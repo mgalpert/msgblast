@@ -66,6 +66,12 @@ jobs:
           PY
           xcodebuild -version
 
+      - name: Install disk-image metadata libraries
+        run: |
+          python3 -m venv "$RUNNER_TEMP/msgblast-installer-python"
+          "$RUNNER_TEMP/msgblast-installer-python/bin/python" -m pip install -r scripts/installer-requirements.txt
+          echo "$RUNNER_TEMP/msgblast-installer-python/bin" >> "$GITHUB_PATH"
+
       - name: Test release tooling
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 

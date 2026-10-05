@@ -1,0 +1,12 @@
+{
+  "fixture": "blue-icon Debug build from reviewed revision, separate bundle identity, simulated AppTranslocation path",
+  "installer_layout": "Native Finder opening of deterministic DMG verified",
+  "video": "Six-second edited-timing sequence of actual native captures: guidance screen, Show in Finder clicked, selected app result. No continuous cursor-motion recording.",
+  "tests": {
+    "release_tooling": 35,
+    "core_controller": 63,
+    "sparkle_fixtures": 4
+  },
+  "review": "Independent read-only review completed; no blocking findings. Python dependencies installed in isolated Actions venv.",
+  "limits": "No real sends, Contacts writes, live app overwrite or permission grants/resets. macOS-only UI; mobile evidence not applicable."
+}

@@ -150,6 +150,31 @@ class AutomatedReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(auto.ReleaseError, "Bad signature"):
                 auto.current_release(self.store, self.prefix, self.root, self.tools, self.key_file)
 
+    def test_installer_is_verified_and_uploaded_before_feed(self):
+        snapshot = self.snapshot()
+        installer = self.publish / "msgblast-0.1.1-2.dmg"
+        installer.write_bytes(b"synthetic installer")
+        self.manifest.update(installer_url=self.base + "downloads/" + installer.name,
+                             installer_signature="synthetic")
+        self.manifest["sha256"][installer.name] = hashlib.sha256(installer.read_bytes()).hexdigest()
+        (self.publish / "release.json").write_text(json.dumps(self.manifest))
+        self.publish_release(snapshot)
+        self.assertEqual(self.store.writes[-3:], [self.prefix + "downloads/" + installer.name,
+            self.prefix + "releases/0.1.1-2.json", self.prefix + "appcast.xml"])
+        self.assertEqual(self.store.objects[self.prefix + "downloads/" + installer.name], installer.read_bytes())
+
+    def test_tampered_installer_leaves_feed_and_storage_unchanged(self):
+        snapshot = self.snapshot()
+        installer = self.publish / "msgblast-0.1.1-2.dmg"
+        installer.write_bytes(b"tampered installer")
+        self.manifest.update(installer_url=self.base + "downloads/" + installer.name,
+                             installer_signature="synthetic")
+        self.manifest["sha256"][installer.name] = "0" * 64
+        (self.publish / "release.json").write_text(json.dumps(self.manifest))
+        with self.assertRaisesRegex(auto.ReleaseError, "hash"):
+            self.publish_release(snapshot)
+        self.assertEqual(self.store.writes, [])
+
     def test_archive_and_immutable_manifest_precede_feed(self):
         snapshot = self.snapshot()
         self.publish_release(snapshot)
@@ -230,6 +255,7 @@ class AutomatedReleaseTests(unittest.TestCase):
             self.assertEqual(key_file, self.key_file.resolve())
             result = json.loads((directory / "release.json").read_text())
             self.assertEqual(result["source_revision"], revision)
+            result["installer_url"] = self.base + "downloads/fixture.dmg"
             return result
 
         with patch.dict(auto.os.environ, environment, clear=True), \
@@ -237,6 +263,7 @@ class AutomatedReleaseTests(unittest.TestCase):
              patch.object(auto, "R2Store", return_value=self.store), \
              patch.object(auto, "verify_feed"), \
              patch.object(auto.release, "prepare", side_effect=prepare) as preparation, \
+             patch.object(auto, "prepare_installer"), \
              patch.object(auto, "publish_release", side_effect=publish) as publication:
             self.assertEqual(auto.main(["--version", "v0.1.0"]), 0)
         options = preparation.call_args.args[0]

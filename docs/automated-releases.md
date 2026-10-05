@@ -84,3 +84,9 @@ To roll back, release the intended reverted source with a new tag/version or dis
 The workflow code and local tests do not prove that an unconfigured R2 host or GitHub runner is working. The first hosted workflow run and a real old-to-new installed-app update are activation checks. The optional Developer ID/notarization path remains available in `scripts/release.py` for future distribution; see [updates.md](updates.md).
 
 References: [Sparkle publishing](https://sparkle-project.org/documentation/publishing/), [R2 public buckets](https://developers.cloudflare.com/r2/buckets/public-buckets/), [R2 conditional S3 operations](https://developers.cloudflare.com/r2/api/s3/api/), [Xcode 27 runner image](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md).
+
+## First-install disk image
+
+Actions also packages the signed app in a drag-to-Applications DMG, signs the DMG with the persistent Sparkle key, and records its immutable URL, signature and SHA-256 in the version/build manifest. The publisher verifies and uploads both ZIP and DMG before updating the signed appcast. The existing fixed `latest.zip` endpoint remains the updater ZIP; use the manifest’s `installer_url` for the first-install DMG. No Apple notarization is implied.
+
+Install the pinned metadata dependencies with `python3 -m pip install -r scripts/installer-requirements.txt`, then build a local installer with `python3 scripts/build_installer.py PATH/TO/msgblast.app OUTPUT.dmg`. Packaging writes and verifies Finder metadata directly, without launching Finder or requiring Automation permission. Release apps opened outside `/Applications` or `~/Applications` show installation guidance before creating the Messages model. Debug builds remain runnable from Xcode; downloaded, mounted and translocated Debug copies show the same guidance.
