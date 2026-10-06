@@ -1,43 +1,21 @@
 --- a/msgblast/App/AppModel.swift
 +++ b/msgblast/App/AppModel.swift
-@@ -30,7 +30,7 @@
-     let linkPreviews = LinkPreviewStore()
-     let accessGuide = MessagesAccessGuide(defaults: ProcessInfo.processInfo.arguments.contains("--demo") ? UserDefaults(suiteName: "com.msgblast.demo-permissions") ?? .standard : .standard)
-     let local: LocalStore
+@@ -33 +33 @@
 -    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true)
 +    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: true)
-     var database: MessagesDatabase?
-     var timer: Timer?
-     var coordinator: WindowCoordinator?
-@@ -38,9 +38,9 @@
-     private var storageLoadFailed = false
-     private var lastDataVersion: Int64?
-     init() {
+@@ -41,3 +41,3 @@
 -        demo = ProcessInfo.processInfo.arguments.contains("--demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastDemo") as? Bool == true
 -        personalAgent = PersonalAgentController(demo: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true)
 -        var fixtureDirectory: URL?
 +        demo = false
 +        personalAgent = PersonalAgentController(demo: true)
 +        var fixtureDirectory: URL? = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-readme-current-capture")
-         #if DEBUG
-         if UpdateProbe.isLocalFixture, let path = Bundle.main.object(forInfoDictionaryKey: "msgblastFixtureStore") as? String {
-             let directory = URL(fileURLWithPath: path).standardizedFileURL
-@@ -50,7 +50,7 @@
-         #endif
-         local = LocalStore(demo: demo, isolated: ProcessInfo.processInfo.arguments.contains("--isolated-demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true || Bundle.main.object(forInfoDictionaryKey: "msgblastIsolatedDemo") as? Bool == true, fixtureDirectory: fixtureDirectory, webPreview: Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool == true)
-         do { state = try local.load(); try local.save(state) } catch { storageLoadFailed = true; self.error = "Local state could not be loaded or saved: \(error.localizedDescription). Sending is unavailable until storage works." }
+@@ -53 +53 @@
 -        if demo { setupDemo() }
 +        setupMarketingCapture()
-         state.selection = Set(state.agents.map(\.id))
-         persist()
-         accessGuide.checkHistory = { [weak self] in
-@@ -59,8 +59,44 @@
-             return self.databaseAvailable
-         }
-         refresh()
+@@ -61,0 +62 @@
 +        state.draft = "I have an idea for a weekend project. What should I do first?"
-         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshIfChanged() } }
-     }
+@@ -63,0 +65,35 @@
 +    private func setupMarketingCapture() {
 +        let names = ["Instinct", "Fo", "Szn"]
 +        let files = ["instinct", "fo", "szn"]
@@ -73,13 +51,7 @@
 +
 +
 +
-     func save() throws {
-         guard !storageLoadFailed else { throw AppFailure.blocked("Local state could not be loaded. Preserve the state.json file and repair it before sending; it will not be overwritten.") }
-         try local.save(state)
-@@ -130,36 +166,8 @@
-         refresh()
-     }
-     func refresh() {
+@@ -133,30 +169,2 @@
 -        guard !busy else { return }
 -        defer { accessGuide.observeHistory(available: databaseAvailable) }
 -        if permissionGuidePreview {
@@ -112,37 +84,16 @@
 -        } catch { databaseAvailable = false; databaseStatus = error.localizedDescription; database = nil }
 +        databaseAvailable = true
 +        databaseStatus = "Isolated sample data; no Messages access"
-     }
-     func searchAgents() async {
-         let query = contactQuery.trimmingCharacters(in: .whitespacesAndNewlines)
 --- a/msgblast/App/msgblastApp.swift
 +++ b/msgblast/App/msgblastApp.swift
-@@ -7,7 +7,7 @@
-     @StateObject private var startup = AppStartup()
-     private var model: AppModel? { startup.model }
-     @StateObject private var updater = AppUpdater()
+@@ -10 +10 @@
 -    private let preferredWindowSize = NSSize(width: 1600, height: 1100)
 +    private let preferredWindowSize = NSSize(width: 1180, height: 600)
-     private var initialWindowSize: NSSize {
-         let screen = NSScreen.main?.visibleFrame.size ?? preferredWindowSize
-         return NSSize(width: min(preferredWindowSize.width, screen.width), height: min(preferredWindowSize.height, screen.height))
-@@ -89,7 +89,7 @@
- }
- 
- private final class InitialWindowSizingView: NSView {
+@@ -92 +92 @@
 -    var preferredSize = NSSize(width: 1600, height: 1100)
 +    var preferredSize = NSSize(width: 1180, height: 600)
-     private var applied = false
-     override func viewDidMoveToWindow() {
-         super.viewDidMoveToWindow()
 --- a/msgblast/Core/WebAgentSession.swift
 +++ b/msgblast/Core/WebAgentSession.swift
-@@ -265,7 +265,7 @@
-     }
- 
-     private func refreshAvatar(generation: Int) async {
+@@ -268 +268 @@
 -        guard provider == .muse, snapshot.ready else { clearAvatar(); return }
 +        guard !fixture, provider == .muse, snapshot.ready else { clearAvatar(); return }
-         do {
-             let result = try await webView.callAsyncJavaScript(MusePageScript.avatar, arguments: ["previousKey": avatarKey ?? ""], in: nil, contentWorld: .defaultClient) as? [String: Any]
-             guard generation == navigationGeneration else { return }
