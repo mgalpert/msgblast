@@ -279,8 +279,8 @@ struct MessagesAccessRow: View {
                     Button("Check again", action: check)
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Messages history").font(.headline)
-                        Text("Read your conversations").font(.callout).foregroundStyle(.secondary)
+                        Text("Connect Messages").font(.headline)
+                        Text("Access the agents you text with.").font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if guide.flow.stage == .verified {
