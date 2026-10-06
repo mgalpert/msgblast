@@ -1,0 +1,24 @@
+{
+  "source_revision": "bd2f5723462638681e0ba643760b577a55c78e01",
+  "run_url": "https://github.com/mgalpert/msgblast/actions/runs/37438534430",
+  "preview_artifact_id": 11399992633,
+  "native_test_artifact_id": 11400332091,
+  "native_source_tree_unchanged_since": "d73437eb9766d3bc32c87338990e171fa51b568e",
+  "video_url": "https://github.com/user-attachments/assets/5688a4ec-e08b-499a-a1a3-307f86f8b10b",
+  "latest_artifacts_verified_and_launched": true,
+  "download_location_gate_verified": true,
+  "production_app_replaced": false,
+  "live_messages_sent": false,
+  "screenshots": [
+    {
+      "file": "01-dev-installation.png",
+      "sha256": "2bf5d0178533861c60f0ffbcd3188b0df57133ca0d4bc1427edd4c93f9e188c7",
+      "capture": "Actual final downloaded app launched from a Downloads directory; no forced installation-preview flag."
+    },
+    {
+      "file": "02-demo-installation.png",
+      "sha256": "e78ca3acdc84296910c48747c985fa8031eb97323cab52f866600683d5d245c1",
+      "capture": "Actual final downloaded app launched from a Downloads directory; no forced installation-preview flag."
+    }
+  ]
+}

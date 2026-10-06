@@ -1,0 +1,18 @@
+[
+  {
+    "variant": "development",
+    "hash_signature_identity_source_icon_verified": true,
+    "zip_sha256": "e90ac640e30a44e7ae62a68a5cd16866bd2f3d16a61c6d0a784d45c6a7a454e7",
+    "source_revision": "bd2f5723462638681e0ba643760b577a55c78e01",
+    "updates_disabled": true,
+    "fixture_default": false
+  },
+  {
+    "variant": "demo",
+    "hash_signature_identity_source_icon_verified": true,
+    "zip_sha256": "d55c01f0d33b6ec04e438fe903992ccd879088722b8f856ee287b6ad0e3edcfc",
+    "source_revision": "bd2f5723462638681e0ba643760b577a55c78e01",
+    "updates_disabled": true,
+    "fixture_default": true
+  }
+]
