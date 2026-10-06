@@ -1,0 +1,109 @@
+--- a/msgblast/App/AppModel.swift
++++ b/msgblast/App/AppModel.swift
+@@ -30,7 +30,7 @@
+     let linkPreviews = LinkPreviewStore()
+     let accessGuide = MessagesAccessGuide(defaults: ProcessInfo.processInfo.arguments.contains("--demo") ? UserDefaults(suiteName: "com.msgblast.demo-permissions") ?? .standard : .standard)
+     let local: LocalStore
+-    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true)
++    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: true)
+     var database: MessagesDatabase?
+     var timer: Timer?
+     var coordinator: WindowCoordinator?
+@@ -38,9 +38,9 @@
+     private var storageLoadFailed = false
+     private var lastDataVersion: Int64?
+     init() {
+-        demo = ProcessInfo.processInfo.arguments.contains("--demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastDemo") as? Bool == true
++        demo = false
+         personalAgent = PersonalAgentController(demo: demo)
+-        var fixtureDirectory: URL?
++        var fixtureDirectory: URL? = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-marketing-capture")
+         #if DEBUG
+         if UpdateProbe.isLocalFixture, let path = Bundle.main.object(forInfoDictionaryKey: "msgblastFixtureStore") as? String {
+             let directory = URL(fileURLWithPath: path).standardizedFileURL
+@@ -58,9 +58,44 @@
+             self.refresh()
+             return self.databaseAvailable
+         }
++        setupMarketingCapture()
++        state.draft = "Help me plan a focused morning: two work blocks and a proper break."
+         refresh()
+         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshIfChanged() } }
+     }
++
++    private func setupMarketingCapture() {
++        let names = ["Orchid", "Zo", "Series"]
++        let files = ["orchid", "zo", "series"]
++        let prompt = "I have an idea for a weekend project. What should I do first?"
++        let answers = [
++            "Make room to start.\n\nPick one outcome for the weekend and protect two 90-minute blocks. Use the first to make a rough version, and the second to improve it.\n\nLeave Sunday evening free to reflect on what you learned.",
++            "Build the smallest useful version.\n\nWrite down who it helps and the one task it makes easier. Then create a simple prototype that does just that.\n\nShow it to one person before adding more features.",
++            "Start with a conversation.\n\nFind two people who have the problem you want to solve. Ask how they handle it today and where they get stuck.\n\nUse what you hear to choose your first experiment."
++        ]
++        state.agents = names.enumerated().map { i, name in
++            let url = Bundle.main.url(forResource: files[i], withExtension: "png", subdirectory: "Discover/icons")
++            return Agent(name: name, handles: ["sample-\(i)@example.com"], avatar: url.flatMap { try? Data(contentsOf: $0) }, colorIndex: i)
++        }
++        chats = state.agents.enumerated().map { i, agent in Chat(id: "sample-\(i)", handle: agent.handles[0], lastActivity: 0) }
++        let time = Date(timeIntervalSince1970: 1791306000)
++        let members = state.agents.enumerated().map { i, agent in
++            var member = Member(agentID: agent.id, name: agent.name, chat: chats[i])
++            member.submission = .submitted
++            member.anchor = Anchor(rowID: Int64(i * 2 + 1), guid: "sample-\(i)-prompt")
++            messages[chats[i].id] = [
++                Message(id: Int64(i * 2 + 1), guid: "sample-\(i)-prompt", chatID: chats[i].id, text: prompt, outgoing: true, date: time),
++                Message(id: Int64(i * 2 + 2), guid: "sample-\(i)-reply", chatID: chats[i].id, text: answers[i], outgoing: false, date: time.addingTimeInterval(30))
++            ]
++            return member
++        }
++        var comparison = Comparison(prompt: prompt, members: members)
++        comparison.created = time
++        comparison.allDraft = "Turn these suggestions into a Saturday morning plan."
++        state.comparisons = [comparison]
++        state.selection = Set(state.agents.map(\.id))
++    }
++
+     func save() throws {
+         guard !storageLoadFailed else { throw AppFailure.blocked("Local state could not be loaded. Preserve the state.json file and repair it before sending; it will not be overwritten.") }
+         try local.save(state)
+@@ -130,6 +165,9 @@
+         refresh()
+     }
+     func refresh() {
++        databaseAvailable = true
++        databaseStatus = "Isolated screenshot capture; no Messages access"
++        return
+         guard !busy else { return }
+         defer { accessGuide.observeHistory(available: databaseAvailable) }
+         if permissionGuidePreview {
+--- a/msgblast/App/MsgBlastApp.swift
++++ b/msgblast/App/MsgBlastApp.swift
+@@ -7,7 +7,7 @@
+     @StateObject private var startup = AppStartup()
+     private var model: AppModel? { startup.model }
+     @StateObject private var updater = AppUpdater()
+-    private let preferredWindowSize = NSSize(width: 1600, height: 1100)
++    private let preferredWindowSize = NSSize(width: 1180, height: 660)
+     private var initialWindowSize: NSSize {
+         let screen = NSScreen.main?.visibleFrame.size ?? preferredWindowSize
+         return NSSize(width: min(preferredWindowSize.width, screen.width), height: min(preferredWindowSize.height, screen.height))
+@@ -89,7 +89,7 @@
+ }
+ 
+ private final class InitialWindowSizingView: NSView {
+-    var preferredSize = NSSize(width: 1600, height: 1100)
++    var preferredSize = NSSize(width: 1180, height: 660)
+     private var applied = false
+     override func viewDidMoveToWindow() {
+         super.viewDidMoveToWindow()
+--- a/msgblast/Core/WebAgentSession.swift
++++ b/msgblast/Core/WebAgentSession.swift
+@@ -221,7 +221,7 @@
+     }
+ 
+     private func refreshAvatar(generation: Int) async {
+-        guard provider == .muse, snapshot.ready else { clearAvatar(); return }
++        guard !fixture, provider == .muse, snapshot.ready else { clearAvatar(); return }
+         do {
+             let result = try await webView.callAsyncJavaScript(MusePageScript.avatar, arguments: ["previousKey": avatarKey ?? ""], in: nil, contentWorld: .defaultClient) as? [String: Any]
+             guard generation == navigationGeneration else { return }

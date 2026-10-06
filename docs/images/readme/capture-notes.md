@@ -1,0 +1,7 @@
+# README product screenshots
+
+Screenshots use the actual native views from source revision `aa5af67`, in a separate capture build. UI view code is unchanged; initial main-window size is reduced to 1180 × 660 points for framing. Backend initialization is isolated to temporary state, Messages history access is stubbed as available, and web sessions use local fixtures so no account or provider request is made. The agent picker uses the bundled Muse fallback image and official bundled ChatGPT/Claude icons plus the bundled Grok artwork. Discover shows the bundled catalog and its attributed icons.
+
+The composer contains an unsent example prompt. The comparison uses local sample messages attributed to illustrative Orchid, Zo, and Series agent profiles with their bundled catalog icons; these are authored sample replies, not live outputs from those services. These images show comparison, selection, and discovery, not authenticated provider replies or delivery. The capture app uses the blue fixture app icon; README branding uses the verified green production icon. No installed app, personal conversations, Contacts, permissions, or accounts are changed.
+
+`workflow.mp4` is a sampled walkthrough of actual captures with edited timing: agent selection, Discover, saved comparison, a recipient excluded, and the restored selection. It is not continuous video or a provider response benchmark. No send action is taken.

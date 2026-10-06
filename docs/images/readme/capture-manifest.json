@@ -1,0 +1,10 @@
+{
+  "base_revision": "aa5af67754423db2d30da5d6e7ef5f8258d1ff8a",
+  "native_view_sha256": {
+    "msgblast/Windows/Views.swift": "c12f47b96f8006720ab78d9cda53c56a3beecc9b4dbd71adbff8cb83ec0ea29f",
+    "msgblast/Windows/WebServicesView.swift": "dd8051b104c71217584da28048672fe2da792b7fdbbdf2efd46aa490ee62be75",
+    "msgblast/Windows/DiscoverView.swift": "faa9303c31ef5ee534fa4de3081b9e4790e9ffc8653c89cda4786e596e3535d9",
+    "msgblast/Windows/WindowCoordinator.swift": "cbdc90434caaef20c5cb0a79690a7f6e6e4af91eaf74eb11d63897d81bdcc9a7"
+  },
+  "capture_limits": "Isolated local sample data; no real sends. See capture-notes.md."
+}

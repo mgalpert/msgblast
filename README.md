@@ -1,55 +1,50 @@
-# msgblast
+<p align="center">
+  <img src="docs/images/readme/msgblast-icon.png" alt="msgblast" width="96">
+</p>
 
-msgblast is a Mac app for comparing AI agents in Messages and embedded Muse, ChatGPT, Claude, and Grok chats. Send one prompt to selected agents, read replies side by side, send follow-ups, and reopen saved comparisons. Messages agents also support photos and files.
+<h1 align="center">msgblast</h1>
+<p align="center"><strong>Ask once. Compare the answers.</strong></p>
+<p align="center">Your AI agents, together in one Mac app.</p>
+<p align="center"><a href="https://updates.msgblast.app/latest.zip"><strong>Download for Mac</strong></a> · macOS Sequoia 15 or later</p>
 
-Requires **macOS Sequoia (15) or later**. Web agents use your existing service accounts. Messages agents require existing one-to-one iMessage conversations.
+<img src="docs/images/readme/compare-answers.jpg" alt="msgblast showing three conversations side by side with agent icons and a shared follow-up composer" width="1100">
 
-## Download and install
+Send one prompt to multiple agents, compare their replies, and follow up without losing the thread. Use Muse, ChatGPT, Claude, and Grok alongside your Messages agents. Reopen saved comparisons whenever you need them.
 
-[Download msgblast for Mac](https://updates.msgblast.app/latest.zip)
+*Actual app interface with an illustrative sample conversation; replies shown are sample copy.*
 
-Unzip the download, drag **msgblast.app** into **Applications**, and open it.
+## Pick your agents
 
-### If macOS blocks the first launch
+Choose who gets your prompt. Web agents use your existing accounts; Messages agents use your one-to-one iMessage conversations. Photos and files work with Messages agents.
 
-After trying to open msgblast, open **System Settings → Privacy & Security**, scroll to the security section, and select **Open Anyway**. Confirm **Open** when macOS asks again, if you trust the download. [Apple's first-launch instructions](https://support.apple.com/en-us/102445#openanyway).
+<img src="docs/images/readme/choose-agents.jpg" alt="msgblast agent picker showing Muse, ChatGPT, Claude, Grok, and Messages agents with their bundled icons" width="1100">
 
-<img src="docs/evidence/readme-onboarding/02-open-anyway.png" alt="macOS Privacy & Security showing that msgblast was blocked, with the Open Anyway button highlighted" width="820">
+## Find your next agent
+
+Browse **Discover** for agents that help with personal assistance, research, and shopping.
+
+<img src="docs/images/readme/discover.jpg" alt="msgblast Discover catalog with agent icons, descriptions, and categories" width="1100">
 
 ## Get started
 
-### 1. Allow access to Messages history
+1. [Download msgblast](https://updates.msgblast.app/latest.zip), unzip it, and drag **msgblast.app** into **Applications**.
+2. Open the app and select your agents. Sign in to web agents inside msgblast.
+3. Write a prompt and send it. Compare the replies, then ask a follow-up.
 
-Click **Open Settings** in msgblast's Messages history banner.
+For Messages agents, allow Messages history, Contacts, and Messages Automation when prompted. Start a one-to-one conversation in Messages before adding an agent.
 
-<img src="docs/evidence/readme-onboarding/01-history-access.png" alt="Actual msgblast history-access screen with the Open Settings button" width="820">
+<details>
+<summary>Installation and Messages permissions</summary>
 
-In **System Settings → Privacy & Security → Full Disk Access**, click **+**, choose **msgblast.app** from **Applications**, and click **Open**. Enable its switch and authenticate if requested. You can also drag the app card into that list. [Apple's Full Disk Access instructions](https://support.apple.com/guide/mac-help/change-privacy-security-settings-on-mac-mchl211c911f/mac).
+If macOS blocks the first launch, open **System Settings → Privacy & Security → Open Anyway** after trying to open the app. [Apple’s first-launch instructions](https://support.apple.com/en-us/102445#openanyway).
 
-Quit and reopen msgblast, then click **Check again** if the history banner remains.
+For Messages history, click **Open Settings** in the app, add **msgblast.app** under **Privacy & Security → Full Disk Access**, and enable it. Quit and reopen msgblast, then click **Check again** if needed.
 
+Allow **Contacts** when asked. On the first Messages send, allow msgblast to control **Messages**. If access was previously declined, enable msgblast under **Privacy & Security → Contacts** and **Automation → Messages**.
 
-### 2. Allow Contacts and Messages Automation
+</details>
 
-Allow Contacts when msgblast asks, so it can find and save agent contacts. If you previously declined, open **System Settings → Privacy & Security → Contacts** and enable access for msgblast. [Apple's privacy settings guide](https://support.apple.com/guide/mac-help/change-privacy-security-settings-on-mac-mchl211c911f/mac).
-
-On your first send, allow msgblast to control **Messages**. If you previously declined, open **System Settings → Privacy & Security → Automation**, expand msgblast, and enable **Messages**. [Apple's Automation instructions](https://support.apple.com/en-nz/guide/mac-help/mchl108e1718/mac).
-
-### 3. Add agents and send a prompt
-
-Find agents in **Discover**, or click **Add Agent** to search by name, email or phone number. Start a one-to-one conversation with the agent in Messages first if it does not have one yet.
-
-<img src="docs/evidence/readme-onboarding/03-add-agents.png" alt="Actual msgblast Add agent screen with sample contacts" width="680">
-
-Select your agents, write a prompt, and press the send arrow. Their replies appear together for comparison.
-
-*These are actual app screenshots captured with demo contacts and a simulated history-access prompt.*
-
-Check for new versions from **msgblast → Check for Updates**.
-
-## Comparison reports
-
-Click **Summarize** in a comparison to open a report with a recommended next action, a comparison of the replies, and open questions. Reports use an installed personal-agent CLI and its existing account. See [personal agent reports](docs/personal-agent-reports.md) for setup, supported CLIs, privacy limits, and fixture validation.
+Check for updates from **msgblast → Check for Updates**. For comparison reports, click **Summarize**; see [report setup](docs/personal-agent-reports.md).
 
 ## Build it yourself
 
