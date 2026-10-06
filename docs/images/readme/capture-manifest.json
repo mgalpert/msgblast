@@ -1,10 +1,26 @@
 {
-  "base_revision": "aa5af67754423db2d30da5d6e7ef5f8258d1ff8a",
-  "native_view_sha256": {
-    "msgblast/Windows/Views.swift": "c12f47b96f8006720ab78d9cda53c56a3beecc9b4dbd71adbff8cb83ec0ea29f",
-    "msgblast/Windows/WebServicesView.swift": "dd8051b104c71217584da28048672fe2da792b7fdbbdf2efd46aa490ee62be75",
-    "msgblast/Windows/DiscoverView.swift": "faa9303c31ef5ee534fa4de3081b9e4790e9ffc8653c89cda4786e596e3535d9",
-    "msgblast/Windows/WindowCoordinator.swift": "cbdc90434caaef20c5cb0a79690a7f6e6e4af91eaf74eb11d63897d81bdcc9a7"
+  "comparison": {
+    "source_revision": "f86cce472649d5468792d04a86dd05a7b763774a",
+    "published_version": "0.2.2",
+    "published_build": 7,
+    "view_sha256": {
+      "msgblast/Windows/Views.swift": "5f7159ed07ae826f30658d5289acea28cd329bb05f7b26d5ce4eafe8dd0d2362",
+      "msgblast/Windows/DiscoverView.swift": "5f5c09dc0432364dcbdd754a11ff1bb8d2ea201bba1291c3cd70eedc253808f8",
+      "msgblast/Windows/WindowCoordinator.swift": "2b45319522b5b3e77615c0cb1ca800586d889ac3f579debaddae347de4c9bc83"
+    }
   },
-  "capture_limits": "Isolated local sample data; no real sends. See capture-notes.md."
+  "picker_preview": {
+    "source_revision": "32b983a71f899b6636453565731130529880fa32",
+    "view_sha256": {
+      "msgblast/Windows/Views.swift": "c12f47b96f8006720ab78d9cda53c56a3beecc9b4dbd71adbff8cb83ec0ea29f",
+      "msgblast/Windows/DiscoverView.swift": "faa9303c31ef5ee534fa4de3081b9e4790e9ffc8653c89cda4786e596e3535d9",
+      "msgblast/Windows/WindowCoordinator.swift": "cbdc90434caaef20c5cb0a79690a7f6e6e4af91eaf74eb11d63897d81bdcc9a7",
+      "msgblast/Windows/WebServicesView.swift": "40e722aa5616e1d5477e6945054d6d18b756e69c9a1ba661c4e3a26b38bc42ea"
+    }
+  },
+  "asset_sha256": {
+    "choose-agents.jpg": "bf9636103b93d13e9588e0b71efe38b377db43ab90dbe1cdd9035270424b739d",
+    "compare-answers.jpg": "fa4140fd421f90100d1cf059528797fab5ca26b3d6dfb9778849d811f8e3127f",
+    "msgblast-icon.png": "e79e7877fdbeeae0ef48243de1e89ec954ae3e2fe39002566fc2a8959cce030e"
+  }
 }

@@ -1,0 +1,107 @@
+--- a/msgblast/App/AppModel.swift
++++ b/msgblast/App/AppModel.swift
+@@ -35,9 +35,9 @@
+     private var storageLoadFailed = false
+     private var lastDataVersion: Int64?
+     init() {
+-        demo = ProcessInfo.processInfo.arguments.contains("--demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastDemo") as? Bool == true
+-        personalAgent = PersonalAgentController(demo: demo)
+-        var fixtureDirectory: URL?
++        demo = false
++        personalAgent = PersonalAgentController(demo: true)
++        var fixtureDirectory: URL? = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-readme-release-capture")
+         #if DEBUG
+         if UpdateProbe.isLocalFixture, let path = Bundle.main.object(forInfoDictionaryKey: "msgblastFixtureStore") as? String {
+             let directory = URL(fileURLWithPath: path).standardizedFileURL
+@@ -47,7 +47,7 @@
+         #endif
+         local = LocalStore(demo: demo, isolated: ProcessInfo.processInfo.arguments.contains("--isolated-demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true, fixtureDirectory: fixtureDirectory)
+         do { state = try local.load(); try local.save(state) } catch { storageLoadFailed = true; self.error = "Local state could not be loaded or saved: \(error.localizedDescription). Sending is unavailable until storage works." }
+-        if demo { setupDemo() }
++        setupMarketingCapture()
+         state.selection = Set(state.agents.map(\.id))
+         persist()
+         accessGuide.checkHistory = { [weak self] in
+@@ -56,8 +56,43 @@
+             return self.databaseAvailable
+         }
+         refresh()
++        state.draft = "I have an idea for a weekend project. What should I do first?"
+         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshIfChanged() } }
+     }
++    private func setupMarketingCapture() {
++        let names = ["Instinct", "Fo", "Szn"]
++        let files = ["instinct", "fo", "szn"]
++        let prompt = "I have an idea for a weekend project. What should I do first?"
++        let answers = [
++            "Make room to start.\n\nPick one outcome for the weekend and protect two 90-minute blocks. Use the first to make a rough version, and the second to improve it.\n\nLeave Sunday evening free to reflect on what you learned.",
++            "Build the smallest useful version.\n\nWrite down who it helps and the one task it makes easier. Then create a simple prototype that does just that.\n\nShow it to one person before adding more features.",
++            "Start with a conversation.\n\nFind two people who have the problem you want to solve. Ask how they handle it today and where they get stuck.\n\nUse what you hear to choose your first experiment."
++        ]
++        state.agents = names.enumerated().map { i, name in
++            let url = Optional(URL(fileURLWithPath: "/Users/contains/.codex/worktrees/9042/msgblast/docs/images/readme/agent-icons/" + files[i] + ".jpg"))
++            return Agent(name: name, handles: ["sample-\(i)@example.com"], avatar: url.flatMap { try? Data(contentsOf: $0) }, colorIndex: i)
++        }
++        chats = state.agents.enumerated().map { i, agent in Chat(id: "sample-\(i)", handle: agent.handles[0], lastActivity: 0) }
++        let time = Date(timeIntervalSince1970: 1791306000)
++        let members = state.agents.enumerated().map { i, agent in
++            var member = Member(agentID: agent.id, name: agent.name, chat: chats[i])
++            member.submission = .submitted
++            member.anchor = Anchor(rowID: Int64(i * 2 + 1), guid: "sample-\(i)-prompt")
++            messages[chats[i].id] = [
++                Message(id: Int64(i * 2 + 1), guid: "sample-\(i)-prompt", chatID: chats[i].id, text: prompt, outgoing: true, date: time),
++                Message(id: Int64(i * 2 + 2), guid: "sample-\(i)-reply", chatID: chats[i].id, text: answers[i], outgoing: false, date: time.addingTimeInterval(30))
++            ]
++            return member
++        }
++        var comparison = Comparison(prompt: prompt, members: members)
++        comparison.created = time
++        comparison.allDraft = "Turn these suggestions into a Saturday morning plan."
++        state.comparisons = [comparison]
++        state.frames[comparison.id.uuidString + ":connected"] = SavedFrame(x: 100, y: 100, width: 1170, height: 640)
++        state.selection = Set(state.agents.map(\.id))
++    }
++
++
+     func save() throws {
+         guard !storageLoadFailed else { throw AppFailure.blocked("Local state could not be loaded. Preserve the state.json file and repair it before sending; it will not be overwritten.") }
+         try local.save(state)
+@@ -127,36 +162,8 @@
+         refresh()
+     }
+     func refresh() {
+-        guard !busy else { return }
+-        defer { accessGuide.observeHistory(available: databaseAvailable) }
+-        if permissionGuidePreview {
+-            databaseAvailable = false
+-            databaseStatus = "Permission guide preview · history access is simulated as unavailable · no real sends"
+-            return
+-        }
+-        if demo {
+-            databaseAvailable = true; databaseStatus = "Simulated Messages · no real sends"
+-            if state.retainAvailableSelection(chats: chats) { persist() }
+-            return
+-        }
+-        do {
+-            if database == nil { database = try MessagesDatabase(path: NSHomeDirectory() + "/Library/Messages/chat.db") }
+-            guard let database else { return }
+-            let version = try database.changeVersion()
+-            let freshChats = try database.chats()
+-            if chats != freshChats { chats = freshChats }
+-            if state.retainAvailableSelection(chats: freshChats) { try save() }
+-            if !databaseAvailable { databaseAvailable = true }
+-            if databaseStatus != "Messages history available · read-only" { databaseStatus = "Messages history available · read-only" }
+-            let members = state.comparisons.flatMap(\.members)
+-            for chatID in Set(members.map(\.chat.id)) {
+-                let start = members.filter { $0.chat.id == chatID }.compactMap(\.anchor?.rowID).min() ?? 0
+-                let fresh = try database.messages(chatID: chatID, after: start)
+-                if messages[chatID] != fresh { messages[chatID] = fresh }
+-            }
+-            try reconcile()
+-            lastDataVersion = version
+-        } catch { databaseAvailable = false; databaseStatus = error.localizedDescription; database = nil }
++        databaseAvailable = true
++        databaseStatus = "Isolated sample data; no Messages access"
+     }
+     func searchAgents() async {
+         let query = contactQuery.trimmingCharacters(in: .whitespacesAndNewlines)
