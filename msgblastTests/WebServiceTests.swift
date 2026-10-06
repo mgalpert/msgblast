@@ -215,11 +215,13 @@ final class WebServiceTests: XCTestCase {
         XCTAssertNil(session.avatar)
         _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar()", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil }
+        await diagnoseAvatar(session)
         let first = try XCTUnwrap(session.avatar)
         await session.refresh()
         XCTAssertEqual(session.avatar, first, "Unchanged media should retain its cached still")
         _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar()", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil && session.avatar != first }
+        await diagnoseAvatar(session)
         XCTAssertTrue(session.state.attempts.isEmpty, "Reading an avatar must never submit a message")
     }
 
@@ -229,11 +231,13 @@ final class WebServiceTests: XCTestCase {
         try await waitFor { session.snapshot.ready }
         _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar()", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil }
+        await diagnoseAvatar(session)
         let first = session.avatar
         _ = try await session.webView.callAsyncJavaScript("chat.hidden=true;login.hidden=false", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { !session.snapshot.ready && session.avatar == nil }
         _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar();chat.hidden=false;login.hidden=true", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil && session.avatar != first }
+        await diagnoseAvatar(session)
         session.reload()
         try await waitFor { session.snapshot.ready && session.avatar == nil }
     }
@@ -334,17 +338,32 @@ final class WebServiceTests: XCTestCase {
         XCTAssertFalse(provider.acceptsReceipt(from: saved, at: provider.newChatURL))
     }
 
+    private func diagnoseAvatar(_ session: WebAgentSession) async {
+        print("AVATAR_DIAGNOSTIC snapshot=\(session.snapshot.ready) bytes=\(session.avatar?.count ?? 0)")
+        let code = #"""
+        const i=document.querySelector('[data-hatch-avatar-layer]');
+        const h=i?.parentElement;
+        const detail={secure:isSecureContext,uuid:typeof crypto.randomUUID,cache:!!globalThis.__msgblastAvatarSource,complete:i?.complete,width:i?.naturalWidth,height:i?.naturalHeight,currentSourceMatches:i?.currentSrc===i?.src,imageRects:i?.getClientRects().length,hostRects:h?.getClientRects().length,opacity:i?getComputedStyle(i).opacity:null};
+        try {const c=document.createElement('canvas');c.width=c.height=256;c.getContext('2d').drawImage(i,0,0,256,256);detail.pngLength=c.toDataURL('image/png').length;detail.pixel=[...c.getContext('2d').getImageData(128,128,1,1).data];}catch(e){detail.error=String(e);}
+        return detail;
+        """#
+        for (name,world) in [("page",WKContentWorld.page),("client",WKContentWorld.defaultClient)] {
+            do {print("AVATAR_DIAGNOSTIC \(name): \(String(describing: try await session.webView.callAsyncJavaScript(code,arguments:[:],in:nil,contentWorld:world)))")}
+            catch { print("AVATAR_DIAGNOSTIC \(name) error: \(error)") }
+        }
+    }
+
     private func makeSession() throws -> WebAgentSession {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MsgBlast-WebTests-\(UUID())")
         return WebAgentSession(provider: .muse, storageURL: directory.appendingPathComponent("web.json"), fixture: true)
     }
 
-    private func waitFor(_ predicate: () -> Bool) async throws {
+    private func waitFor(file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool) async throws {
         for _ in 0..<100 {
             if predicate() { return }
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTFail("WebKit did not reach the expected state")
+        XCTFail("WebKit did not reach the expected state", file: file, line: line)
     }
 }
 

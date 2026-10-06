@@ -1,0 +1,34 @@
+name: Diagnose Muse avatar rendering
+on:
+  push:
+    branches: ['codex/avatar-ci-diagnostics']
+permissions:
+  contents: read
+jobs:
+  avatars:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Exercise fixture avatars with diagnostics
+        run: |
+          set -o pipefail
+          xcodebuild -project msgblast.xcodeproj -scheme msgblast \
+            -derivedDataPath build/avatar-diagnostics \
+            -destination 'platform=macOS,arch=arm64' \
+            -only-testing:msgblastTests/WebServiceTests/testPersonalAvatarFollowsTheMainChatMediaAndChanges \
+            -only-testing:msgblastTests/WebServiceTests/testAvatarClearsOnSignOutAndIsNotPersistedForAnotherAccount \
+            -resultBundlePath build/avatar-results.xcresult test | tee build-avatar.log
+      - name: Retain diagnostic results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: avatar-diagnostics
+          path: |
+            build/avatar-results.xcresult
+            build-avatar.log
+          retention-days: 7
