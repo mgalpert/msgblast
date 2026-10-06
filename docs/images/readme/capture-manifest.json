@@ -16,7 +16,8 @@
       "msgblast/Windows/DiscoverView.swift": "faa9303c31ef5ee534fa4de3081b9e4790e9ffc8653c89cda4786e596e3535d9",
       "msgblast/Windows/WindowCoordinator.swift": "cbdc90434caaef20c5cb0a79690a7f6e6e4af91eaf74eb11d63897d81bdcc9a7",
       "msgblast/Windows/WebServicesView.swift": "40e722aa5616e1d5477e6945054d6d18b756e69c9a1ba661c4e3a26b38bc42ea"
-    }
+    },
+    "native_views_verified_against": "5ec6488a4d53fbef12417c0be034aa1e62dd1c74"
   },
   "asset_sha256": {
     "choose-agents.jpg": "bf9636103b93d13e9588e0b71efe38b377db43ab90dbe1cdd9035270424b739d",
