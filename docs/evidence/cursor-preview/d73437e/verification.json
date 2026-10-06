@@ -1,0 +1,28 @@
+[
+  {
+    "variant": "development",
+    "zip_sha256": "4451a428c1642bf2107751f27ca79b91b0c025cf8b7838313be28dae0a83ea86",
+    "signature_verified": true,
+    "source_revision": "d73437eb9766d3bc32c87338990e171fa51b568e",
+    "bundle_id": "com.msgblast.development",
+    "support_directory": "msgblast-Dev",
+    "demo": false,
+    "version": "0.3.0",
+    "build": "1",
+    "updates_disabled": true,
+    "compiled_icon_sha256": "e97cb2b77a73924c6fc461b2c677b3beed6a3da24f068193b75f20d6692a4af7"
+  },
+  {
+    "variant": "demo",
+    "zip_sha256": "38376179a9049c9bec87d6240ee749077bc4246a39e1b5591e032bb0ea2c939f",
+    "signature_verified": true,
+    "source_revision": "d73437eb9766d3bc32c87338990e171fa51b568e",
+    "bundle_id": "com.msgblast.demo",
+    "support_directory": "msgblast-Demo",
+    "demo": true,
+    "version": "0.3.0",
+    "build": "1",
+    "updates_disabled": true,
+    "compiled_icon_sha256": "2f6122b508af085208404b157df8afe5f532b0af563a97c51de5547f8744be81"
+  }
+]

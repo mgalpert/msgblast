@@ -1,0 +1,98 @@
+{
+  "source_revision": "d73437eb9766d3bc32c87338990e171fa51b568e",
+  "run_url": "https://github.com/mgalpert/msgblast/actions/runs/37433333798",
+  "preview_artifact_id": 11398097321,
+  "native_ci_tests": {
+    "passed": 129,
+    "failed": 0,
+    "skipped": 0
+  },
+  "dev_test_launch_arguments": [
+    "--demo",
+    "--isolated-demo"
+  ],
+  "demo_test_launch_arguments": [
+    "--isolated-demo"
+  ],
+  "limitations": [
+    "All input, contacts, accounts, messages and replies are synthetic. Development app was tested with an explicit fixture override; default development build is not a fixture.",
+    "No real Messages send, Contacts write, login, model inference, permission change, production installation or production release occurred.",
+    "Video is a sampled walkthrough assembled from actual native screenshots with edited three-second holds. It is not continuous recording or a latency measurement.",
+    "Native macOS app; mobile screenshots do not apply."
+  ],
+  "smoke_results": {
+    "both_variants_launched": true,
+    "demo_three_recipient_send_replies": true,
+    "dev_send_reply": true,
+    "dev_draft_attachment_close_reopen": true,
+    "dev_attachment_followup_reply": true,
+    "about_names_icons": true
+  },
+  "media": [
+    {
+      "file": "07-dev-about.png",
+      "caption": "msgblast Dev - blue-green app / fixture override for this test",
+      "sha256": "f36ee5ea158babfd0254dcc9fd664765430caed32f5bb1d2f607f89629c51aaf"
+    },
+    {
+      "file": "08-demo-about.png",
+      "caption": "msgblast Demo - blue fixture app",
+      "sha256": "30313c8644bd366b50d82f8f08b7ca6bd4193c87360079b665fcd40fb4e1a2f1"
+    },
+    {
+      "file": "01-demo-compose.png",
+      "caption": "Demo - synthetic prompt / no real sends",
+      "sha256": "501702b073de8691c0852d0a6a108ebbc449efd830ce6bbaf85bef61b2b9fabb"
+    },
+    {
+      "file": "02-demo-replies.png",
+      "caption": "Demo - simulated replies",
+      "sha256": "804aabb97f5a037cea0ff569ef1d13c3bd23db0513996989f7b096824a4d5c6d"
+    },
+    {
+      "file": "04-dev-draft-attachment.png",
+      "caption": "Dev - unsent synthetic draft and attachment",
+      "sha256": "6fb044cfa316925c6b0946aaf665003a362b498690ba240a7a513e95591432ad"
+    },
+    {
+      "file": "05-dev-reopened-draft-attachment.png",
+      "caption": "Dev - draft and attachment retained after close/reopen",
+      "sha256": "374e3efcf23a745596a5be0cbaa153c55e8f2b08f9313e563a9cb72be064f4f3"
+    },
+    {
+      "file": "06-dev-attachment-followup.png",
+      "caption": "Dev - simulated attachment follow-up and reply",
+      "sha256": "276a8f2c75d6235905ba374b58586a3f02cf40ce0ffed2accdca3712ef87b3e2"
+    },
+    {
+      "file": "preview-walkthrough.mp4",
+      "sha256": "8c0b16a9469349ab2278cc968603fe27e8f6cc9f92d637fb439972f925257f23",
+      "duration_seconds": 21.0
+    }
+  ],
+  "video_probe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "h264",
+        "width": 1600,
+        "height": 900,
+        "pix_fmt": "yuvj420p",
+        "side_data_list": [
+          {}
+        ]
+      }
+    ],
+    "format": {
+      "duration": "21.000000"
+    }
+  },
+  "extra_screenshots": [
+    {
+      "file": "03-dev-compose-fixture-override.png",
+      "caption": "Dev compose screen with explicit fixture override",
+      "sha256": "413e5384f8daca93ef7705b41778c25f0e8322de4f00e57ae5303d78618c4b9d"
+    }
+  ]
+}
