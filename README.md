@@ -4,61 +4,52 @@
 
 <h1 align="center">msgblast</h1>
 <p align="center"><strong>Ask once. Compare the answers.</strong></p>
-<p align="center">Your AI agents, together in one Mac app.</p>
+<p align="center">Send one question to several AI assistants. Read their replies side by side on your Mac.</p>
 <p align="center"><a href="https://updates.msgblast.app/latest.zip"><strong>Download for Mac</strong></a> · macOS Sequoia 15 or later</p>
 
-<img src="docs/images/readme/compare-answers.jpg" alt="msgblast showing three conversations side by side with agent icons and a shared follow-up composer" width="1100">
+<img src="docs/images/readme/compare-answers.jpg" alt="One question sent to Instinct, Fo, and Szn, with three different answers side by side and a shared follow-up message" width="1100">
 
-Send one prompt to multiple agents, compare their replies, and follow up without losing the thread. Use Muse, ChatGPT, Claude, and Grok alongside your Messages agents. Reopen saved comparisons whenever you need them.
+Planning a weekend, researching a purchase, or testing an idea? Write your question once, choose your assistants, and compare their suggestions in one window. Send a follow-up to everyone or just one assistant. Your comparisons stay saved so you can return to them later.
 
-*Actual app interface with an illustrative sample conversation; replies shown are sample copy.*
+*Actual app screenshot with an example conversation. The replies are illustrative sample text.*
 
-## Pick your agents
+## Use the assistants you already text
 
-Choose who gets your prompt. Web agents use your existing accounts; Messages agents use your one-to-one iMessage conversations. Photos and files work with Messages agents.
+The current download works with AI assistants in **Messages**, including [Instinct](https://instinct.com/), [Fo](https://wajo.ai/), and [Szn](https://theszn.ai/). Start an iMessage conversation with each assistant you want to use, then add it to msgblast. Each assistant’s own account and access requirements apply.
 
-<img src="docs/images/readme/choose-agents.jpg" alt="msgblast agent picker showing Muse, ChatGPT, Claude, Grok, and Messages agents with their bundled icons" width="1100">
-
-## Find your next agent
-
-Browse **Discover** for agents that help with personal assistance, research, and shopping.
-
-<img src="docs/images/readme/discover.jpg" alt="msgblast Discover catalog with agent icons, descriptions, and categories" width="1100">
+You can also send photos and files to your Messages assistants.
 
 ## Get started
 
-1. [Download msgblast](https://updates.msgblast.app/latest.zip), unzip it, and drag **msgblast.app** into **Applications**.
-2. Open the app and select your agents. Sign in to web agents inside msgblast.
-3. Write a prompt and send it. Compare the replies, then ask a follow-up.
-
-For Messages agents, allow Messages history, Contacts, and Messages Automation when prompted. Start a one-to-one conversation in Messages before adding an agent.
+1. [Download msgblast](https://updates.msgblast.app/latest.zip), unzip the file, and drag **msgblast.app** into **Applications**. Open the app.
+2. Click **Open Settings** in msgblast and allow it to read Messages history. Quit and reopen the app afterward. The permission steps are below.
+3. Click **Add Agent**, find your assistant by name, email, or phone number, and add it. Allow Contacts when asked. **Agent** means an AI assistant in msgblast.
+4. Select the assistants you want, type a question, and press the send arrow. Allow msgblast to control **Messages** when asked. Their replies appear together for comparison.
 
 <details>
-<summary>Installation and Messages permissions</summary>
+<summary>Help opening the app and allowing Messages access</summary>
 
-If macOS blocks the first launch, open **System Settings → Privacy & Security → Open Anyway** after trying to open the app. [Apple’s first-launch instructions](https://support.apple.com/en-us/102445#openanyway).
+**If macOS blocks the first launch:** after trying to open msgblast, go to **System Settings → Privacy & Security**, scroll to the security section, and choose **Open Anyway**. Confirm **Open** if you trust the download. [Apple’s first-launch instructions](https://support.apple.com/en-us/102445#openanyway).
 
-For Messages history, click **Open Settings** in the app, add **msgblast.app** under **Privacy & Security → Full Disk Access**, and enable it. Quit and reopen msgblast, then click **Check again** if needed.
+**Messages history:** click **Open Settings** in msgblast. In **Privacy & Security → Full Disk Access**, click **+**, choose **msgblast.app** from **Applications**, and click **Open**. Enable its switch and authenticate if asked. Quit and reopen msgblast, then click **Check again** if the history banner remains. This lets msgblast read replies from your existing Messages conversations.
 
-Allow **Contacts** when asked. On the first Messages send, allow msgblast to control **Messages**. If access was previously declined, enable msgblast under **Privacy & Security → Contacts** and **Automation → Messages**.
+**Contacts:** allow access when msgblast asks so it can find your assistants. If you previously declined, enable msgblast in **Privacy & Security → Contacts**.
+
+**Sending through Messages:** on the first send, allow msgblast to control **Messages**. If you previously declined, enable **Messages** under **Privacy & Security → Automation → msgblast**.
 
 </details>
 
-Check for updates from **msgblast → Check for Updates**. For comparison reports, click **Summarize**; see [report setup](docs/personal-agent-reports.md).
+Check for updates from **msgblast → Check for Updates**.
 
-## Build it yourself
+## More assistants, in development
 
-Install **Xcode 16.4 or later**, then clone this repository and build the app:
+Muse, ChatGPT, Claude, and Grok are being brought into msgblast alongside your Messages assistants. The screen below previews the next version; these direct connections are not in the current download.
 
-```sh
-git clone https://github.com/mgalpert/msgblast.git
-cd msgblast
-xcodebuild -project msgblast.xcodeproj -scheme msgblast \
-  -derivedDataPath build/from-source -destination 'platform=macOS' build
-open build/from-source/Build/Products/Debug/msgblast.app
-```
+<img src="docs/images/readme/choose-agents.jpg" alt="Next-version preview showing Muse, ChatGPT, Claude, Grok, Instinct, Fo, and Szn with their icons" width="1100">
 
-You can also open **msgblast.xcodeproj** in Xcode, select the **msgblast** scheme, and click **Run**.
+*Preview captured from the current source with sample Messages profiles. No messages were sent.*
+
+For developers: [build from source](docs/build-from-source.md).
 
 ## License
 

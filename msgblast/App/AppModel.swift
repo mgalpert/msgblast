@@ -39,7 +39,7 @@ final class AppModel: ObservableObject {
     private var lastDataVersion: Int64?
     init() {
         demo = ProcessInfo.processInfo.arguments.contains("--demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastDemo") as? Bool == true
-        personalAgent = PersonalAgentController(demo: demo)
+        personalAgent = PersonalAgentController(demo: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true)
         var fixtureDirectory: URL?
         #if DEBUG
         if UpdateProbe.isLocalFixture, let path = Bundle.main.object(forInfoDictionaryKey: "msgblastFixtureStore") as? String {

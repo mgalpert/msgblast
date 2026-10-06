@@ -19,13 +19,23 @@ import msgblastCore
         try await waitUntil { model.webAgents.sessions.allSatisfy { $0.snapshot.ready } }
         let firstResults = await WebAgents.send("First comparison", to: model.webAgents.sessions, comparisonID: first)
         precondition(firstResults.values.allSatisfy { $0.status == .observed })
+        let firstNativeSessions = Dictionary(uniqueKeysWithValues: model.webAgents.sessions.compactMap { session in session.state.localSessionIDs[first.uuidString].map { (session.provider, $0) } })
         await model.submit(first, retry: false)
         let second = await model.prepareWebComparison("Second comparison", recipientIDs: [], providers: WebProvider.allCases)!
         let secondResults = await WebAgents.send("Second comparison", to: model.webAgents.sessions, comparisonID: second)
         precondition(secondResults.values.allSatisfy { $0.status == .observed })
-        for provider in WebProvider.allCases { precondition(firstResults[provider]?.conversationURL != secondResults[provider]?.conversationURL) }
+        for session in model.webAgents.sessions {
+            if session.provider.personalAgentProvider != nil {
+                precondition(firstNativeSessions[session.provider] != session.state.localSessionIDs[second.uuidString])
+            } else { precondition(firstResults[session.provider]?.conversationURL != secondResults[session.provider]?.conversationURL) }
+        }
         model.coordinator?.open(first)
-        try await waitUntil { model.webAgents.sessions.allSatisfy { $0.webView.url == firstResults[$0.provider]?.conversationURL } }
+        try await waitUntil { model.webAgents.sessions.allSatisfy { session in
+            if session.provider.personalAgentProvider != nil {
+                return session.state.comparisonID == first && session.snapshot.messages.first?.text == "First comparison" && session.state.localSessionIDs[first.uuidString] == firstNativeSessions[session.provider]
+            }
+            return session.webView.url == firstResults[session.provider]?.conversationURL
+        } }
         precondition(model.state.selection == [recipient.id])
         precondition(model.webAgents.selected.map(\.provider) == WebProvider.allCases)
         precondition(model.webAgents.comparisonID == first)
@@ -49,6 +59,6 @@ import msgblastCore
         precondition(model.comparison(first)?.followUps.last?.states[recipient.id.uuidString] == .submitted)
         precondition(muse.state.attempts.count == beforeRetry)
         print("PASS: attachment-only and text-plus-attachment native follow-ups submit their comparison drafts; native retry does not resend Muse. Controlled local fixture inputs.")
-        print("PASS: actual AppModel + WindowCoordinator restore comparison ID, native recipient, Muse selection and original saved URLs for all four web providers. All sends use local fixtures.")
+        print("PASS: actual AppModel + WindowCoordinator restore comparison ID, native recipient, provider selection, saved Muse/Grok URLs and native ChatGPT/Claude sessions. All sends use local fixtures.")
     }
 }

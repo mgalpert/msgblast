@@ -1,14 +1,15 @@
 import Foundation
 
 public enum WebSendStatus: String, Codable, Sendable {
-    case preparing, attempting, observed, notSent, uncertain
+    case preparing, attempting, observed, notSent, uncertain, dismissed
     public func label(for provider: WebProvider) -> String {
         switch self {
         case .preparing: "Checking \(provider.name)…"
         case .attempting: "Submitting to \(provider.name)…"
-        case .observed: "Appeared in \(provider.name)"
-        case .notSent: "Not sent to \(provider.name)"
+        case .observed: provider.personalAgentProvider == nil ? "Appeared in \(provider.name)" : "\(provider.name) replied"
+        case .notSent: provider.personalAgentProvider == nil ? "Not sent to \(provider.name)" : "No completed reply from \(provider.name)"
         case .uncertain: "\(provider.name) submission unconfirmed"
+        case .dismissed: "Incomplete request acknowledged"
         }
     }
 }
@@ -35,8 +36,11 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var comparisonID: UUID?
     public var attempts: [WebSendAttempt] = []
     public var conversationURLs: [String: URL] = [:]
+    public var localConversations: [String: [WebPageMessage]] = [:]
+    public var localSessionIDs: [String: String] = [:]
+    public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case sessionID, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, museConversations }
+    private enum CodingKeys: String, CodingKey { case sessionID, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, museConversations, localConversations, localSessionIDs, localDrafts }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         sessionID = try c.decode(UUID.self, forKey: .sessionID)
@@ -46,6 +50,9 @@ public struct WebWorkspaceState: Codable, Sendable {
         comparisonID = try c.decodeIfPresent(UUID.self, forKey: .comparisonID)
         conversationURLs = try c.decodeIfPresent([String: URL].self, forKey: .conversationURLs)
             ?? c.decodeIfPresent([String: URL].self, forKey: .museConversations) ?? [:]
+        localConversations = try c.decodeIfPresent([String: [WebPageMessage]].self, forKey: .localConversations) ?? [:]
+        localSessionIDs = try c.decodeIfPresent([String: String].self, forKey: .localSessionIDs) ?? [:]
+        localDrafts = try c.decodeIfPresent([String: String].self, forKey: .localDrafts) ?? [:]
         attempts = try c.decodeIfPresent([WebSendAttempt].self, forKey: .attempts) ?? []
     }
     public func encode(to encoder: Encoder) throws {
@@ -57,6 +64,9 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encodeIfPresent(comparisonID, forKey: .comparisonID)
         try c.encode(attempts, forKey: .attempts)
         try c.encode(conversationURLs, forKey: .conversationURLs)
+        try c.encode(localConversations, forKey: .localConversations)
+        try c.encode(localSessionIDs, forKey: .localSessionIDs)
+        try c.encode(localDrafts, forKey: .localDrafts)
     }
     public func hasUnresolvedSend(_ text: String) -> Bool {
         attempts.contains { $0.text == text && [.attempting, .uncertain].contains($0.status) }
@@ -78,10 +88,13 @@ public struct WebWorkspaceState: Codable, Sendable {
     }
 }
 
-public struct WebPageMessage: Decodable, Equatable, Sendable {
+public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var role: String
     public var text: String
+    public init(id: String = UUID().uuidString, role: String, text: String) {
+        self.id = id; self.role = role; self.text = text
+    }
 }
 
 public struct WebPageSnapshot: Decodable, Equatable, Sendable {

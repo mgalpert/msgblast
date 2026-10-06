@@ -3,6 +3,9 @@ import Foundation
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     case muse, chatgpt, claude, grok
     public var id: String { rawValue }
+    public var personalAgentProvider: PersonalAgentProvider? {
+        switch self { case .chatgpt: .codex; case .claude: .claude; default: nil }
+    }
     public var name: String {
         switch self { case .muse: "Muse"; case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .grok: "Grok" }
     }

@@ -9,7 +9,13 @@ import msgblastCore
     @Published var webBroadcastBusy = false
     var error: String?
     let personalAgent = FakePersonalAgent()
+    let webAgents = FakeWebAgents()
     func save() throws {}
+}
+@MainActor final class FakeWebAgents {
+    let hasNativeRequests = false
+    func beginShutdown() {}
+    func cancelAndWait() async {}
 }
 @MainActor final class FakePersonalAgent {
     let running: Set<UUID> = []

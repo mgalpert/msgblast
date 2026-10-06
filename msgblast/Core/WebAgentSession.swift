@@ -13,7 +13,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @Published public private(set) var popup: WKWebView?
     @Published public private(set) var popupURL = ""
     @Published public private(set) var avatar: Data?
-    public let webView: WKWebView
+    // ChatGPT/Claude never touch this lazy view: their transcript is native.
+    public lazy var webView: WKWebView = {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = fixture ? .nonPersistent() : WKWebsiteDataStore(forIdentifier: state.sessionID)
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        view.navigationDelegate = self; view.uiDelegate = self
+        view.allowsBackForwardNavigationGestures = true
+        return view
+    }()
+    @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
+    private var installedAgent: InstalledPersonalAgent?
+    private var nativeRequest: Task<PersonalAgentReply, Error>?
+    private var shuttingDown = false
+    private var requestCancelled = false
     public let fixture: Bool
     private let storageURL: URL
     private var storageFailed = false
@@ -36,17 +50,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do { loaded = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storageURL)).recoveringInFlight() }
         catch CocoaError.fileReadNoSuchFile { }
         catch { failure = "Web session state could not be read. The saved file has been preserved: \(error.localizedDescription)" }
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = fixture ? .nonPersistent() : WKWebsiteDataStore(forIdentifier: loaded.sessionID)
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         super.init()
         state = loaded
         storageFailed = failure != nil
         error = failure
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
+        if provider.personalAgentProvider != nil { updateNativeSnapshot() }
         if failure == nil { persist() }
     }
 
@@ -55,14 +63,31 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func updateState(_ edit: (inout WebWorkspaceState) -> Void) {
         guard !storageFailed else { return }
         let previous = state.comparisonID
+        let previousDraft = state.draft
         edit(&state)
         if state.comparisonID != previous { comparisonGeneration += 1 }
+        if provider.personalAgentProvider != nil {
+            if previous != state.comparisonID {
+                state.localDrafts[previous?.uuidString ?? "new"] = previousDraft
+                let target = state.comparisonID?.uuidString ?? "new"
+                if let saved = state.localDrafts[target] { state.draft = saved }
+                else if previous != nil || state.comparisonID == nil || state.localConversations[target] != nil {
+                    state.draft = ""
+                } else { state.localDrafts["new"] = "" }
+            }
+            state.localDrafts[state.comparisonID?.uuidString ?? "new"] = state.draft
+            updateNativeSnapshot()
+        }
         persist()
     }
 
     public func connect() {
         guard !connected else { return }
         connected = true
+        if provider.personalAgentProvider != nil {
+            Task { await refresh() }
+            return
+        }
         loadComparisonChat()
         poll = Task { [weak self] in
             while !Task.isCancelled {
@@ -74,6 +99,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func reload() {
         guard !isSending else { return }
+        if provider.personalAgentProvider != nil { connect(); Task { await refresh() }; return }
         if !connected { connect() }
         else if fixture { loadComparisonChat() }
         else { webView.reload() }
@@ -81,6 +107,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func openComparisonChat() {
         guard !isSending else { return }
+        if provider.personalAgentProvider != nil { reload(); return }
         if !connected { connect() }
         else { loadComparisonChat() }
     }
@@ -101,6 +128,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public var locationLabel: String {
+        if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
         return provider == .muse && webView.url.map(provider.isChatURL) == true ? "\(host) · Side chat" : host
     }
@@ -110,6 +138,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard !isSending else { return false }
         if state.comparisonID != id { updateState { $0.comparisonID = id } }
         connect()
+        if provider.personalAgentProvider != nil {
+            await refresh()
+            return snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
+        }
         do {
             let readyBeforeSetup = try await prepareConversation()
             self.error = nil
@@ -180,6 +212,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func refresh() async {
         guard connected, !loading, !refreshing else { return }
+        if let localProvider = provider.personalAgentProvider {
+            refreshing = true
+            loading = true
+            defer { refreshing = false; loading = false }
+            if fixture { accountStatus = .subscription }
+            else {
+                installedAgent = await LocalPersonalAgent.discover().first { $0.provider == localProvider }
+                accountStatus = if let installedAgent { await LocalPersonalAgent.accountStatus(using: installedAgent) } else { .unknown }
+            }
+            updateNativeSnapshot()
+            return
+        }
         guard let url = webView.url, provider.isChatURL(url) else {
             var current = WebPageSnapshot()
             current.url = webView.url?.absoluteString ?? ""
@@ -239,6 +283,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     @discardableResult
     public func send(_ text: String, comparisonID: UUID? = nil) async -> WebSendAttempt? {
+        if provider.personalAgentProvider != nil { return await sendNative(text, comparisonID: comparisonID) }
         guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         guard !state.hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
@@ -327,6 +372,99 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
         }
         do { try store(attempt) } catch { self.error = "Could not save the send result. Check \(provider.name) before retrying." }
+        return attempt
+    }
+
+    private func updateNativeSnapshot() {
+        var fresh = snapshot
+        fresh.messages = state.comparisonID.flatMap { state.localConversations[$0.uuidString] } ?? []
+        fresh.draft = state.draft
+        fresh.ready = !storageFailed && (fixture || (installedAgent != nil && [.subscription, .apiKey, .other].contains(accountStatus)))
+        fresh.reason = installedAgent == nil && !fixture ? "Install \(provider.personalAgentProvider!.name), then sign in with your local account." : accountStatus.label
+        if fresh != snapshot { snapshot = fresh }
+    }
+
+    public func acknowledgeIncompleteRequest() {
+        guard provider.personalAgentProvider != nil, !isSending else { return }
+        updateState { state in
+            for i in state.attempts.indices where state.attempts[i].comparisonID == state.comparisonID && state.attempts[i].status == .uncertain {
+                state.attempts[i].status = .dismissed
+            }
+        }
+    }
+
+    public func hasUnresolvedSend(_ text: String) -> Bool {
+        if provider.personalAgentProvider == nil { return state.hasUnresolvedSend(text) }
+        return hasIncompleteNativeRequest(for: state.comparisonID)
+    }
+    private func hasIncompleteNativeRequest(for id: UUID?) -> Bool {
+        state.attempts.contains { $0.comparisonID == id && [.attempting, .uncertain].contains($0.status) }
+    }
+
+    public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
+    public func beginShutdown() { shuttingDown = true; cancelNativeRequest() }
+    public func cancelAndWait() async {
+        beginShutdown()
+        while provider.personalAgentProvider != nil && isSending { try? await Task.sleep(for: .milliseconds(20)) }
+    }
+
+    private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
+        guard !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let id = comparisonID ?? state.comparisonID ?? UUID()
+        guard !hasIncompleteNativeRequest(for: id) else {
+            error = "An earlier request did not complete. Review it before explicitly allowing another request; usage may have been consumed."
+            return nil
+        }
+        isSending = true
+        requestCancelled = false
+        defer { nativeRequest = nil; isSending = false }
+        error = nil
+        var attempt = WebSendAttempt(text: text)
+        attempt.comparisonID = id
+        updateState { $0.comparisonID = id }
+        state.attempts.insert(attempt, at: 0)
+        var started = false
+        do {
+            try save()
+            connected = true
+            await refresh()
+            guard !shuttingDown, !requestCancelled else { throw CancellationError() }
+            guard snapshot.ready else { throw WebSessionFailure.notSent(snapshot.reason) }
+            guard snapshot.draft.isEmpty || snapshot.draft == text else {
+                throw WebSessionFailure.notSent("\(provider.name) has a draft. Send or clear it before using the shared composer.")
+            }
+            let user = WebPageMessage(role: "user", text: text)
+            let history = (state.localConversations[id.uuidString] ?? []) + [user]
+            attempt.status = .attempting
+            try store(attempt)
+            started = true
+            let savedSessionID = state.localSessionIDs[id.uuidString]
+            let workingDirectory = storageURL.deletingLastPathComponent().appendingPathComponent("local-conversations/\(provider.rawValue)/\(id.uuidString)", isDirectory: true)
+            let request = Task { [fixture, provider, installedAgent] in
+                if fixture {
+                    try await Task.sleep(for: .milliseconds(350))
+                    return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
+                }
+                guard let installedAgent else { throw PersonalAgentError.unavailable(provider.name) }
+                return try await LocalPersonalAgent.reply(to: history, using: installedAgent, sessionID: savedSessionID, workingDirectory: workingDirectory)
+            }
+            nativeRequest = request
+            let answer = try await withTaskCancellationHandler { try await request.value } onCancel: { request.cancel() }
+            try Task.checkCancellation()
+            state.localConversations[id.uuidString] = history + [WebPageMessage(role: "assistant", text: answer.text)]
+            state.localSessionIDs[id.uuidString] = answer.sessionID
+            if state.draft == text { state.draft = "" }
+            state.localDrafts[id.uuidString] = state.draft
+            attempt.status = .observed; attempt.messageID = user.id
+            attempt.detail = fixture ? "Simulated reply. No local CLI or provider was contacted." : "Completed reply from the local CLI."
+            try store(attempt)
+        } catch {
+            attempt.status = started ? .uncertain : .notSent
+            attempt.detail = error.localizedDescription
+            self.error = error.localizedDescription
+            do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
+        }
+        updateNativeSnapshot()
         return attempt
     }
 

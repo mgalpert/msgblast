@@ -2,6 +2,224 @@ import XCTest
 @testable import msgblastCore
 
 final class PersonalAgentTests: XCTestCase {
+    @MainActor
+    func testNativeComparisonPreparationPreservesSessionsAndBlocksIncompleteRequests() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let web = WebAgents(directory: directory, fixture: true)
+        let native = web.sessions.filter { $0.provider.personalAgentProvider != nil }
+        let id = UUID()
+        let prepared = await web.prepareComparison(id, for: native)
+        XCTAssertTrue(prepared)
+        let replies = await WebAgents.send("First question", to: native, comparisonID: id)
+        XCTAssertTrue(replies.values.allSatisfy { $0.status == .observed })
+        let sessionIDs = native.map { $0.state.localSessionIDs[id.uuidString] }
+        let reopened = WebAgents(directory: directory, fixture: true)
+        let restoredNative = reopened.sessions.filter { $0.provider.personalAgentProvider != nil }
+        let restored = await reopened.prepareComparison(id, for: restoredNative)
+        XCTAssertTrue(restored)
+        XCTAssertEqual(restoredNative.map { $0.state.localSessionIDs[id.uuidString] }, sessionIDs)
+        XCTAssertTrue(restoredNative.allSatisfy { $0.snapshot.messages.count == 2 })
+        restoredNative[0].updateState {
+            var pending = WebSendAttempt(text: "Interrupted", status: .uncertain)
+            pending.comparisonID = id
+            $0.attempts.insert(pending, at: 0)
+        }
+        let blocked = await reopened.prepareComparison(id, for: restoredNative)
+        XCTAssertFalse(blocked)
+        restoredNative[0].acknowledgeIncompleteRequest()
+        let acknowledged = await reopened.prepareComparison(id, for: restoredNative)
+        XCTAssertTrue(acknowledged)
+    }
+
+    @MainActor
+    func testNativeDraftsFollowTheirSavedComparisonAfterReopening() throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("chat.json")
+        let session = WebAgentSession(provider: .claude, storageURL: file, fixture: true)
+        let first = UUID(), second = UUID()
+        session.updateState { $0.comparisonID = first; $0.draft = "Draft for first comparison" }
+        session.updateState { $0.comparisonID = second }
+        XCTAssertTrue(session.state.draft.isEmpty)
+        session.updateState { $0.draft = "Draft for second comparison" }
+        let reopened = WebAgentSession(provider: .claude, storageURL: file, fixture: true)
+        reopened.updateState { $0.comparisonID = first }
+        XCTAssertEqual(reopened.state.draft, "Draft for first comparison")
+        reopened.updateState { $0.comparisonID = second }
+        XCTAssertEqual(reopened.state.draft, "Draft for second comparison")
+        reopened.updateState { $0.comparisonID = nil }
+        XCTAssertTrue(reopened.state.draft.isEmpty)
+        reopened.updateState { $0.draft = "Draft for a new comparison" }
+        reopened.updateState { $0.comparisonID = first }
+        XCTAssertEqual(reopened.state.draft, "Draft for first comparison")
+        reopened.updateState { $0.comparisonID = nil }
+        XCTAssertEqual(reopened.state.draft, "Draft for a new comparison")
+    }
+
+    @MainActor
+    func testNativeRequestCancellationAndShutdownPreserveIncompleteReceipt() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .chatgpt, storageURL: directory.appendingPathComponent("chat.json"), fixture: true)
+        session.connect(); await session.refresh()
+        let id = UUID()
+        let sending = Task { await session.send("Pending", comparisonID: id) }
+        for _ in 0..<100 {
+            if session.state.attempts.first?.status == .attempting { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(session.state.attempts.first?.status, .attempting)
+        await session.cancelAndWait()
+        let attempt = await sending.value
+        XCTAssertEqual(attempt?.status, .uncertain)
+        XCTAssertFalse(session.isSending)
+        XCTAssertTrue(session.snapshot.messages.isEmpty)
+        let afterShutdown = await session.send("No request after shutdown", comparisonID: id)
+        XCTAssertNil(afterShutdown)
+        let reopened = WebAgentSession(provider: .chatgpt, storageURL: directory.appendingPathComponent("chat.json"), fixture: true)
+        let blocked = await reopened.send("Continue", comparisonID: id)
+        XCTAssertNil(blocked)
+        reopened.acknowledgeIncompleteRequest()
+        let continued = await reopened.send("Continue", comparisonID: id)
+        XCTAssertEqual(continued?.status, .observed)
+    }
+
+    @MainActor
+    func testConversationReplyUsesStdinHistoryAndRetainsToolDenial() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in [PersonalAgentProvider.codex, .claude] {
+            let sessionID = "00000000-0000-0000-0000-000000000001"
+            let output = provider == .codex ? "previous=\nfor argument in \"$@\"; do\nif [ \"$previous\" = '--output-last-message' ]; then answer_file=\"$argument\"; fi\nprevious=\"$argument\"\ndone\nprintf 'A conversational reply' > \"$answer_file\"\nprintf '%s' '{\"type\":\"thread.started\",\"thread_id\":\"\(sessionID)\"}'" : "printf '%s' '{\"result\":\"A conversational reply\",\"is_error\":false,\"session_id\":\"\(sessionID)\"}'"
+            let workingDirectory = directory.appendingPathComponent("stable workspace/" + provider.rawValue, isDirectory: true)
+            try executable(provider.executable, script: "/bin/pwd > working-directory.txt\n/bin/cat > received.txt\n/usr/bin/grep -q 'Earlier reply' received.txt || exit 8\n/usr/bin/grep -q 'Follow-up' received.txt || exit 9\n" + output, in: directory)
+            let agent = InstalledPersonalAgent(provider: provider, executableURL: directory.appendingPathComponent(provider.executable), path: "/usr/bin:/bin")
+            let result = try await LocalPersonalAgent.reply(to: [WebPageMessage(role: "assistant", text: "Earlier reply"), WebPageMessage(role: "user", text: "Follow-up")], using: agent, workingDirectory: workingDirectory)
+            XCTAssertEqual(result.text, "A conversational reply")
+            XCTAssertEqual(result.sessionID, sessionID)
+            let resumedArgs = try provider.arguments(in: directory, persistentConversation: true, sessionID: sessionID)
+            XCTAssertTrue(resumedArgs.contains(provider == .codex ? "resume" : "--resume"))
+            XCTAssertTrue(resumedArgs.contains(sessionID))
+            XCTAssertFalse(resumedArgs.contains("--ephemeral"))
+            XCTAssertFalse(resumedArgs.contains("--no-session-persistence"))
+            XCTAssertTrue(resumedArgs.contains(provider == .codex ? "--ignore-user-config" : "--tools"))
+            XCTAssertTrue(resumedArgs.contains(provider == .codex ? "features.shell_tool=false" : "dontAsk"))
+            let initialDirectory = try String(contentsOf: workingDirectory.appendingPathComponent("working-directory.txt"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+            XCTAssertEqual(URL(fileURLWithPath: initialDirectory).resolvingSymlinksInPath().path, workingDirectory.resolvingSymlinksInPath().path)
+            try executable(provider.executable, script: "found_session=0\nfor argument in \"$@\"; do if [ \"$argument\" = '\(sessionID)' ]; then found_session=1; fi; done\ntest \"$found_session\" = 1 || exit 8\n/bin/pwd > resumed-directory.txt\n/bin/cat > received.txt\ntest \"$(/bin/cat received.txt)\" = 'Continue the same thread' || exit 9\n" + output, in: directory)
+            let resumed = try await LocalPersonalAgent.reply(to: [WebPageMessage(role: "user", text: "Continue the same thread")], using: agent, sessionID: sessionID, workingDirectory: workingDirectory)
+            XCTAssertEqual(resumed.sessionID, sessionID)
+            let resumedDirectory = try String(contentsOf: workingDirectory.appendingPathComponent("resumed-directory.txt"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+            XCTAssertEqual(URL(fileURLWithPath: resumedDirectory).resolvingSymlinksInPath().path, workingDirectory.resolvingSymlinksInPath().path)
+        }
+    }
+
+    @MainActor
+    func testConversationRejectsMissingMalformedAndMismatchedSessionMetadata() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let expectedID = "00000000-0000-0000-0000-000000000001"
+        for provider in [PersonalAgentProvider.codex, .claude] {
+            for returnedID in ["", "malformed", "00000000-0000-0000-0000-000000000002"] {
+                let output = provider == .codex ? "printf 'Reply' > answer.txt\nprintf '%s' '{\"type\":\"thread.started\",\"thread_id\":\"\(returnedID)\"}'" : "printf '%s' '{\"result\":\"Reply\",\"is_error\":false,\"session_id\":\"\(returnedID)\"}'"
+                try executable(provider.executable, script: output, in: directory)
+                let agent = InstalledPersonalAgent(provider: provider, executableURL: directory.appendingPathComponent(provider.executable), path: "/usr/bin:/bin")
+                do {
+                    _ = try await LocalPersonalAgent.reply(to: [WebPageMessage(role: "user", text: "Continue")], using: agent, sessionID: expectedID)
+                    XCTFail("A mismatched or absent session must not be accepted")
+                } catch PersonalAgentError.invalidResponse { }
+            }
+        }
+    }
+
+    @MainActor
+    func testNativeProviderConversationsPersistAndStaySeparateByComparison() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in [WebProvider.chatgpt, .claude] {
+            let file = directory.appendingPathComponent(provider.storageFilename)
+            let session = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            session.connect()
+            await session.refresh()
+            XCTAssertTrue(session.snapshot.ready)
+            let first = UUID(), second = UUID()
+            let result = await session.send("First question", comparisonID: first)
+            XCTAssertEqual(result?.status, .observed)
+            let firstSessionID = try XCTUnwrap(session.state.localSessionIDs[first.uuidString])
+            XCTAssertEqual(session.snapshot.messages.map(\.role), ["user", "assistant"])
+            _ = await session.send("Follow-up", comparisonID: first)
+            XCTAssertEqual(session.snapshot.messages.count, 4)
+            _ = await session.send("Second question", comparisonID: second)
+            XCTAssertEqual(session.snapshot.messages.count, 2)
+            XCTAssertEqual(session.snapshot.messages.first?.text, "Second question")
+            let reopened = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            reopened.updateState { $0.comparisonID = first }
+            XCTAssertEqual(reopened.snapshot.messages.count, 4)
+            XCTAssertEqual(reopened.snapshot.messages.first?.text, "First question")
+            _ = await reopened.send("Continue after reopening", comparisonID: first)
+            XCTAssertEqual(reopened.snapshot.messages.count, 6)
+            XCTAssertEqual(reopened.state.localSessionIDs[first.uuidString], firstSessionID)
+            XCTAssertNotNil(provider.personalAgentProvider)
+        }
+        XCTAssertNil(WebProvider.muse.personalAgentProvider)
+        XCTAssertNil(WebProvider.grok.personalAgentProvider)
+    }
+
+    @MainActor
+    func testAccountStatusUsesProviderStatusCommandsWithoutInference() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for (provider, script, expected) in [
+            (PersonalAgentProvider.codex, "test \"$*\" = 'login status' || exit 9\nprintf 'Logged in using ChatGPT' >&2", PersonalAgentAccountStatus.subscription),
+            (.codex, "printf 'Logged in using an API key' >&2", .apiKey),
+            (.codex, "printf 'Not logged in' >&2\nexit 1", .signedOut),
+            (.codex, "printf 'Unknown failure' >&2\nexit 2", .unknown),
+            (.claude, "test \"$*\" = 'auth status' || exit 9\nprintf '%s' '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'", .subscription),
+            (.claude, "printf '%s' '{\"loggedIn\":true,\"authMethod\":\"api_key\"}'", .apiKey),
+            (.claude, "printf '%s' '{\"loggedIn\":false,\"authMethod\":\"none\"}'\nexit 1", .signedOut),
+            (.claude, "printf 'invalid JSON'", .unknown),
+            (.claude, "printf '%s' '{\"loggedIn\":true,\"authMethod\":\"third_party\"}'", .other)
+        ] {
+            try executable(provider.executable, script: script, in: directory)
+            let agent = InstalledPersonalAgent(provider: provider, executableURL: directory.appendingPathComponent(provider.executable), path: "/usr/bin:/bin")
+            let status = await LocalPersonalAgent.accountStatus(using: agent)
+            XCTAssertEqual(status, expected)
+        }
+    }
+
+    func testLoginScriptQuotesExecutableAndPathWithoutExecutingShellInput() throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = directory.appendingPathComponent("INJECTED")
+        let name = "codex ' $(touch INJECTED)"
+        try executable(name, script: "test \"$*\" = 'login' || exit 9\nprintf 'login invoked'", in: directory)
+        let agent = InstalledPersonalAgent(provider: .codex, executableURL: directory.appendingPathComponent(name), path: "/usr/bin:/bin:$(touch \(marker.path))" )
+        let script = directory.appendingPathComponent("login.command")
+        try Data(try LocalPersonalAgent.loginScript(using: agent).utf8).write(to: script)
+        let result = try AgentProcess.run(executable: URL(fileURLWithPath: "/bin/zsh"), arguments: [script.path], input: "", environment: [:], timeout: 5, cancellation: AgentCancellation())
+        XCTAssertEqual(result.status, 0)
+        XCTAssertTrue(result.stdout.contains("login invoked"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: script.path), "Login handoff removes its temporary script")
+        XCTAssertThrowsError(try LocalPersonalAgent.loginScript(using: InstalledPersonalAgent(provider: .pi, executableURL: script, path: "")))
+    }
+
+    func testLoginUsesAppConfigurationInsteadOfTerminalProfileWithoutCopyingTokens() throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try executable("codex", script: "printf '%s' \"$CODEX_HOME|${CLAUDE_CONFIG_DIR-unset}|${OPENAI_API_KEY-unset}\"", in: directory)
+        let agent = InstalledPersonalAgent(provider: .codex, executableURL: directory.appendingPathComponent("codex"), path: "/usr/bin:/bin")
+        let script = directory.appendingPathComponent("login.command")
+        let source = try LocalPersonalAgent.loginScript(using: agent, environment: ["CODEX_HOME": "app profile ' with spaces", "OPENAI_API_KEY": "fixture-secret"])
+        XCTAssertFalse(source.contains("fixture-secret"))
+        try Data(source.utf8).write(to: script)
+        let result = try AgentProcess.run(executable: URL(fileURLWithPath: "/bin/zsh"), arguments: [script.path], input: "",
+            environment: ["CODEX_HOME": "terminal profile", "CLAUDE_CONFIG_DIR": "terminal claude profile", "OPENAI_API_KEY": "terminal-key"], timeout: 5, cancellation: AgentCancellation())
+        XCTAssertEqual(result.status, 0)
+        XCTAssertTrue(result.stdout.hasPrefix("app profile ' with spaces|unset|unset"))
+    }
+
     func testReportRequiresActionAndRationaleAndPreservesLegacySummary() throws {
         let response = #"{"bestNextAction":"Run a small trial","rationale":"The replies disagree on cost","comparison":"Cedar favors clarity; Lumen favors a trial.","uncertainties":["Actual cost is unknown"]}"#
         let report = try XCTUnwrap(ComparisonReport(response: response))

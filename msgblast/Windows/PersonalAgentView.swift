@@ -58,6 +58,7 @@ struct ComparisonReportView: View {
                 Spacer(minLength: 12)
                 Button("Refresh agents") { Task { await agent.discover() } }.disabled(agent.discovering || running)
             }
+            LocalAgentSettingsView(agent: agent, busy: running)
             if let selected, !agent.demo {
                 Text(selected.unavailabilityReason ?? "Sign in or troubleshoot in Terminal: \(selected.setup)")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

@@ -107,7 +107,8 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         switch termination.request(isBusy: model.busy || model.webBroadcastBusy, persist: { try model.save() }) {
         case .allowed:
             model.personalAgent.beginShutdown()
-            guard !model.personalAgent.running.isEmpty else { return .terminateNow }
+            model.webAgents.beginShutdown()
+            guard !model.personalAgent.running.isEmpty || model.webAgents.hasNativeRequests else { return .terminateNow }
             replyToTermination(sender, allowed: true)
             return .terminateLater
         case .deferred: return .terminateLater
@@ -122,8 +123,10 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             return
         }
         model.personalAgent.beginShutdown()
+        model.webAgents.beginShutdown()
         Task {
             await model.personalAgent.cancelAndWait()
+            await model.webAgents.cancelAndWait()
             sender.reply(toApplicationShouldTerminate: true)
         }
     }

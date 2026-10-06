@@ -1,11 +1,17 @@
 import Foundation
 import Combine
+import AppKit
 import msgblastCore
 
 @MainActor
 final class PersonalAgentController: ObservableObject {
     @Published private(set) var installed: [InstalledPersonalAgent] = []
     @Published private(set) var discovering = false
+    @Published private(set) var accounts: [PersonalAgentProvider: PersonalAgentAccountStatus] = [:]
+    @Published private(set) var checkingAccounts = false
+    @Published private(set) var accountError: String?
+    @Published private(set) var detectedLocalAgents: [InstalledLocalAgent] = []
+    @Published private(set) var detectingLocalAgents = false
     @Published private(set) var errors: [UUID: String] = [:]
     @Published private var tasks: [UUID: Task<Void, Never>] = [:]
     private var discoveryTask: Task<[InstalledPersonalAgent], Never>?
@@ -13,14 +19,77 @@ final class PersonalAgentController: ObservableObject {
     var running: Set<UUID> { Set(tasks.keys) }
     let demo: Bool
 
-    init(demo: Bool) { self.demo = demo }
+    init(demo: Bool) {
+        self.demo = demo
+        if demo { accounts = [.codex: .subscription, .claude: .signedOut] }
+    }
+
+    func detectLocalAgents() async {
+        guard !shuttingDown, !detectingLocalAgents else { return }
+        detectingLocalAgents = true
+        defer { detectingLocalAgents = false }
+        if demo {
+            detectedLocalAgents = LocalAgentRuntime.allCases.map { InstalledLocalAgent(runtime: $0, executableURL: URL(fileURLWithPath: "/dev/null")) }
+        } else { detectedLocalAgents = await LocalAgentDetection.detect() }
+    }
+
+    func refreshAccounts() async {
+        guard !demo, !shuttingDown, !checkingAccounts else { return }
+        checkingAccounts = true
+        defer { checkingAccounts = false }
+        await discover()
+        accounts = await withTaskGroup(of: (PersonalAgentProvider, PersonalAgentAccountStatus).self) { group in
+            for agent in installed where agent.provider == .codex || agent.provider == .claude {
+                group.addTask { (agent.provider, await msgblastCore.LocalPersonalAgent.accountStatus(using: agent)) }
+            }
+            var refreshed: [PersonalAgentProvider: PersonalAgentAccountStatus] = [:]
+            for await (provider, status) in group { refreshed[provider] = status }
+            return refreshed
+        }
+    }
+
+    func signIn(_ provider: PersonalAgentProvider) {
+        guard !demo, !shuttingDown, let agent = installed.first(where: { $0.provider == provider }) else { return }
+        do { openTerminal(script: try LocalPersonalAgent.loginScript(using: agent), purpose: "sign-in") }
+        catch { accountError = "Could not open sign-in. Run \(provider.setup) in Terminal." }
+    }
+
+    func setUp(_ runtime: LocalAgentRuntime) {
+        guard !demo, !shuttingDown,
+              let installation = detectedLocalAgents.first(where: { $0.runtime == runtime }) else { return }
+        Task {
+            let path = await LocalPersonalAgent.executableSearchPath()
+            guard !shuttingDown else { return }
+            openTerminal(script: LocalAgentDetection.setupScript(using: installation, path: path), purpose: "setup")
+        }
+    }
+
+    private func openTerminal(script: String, purpose: String) {
+        accountError = nil
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-Setup-\(UUID()).command")
+        do {
+            guard FileManager.default.createFile(atPath: url.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o700]),
+                  let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+                throw PersonalAgentError.unavailable("Terminal")
+            }
+            NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: .init()) { [weak self] _, error in
+                if error != nil {
+                    try? FileManager.default.removeItem(at: url)
+                    Task { @MainActor [weak self] in self?.accountError = "Could not open Terminal for \(purpose). Try again." }
+                }
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            accountError = "Could not open Terminal for \(purpose). Try again."
+        }
+    }
 
     func discover() async {
         if let discoveryTask { installed = await discoveryTask.value; return }
         discovering = true
         let task = Task { [demo] in
             if demo {
-                return [InstalledPersonalAgent(provider: .codex, executableURL: URL(fileURLWithPath: "/dev/null"), path: "")]
+                return [.codex, .claude].map { InstalledPersonalAgent(provider: $0, executableURL: URL(fileURLWithPath: "/dev/null"), path: "") }
             }
             return await LocalPersonalAgent.discover()
         }

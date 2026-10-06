@@ -213,12 +213,12 @@ final class WebServiceTests: XCTestCase {
         session.connect()
         try await waitFor { session.snapshot.ready }
         XCTAssertNil(session.avatar)
-        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar()", arguments: [:], in: nil, contentWorld: .page)
+        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar(); await document.querySelector('[data-hatch-avatar-layer]').decode()", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil }
         let first = try XCTUnwrap(session.avatar)
         await session.refresh()
         XCTAssertEqual(session.avatar, first, "Unchanged media should retain its cached still")
-        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar()", arguments: [:], in: nil, contentWorld: .page)
+        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar(); await document.querySelector('[data-hatch-avatar-layer]').decode()", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil && session.avatar != first }
         XCTAssertTrue(session.state.attempts.isEmpty, "Reading an avatar must never submit a message")
     }
@@ -227,12 +227,12 @@ final class WebServiceTests: XCTestCase {
         let session = try makeSession()
         session.connect()
         try await waitFor { session.snapshot.ready }
-        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar()", arguments: [:], in: nil, contentWorld: .page)
+        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar(); await document.querySelector('[data-hatch-avatar-layer]').decode()", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil }
         let first = session.avatar
         _ = try await session.webView.callAsyncJavaScript("chat.hidden=true;login.hidden=false", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { !session.snapshot.ready && session.avatar == nil }
-        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar();chat.hidden=false;login.hidden=true", arguments: [:], in: nil, contentWorld: .page)
+        _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar(); await document.querySelector('[data-hatch-avatar-layer]').decode();chat.hidden=false;login.hidden=true", arguments: [:], in: nil, contentWorld: .page)
         try await waitFor { session.avatar != nil && session.avatar != first }
         session.reload()
         try await waitFor { session.snapshot.ready && session.avatar == nil }

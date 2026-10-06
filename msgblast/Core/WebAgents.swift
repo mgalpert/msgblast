@@ -33,6 +33,9 @@ public final class WebAgents: ObservableObject {
         }
     }
     public func connectSelected() { selected.forEach { $0.connect() } }
+    public var hasNativeRequests: Bool { sessions.contains { $0.provider.personalAgentProvider != nil && $0.isSending } }
+    public func beginShutdown() { sessions.forEach { $0.beginShutdown() } }
+    public func cancelAndWait() async { for session in sessions { await session.cancelAndWait() } }
     public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession]) async -> Bool {
         // Muse stores the workspace identity even when it is deselected.
         setComparison(id)
