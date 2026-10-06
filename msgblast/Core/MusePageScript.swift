@@ -56,7 +56,7 @@ enum MusePageScript {
     try {
       const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
       const side = Math.min(width, height);
-      canvas.getContext('2d').drawImage(media, (width-side)/2, (height-side)/2, side, side, 0, 0, 256, 256);
+      canvas.getContext('2d', {willReadFrequently: true}).drawImage(media, (width-side)/2, (height-side)/2, side, side, 0, 0, 256, 256);
       return {key:cached.key,png:canvas.toDataURL('image/png')};
     } catch { return {}; }
     """#
@@ -108,7 +108,7 @@ enum MusePageScript {
       document.getElementById('thread-title').textContent = location.pathname === '/thread/new' ? 'New Muse side chat' : 'Muse side chat · '+location.pathname.slice(-6);
     }
     let avatarVersion=0;
-    function changeFixtureAvatar(){const c=document.createElement('canvas');c.width=c.height=256;const ctx=c.getContext('2d');ctx.fillStyle=++avatarVersion%2?'#5865d8':'#138c78';ctx.fillRect(0,0,256,256);ctx.fillStyle='white';ctx.font='bold 140px sans-serif';ctx.textAlign='center';ctx.fillText(avatarVersion%2?'A':'B',128,180);const image=document.querySelector('[data-hatch-avatar-layer]');image.src=c.toDataURL();image.hidden=false;}
+    function changeFixtureAvatar(){const c=document.createElement('canvas');c.width=c.height=256;const ctx=c.getContext('2d', {willReadFrequently: true});ctx.fillStyle=++avatarVersion%2?'#5865d8':'#138c78';ctx.fillRect(0,0,256,256);ctx.fillStyle='white';ctx.font='bold 140px sans-serif';ctx.textAlign='center';ctx.fillText(avatarVersion%2?'A':'B',128,180);const image=document.querySelector('[data-hatch-avatar-layer]');image.src=c.toDataURL();image.hidden=false;}
     const input=document.querySelector('textarea'),send=document.querySelector('[aria-label=Send]');
     input.addEventListener('input',()=>{send.disabled=!input.value.trim()});
     send.addEventListener('click',()=>{

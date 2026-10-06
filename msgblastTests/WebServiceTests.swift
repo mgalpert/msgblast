@@ -209,13 +209,7 @@ final class WebServiceTests: XCTestCase {
     }
 
     func testPersonalAvatarFollowsTheMainChatMediaAndChanges() async throws {
-        _ = NSApplication.shared
         let session = try makeSession()
-        let window = NSWindow(contentRect: session.webView.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = session.webView
-        window.orderFront(nil)
-        defer { window.close() }
         session.connect()
         try await waitFor { session.snapshot.ready }
         XCTAssertNil(session.avatar)
@@ -232,13 +226,7 @@ final class WebServiceTests: XCTestCase {
     }
 
     func testAvatarClearsOnSignOutAndIsNotPersistedForAnotherAccount() async throws {
-        _ = NSApplication.shared
         let session = try makeSession()
-        let window = NSWindow(contentRect: session.webView.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = session.webView
-        window.orderFront(nil)
-        defer { window.close() }
         session.connect()
         try await waitFor { session.snapshot.ready }
         _ = try await session.webView.callAsyncJavaScript("changeFixtureAvatar()", arguments: [:], in: nil, contentWorld: .page)
