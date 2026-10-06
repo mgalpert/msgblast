@@ -343,7 +343,8 @@ final class WebServiceTests: XCTestCase {
         let code = #"""
         const i=document.querySelector('[data-hatch-avatar-layer]');
         const h=i?.parentElement;
-        const detail={secure:isSecureContext,uuid:typeof crypto.randomUUID,cache:!!globalThis.__msgblastAvatarSource,complete:i?.complete,width:i?.naturalWidth,height:i?.naturalHeight,currentSourceMatches:i?.currentSrc===i?.src,imageRects:i?.getClientRects().length,hostRects:h?.getClientRects().length,opacity:i?getComputedStyle(i).opacity:null};
+        const detail={secure:isSecureContext,uuid:typeof crypto.randomUUID,cache:!!globalThis.__msgblastAvatarSource,srcLength:i?.src.length,srcPrefix:i?.src.slice(0,80),complete:i?.complete,width:i?.naturalWidth,height:i?.naturalHeight,currentSourceMatches:i?.currentSrc===i?.src,imageRects:i?.getClientRects().length,hostRects:h?.getClientRects().length,opacity:i?getComputedStyle(i).opacity:null};
+        {const c=document.createElement('canvas');c.width=c.height=256;const ctx=c.getContext('2d');ctx.fillStyle='#ff0000';ctx.fillRect(0,0,256,256);const png=c.toDataURL('image/png');detail.freshPNGLength=png.length;detail.freshPNGPrefix=png.slice(0,80);}
         try {const c=document.createElement('canvas');c.width=c.height=256;c.getContext('2d').drawImage(i,0,0,256,256);detail.pngLength=c.toDataURL('image/png').length;detail.pixel=[...c.getContext('2d').getImageData(128,128,1,1).data];}catch(e){detail.error=String(e);}
         return detail;
         """#
