@@ -1,0 +1,3 @@
+Evidence-SHA: 78d866ea6662f37154883e90db80b8f6c01dc926
+
+Native Mac isolated blue fixture (com.msgblast.update-fixture), signed localhost feed, synthetic versions 0.1.1 (1) to 0.1.2 (2). Real Sparkle 2.10.0 downloads/prepares/installs/relaunches; simulated Messages/account data, synthetic draft and attachment; no production app replaced by this feature test, no real sends or Contacts writes. Both manual and automatic download paths exercised. Video samples actual native screen states with fixed holds and edited timing, not continuous recording. Captured code bytes match the reviewed revision; capture on macOS 27.2, app target macOS 15.0.
