@@ -1,0 +1,3 @@
+Evidence-SHA: 221cb00611d5b81a1b5ca14db77d136552da7ac0
+
+Functional blue-green msgblast Dev.app, com.msgblast.development, fixtureMode false, updates disabled, separate msgblast-Dev support directory. Ad-hoc hardened runtime, signed Address Book, Automation and network entitlements verified. CI preview defaults 0.4.3 build 1, not a production version. macOS 27.2 capture, production minimum macOS 15.0. Test note, no contact address; real private R2 receipt 2913f3b6-aeee-4931-a829-baeb0e51a963. Actual Messages access unavailable; no permission changes or real messages/Contacts writes. Video samples actual native screen states with edited timing and holds; not continuous recording.
