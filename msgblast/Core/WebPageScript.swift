@@ -29,6 +29,11 @@ struct WebPageScript {
                          #"button[data-testid="chat-submit"],button[aria-label="Submit"]"#,
                          #"[data-message-id][data-message-role],.message-bubble"#,
                          #"button[data-testid="user-menu-button"],button[aria-label="User menu"],button[aria-label="Open user menu"],button[aria-label="Account menu"],button[aria-haspopup="menu"]:has(img[alt="pfp"])"#)
+        case .os3:
+            selectors = (#"textarea[aria-label="message input"]"#,
+                         #"button[aria-label="send message"]"#,
+                         #"[role="log"][aria-label="conversation"] > .dial-msg[data-render-id^="msg-"]"#,
+                         #"button[aria-label="Settings"]"#)
         }
         let config: [String: String] = ["name":provider.name,"provider":provider.rawValue,"host":provider.homeURL.host!,"editor":selectors.editor,"send":selectors.send,"messages":selectors.messages,"account":selectors.account]
         let json = String(data: try! JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]), encoding: .utf8)!
@@ -60,8 +65,10 @@ struct WebPageScript {
             if (config.provider==='dots') role=e.classList.contains('self') ? 'user' : 'assistant';
             if (!role && config.provider==='claude') role=e.getAttribute('data-testid')==='user-message' ? 'user' : 'assistant';
             if (!role && config.provider==='grok') role=e.classList.contains('items-end') || e.closest('[data-role="user"],.items-end') ? 'user' : 'assistant';
+            if (config.provider==='os3') { role=e.classList.contains('dial-user') ? 'user' : 'assistant'; id=e.dataset.renderId; }
             const copy=(config.provider==='dots' ? e.querySelector('.message-text') || document.createElement('span') : e).cloneNode(true); copy.querySelectorAll('button,[role="button"],time').forEach(n=>n.remove());
             if (config.provider==='chatgpt') copy.querySelectorAll('h4[data-conversation-role]').forEach(n=>n.remove());
+            if (config.provider==='os3') copy.querySelectorAll('.dial-meta,.dial-reaction').forEach(n=>n.remove());
             copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
             if (!observation.ids.has(e)) observation.ids.set(e,`node-${++observation.nextID}`);
             return {id:id||observation.ids.get(e),role:role||'unknown',text:normalized(copy.textContent||'')};
@@ -78,8 +85,11 @@ struct WebPageScript {
             const login=all('button[data-testid="login-button"]').length>0 || all('button,a').some(e=>/^(log in|sign in|sign up|sign up for free)$/i.test(normalized(e.innerText||e.getAttribute('aria-label')||'')) || (config.provider==='dots' && /^(log in|sign in)$/i.test(e.getAttribute('aria-label')||'')));
             const account=document.querySelector(config.account);
             const signedIn=login ? false : account ? true : null;
-            const modal=all('[role="dialog"],[aria-modal="true"]').length>0;
-            const generating=all('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"] ').length>0;
+            // Closed panels can stay rendered, marked aria-hidden or moved off-screen.
+            const modal=all('[role="dialog"],[aria-modal="true"]').some(e=>{const r=e.getBoundingClientRect();
+                const offScreen=r.width>0 && r.height>0 && (r.right<=0 || r.bottom<=0 || r.left>=innerWidth || r.top>=innerHeight);
+                return e.getAttribute('aria-hidden')!=='true' && !offScreen;});
+            const generating=all('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"]').length>0;
             if (!pathAllowed()) reason=`Open a ${config.name} chat to send from MsgBlast.`;
             else if (login) reason=`Sign in to ${config.name} to send this request.`;
             // Responsive sidebars hide their account control without ending the session.
@@ -213,17 +223,18 @@ struct WebPageScript {
         case .dots: #"<div contenteditable="true" role="textbox" aria-label="Message" data-composer-markdown></div>"#
         case .claude: #"<div class="ProseMirror" role="textbox" aria-label="Message Claude" contenteditable="true"></div>"#
         case .chatgpt: #"<textarea aria-label="Chat with ChatGPT"></textarea>"#
+        case .os3: #"<textarea aria-label="message input"></textarea>"#
         default: #"<textarea aria-label="Ask Grok anything"></textarea>"#
         }
-        let send = provider == .dots ? #"aria-label="Send""# : provider == .grok ? #"data-testid="chat-submit" aria-label="Submit""# : #"aria-label="Send message""#
-        let account = provider == .dots ? #"aria-label="Your dot actions""# : provider == .chatgpt ? #"data-testid="accounts-profile-button""# : #"data-testid="user-menu-button""#
+        let send = provider == .dots ? #"aria-label="Send""# : provider == .os3 ? #"aria-label="send message""# : provider == .grok ? #"data-testid="chat-submit" aria-label="Submit""# : #"aria-label="Send message""#
+        let account = provider == .dots ? #"aria-label="Your dot actions""# : provider == .os3 ? #"aria-label="Settings""# : provider == .chatgpt ? #"data-testid="accounts-profile-button""# : #"data-testid="user-menu-button""#
         let login = provider == .dots ? #"aria-label="Sign in""# : ""
         let avatar = provider == .dots ? ##"<div id="fixture-dot-avatar"><button data-orbit-profile-trigger aria-label="Open Fixture’s profile"></button><span role="presentation" style="display:block;width:64px;height:64px"><svg width="64" height="64" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="22" fill="#23b88d"/><circle cx="24" cy="27" r="4" fill="white"/><circle cx="40" cy="27" r="4" fill="white"/><path d="M22 40 Q32 48 42 40" fill="none" stroke="white" stroke-width="3"/></svg></span></div>"## : ""
         return """
         <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
         :root{color-scheme:light dark;font:15px -apple-system,sans-serif}body{margin:0;padding:22px;background:Canvas;color:CanvasText}header{display:flex;gap:12px;align-items:center;border-bottom:1px solid #8884;padding-bottom:16px}small{color:#888}#transcript{min-height:150px;padding:20px 0}article{background:#8882;border-radius:16px;margin:12px 0;padding:14px}textarea,[contenteditable]{box-sizing:border-box;width:100%;min-height:70px;padding:12px;font:inherit;border:1px solid #8885;border-radius:14px}button{font:inherit;margin:8px 0;padding:8px 14px;border-radius:10px;border:1px solid #8885}[hidden]{display:none!important}
         </style></head><body><header><strong id="thread-title">New \(provider.name) chat</strong><small>Local fixture · no real sends</small></header>
-        <main id="chat">\(avatar)<button \(account)>Fixture account</button><div id="transcript"></div>\(input)<button id="fixture-send" \(send) disabled>Send</button><button onclick="chat.hidden=true;login.hidden=false">Sign out of fixture</button>\(provider == .dots ? "<button onclick=\"changeFixtureAvatar()\">Change fixture avatar</button>" : "")</main>
+        <main id="chat">\(avatar)<button \(account)>Fixture account</button><div id="transcript" role="log" aria-label="conversation"></div>\(input)<button id="fixture-send" \(send) disabled>Send</button><button onclick="chat.hidden=true;login.hidden=false">Sign out of fixture</button>\(provider == .dots ? "<button onclick=\"changeFixtureAvatar()\">Change fixture avatar</button>" : "")</main>
         <div id="login" hidden><p>Sign in to continue.</p><button data-testid="login-button" \(login) onclick="chat.hidden=false;login.hidden=true">Sign in to fixture</button></div>
         <script>
         const provider='\(provider.rawValue)',input=document.querySelector('textarea,[contenteditable]'),send=document.getElementById('fixture-send');
@@ -248,9 +259,10 @@ struct WebPageScript {
         if(provider==='chatgpt'){a.dataset.messageAuthorRole=role;a.dataset.messageId=crypto.randomUUID();}
         if(provider==='claude'){a.dataset.testid=role==='user'?'user-message':'assistant-message';}
         if(provider==='grok'){a.dataset.messageRole=role;a.dataset.messageId=crypto.randomUUID();a.className='message-bubble';}
+        if(provider==='os3'){a.dataset.renderId='msg-'+crypto.randomUUID();a.className='dial-msg '+(role==='user'?'dial-user':'dial-system');}
         a.textContent=text;document.getElementById('transcript').append(a);a.scrollIntoView({block:'nearest'});saveFixtureThread();}
         add('user',text);if(input.tagName==='TEXTAREA')input.value='';else input.textContent='';send.disabled=true;
-        if(location.pathname===newPath){history.replaceState(null,'',(provider==='claude'?'/chat/':'/c/')+crypto.randomUUID());updateFixtureTitle();saveFixtureThread();}
+        if(provider!=='os3'&&location.pathname===newPath){history.replaceState(null,'',(provider==='claude'?'/chat/':'/c/')+crypto.randomUUID());updateFixtureTitle();saveFixtureThread();}
         setTimeout(()=>add('assistant','\(provider.name) fixture reply: '+text),350);});
         </script></body></html>
         """

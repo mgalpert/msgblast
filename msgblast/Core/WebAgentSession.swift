@@ -263,12 +263,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               let attempt = linkableWebAttempt, let comparison = state.comparisonID, let current = URL(string: snapshot.url),
               let url = provider.canonicalConversationURL(current),
               webView.url.flatMap(provider.canonicalConversationURL) == url,
-              (provider == .dots || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
+              (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
         if let saved = state.conversationURLs[comparison.uuidString], provider.canonicalConversationURL(saved) != url { return false }
         if let candidate = attempt.pinnedConversationURL, candidate != url { return false }
-        let matches = snapshot.messages.indices.filter { snapshot.messages[$0].role == "user" && Self.normalized(snapshot.messages[$0].text) == Self.normalized(attempt.text) }
+        let matches = linkCandidates(for: attempt)
         guard matches.count == 1 else { return false }
         return snapshot.messages.dropFirst(matches[0] + 1).prefix { $0.role != "user" }.contains { $0.role == "assistant" }
+    }
+
+    // In a shared conversation, a message another attempt already observed belongs to that attempt.
+    private func linkCandidates(for attempt: WebSendAttempt) -> [Int] {
+        let claimed = provider.sharesOneConversation ? Set(state.attempts.compactMap { $0.id == attempt.id ? nil : $0.messageID }) : []
+        return snapshot.messages.indices.filter { snapshot.messages[$0].role == "user" && !claimed.contains(snapshot.messages[$0].id) && Self.normalized(snapshot.messages[$0].text) == Self.normalized(attempt.text) }
     }
 
     // Explicit user linking recovers requests whose automatic attribution could not finish.
@@ -287,7 +293,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               var attempt = linkableWebAttempt, let comparison, let current = URL(string: snapshot.url),
               let url = provider.canonicalConversationURL(current) else { return }
         attempt.status = .observed
-        attempt.messageID = snapshot.messages.first { $0.role == "user" && Self.normalized($0.text) == Self.normalized(attempt.text) }?.id
+        attempt.messageID = linkCandidates(for: attempt).first.map { snapshot.messages[$0].id }
         attempt.conversationURL = url
         attempt.recoveryConversationURL = nil
         attempt.receiptContext = nil
@@ -399,7 +405,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if !loading, snapshot.url == target.absoluteString, !snapshot.ready {
             throw WebSessionFailure.notReady(snapshot.reason)
         }
-        if target == provider.newChatURL, snapshot.url == target.absoluteString,
+        if !provider.sharesOneConversation, target == provider.newChatURL, snapshot.url == target.absoluteString,
            snapshot.messages.contains(where: { $0.role == "user" }) {
             throw WebSessionFailure.notSent("\(provider.name) has an unfinished conversation submission. Check its page before starting another comparison.")
         }
@@ -834,7 +840,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // Across reloads/restarts only the already pinned candidate can be recovered.
         let pinned = attempt.pinnedConversationURL
         guard receiptGenerations[attempt.id]?.matches(page) == true || pinned != nil else { return invalidate() }
-        if context.originalURL == provider.newChatURL, current == context.originalURL { return false }
+        if !provider.sharesOneConversation, context.originalURL == provider.newChatURL, current == context.originalURL { return false }
         guard provider.acceptsReceipt(from: context.originalURL, at: current), let url = provider.canonicalConversationURL(current),
               pinned == nil || pinned == url,
               current.path == context.originalURL.path || (!context.existingPaths.contains(current.path) && !state.conversationURLs.values.contains(where: { provider.canonicalConversationURL($0) == url })),
@@ -869,7 +875,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               page.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               provider.acceptsReceipt(from: context.originalURL, at: current),
               state.conversationURLs[page.key] == nil || state.conversationURLs[page.key] == url,
-              (provider == .dots || !state.conversationURLs.contains(where: { $0.key != page.key && provider.canonicalConversationURL($0.value) == url })),
+              (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != page.key && provider.canonicalConversationURL($0.value) == url })),
               current.path == context.originalURL.path || !context.existingPaths.contains(current.path),
               page.snapshot.messages.starts(with: context.baseline) else { return }
         let previous = Set(context.baseline.map(\.id))

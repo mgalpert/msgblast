@@ -1,7 +1,7 @@
 import Foundation
 
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot
+    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
     public static let optionalProviders: [Self] = [.codexCLI, .claudeCode]
     public var id: String { rawValue }
@@ -10,7 +10,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self { case .codexCLI: .codex; case .claudeCode: .claude; default: nil }
     }
     public var name: String {
-        switch self { case .muse: "Muse"; case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .grok: "Grok"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots"; case .grokbot: "Grok Bot" }
+        switch self { case .muse: "Muse"; case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .grok: "Grok"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3" }
     }
     public var homeURL: URL {
         switch self {
@@ -20,6 +20,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .claude, .claudeCode: URL(string: "https://claude.ai/new")!
         case .grok: URL(string: "https://grok.com/")!
         case .grokbot: URL(string: "https://x.ai/bot")!
+        case .os3: URL(string: "https://os3.rabbit.tech/")!
         }
     }
     // These directory names were used before CLI identities were separated. Claude
@@ -27,9 +28,12 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     var localConversationDirectoryName: String {
         switch self { case .codexCLI: "chatgpt"; case .claudeCode: "claude"; default: rawValue }
     }
+    // rabbit OS3 keeps one conversation per account, so every comparison uses it.
+    public var sharesOneConversation: Bool { self == .os3 }
     public var newChatURL: URL { self == .muse ? URL(string: "https://muse.ai/thread/new")! : homeURL }
     public func isSavedConversation(_ url: URL) -> Bool {
-        isChatURL(url) && url.query == nil && url.fragment == nil && !url.path.isEmpty && url.path != "/" && url.path != newChatURL.path && (self != .dots || url.path != "/dots/")
+        guard isChatURL(url), url.query == nil, url.fragment == nil else { return false }
+        return sharesOneConversation || (!url.path.isEmpty && url.path != "/" && url.path != newChatURL.path && (self != .dots || url.path != "/dots/"))
     }
     // A Grok response selector is not part of the persistent conversation identity.
     public func canonicalConversationURL(_ url: URL) -> URL? {
@@ -58,6 +62,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .chatgpt: return path.isEmpty || path == "/" || path.range(of: #"^/c/[a-zA-Z0-9-]+/?$"#, options: .regularExpression) != nil
         case .claude: return path == "/new" || path.range(of: #"^/chat/[a-zA-Z0-9-]+/?$"#, options: .regularExpression) != nil
         case .grok: return path.isEmpty || path == "/" || path.range(of: #"^/c/[a-zA-Z0-9-]+/?$"#, options: .regularExpression) != nil
+        case .os3: return path.isEmpty || path == "/"
         }
     }
     // A first send can assign a conversation URL using history.replaceState.
