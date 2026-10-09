@@ -1,0 +1,16 @@
+{
+  "application_source": "68eee9daaed5dccf753033e75615f72971e90661",
+  "before_source": "d9df26988fa96232fcd83519b97c8e48e7bdff38",
+  "capture": "Native macOS CUA, live blue-green Dev, no demo arguments",
+  "video": "10-second edited screenshot sequence; actual native before/chooser/after states",
+  "result": "Both approved text lines fit; Continue setup reaches the new card using preserved login",
+  "release_limit": "Full Disk Access and live Contacts fetch not verified",
+  "files": {
+    "after-card.png": "fa392fdacadb22880bcabf56bb607a11b403ccff6779cc82c5ca697def9ce729",
+    "after-full.png": "9e26e0c11f783b66f04e7ae3997c900eb9221a7a06b68d86aef24f6a47e533fd",
+    "before-card.png": "bce9cdd761fa1438c7368482c080ff48776ded50c1cccd446521a93502d4b527",
+    "before-full.png": "7291fa597bfccb4519679f0c275b02069b085de33f849c6d6f1b75bef1b76d06",
+    "chooser.png": "b3d098fd7520aae00c5dd162c8fa6df22593fce224f061a0db814e49a2dd4fe2",
+    "workflow.mp4": "af65060e5e29b32c631d2755e0309dabd5210164db01008a05228d192fadb5ff"
+  }
+}
