@@ -67,6 +67,8 @@ final class OnboardingController: ObservableObject {
                 if provider.personalAgentProvider != nil {
                     guard await session.checkNativeAccount() else { continue }
                     if let supported = await personalAgentCompatibility(for: session) { compatibility[provider] = supported }
+                } else if !provider.usesNativeConversation {
+                    guard await session.checkSignIn() == true else { continue }
                 }
                 guard checkGeneration == generation, state.stage == .feedback else { return }
                 hasUsableAgent = session.isEnabled && isReady(session)
@@ -100,7 +102,7 @@ final class OnboardingController: ObservableObject {
     }
 
     func isReady(_ session: WebAgentSession) -> Bool {
-        session.snapshot.ready && (session.provider != .claudeCode || compatibility[.claudeCode] == true)
+        session.isReadyForOnboarding && (session.provider != .claudeCode || compatibility[.claudeCode] == true)
     }
 
     func refresh(_ session: WebAgentSession) async {

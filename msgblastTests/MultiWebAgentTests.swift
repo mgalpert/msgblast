@@ -4,6 +4,28 @@ import WebKit
 
 @MainActor
 final class MultiWebAgentTests: XCTestCase {
+    func testMuseOnboardingAcceptsMainChatLoginWithoutAllowingComparisonSubmission() async throws {
+        let session = WebAgentSession(provider: .muse, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.webView.callAsyncJavaScript("history.replaceState({}, '', '/')", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        let signedIn = await session.checkSignIn()
+        XCTAssertEqual(signedIn, true)
+        XCTAssertFalse(session.snapshot.ready, "Muse still requires a comparison side chat before sending")
+        XCTAssertTrue(session.isReadyForOnboarding, "An authenticated main chat must finish onboarding without a comparison")
+        XCTAssertTrue(session.state.attempts.isEmpty, "Checking login does not submit a message")
+
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('chat').hidden=true;document.getElementById('login').hidden=false", arguments: [:], in: nil, contentWorld: .page)
+        _ = await session.checkSignIn()
+        XCTAssertFalse(session.isReadyForOnboarding, "A signed-out page cannot complete setup")
+
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('chat').remove();document.getElementById('login').remove()", arguments: [:], in: nil, contentWorld: .page)
+        _ = await session.checkSignIn()
+        XCTAssertNil(session.snapshot.signedIn)
+        XCTAssertFalse(session.isReadyForOnboarding, "Unrecognized or still-loading account markup cannot complete setup")
+    }
+
     func testContentEditableSpacingDoesNotStopSharedSubmission() async throws {
         for provider in [WebProvider.claude, .grok, .chatgpt] {
             let session = WebAgentSession(provider: provider, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)

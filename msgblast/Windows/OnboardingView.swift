@@ -197,7 +197,7 @@ private struct OnboardingProviderView: View {
             }
         }.padding(28)
         .task { await setup.refresh(session) }
-        .onChange(of: session.snapshot.ready) { _, _ in setup.advanceIfReady(session) }
+        .onChange(of: setup.isReady(session)) { _, _ in setup.advanceIfReady(session) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await setup.refresh(session) }
         }

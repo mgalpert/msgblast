@@ -100,6 +100,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public let provider: WebProvider
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
+    public var isReadyForOnboarding: Bool {
+        guard isEnabled, connected, !storageFailed, !loading else { return false }
+        if provider.usesNativeConversation { return snapshot.ready }
+        return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true
+    }
+
     public init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil) {
         self.provider = provider
         self.storageURL = storageURL
