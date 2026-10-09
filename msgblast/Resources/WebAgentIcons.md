@@ -57,4 +57,6 @@ The Dots demo uses synthetic SVG and CSS artwork and local conversation replies.
 
 ## Messages onboarding avatars
 
-`WebAgentIcons/instinct.jpg`, `fo.jpg`, and `szn.jpg` are unchanged copies of the user's saved contact artwork already retained in `docs/images/readme/agent-icons/`. They identify the onboarding choices; after connection, the selected contact's own picture is used. These files contain artwork only, with no contact addresses or identifiers.
+`WebAgentIcons/instinct.jpg` is the updated contact photo shared by Instinct, exported from the user's Contacts at their request on October 9, 2026. The JPEG is preserved unchanged (SHA-256: `c8b5cc54b618246582c37003b52d649e139200963ffb4c241d30965a7e25a1e4`). Only the artwork is bundled; the local contact export, addresses, and identifiers are excluded.
+
+`fo.jpg` and `szn.jpg` remain unchanged copies of the user's saved contact artwork retained in `docs/images/readme/agent-icons/`. Bundled artwork identifies choices before Contacts access. During Messages setup, a selected contact's own picture takes precedence, with bundled artwork as the fallback.
