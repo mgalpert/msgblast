@@ -13,7 +13,14 @@ final class MultiWebAgentTests: XCTestCase {
             let html = WebPageScript(provider: provider).fixture.replacingOccurrences(
                 of: #"<textarea aria-label="[^"]*"></textarea>"#,
                 with: "<div contenteditable=\"true\" role=\"textbox\" aria-label=\"\(label)\"></div>", options: .regularExpression)
-            session.webView.loadHTMLString(html, baseURL: provider.newChatURL)
+            session.webView.loadHTMLString(html.replacingOccurrences(of: "</body>", with: "<script>window.spacingFixtureLoaded=true;</script></body>"), baseURL: provider.newChatURL)
+            var loaded = false
+            for _ in 0..<100 {
+                loaded = (try? await session.webView.callAsyncJavaScript("return window.spacingFixtureLoaded === true", arguments: [:], in: nil, contentWorld: .page)) as? Bool == true
+                if loaded { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertTrue(loaded, "Wait for the replacement editor, rather than the previous page's ready snapshot")
             try await waitFor { !session.loading && session.snapshot.ready }
             let text = "Compare two approaches.  Keep this sentence's spacing.\nThen reply with READY."
             let attempt = await session.send(text, comparisonID: UUID())

@@ -447,6 +447,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func closePopup() { popup = nil; popupURL = ""; Task { await refresh() } }
 
+    public func checkNativeAccount() async -> Bool {
+        guard provider.personalAgentProvider != nil, !shuttingDown else { return false }
+        connect()
+        // Finish any earlier status check, then request a current result.
+        while refreshing || loading {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return false }
+            guard !shuttingDown else { return false }
+        }
+        await refresh()
+        return !Task.isCancelled && !shuttingDown && !loading && snapshot.ready
+    }
+
     public func refresh() async {
         guard connected else { return }
         if provider == .grokbot {
@@ -498,7 +510,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             let result = try await page.view.callAsyncJavaScript(script.inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
             guard generation == page.generation, !shuttingDown, !flushingDrafts, let result else { return }
-            page.snapshot = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
+            let fresh = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
+            // WebKit can expose the destination before its new document replaces about:blank.
+            guard let inspectedURL = URL(string: fresh.url), let displayedURL = page.view.url,
+                  inspectedURL == displayedURL ||
+                  (provider.canonicalConversationURL(inspectedURL) != nil &&
+                   provider.canonicalConversationURL(inspectedURL) == provider.canonicalConversationURL(displayedURL)) else { return }
+            page.snapshot = fresh
             if provider == .dots, page.snapshot.signedOut == true {
                 clearSavedDot(in: page)
                 publish(page)
@@ -1150,7 +1168,7 @@ extension WebAgentSession {
         }
     }
     @discardableResult
-    public func configureGrokBot(webhookURL: String, webhookKey: String) async -> Bool {
+    public func configureGrokBot(webhookURL: String, webhookKey: String, selectAfterConnecting: Bool = true) async -> Bool {
         guard provider == .grokbot, !isSending, !configuringGrokBot, !hasPendingGrokBotRequests, !storageFailed, !shuttingDown else { return false }
         setGrokBotConnectionActivity(.startingTunnel)
         defer { setGrokBotConnectionActivity(nil) }
@@ -1172,7 +1190,9 @@ extension WebAgentSession {
             grokBotCredentials = credentials
             grokBotRemembersConnection = remembered
             grokBotConnectionReady = true; grokBotNeedsKeychainRetry = false; error = nil
-            setEnabled(true); connect()
+            if selectAfterConnecting { setEnabled(true) }
+            else { updateState { $0.enabled = true; $0.selected = false } }
+            connect()
             return true
         } catch {
             self.error = error.localizedDescription

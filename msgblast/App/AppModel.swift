@@ -20,6 +20,19 @@ final class AppModel: ObservableObject {
     @Published private(set) var contactsAvailable = false
     let demo: Bool
     let personalAgent: PersonalAgentController
+    lazy var onboarding = OnboardingController(model: self)
+    var onboardingPreview: Bool {
+        #if DEBUG
+        demo && (ProcessInfo.processInfo.arguments.contains("--onboarding-preview") || Bundle.main.object(forInfoDictionaryKey: "msgblastOnboardingPreview") as? Bool == true)
+        #else
+        false
+        #endif
+    }
+    var needsOnboarding: Bool { state.onboarding.map { !$0.isFinished } ?? false }
+    var usesMessages: Bool {
+        (state.onboarding?.stage == .connecting && state.onboarding?.currentStep == .messages) || !state.agents.isEmpty ||
+        state.comparisons.contains { !$0.members.isEmpty } || accessGuide.flow.isActive
+    }
     var permissionGuidePreview: Bool {
         #if DEBUG
         demo && (ProcessInfo.processInfo.arguments.contains("--permission-guide-preview") || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true)
@@ -51,9 +64,20 @@ final class AppModel: ObservableObject {
         }
         #endif
         local = LocalStore(demo: demo, isolated: ProcessInfo.processInfo.arguments.contains("--isolated-demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true || Bundle.main.object(forInfoDictionaryKey: "msgblastIsolatedDemo") as? Bool == true, fixtureDirectory: fixtureDirectory, supportDirectoryName: Bundle.main.object(forInfoDictionaryKey: "msgblastSupportDirectory") as? String, webPreview: Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool == true)
-        do { state = try local.load(); try local.save(state) } catch { storageLoadFailed = true; self.error = "Local state could not be loaded or saved: \(error.localizedDescription). Sending is unavailable until storage works." }
+        let existingStore = FileManager.default.fileExists(atPath: local.url.path)
+        do {
+            state = try local.load()
+            if !existingStore && (!demo || onboardingPreview) { state.onboarding = OnboardingState() }
+            // Saved intent survives a restart; readiness is checked against the
+            // actual accounts and permissions again before opening any chats.
+            state.onboarding?.recheckConnections()
+            try local.save(state)
+        } catch { storageLoadFailed = true; self.error = "Local state could not be loaded or saved: \(error.localizedDescription). Sending is unavailable until storage works." }
         if demo { setupDemo() }
-        state.selection = Set(state.agents.map(\.id))
+        if state.onboarding?.stage == .choosing, state.onboarding?.completed.isEmpty == true {
+            state.selection = []
+            webAgents.sessions.forEach { $0.updateState { $0.selected = false } }
+        } else if state.onboarding == nil { state.selection = Set(state.agents.map(\.id)) }
         persist()
         accessGuide.checkHistory = { [weak self] in
             guard let self, !self.busy else { return false }
@@ -111,6 +135,15 @@ final class AppModel: ObservableObject {
             state.draft = "What is the clearest way to compare three approaches to the same problem?"
         }
         // Synthetic transcripts are reconstructed from app-owned prompts, never copied into the local store.
+        if onboardingPreview {
+            state.draft = ""
+            for name in ["Fo", "Instinct", "Szn"] {
+                let handle = name.lowercased() + "@example.com"
+                if !chats.contains(where: { $0.handle == handle }) {
+                    chats.append(Chat(id: "demo-onboarding-" + name.lowercased(), handle: handle, lastActivity: 0))
+                }
+            }
+        }
         for comparison in state.comparisons {
             for member in comparison.members {
                 if member.payload == nil, let anchor = member.anchor {
@@ -133,6 +166,7 @@ final class AppModel: ObservableObject {
     }
     private func refreshIfChanged() {
         refreshContactAccess()
+        guard !needsOnboarding || usesMessages else { return }
         guard !busy, !demo else { return }
         do {
             if let database, try database.changeVersion() == lastDataVersion { return }
@@ -142,6 +176,7 @@ final class AppModel: ObservableObject {
     func refresh() {
         guard !busy else { return }
         refreshContactAccess()
+        guard !needsOnboarding || usesMessages else { return }
         defer { accessGuide.observeHistory(available: databaseAvailable) }
         if permissionGuidePreview {
             databaseAvailable = false
@@ -228,14 +263,32 @@ final class AppModel: ObservableObject {
             contactResults = []; contactStatus = error.localizedDescription
         }
     }
+    func savedAgent(matching agent: Agent) -> Agent? {
+        let handles = Set(agent.handles.map(ChatResolver.normalize))
+        return state.agents.first { saved in
+            if let contactID = agent.contactID { return saved.contactID == contactID }
+            return saved.handles.contains { handles.contains(ChatResolver.normalize($0)) }
+        }
+    }
+
+    func onboardingContactSuggestions() async throws -> [Agent] {
+        guard databaseAvailable, contactsAvailable else { return [] }
+        if demo {
+            return ["Fo", "Instinct", "Szn"].map {
+                Agent(contactID: "fixture-known-" + $0.lowercased(), name: $0, handles: [$0.lowercased() + "@example.com"])
+            }
+        }
+        let search = Task.detached(priority: .userInitiated) {
+            try ContactSearch().knownAgents(matching: KnownAgentContacts(agents: []))
+        }
+        let results = try await withTaskCancellationHandler { try await search.value } onCancel: { search.cancel() }
+        guard !Task.isCancelled, databaseAvailable, contactsAvailable else { return [] }
+        return results
+    }
     func addAgent(_ agent: Agent) async {
         guard !busy else { return }
         contactStatus = ""
-        let normalizedHandles = Set(agent.handles.map(ChatResolver.normalize))
-        guard !state.agents.contains(where: { saved in
-            if let contactID = agent.contactID { return saved.contactID == contactID }
-            return saved.handles.contains { normalizedHandles.contains(ChatResolver.normalize($0)) }
-        }) else { return }
+        guard savedAgent(matching: agent) == nil else { return }
         busy = true
         defer { busy = false }
         do {

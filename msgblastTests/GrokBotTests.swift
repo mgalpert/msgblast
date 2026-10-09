@@ -6,6 +6,19 @@ import LocalAuthentication
 
 @MainActor
 final class GrokBotTests: XCTestCase {
+    func testOnboardingConfigurationDoesNotSelectTheBotAsARecipient() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .grokbot, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        let success = await session.configureGrokBot(webhookURL: "https://example.invalid/fixture", webhookKey: String(repeating: "fixture", count: 8), selectAfterConnecting: false)
+        XCTAssertTrue(success)
+        XCTAssertTrue(session.isEnabled)
+        XCTAssertFalse(session.state.selected)
+        let reopened = WebAgentSession(provider: .grokbot, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        XCTAssertFalse(reopened.state.selected)
+        XCTAssertTrue(reopened.isEnabled)
+    }
+
     func testAdHocConnectionCredentialsSurviveStorageReload() async throws {
         guard SecureEnclave.isAvailable else { throw XCTSkip("This integration check needs a Secure Enclave") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

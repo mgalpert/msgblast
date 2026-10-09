@@ -4,7 +4,7 @@ Grok Bot is a separate optional agent from Grok's website. Its implementation li
 
 ## Connect once
 
-1. Open **msgblast → Settings → Grok Bot** and choose **Copy Bot setup instructions**. Paste those instructions into the particular Grok Bot you want to connect. This creates a webhook routine that receives the request and POSTs its answer back to msgblast.
+1. Choose **Grok Bot** during onboarding, or open **msgblast → Settings → Grok Bot**. Read the visible routine prompt and choose **Copy prompt**. Paste it into the particular Grok Bot you want to connect. This creates a webhook routine that receives the request and POSTs its answer back to msgblast.
 2. In Grok Bot, click **msgblast** next to **Created routine** in its reply to open the routine panel. Copy **POST to** into msgblast's **Webhook URL**, and **key** into **Webhook key**. Paste only the key; msgblast adds the Authorization header automatically. Choose **Connect Grok Bot**. Setup never requests your Mac login password. Normal app state contains no webhook key or callback token.
 3. Select **Grok Bot** in Agents and send a shared prompt or a message in its native pane. Its answer appears in the same comparison. Each follow-up includes that comparison's local history.
 

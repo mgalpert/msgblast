@@ -235,6 +235,7 @@ public struct AppState: Codable, Sendable {
     public var frames: [String: SavedFrame] = [:]
     public var windowStyle: ComparisonWindowStyle?
     public var personalAgentProvider: String?
+    public var onboarding: OnboardingState?
     public var effectiveWindowStyle: ComparisonWindowStyle { windowStyle ?? .connected }
     public init() {}
     @discardableResult
