@@ -78,7 +78,7 @@ import msgblastCore
         for session in model.webAgents.availableSessions {
             if session.provider.personalAgentProvider != nil {
                 precondition(firstNativeSessions[session.provider] != session.state.localSessionIDs[second.uuidString])
-            } else if session.provider == .dots {
+            } else if session.provider == .dots || session.provider.sharesOneConversation {
                 precondition(firstResults[session.provider]?.conversationURL == secondResults[session.provider]?.conversationURL)
             } else { precondition(firstResults[session.provider]?.conversationURL != secondResults[session.provider]?.conversationURL) }
         }

@@ -629,7 +629,7 @@ final class MultiWebAgentTests: XCTestCase {
     }
 
     func testProviderDestinationsAndFirstConversationTransition() {
-        for provider in WebProvider.webDefaults {
+        for provider in WebProvider.webDefaults + [.os3] {
             XCTAssertTrue(provider.isChatURL(provider.newChatURL))
             for invalid in ["https://\(provider.homeURL.host!).evil.test/", "http://\(provider.homeURL.host!)/", "https://\(provider.homeURL.host!)/login", "https://\(provider.homeURL.host!)/settings", "https://\(provider.homeURL.host!):444/", "https://user@\(provider.homeURL.host!)/"] {
                 XCTAssertFalse(provider.isChatURL(URL(string: invalid)!), invalid)
@@ -1025,6 +1025,62 @@ final class MultiWebAgentTests: XCTestCase {
         XCTAssertEqual(WebAgentSession(provider: .dots, storageURL: storage, fixture: true).avatar, moved)
     }
 
+    func testOS3NeverLinksAMessageAnotherComparisonObserved() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let earlier = await session.send("Same question", comparisonID: UUID())
+        XCTAssertEqual(earlier?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        // The page drops the next submission, leaving only the earlier comparison's copy of this text.
+        _ = try await session.webView.callAsyncJavaScript("""
+        document.addEventListener('click',e=>{if(e.target===send){e.stopImmediatePropagation();input.value='';}},{capture:true,once:true});
+        """, arguments: [:], in: nil, contentWorld: .page)
+        let dropped = await session.send("Same question", comparisonID: UUID())
+        XCTAssertEqual(dropped?.status, .uncertain)
+        await session.refresh()
+        XCTAssertTrue(session.needsConversationLink)
+        XCTAssertTrue(session.snapshot.ready)
+        XCTAssertFalse(session.canLinkCurrentConversation)
+    }
+
+    func testHiddenAndOffScreenDialogsDoNotBlockSending() async throws {
+        for provider in [WebProvider.chatgpt, .claude, .grok, .os3] {
+            let session = WebAgentSession(provider: provider, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+            session.connect()
+            try await waitFor { session.snapshot.ready }
+            _ = try await session.webView.callAsyncJavaScript("""
+            for (const offScreen of [false, true]) {
+                const panel=document.createElement('div');panel.setAttribute('role','dialog');panel.textContent='Closed panel';
+                if (offScreen) panel.style.cssText='position:fixed;top:0;left:100vw'; else panel.setAttribute('aria-hidden','true');
+                document.body.append(panel);
+            }
+            """, arguments: [:], in: nil, contentWorld: .page)
+            await session.refresh()
+            XCTAssertTrue(session.snapshot.ready, provider.name)
+            let attempt = await session.send("Closed panels stay out of the way")
+            XCTAssertEqual(attempt?.status, .observed, provider.name)
+        }
+    }
+
+    func testOS3SendsEveryComparisonIntoItsOneConversation() async throws {
+        let os3 = WebProvider.os3
+        XCTAssertTrue(os3.isSavedConversation(os3.homeURL))
+        XCTAssertTrue(os3.acceptsReceipt(from: os3.homeURL, at: os3.homeURL))
+        XCTAssertFalse(os3.isChatURL(URL(string: "https://os3.rabbit.tech/sign-up?returnTo=%2F")!))
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        XCTAssertFalse(session.state.selected, "rabbit OS3 is opt-in")
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let first = await session.send("First comparison", comparisonID: UUID())
+        XCTAssertEqual(first?.status, .observed, first?.detail ?? "")
+        let second = await session.send("Second comparison", comparisonID: UUID())
+        XCTAssertEqual(second?.status, .observed, second?.detail ?? "")
+        XCTAssertEqual(first?.conversationURL, os3.homeURL)
+        XCTAssertEqual(second?.conversationURL, os3.homeURL)
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["First comparison", "Second comparison"])
+    }
+
     func testLegacyMuseSessionSelectionAndPendingReceiptSurviveUpgrade() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1039,7 +1095,7 @@ final class MultiWebAgentTests: XCTestCase {
         XCTAssertEqual(web.availableSessions[0].state.sessionID, id)
         XCTAssertEqual(web.availableSessions[0].state.draft, "Legacy draft")
         XCTAssertEqual(web.comparisonID, comparison)
-        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, 5)
+        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, 6)
         for session in web.availableSessions where session.provider.personalAgentProvider == nil { XCTAssertEqual(session.webView.configuration.websiteDataStore.identifier, session.state.sessionID) }
         web.toggle(web.availableSessions[2])
         let reopened = WebAgents(directory: directory, fixture: false)
@@ -1512,7 +1568,7 @@ final class MultiWebAgentTests: XCTestCase {
     }
 
     func testNewProvidersAttachReceiptsToTheirComparison() async throws {
-        for provider in [WebProvider.chatgpt, .claude, .grok] {
+        for provider in [WebProvider.chatgpt, .claude, .grok, .os3] {
             let session = WebAgentSession(provider: provider, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
             session.connect()
             try await waitFor { session.snapshot.ready }

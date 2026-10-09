@@ -651,9 +651,9 @@ let grokBotIcon = Bundle.main.url(forResource: "grokbot", withExtension: "icns",
     .flatMap { NSImage(contentsOf: $0) }
 private let grokBotAvatar = grokBotIcon?.tiffRepresentation
 private let webDefaultAvatars: [WebProvider: Data] = Dictionary(uniqueKeysWithValues:
-    [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots].compactMap { provider in
+    [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots, .os3].compactMap { provider in
         let resource = provider == .codexCLI ? "chatgpt" : provider == .claudeCode ? "claude" : provider.rawValue
-        let fileExtension = provider == .dots ? "pdf" : provider == .grok ? "png" : "jpg"
+        let fileExtension = provider == .dots ? "pdf" : [.grok, .os3].contains(provider) ? "png" : "jpg"
         guard let url = Bundle.main.url(forResource: resource, withExtension: fileExtension, subdirectory: "WebAgentIcons"),
               let data = try? Data(contentsOf: url) else { return nil }
         return (provider, data)

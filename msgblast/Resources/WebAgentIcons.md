@@ -32,6 +32,14 @@ Edit this Grok avatar image. Preserve the exact symbol shape, silver-white color
 
 Precise scale-only edit for this Grok avatar. Keep the exact logo silhouette, monochrome silver-white shading, centered placement, and black square background unchanged. Enlarge the symbol by about 30 percent relative to its present size, expanding symmetrically from the center. Its two diagonal tips should still have clear black space around them inside a circular crop; aim for a symbol about 60 percent of the image's width and height, with 20 percent black margin at each outer edge. No square frame, no outline, no text. A polished, legible circular app avatar.
 
+## rabbit OS3 adaptation
+
+rabbit OS3 has no App Store listing. Its icon is an adaptation of the website favicon, retrieved October 7, 2026. The unmodified white rabbit mark is drawn with AppKit at 60 percent of the width, centered on an opaque black 1024 × 1024 square, so it fits the circular avatar mask. The rabbit name and mark belong to their owner.
+
+| Resource | Official source | Source SHA-256 |
+| --- | --- | --- |
+| `WebAgentIcons/os3.png` (favicon adaptation) | [rabbit OS3 favicon](https://os3.rabbit.tech/icons/rabbit.svg) | `982c6c0f002df33d2f42d2ad7be82ee093fccd15ef32d4e71c74117b2c4b9e6f` |
+
 ## Local account icons
 
 The local accounts panel in Settings reuses the unmodified ChatGPT and Claude App Store artwork above. OpenClaw and Hermes use unmodified PNGs from their official project repositories, retrieved October 6, 2026 and pinned to the source revisions below. The projects retain ownership of their artwork and trademarks.
