@@ -1,0 +1,21 @@
+{
+  "application_source": "45b3ff886791990b607b877795bf33364dfde0e1",
+  "before_source": "ecbf3f9dce67ec05fbdf8e263c06b6042f064dbf",
+  "capture": "Native macOS CUA",
+  "video": "Edited screenshot sequence, 18 seconds; labels distinguish fixture from live Dev",
+  "live_result": "Signed-in Muse automatically advances to Messages using existing profile; no Muse Continue click",
+  "release_limit": "Live Messages/Contacts access not yet verified",
+  "files": {
+    "after-chooser.png": "07796afc4a4bc2982ce7e68534d57771889e372ce6015124cfaa7ccd1bc88669",
+    "after-feedback.png": "4fa2c6345d2baee6140d35b67d0d79ead2690a754aefc56b1cc28b92d00c3b86",
+    "after-messages.png": "71e89eb824ec8636042aedd27416d2d2dd5ea5e332a716aff0ed4458c23e64ce",
+    "after-muse.png": "6796ca0b5a91f56dbec413f536b69f77dd4e713c39c7b7f266063bb22002ff7c",
+    "before-chooser.png": "543e4d21f9af29254ea81a46432461a4762d19ed47f7734561b2342c496c3ba0",
+    "before-muse.png": "528fa30cd21bdd325b02f4a5810c5937889775f65d7cfadcb36fd649f1a51f60",
+    "live-dev-auto-next-step.png": "e2df36ec810d67d842073c9bc8dbbbc7a5dd5f100638f4b1bb029e9097a01623",
+    "live-dev-selected-agents.png": "7add18503fd65149736f9d936c43bc8e5c5f96e9a298849984738b912b7ac098",
+    "onboarding-workflow.mp4": "1caf8869d39817d20300372167b148b87c47cfff6d430bcc363da70161995748",
+    "signed-in-muse.png": "f4fe90ef9b36073fb3fa37c5376c0bef7f0b5645f483fe589d7ddf2c9c610ed7",
+    "signed-out-muse.png": "ee8c0bd238e619290db2e1ed8f22d75b9fae36419149fca43246fc0f746a015e"
+  }
+}
