@@ -280,9 +280,9 @@ struct MessagesAccessRow: View {
                     Button("Check again", action: check)
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(isOnboarding ? "Chat with the agents you text" : "Connect Messages").font(.headline)
+                        Text(isOnboarding ? "Chat with the agents you text on Messages" : "Connect Messages").font(.headline)
                         if isOnboarding {
-                            Label("Matched on your Mac. Nothing uploaded or shared.", systemImage: "lock.shield")
+                            Label("Your Messages history stays on your Mac. Nothing uploaded or shared.", systemImage: "lock.shield")
                                 .font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(.primary.opacity(0.05), in: Capsule())
                         } else {
