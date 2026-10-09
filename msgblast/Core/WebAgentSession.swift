@@ -886,7 +886,7 @@ extension WebAgentSession {
         }
     }
     @discardableResult
-    public func configureGrokBot(webhookURL: String, webhookKey: String) async -> Bool {
+    public func configureGrokBot(webhookURL: String, webhookKey: String, selectAfterConnecting: Bool = true) async -> Bool {
         guard provider == .grokbot, !isSending, !configuringGrokBot, !hasPendingGrokBotRequests, !storageFailed, !shuttingDown else { return false }
         setGrokBotConnectionActivity(.startingTunnel)
         defer { setGrokBotConnectionActivity(nil) }
@@ -908,7 +908,9 @@ extension WebAgentSession {
             grokBotCredentials = credentials
             grokBotRemembersConnection = remembered
             grokBotConnectionReady = true; grokBotNeedsKeychainRetry = false; error = nil
-            setEnabled(true); connect()
+            if selectAfterConnecting { setEnabled(true) }
+            else { updateState { $0.enabled = true; $0.selected = false } }
+            connect()
             return true
         } catch {
             self.error = error.localizedDescription

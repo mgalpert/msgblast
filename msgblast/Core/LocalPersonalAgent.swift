@@ -151,6 +151,19 @@ public struct PersonalAgentReply: Sendable {
 }
 
 public enum LocalPersonalAgent {
+    public static func supportsConfiguredConversation(using agent: InstalledPersonalAgent) async -> Bool {
+        guard agent.provider == .claude else { return agent.provider == .codex }
+        return await Task.detached(priority: .utility) {
+            var environment = ProcessInfo.processInfo.environment
+            environment["PATH"] = agent.path
+            environment["NO_COLOR"] = "1"
+            environment.removeValue(forKey: "CLAUDECODE")
+            guard let result = try? AgentProcess.run(executable: agent.executableURL, arguments: ["--help"],
+                input: "", environment: environment, timeout: 10, cancellation: AgentCancellation()), result.status == 0 else { return false }
+            return (result.stdout + result.stderr).contains("--permission-prompts")
+        }.value
+    }
+
     public static func accountStatus(using agent: InstalledPersonalAgent) async -> PersonalAgentAccountStatus {
         guard agent.provider == .codex || agent.provider == .claude else { return .unknown }
         return await Task.detached(priority: .utility) {

@@ -7,7 +7,12 @@ struct msgblastApp: App {
     @StateObject private var startup = AppStartup()
     private var model: AppModel? { startup.model }
     @StateObject private var updater = AppUpdater()
-    private let preferredWindowSize = NSSize(width: 1600, height: 1100)
+    private var preferredWindowSize: NSSize {
+        if model?.needsOnboarding == true {
+            return NSSize(width: 840, height: model?.state.onboarding?.stage == .choosing ? 760 : 860)
+        }
+        return NSSize(width: 1600, height: 1100)
+    }
     private var initialWindowSize: NSSize {
         let screen = NSScreen.main?.visibleFrame.size ?? preferredWindowSize
         return NSSize(width: min(preferredWindowSize.width, screen.width), height: min(preferredWindowSize.height, screen.height))
@@ -17,7 +22,10 @@ struct msgblastApp: App {
             Group {
                 if startup.needsInstallation { InstallationView() }
                 else if let model {
-                    MainView(model: model, updater: updater).onAppear { lifecycle.configure(model: model); updater.configure(delegate: lifecycle); if model.coordinator == nil { model.coordinator = WindowCoordinator(model: model) } }
+                    Group {
+                        if model.needsOnboarding { OnboardingView(model: model) }
+                        else { MainView(model: model, updater: updater) }
+                    }.onAppear { lifecycle.configure(model: model); updater.configure(delegate: lifecycle); if model.coordinator == nil { model.coordinator = WindowCoordinator(model: model) } }
                 }
             }.background(InitialWindowFrame(size: preferredWindowSize))
         }.defaultSize(width: initialWindowSize.width, height: initialWindowSize.height).windowToolbarStyle(.unified)
@@ -135,7 +143,11 @@ private struct InitialWindowFrame: NSViewRepresentable {
         view.preferredSize = size
         return view
     }
-    func updateNSView(_ nsView: InitialWindowSizingView, context: Context) {}
+    func updateNSView(_ nsView: InitialWindowSizingView, context: Context) {
+        guard nsView.preferredSize != size else { return }
+        nsView.preferredSize = size
+        nsView.applySize()
+    }
 }
 
 private final class InitialWindowSizingView: NSView {
@@ -143,8 +155,12 @@ private final class InitialWindowSizingView: NSView {
     private var applied = false
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard let window, !applied else { return }
+        guard window != nil, !applied else { return }
         applied = true
+        applySize()
+    }
+    func applySize() {
+        guard let window else { return }
         let size = preferredSize
         DispatchQueue.main.async { [weak window] in
             guard let window, let screen = window.screen ?? NSScreen.main else { return }

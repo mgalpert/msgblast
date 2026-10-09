@@ -87,7 +87,7 @@ struct AgentsWorkspaceView: View {
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 3), spacing: 28) {
                     ForEach(web.availableSessions, id: \.provider) { session in
-                        PinnedAgentTile(agent: webAgent(session), selected: session.state.selected, size: tileSize(geometry)) {
+                        PinnedAgentTile(agent: AgentArtwork.agent(for: session), selected: session.state.selected, size: tileSize(geometry)) {
                             web.toggle(session)
                         }.disabled(busy).help("\(session.provider.name) · \(session.locationLabel)")
                             .contextMenu {
@@ -480,7 +480,7 @@ private struct WebAgentPane: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                AgentAvatar(agent: webAgent(session), name: session.provider.name, size: 38)
+                AgentAvatar(agent: AgentArtwork.agent(for: session), name: session.provider.name, size: 38)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(session.provider.name).font(.headline)
                     Text(session.locationLabel).font(.caption).foregroundStyle(.secondary)
@@ -524,7 +524,7 @@ private struct WebAgentPane: View {
                 EmbeddedServicePage(webView: session.webView)
             } else {
                 VStack(spacing: 18) {
-                    AgentAvatar(agent: webAgent(session), name: session.provider.name, size: 80)
+                    AgentAvatar(agent: AgentArtwork.agent(for: session), name: session.provider.name, size: 80)
                     Text("\(session.provider.name), inside MsgBlast").font(.title2.weight(.semibold))
                     Text("Sign in here once, then send from the shared composer. Your \(session.provider.name) conversation and replies stay in this window.")
                         .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
@@ -629,25 +629,6 @@ private let localAccountIcons: [String: NSImage] = Dictionary(uniqueKeysWithValu
         return (url.deletingPathExtension().lastPathComponent, image)
     }
 )
-
-private let museDefaultAvatar = Bundle.main.url(forResource: "MuseAvatar", withExtension: "jpg").flatMap { try? Data(contentsOf: $0) }
-let grokBotIcon = Bundle.main.url(forResource: "grokbot", withExtension: "icns", subdirectory: "WebAgentIcons")
-    .flatMap { NSImage(contentsOf: $0) }
-private let grokBotAvatar = grokBotIcon?.tiffRepresentation
-private let webDefaultAvatars: [WebProvider: Data] = Dictionary(uniqueKeysWithValues:
-    [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots].compactMap { provider in
-        let resource = provider == .codexCLI ? "chatgpt" : provider == .claudeCode ? "claude" : provider.rawValue
-        let fileExtension = provider == .dots ? "pdf" : provider == .grok ? "png" : "jpg"
-        guard let url = Bundle.main.url(forResource: resource, withExtension: fileExtension, subdirectory: "WebAgentIcons"),
-              let data = try? Data(contentsOf: url) else { return nil }
-        return (provider, data)
-    }
-)
-@MainActor
-private func webAgent(_ session: WebAgentSession) -> Agent {
-    Agent(name: session.provider.name, handles: [], avatar: session.provider == .grokbot ? grokBotAvatar : session.avatar ?? (session.provider == .muse ? museDefaultAvatar : webDefaultAvatars[session.provider]),
-          colorIndex: WebProvider.allCases.firstIndex(of: session.provider)! + 4)
-}
 
 // Resize only when the open-chat count changes; ordinary manual resizing stays intact.
 private struct ChatWindowFrame: NSViewRepresentable {

@@ -2,6 +2,18 @@ import XCTest
 @testable import msgblastCore
 
 final class PersonalAgentTests: XCTestCase {
+    func testOnboardingChecksClaudeConversationSupportWithoutRequestingAReply() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try executable("claude", script: "[ \"$1\" = \"--help\" ] || exit 99\necho '--permission-prompts <mode>'", in: directory)
+        let installed = InstalledPersonalAgent(provider: .claude, executableURL: directory.appendingPathComponent("claude"), path: "/usr/bin:/bin")
+        let supported = await LocalPersonalAgent.supportsConfiguredConversation(using: installed)
+        XCTAssertTrue(supported)
+        try executable("claude", script: "[ \"$1\" = \"--help\" ] || exit 99\necho 'Older CLI help'", in: directory)
+        let older = await LocalPersonalAgent.supportsConfiguredConversation(using: installed)
+        XCTAssertFalse(older)
+    }
+
     @MainActor
     func testOptionalCLIOptInPersistsAndArchivedOptOutCannotSend() async throws {
         let directory = try fixtureDirectory()
