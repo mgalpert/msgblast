@@ -52,3 +52,11 @@ The Dots demo uses synthetic SVG and CSS artwork and local conversation replies.
 ## Grok Bot icon
 
 `WebAgentIcons/grokbot.icns` is the unmodified native icon from the locally installed Grok Bot 0.68.1 app (`com.anysphere.sand`), retrieved October 8, 2026. SHA-256: `0174e1ce966156a20c07f5715bbf6577b39cec60bd539267395e5f5fa15bbf80`. The bundled artwork identifies Grok Bot in Settings and chat avatars, including Macs without Grok Bot installed. Its owner retains the artwork and trademark rights.
+
+`AgentArtwork` draws a centered crop of this source inside a circular mask for the picker, onboarding, Settings, and chat headers. The original icon file remains unchanged.
+
+## Messages onboarding avatars
+
+`WebAgentIcons/instinct.jpg` is the updated contact photo shared by Instinct, exported from the user's Contacts at their request on October 9, 2026. The JPEG is preserved unchanged (SHA-256: `c8b5cc54b618246582c37003b52d649e139200963ffb4c241d30965a7e25a1e4`). Only the artwork is bundled; the local contact export, addresses, and identifiers are excluded.
+
+`fo.jpg` and `szn.jpg` remain unchanged copies of the user's saved contact artwork retained in `docs/images/readme/agent-icons/`. Bundled artwork identifies choices before Contacts access. During Messages setup, a selected contact's own picture takes precedence, with bundled artwork as the fallback.

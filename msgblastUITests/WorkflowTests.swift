@@ -2,6 +2,22 @@ import XCTest
 import AppKit
 final class WorkflowTests: XCTestCase {
     @MainActor
+    func testShareFeedbackMenuIsAvailableAnytime() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        app.menuBars.menuBarItems["Help"].click()
+        let feedback = app.menuBars.menuBarItems["Help"].menuItems["Share Feedback…"]
+        XCTAssertTrue(feedback.waitForExistence(timeout: 5))
+        feedback.hover()
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "share-feedback-menu"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testStandardShortcutsNavigateAndStartBlastWithoutLosingDraft() {
         let app = launchFixture(separateWindows: false)
         defer { app.terminate() }
@@ -472,8 +488,8 @@ final class WorkflowTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         app.menuBars.menuBarItems["Help"].click()
-        XCTAssertTrue(app.menuItems["Send Feedback…"].waitForExistence(timeout: 5))
-        app.menuItems["Send Feedback…"].click()
+        XCTAssertTrue(app.menuBars.menuBarItems["Help"].menuItems["Share Feedback…"].waitForExistence(timeout: 5))
+        app.menuBars.menuBarItems["Help"].menuItems["Share Feedback…"].click()
         let feedback = app.windows["Send Feedback"]
         XCTAssertTrue(feedback.waitForExistence(timeout: 5))
         XCTAssertTrue(feedback.staticTexts["Send feedback to msgblast"].exists)

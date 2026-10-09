@@ -1,0 +1,36 @@
+{
+  "source_revision": "0df8194e105e4af3173465162e56679bd382013a",
+  "capture_method": "Native CUA screenshots around actual clicks",
+  "app": "msgblast Demo",
+  "bundle_id": "com.msgblast.demo",
+  "fixture": true,
+  "os": "macOS 27.2 beta, 26B5091g",
+  "updates": "disabled",
+  "limitations": [
+    "Contacts, permissions, account readiness and runtime detection simulated in public evidence",
+    "No real sends, Contacts writes, feedback submission or paid requests",
+    "Native floating menu popovers are verified through AX but not included in window screenshot samples",
+    "Videos repeat screenshot frames with edited timing and omitted gaps; not continuous recordings"
+  ],
+  "files": {
+    "06-openclaw-setup.png": "490bdacde4d871ba88a931f397534586b86d2a22f271534b3c2f53e5e50387ed",
+    "11-feedback-tip.png": "8664a7d8063ee149acdef62105cd13e29d8b0d1a383fef6179701217532ee1b3",
+    "01-choose-agents.png": "669dcac50486d2ecd35d72f6f3b42179c337cde0f6dc34cc950d49955c872174",
+    "05-cli-setup-fixture.png": "5d52eff49c4c644153b1e119bbe423284a9f5a1175c67a17f6648736dbcd65ed",
+    "02-selected-agents.png": "be54346adad685c75dff3830f1189cd8307354d7c8b9c53f984142481fb16ca2",
+    "13-confirmed-workspace.png": "4d3ea5ee3a78878ba53a2d4fe3db1e8afcb482a940e1dbc82d002a0eb4f4f4e0",
+    "10-selected-contacts.png": "efc2b8561d6440d28e8b2be0846637e55370b7137c0a1d652ac97feb8cc585a5",
+    "12-feedback-window.png": "9838a6898c5e703b36a984258c9114368439db0f4d2d99186b3097d328df8776",
+    "04-grokbot-setup.png": "b0257cf80e6a8f610939ad3d9b96a2eac662a0e2bc6f6cf8e8d2825b67b704d7",
+    "09-change-contact.png": "aa56b982488d6a72b0a5bbadff098ca1e27577f5268b99f5d8c472cd2f8e9e95",
+    "08-messages-proposals.png": "575339e45833063f5f0935649033d9982e9b451cfcbdd79632bb959827f0706f",
+    "03-account-setup-fixture.png": "08f215d00e73506946bce0f16c476499a7951a40a37417c2fb3d4843b6e1a3db",
+    "07-hermes-setup.png": "65bbcb30e6127f172998909c95eddb38ab9d86e3a3407d92154e9826e408be93",
+    "workflow.mp4": "fe5b904c57d5bed43f082aebadbaadcd430e6f54f14d7204fe7ba4d5ee25465f",
+    "messages-confirmation.mp4": "d9bba6d892dfa66be6f8fd61fef8aea68024009c00ccde1a546ed40ebb84a2d0"
+  },
+  "video_durations": {
+    "workflow.mp4": 37.0,
+    "messages-confirmation.mp4": 18.0
+  }
+}

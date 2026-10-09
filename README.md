@@ -26,7 +26,7 @@ Planning a weekend, researching a purchase, or testing an idea? Write your quest
 
 | Connection | Agents | How it works |
 | --- | --- | --- |
-| Websites | **Muse, ChatGPT, Claude, Grok** | Selected by default on a new installation. Sign in inside msgblast and keep the chats in the app. |
+| Websites | **Muse, ChatGPT, Claude, Grok** | Choose during setup, sign in inside msgblast, and keep the chats in the app. |
 | Your dot | **Dots** | Select Dots to message your ongoing dot at chatgpt.com/dots. Its displayed avatar is saved locally. |
 | Messages | AI assistants you already text, including **Instinct, Fo, and Szn** | Connect existing one-to-one iMessage conversations. Photos and files are supported. |
 | Optional CLI conversations | **Codex CLI, Claude Code** | Enable each in Settings to add it alongside the websites. Uses the installed CLI’s sign-in, skills, tools, and connectors, subject to its permissions. |
@@ -37,7 +37,7 @@ Each service’s own account, subscription, and usage limits apply. Web and CLI 
 ## Get started
 
 1. [Download msgblast](https://updates.msgblast.app/latest.zip), unzip the file, and drag **msgblast.app** into **Applications**. Open the app.
-2. Choose your agents in **Agents**. Muse, ChatGPT, Claude, and Grok start selected. Turn on optional CLI agents in **msgblast → Settings**; use **Add Agent** or **Discover** for Messages assistants.
+2. On first launch, choose the agents you use and connect at least one to start chatting. Connect the remaining selections or **Skip for now**. Instinct, Fo, Szn, and other Messages agents share one setup screen; Grok Bot shows its routine prompt and connection fields directly. OpenClaw and Hermes offer their existing Terminal setup; Hermes supports comparison reports, and neither currently has a chat pane. Existing installations keep their saved setup.
 3. Write your question and press the send arrow. If sign-in is needed, finish it in the relevant pane and send again. Your question stays ready. Messages access is only needed for Messages agents; see the steps below.
 4. Compare the replies, choose recipients for a follow-up, or click **New Blast** to start another comparison. Saved comparisons remain in the sidebar.
 
@@ -57,6 +57,8 @@ Each service’s own account, subscription, and usage limits apply. Web and CLI 
 </details>
 
 Check for updates from **msgblast → Check for Updates**.
+
+Skipped agents stay available through **Finish setup**. Setup saves your progress through a restart and never sends a question automatically. You can add agents later through Settings and Discover.
 
 ## Web accounts and optional CLI agents
 

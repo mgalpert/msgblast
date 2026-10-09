@@ -261,7 +261,14 @@ struct MainView: View {
             } else {
             VStack(spacing: 0) {
                 if model.demo { demoControls }
-                MessagesAccessBanner(model: model)
+                if let setup = model.state.onboarding, !setup.skipped.isEmpty {
+                    HStack {
+                        Text("\(setup.skipped.count) \(setup.skipped.count == 1 ? "agent" : "agents") still need setup.").foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Finish setup") { model.onboarding.resume() }
+                    }.padding(18).background(.bar)
+                }
+                if model.usesMessages { MessagesAccessBanner(model: model) }
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: newBlastRequest)
             }.navigationTitle("")
             }
