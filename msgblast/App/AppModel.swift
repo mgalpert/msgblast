@@ -166,7 +166,7 @@ final class AppModel: ObservableObject {
     }
     private func refreshIfChanged() {
         refreshContactAccess()
-        guard state.onboarding == nil || usesMessages else { return }
+        guard !needsOnboarding || usesMessages else { return }
         guard !busy, !demo else { return }
         do {
             if let database, try database.changeVersion() == lastDataVersion { return }
@@ -176,7 +176,7 @@ final class AppModel: ObservableObject {
     func refresh() {
         guard !busy else { return }
         refreshContactAccess()
-        guard state.onboarding == nil || usesMessages else { return }
+        guard !needsOnboarding || usesMessages else { return }
         defer { accessGuide.observeHistory(available: databaseAvailable) }
         if permissionGuidePreview {
             databaseAvailable = false
@@ -269,6 +269,21 @@ final class AppModel: ObservableObject {
             if let contactID = agent.contactID { return saved.contactID == contactID }
             return saved.handles.contains { handles.contains(ChatResolver.normalize($0)) }
         }
+    }
+
+    func onboardingContactSuggestions() async throws -> [Agent] {
+        guard databaseAvailable, contactsAvailable else { return [] }
+        if demo {
+            return ["Fo", "Instinct", "Szn"].map {
+                Agent(contactID: "fixture-known-" + $0.lowercased(), name: $0, handles: [$0.lowercased() + "@example.com"])
+            }
+        }
+        let search = Task.detached(priority: .userInitiated) {
+            try ContactSearch().knownAgents(matching: KnownAgentContacts(agents: []))
+        }
+        let results = try await withTaskCancellationHandler { try await search.value } onCancel: { search.cancel() }
+        guard !Task.isCancelled, databaseAvailable, contactsAvailable else { return [] }
+        return results
     }
     func addAgent(_ agent: Agent) async {
         guard !busy else { return }

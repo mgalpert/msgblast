@@ -34,6 +34,15 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
     public var isMessages: Bool {
         switch self { case .instinct, .fo, .szn, .otherMessages: true; default: false }
     }
+
+    public func contactSuggestions(in contacts: [Agent]) -> [Agent] {
+        guard isMessages, self != .otherMessages else { return [] }
+        return contacts.filter { contact in
+            contact.contactID != nil && !contact.handles.isEmpty &&
+            contact.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .compare(name, options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX")) == .orderedSame
+        }
+    }
 }
 
 public enum OnboardingStep: Hashable, Sendable {

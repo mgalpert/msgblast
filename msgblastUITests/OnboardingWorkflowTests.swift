@@ -2,6 +2,26 @@ import XCTest
 
 final class OnboardingWorkflowTests: XCTestCase {
     @MainActor
+    func testExactMessagesContactsAreSuggestedWithoutOpeningSearch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
+        app.launch()
+        defer { app.terminate() }
+        for name in ["Fo", "Instinct", "Szn"] { app.buttons["Choose \(name)"].click() }
+        app.buttons["Continue setup"].click()
+        for name in ["Fo", "Instinct", "Szn"] {
+            XCTAssertTrue(app.buttons["Use suggested \(name) contact"].waitForExistence(timeout: 5))
+        }
+        XCTAssertFalse(app.textFields["Find onboarding contact"].exists)
+        XCTAssertFalse(app.buttons["New Blast"].exists)
+        app.buttons["Use suggested Fo contact"].click()
+        XCTAssertTrue(app.staticTexts["Fo connected"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Use suggested Instinct contact"].exists)
+        XCTAssertTrue(app.buttons["Use suggested Szn contact"].exists)
+        XCTAssertFalse(app.buttons["New Blast"].exists)
+    }
+
+    @MainActor
     func testDisablingTheOnlyConnectedAgentBeforeAcknowledgementKeepsOnboardingOpen() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]

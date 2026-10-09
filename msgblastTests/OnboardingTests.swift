@@ -2,6 +2,21 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testMessagesSuggestionsRequireAnExactSavedContactWithAnAddress() {
+        let exact = Agent(contactID: "exact", name: "  fO  ", handles: ["fo@example.test"])
+        let duplicate = Agent(contactID: "duplicate", name: "Fo", handles: ["second@example.test"])
+        let contacts = [exact, duplicate,
+                        Agent(contactID: "partial", name: "Fortune", handles: ["partial@example.test"]),
+                        Agent(contactID: "suffix", name: "Fo AI", handles: ["suffix@example.test"]),
+                        Agent(name: "Fo", handles: ["manual@example.test"]),
+                        Agent(contactID: "empty", name: "Fo", handles: [])]
+        XCTAssertEqual(OnboardingChoice.fo.contactSuggestions(in: contacts), [exact, duplicate], "Keep ambiguous exact matches for the user to confirm")
+        XCTAssertTrue(OnboardingChoice.instinct.contactSuggestions(in: contacts).isEmpty)
+        XCTAssertTrue(OnboardingChoice.szn.contactSuggestions(in: contacts).isEmpty)
+        XCTAssertTrue(OnboardingChoice.otherMessages.contactSuggestions(in: contacts).isEmpty)
+        XCTAssertTrue(OnboardingChoice.chatgpt.contactSuggestions(in: contacts).isEmpty)
+    }
+
     func testResolvedSetupWaitsForFinalAcknowledgement() {
         var onboarding = OnboardingState()
         onboarding.toggle(.chatgpt)

@@ -52,17 +52,33 @@ final class OnboardingController: ObservableObject {
         edit { $0.resume(); $0.completed = [] }
     }
 
-    func finish() {
-        guard state.stage == .feedback else { return }
+    func finish() async {
+        guard state.stage == .feedback, !checking else { return }
+        checking = true
+        let generation = UUID()
+        checkGeneration = generation
+        defer { if checkGeneration == generation { checking = false } }
         model.refresh()
-        let hasUsableAgent = state.completed.intersection(state.selected).contains { choice in
+        var hasUsableAgent = false
+        for choice in OnboardingChoice.allCases where state.completed.intersection(state.selected).contains(choice) {
             if let provider = choice.provider {
                 let session = session(for: provider)
-                return session.isEnabled && isReady(session)
+                guard session.isEnabled else { continue }
+                if provider.personalAgentProvider != nil {
+                    guard await session.checkNativeAccount() else { continue }
+                    if let supported = await personalAgentCompatibility(for: session) { compatibility[provider] = supported }
+                }
+                guard checkGeneration == generation, state.stage == .feedback else { return }
+                hasUsableAgent = session.isEnabled && isReady(session)
+            } else if choice.isMessages {
+                model.refresh()
+                if model.databaseAvailable, model.contactsAvailable, let agent = candidate(for: choice) {
+                    hasUsableAgent = model.route(agent) != nil
+                }
             }
-            guard choice.isMessages, model.databaseAvailable, let agent = candidate(for: choice) else { return false }
-            return model.route(agent) != nil
+            if hasUsableAgent { break }
         }
+        guard checkGeneration == generation, state.stage == .feedback else { return }
         guard hasUsableAgent else {
             edit { $0.recheckConnections(); $0.chooseAgain() }
             error = "Connect at least one agent before starting a chat."

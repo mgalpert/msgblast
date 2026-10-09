@@ -41,8 +41,10 @@ struct OnboardingView: View {
                     Button("Back") { setup.back() }
                     Spacer()
                     if setup.state.stage == .feedback {
-                        Button("Start chatting") { setup.finish() }
+                        if setup.checking { ProgressView("Checking connections…").controlSize(.small) }
+                        Button("Start chatting") { Task { await setup.finish() } }
                             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                            .disabled(setup.checking)
                     } else {
                         Button("Skip for now") { setup.skip() }
                             .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -181,7 +183,9 @@ private struct OnboardingProviderView: View {
                 } else if setup.isReady(session) {
                     Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 } else {
-                    Text(session.snapshot.reason).font(.caption).foregroundStyle(.secondary)
+                    Text(session.provider == .grokbot && !session.grokBotRemembersConnection
+                         ? "Paste your Bot’s webhook details above to connect."
+                         : session.snapshot.reason).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Check again") { Task { await setup.refresh(session) } }
@@ -309,6 +313,8 @@ private struct OnboardingMessagesView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var setup: OnboardingController
     @State private var choosingContact: OnboardingChoice?
+    @State private var suggestions: [OnboardingChoice: [Agent]] = [:]
+    @State private var findingContacts = false
 
     private var choices: [OnboardingChoice] { OnboardingChoice.allCases.filter { $0.isMessages && setup.state.selected.contains($0) } }
 
@@ -334,7 +340,10 @@ private struct OnboardingMessagesView: View {
             }.padding(28)
         }
         .scrollIndicators(.hidden)
-        .task { setup.checkMessages() }
+        .task(id: model.databaseAvailable && model.contactsAvailable) {
+            setup.checkMessages()
+            await findSuggestions()
+        }
         .onChange(of: model.databaseAvailable) { _, _ in setup.checkMessages(refresh: false) }
         .onChange(of: model.contactsAvailable) { _, _ in setup.checkMessages(refresh: false) }
         .onChange(of: model.chats) { _, _ in setup.checkMessages(refresh: false) }
@@ -359,11 +368,31 @@ private struct OnboardingMessagesView: View {
                 Spacer()
                 if completed { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
                 else if !skipped {
-                    Button("Choose contact") { choosingContact = choice }
+                    Button(suggestions[choice, default: []].isEmpty ? "Choose contact" : "Search instead") { choosingContact = choice }
                         .accessibilityLabel("Choose contact for \(choice.name)")
                         .disabled(!model.databaseAvailable || !model.contactsAvailable || model.busy)
                     Button("Skip") { setup.edit { $0.skip(choice) } }.buttonStyle(.plain)
                         .foregroundStyle(.secondary).accessibilityLabel("Skip \(choice.name)").disabled(model.busy)
+                }
+            }
+            if candidate == nil, !completed, !skipped, model.contactsAvailable, model.databaseAvailable, choice != .otherMessages {
+                if findingContacts {
+                    ProgressView("Looking in Contacts…").controlSize(.small)
+                } else {
+                    ForEach(suggestions[choice, default: []]) { agent in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(agent.name).font(.callout.bold())
+                                Text(agent.handles.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                                Text(model.route(agent) == nil ? "No conversation yet" : "Existing conversation")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Use contact") { Task { _ = await setup.use(agent, for: choice) } }
+                                .accessibilityIdentifier("Use suggested \(choice.name) contact")
+                                .accessibilityLabel("Use \(agent.name), \(agent.handles.joined(separator: ", "))").disabled(model.busy)
+                        }
+                    }
                 }
             }
             if let candidate, !completed, !skipped {
@@ -375,6 +404,21 @@ private struct OnboardingMessagesView: View {
                 }
             }
         }.padding(18).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func findSuggestions() async {
+        suggestions = [:]
+        guard model.contactsAvailable, model.databaseAvailable else { return }
+        findingContacts = true
+        defer { findingContacts = false }
+        do {
+            let contacts = try await model.onboardingContactSuggestions()
+            guard !Task.isCancelled else { return }
+            suggestions = Dictionary(uniqueKeysWithValues: choices.map { ($0, $0.contactSuggestions(in: contacts)) })
+        } catch {
+            guard !Task.isCancelled else { return }
+            model.contactStatus = error.localizedDescription
+        }
     }
 }
 
