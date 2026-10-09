@@ -383,7 +383,7 @@ private struct OnboardingMessagesView: View {
         let contact = proposed[choice]
         let completed = setup.state.completed.contains(choice) && contact.flatMap(model.savedAgent(matching:))?.id == setup.state.messageAgentIDs[choice.rawValue]
         let name = choice == .otherMessages ? contact?.name ?? "Another Messages agent" : choice.name
-        let artwork = Agent(name: name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice) ?? contact?.avatar)
+        let artwork = Agent(name: name, handles: [], avatar: contact?.avatar ?? AgentArtwork.messageAvatar(for: choice))
         let needsConversation = contact.map { model.route($0) == nil } ?? false
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 20) {

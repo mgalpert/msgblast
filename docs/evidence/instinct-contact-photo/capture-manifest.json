@@ -1,0 +1,29 @@
+{
+  "source_revision": "ecbf3f9dce67ec05fbdf8e263c06b6042f064dbf",
+  "base_revision": "374830088935bf876cfbab3282c091c6b729eb43",
+  "app": "msgblast Demo.app",
+  "bundle_identifier": "com.msgblast.demo",
+  "fixture": true,
+  "capture_method": "Native CUA screenshots before and after actual clicks; video is a screenshot sequence with edited timing, scaled and padded to a fixed canvas.",
+  "limitations": [
+    "Permissions, contacts, addresses, and conversations are simulated.",
+    "Real Contacts fetching on final blue-green Dev is still pending user permission; this fixture does not satisfy the release gate.",
+    "Native macOS UI only; no responsive/mobile UI changed."
+  ],
+  "photo_sha256": "c8b5cc54b618246582c37003b52d649e139200963ffb4c241d30965a7e25a1e4",
+  "screenshots": {
+    "01-chooser.png": "010d05f9c6054c93c6cf0335aedf95fbf5c39394f829094c022131a294e7d60c",
+    "02-selected.png": "99a5fd781af3fb97cb2a3688245b51b903d38ebead4ebc23ca7b2341e49c5981",
+    "03-messages.png": "5690ee8cd6382c31e262371a6cde785639f0df8fa5af7039d7527716817269b9",
+    "04-confirmed.png": "e4f2eddb4b447532e68ff64f65819ad0eb1e0a15915b09a05cd52ef2a57d77ca"
+  },
+  "video": "workflow.mp4",
+  "verification": [
+    "Isolated native Debug builds passed for Demo and Dev.",
+    "Bundled JPEG matches the user-requested contact photo byte for byte.",
+    "Instinct photo shown in picker and Messages row.",
+    "Connect selected reaches feedback with three fixture agents confirmed.",
+    "Production green source icon unchanged.",
+    "Original Dev data restored with every original file hash matching."
+  ]
+}
