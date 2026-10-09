@@ -2,7 +2,7 @@
 
 New installations choose agents from one multi-select grid. All tiles have the same dimensions, including Another Messages agent. The picker has no scrolling, category headings, help-to-choose link, or Set up later action. At least one selected agent must be ready for chat before the workspace opens.
 
-Onboarding shows primary headings and controls without explanatory subtitles or sending-status captions. The Messages access card contains Connect Messages and Open Settings, with permission instructions in the visual Settings guide. The shared workspace and Discover card keep their explanatory text. Required Grok Bot routine instructions, contact addresses, installation/account status, errors, and accurate demo labels remain visible.
+Onboarding shows primary headings and controls without explanatory paragraphs or sending-status captions. The Messages access card leads with “Chat with the agents you text,” has a short privacy badge (“Matched on your Mac. Nothing uploaded or shared.”), and one Open Settings action. The badge describes local contact/conversation matching through Contacts and the read-only Messages database. Permission instructions appear in the visual Settings guide. The shared workspace and Discover card keep their explanatory text. Required Grok Bot routine instructions, contact addresses, installation/account status, errors, and accurate demo labels remain visible.
 
 ## Connection queue
 

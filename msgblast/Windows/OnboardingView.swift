@@ -300,7 +300,7 @@ private struct OnboardingMessagesView: View {
                     Text("Choose who to connect").font(.system(size: 28, weight: .bold))
                 }.frame(maxWidth: .infinity).padding(.top, 24)
                 if !model.databaseAvailable {
-                    MessagesAccessRow(guide: model.accessGuide, check: { model.refresh() }, showsExplanation: false)
+                    MessagesAccessRow(guide: model.accessGuide, check: { model.refresh() }, isOnboarding: true)
                 } else if !model.contactsAvailable {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Find your agents in Contacts").font(.headline)
