@@ -2,7 +2,7 @@ import XCTest
 
 final class OnboardingWorkflowTests: XCTestCase {
     @MainActor
-    func testExactMessagesContactsAreSuggestedWithoutOpeningSearch() {
+    func testExactMessagesContactsUseOneConfirmationAndUncheckedAgentsAreSkipped() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
         app.launch()
@@ -10,14 +10,73 @@ final class OnboardingWorkflowTests: XCTestCase {
         for name in ["Fo", "Instinct", "Szn"] { app.buttons["Choose \(name)"].click() }
         app.buttons["Continue setup"].click()
         for name in ["Fo", "Instinct", "Szn"] {
-            XCTAssertTrue(app.buttons["Use suggested \(name) contact"].waitForExistence(timeout: 5))
+            let row = app.buttons["Select \(name)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            XCTAssertEqual(row.value as? String, "Selected")
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "Contact for \(name)").firstMatch.exists)
         }
         XCTAssertFalse(app.textFields["Find onboarding contact"].exists)
         XCTAssertFalse(app.buttons["New Blast"].exists)
-        app.buttons["Use suggested Fo contact"].click()
-        XCTAssertTrue(app.staticTexts["Fo connected"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Use suggested Instinct contact"].exists)
-        XCTAssertTrue(app.buttons["Use suggested Szn contact"].exists)
+        XCTAssertFalse(app.buttons["Use contact"].exists)
+        XCTAssertFalse(app.buttons["Search instead"].exists)
+        XCTAssertFalse(app.buttons["Skip Szn"].exists)
+        XCTAssertEqual(app.descendants(matching: .scrollBar).count, 0)
+        app.buttons["Select Szn"].click()
+        app.buttons["Connect selected"].click()
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["New Blast"].exists)
+        app.buttons["Start chatting"].click()
+        XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Fo"].exists)
+        XCTAssertTrue(app.buttons["Instinct"].exists)
+        XCTAssertFalse(app.buttons["Szn"].exists)
+        XCTAssertTrue(app.buttons["Finish setup"].exists)
+    }
+
+    @MainActor
+    func testUncheckedMessagesRowsCannotFinishWithoutAConnectedAgent() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
+        app.launch()
+        defer { app.terminate() }
+        app.buttons["Choose Fo"].click()
+        app.buttons["Continue setup"].click()
+        let row = app.buttons["Select Fo"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+        XCTAssertFalse(app.buttons["Connect selected"].isEnabled)
+        XCTAssertFalse(app.buttons["New Blast"].exists)
+        row.click()
+        app.buttons["Connect selected"].click()
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testUncheckingPreviouslyConfirmedRowsClearsTheirConnections() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
+        app.launch()
+        defer { app.terminate() }
+        for name in ["Fo", "Szn"] { app.buttons["Choose \(name)"].click() }
+        app.buttons["Continue setup"].click()
+        let contact = app.descendants(matching: .any).matching(identifier: "Contact for Szn").firstMatch
+        XCTAssertTrue(contact.waitForExistence(timeout: 5))
+        contact.click()
+        app.menuItems["Search Contacts…"].click()
+        let query = app.textFields["Find onboarding contact"]
+        XCTAssertTrue(query.waitForExistence(timeout: 5))
+        query.click()
+        query.typeKey("a", modifierFlags: .command)
+        query.typeText("new-szn@example.test")
+        let choice = app.buttons["Choose new-szn@example.test contact"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        choice.click()
+        app.buttons["Connect selected"].click()
+        XCTAssertTrue(app.images["Fo connected"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Start chatting"].exists)
+        for name in ["Fo", "Szn"] { app.buttons["Select \(name)"].click() }
+        app.buttons["Continue"].click()
+        XCTAssertTrue(app.staticTexts["Which agents do you use?"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["New Blast"].exists)
     }
 
@@ -74,17 +133,15 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Choose Fo"].click()
         app.buttons["Choose Szn"].click()
         app.buttons["Continue setup"].click()
-        app.buttons["Choose contact for Fo"].click()
-        XCTAssertTrue(app.buttons["Use Fo"].waitForExistence(timeout: 5))
-        app.buttons["Use Fo"].click()
-        XCTAssertTrue(app.staticTexts["Fo connected"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Connect selected"].waitForExistence(timeout: 5))
+        app.buttons["Connect selected"].click()
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
         app.buttons["Back"].click()
         app.buttons["Choose Fo"].click()
         app.buttons["Choose ChatGPT"].click()
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
         app.buttons["Continue"].click()
-        app.buttons["Skip Szn"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
         app.buttons["Start chatting"].click()
         XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 5))
@@ -117,12 +174,13 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Continue"].click()
         XCTAssertTrue(app.staticTexts["Let’s connect Claude Code"].waitForExistence(timeout: 10))
         app.buttons["Skip for now"].click()
-        XCTAssertTrue(app.staticTexts["Connect your Messages agents"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Choose who to connect"].waitForExistence(timeout: 10))
         for name in ["Fo", "Instinct", "Szn"] {
-            XCTAssertTrue(app.buttons["Choose contact for \(name)"].exists)
+            XCTAssertTrue(app.buttons["Select \(name)"].waitForExistence(timeout: 5))
+            app.buttons["Select \(name)"].click()
         }
         XCTAssertFalse(app.buttons["New Blast"].exists)
-        app.buttons["Skip for now"].click()
+        app.buttons["Continue"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
         app.buttons["Start chatting"].click()
         XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 10))
@@ -153,7 +211,7 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectingAContactCompletesOnlyThatMessagesAgent() {
+    func testSearchingForAContactOnlyUpdatesTheProposalUntilConfirmation() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
         app.launch()
@@ -162,14 +220,18 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Choose Fo"].click()
         app.buttons["Choose Szn"].click()
         app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.staticTexts["Connect your Messages agents"].waitForExistence(timeout: 10))
-        app.buttons["Choose contact for Fo"].click()
-        XCTAssertTrue(app.buttons["Use Fo"].waitForExistence(timeout: 10))
-        app.buttons["Use Fo"].click()
-        XCTAssertTrue(app.staticTexts["Fo connected"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["Choose contact for Szn"].exists)
+        XCTAssertTrue(app.staticTexts["Choose who to connect"].waitForExistence(timeout: 10))
+        let contact = app.descendants(matching: .any).matching(identifier: "Contact for Fo").firstMatch
+        XCTAssertTrue(contact.waitForExistence(timeout: 5))
+        contact.click()
+        app.menuItems["Search Contacts…"].click()
+        XCTAssertTrue(app.buttons["Choose Fo contact"].waitForExistence(timeout: 10))
+        app.buttons["Choose Fo contact"].click()
+        XCTAssertFalse(app.buttons["Start chatting"].exists)
+        XCTAssertTrue(app.buttons["Select Szn"].exists)
         XCTAssertFalse(app.buttons["New Blast"].exists)
-        app.buttons["Skip Szn"].click()
+        app.buttons["Select Szn"].click()
+        app.buttons["Connect selected"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
         app.buttons["Start chatting"].click()
         XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 10))

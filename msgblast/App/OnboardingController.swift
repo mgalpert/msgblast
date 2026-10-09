@@ -85,6 +85,7 @@ final class OnboardingController: ObservableObject {
             return
         }
         edit { $0.finish() }
+        if state.isFinished { model.accessGuide.dismissCompletion() }
     }
 
     func completeRuntime(_ runtime: LocalAgentRuntime) {
@@ -141,26 +142,40 @@ final class OnboardingController: ObservableObject {
         return model.state.agents.first { $0.id == id }
     }
 
-    func use(_ candidate: Agent, for choice: OnboardingChoice) async -> Bool {
-        await model.addAgent(candidate)
-        guard model.contactStatus.isEmpty, let saved = model.savedAgent(matching: candidate) else { return false }
-        edit { $0.messageAgentIDs[choice.rawValue] = saved.id }
-        checkMessages()
-        return true
-    }
-
-    func checkMessages(refresh: Bool = true) {
-        if refresh { model.refresh() }
-        guard state.stage == .connecting, state.currentStep == .messages, model.databaseAvailable, model.contactsAvailable else { return }
-        for choice in state.pendingChoices where choice.isMessages {
-            guard let agent = candidate(for: choice), model.route(agent) != nil else { continue }
-            model.state.selection.insert(agent.id)
-            edit { $0.complete(choice) }
+    func connectMessages(_ contacts: [OnboardingChoice: Agent], selected: Set<OnboardingChoice>) async {
+        guard state.stage == .connecting, state.currentStep == .messages, !checking, !model.busy else { return }
+        model.refresh()
+        guard model.databaseAvailable, model.contactsAvailable else { return }
+        let choices = Set(state.selected.filter(\.isMessages))
+        let selected = selected.intersection(choices)
+        guard selected.allSatisfy({ contacts[$0] != nil }) else { return }
+        checking = true
+        let generation = UUID()
+        checkGeneration = generation
+        defer { if checkGeneration == generation { checking = false } }
+        error = nil
+        var savedIDs: [String: UUID] = [:]
+        var connected: Set<OnboardingChoice> = []
+        for choice in OnboardingChoice.allCases where selected.contains(choice) {
+            guard let candidate = contacts[choice] else { continue }
+            await model.addAgent(candidate)
+            guard checkGeneration == generation, state.stage == .connecting, state.currentStep == .messages else { return }
+            guard model.contactStatus.isEmpty, let saved = model.savedAgent(matching: candidate) else { break }
+            savedIDs[choice.rawValue] = saved.id
+            model.refresh()
+            if model.databaseAvailable, model.contactsAvailable, model.route(saved) != nil { connected.insert(choice) }
+        }
+        guard checkGeneration == generation, state.stage == .connecting, state.currentStep == .messages else { return }
+        model.refresh()
+        if !model.databaseAvailable || !model.contactsAvailable { connected = [] }
+        edit {
+            $0.messageAgentIDs.merge(savedIDs) { _, new in new }
+            $0.confirmMessages(connected: connected, skipped: choices.subtracting(selected))
         }
     }
 
     func openMessages(for agent: Agent) {
-        guard !model.demo else { checkMessages(); return }
+        guard !model.demo else { return }
         var parts = URLComponents()
         parts.scheme = "sms"
         parts.path = agent.handles.first ?? ""

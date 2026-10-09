@@ -101,6 +101,15 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         skipped.insert(choice)
         finishIfResolved()
     }
+    public mutating func confirmMessages(connected: Set<OnboardingChoice>, skipped: Set<OnboardingChoice>) {
+        guard stage == .connecting, currentStep == .messages else { return }
+        let choices = selected.filter(\.isMessages)
+        completed.subtract(choices)
+        self.skipped.subtract(choices)
+        completed.formUnion(connected.intersection(choices))
+        self.skipped.formUnion(skipped.intersection(choices).subtracting(connected))
+        finishIfResolved()
+    }
     public mutating func skipCurrentStep() {
         guard let currentStep else { return }
         for choice in pendingChoices {

@@ -9,7 +9,8 @@ struct msgblastApp: App {
     @StateObject private var updater = AppUpdater()
     private var preferredWindowSize: NSSize {
         if model?.needsOnboarding == true {
-            return NSSize(width: 840, height: model?.state.onboarding?.stage == .choosing ? 760 : 860)
+            let compact = model?.state.onboarding?.stage == .choosing || model?.state.onboarding?.currentStep == .messages
+            return NSSize(width: 840, height: compact ? 760 : 860)
         }
         return NSSize(width: 1600, height: 1100)
     }

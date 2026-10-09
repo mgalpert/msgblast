@@ -2,6 +2,44 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testMessagesConfirmationConnectsOnlySelectedRowsAndSkipsTheRest() {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.instinct, .fo, .szn] { onboarding.toggle(choice) }
+        onboarding.begin()
+        onboarding.confirmMessages(connected: [.instinct, .fo], skipped: [.szn])
+        XCTAssertEqual(onboarding.completed, [.instinct, .fo])
+        XCTAssertEqual(onboarding.skipped, [.szn])
+        XCTAssertEqual(onboarding.stage, .feedback)
+        XCTAssertFalse(onboarding.isFinished)
+    }
+
+    func testMessagesConfirmationKeepsMissingConversationsPending() {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.fo, .szn, .otherMessages] { onboarding.toggle(choice) }
+        onboarding.begin()
+        onboarding.confirmMessages(connected: [.fo], skipped: [.otherMessages])
+        XCTAssertEqual(onboarding.pendingChoices, [.szn])
+        XCTAssertEqual(onboarding.currentStep, .messages)
+        XCTAssertEqual(onboarding.stage, .connecting)
+        onboarding.confirmMessages(connected: [], skipped: [.fo, .szn, .otherMessages])
+        XCTAssertTrue(onboarding.completed.isEmpty, "Unchecking a previously confirmed row removes it from connected choices")
+        XCTAssertEqual(onboarding.stage, .choosing, "Skipping every choice cannot open an empty workspace")
+    }
+
+    func testMessagesConfirmationDoesNotCompleteUnselectedOrNonMessagesChoices() {
+        var onboarding = OnboardingState()
+        onboarding.toggle(.fo)
+        onboarding.toggle(.chatgpt)
+        onboarding.begin()
+        onboarding.confirmMessages(connected: [.fo, .szn, .chatgpt], skipped: [])
+        XCTAssertTrue(onboarding.completed.isEmpty, "The provider step must finish first")
+        onboarding.complete(.chatgpt)
+        onboarding.confirmMessages(connected: [.fo, .szn, .chatgpt], skipped: [.fo])
+        XCTAssertEqual(onboarding.completed, [.fo, .chatgpt])
+        XCTAssertTrue(onboarding.skipped.isEmpty, "Connected rows take precedence")
+        XCTAssertEqual(onboarding.stage, .feedback)
+    }
+
     func testMessagesSuggestionsRequireAnExactSavedContactWithAnAddress() {
         let exact = Agent(contactID: "exact", name: "  fO  ", handles: ["fo@example.test"])
         let duplicate = Agent(contactID: "duplicate", name: "Fo", handles: ["second@example.test"])

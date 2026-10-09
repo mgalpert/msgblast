@@ -29,28 +29,30 @@ struct OnboardingView: View {
             if let error = setup.error ?? model.error {
                 Text(error).font(.callout).foregroundStyle(.orange).padding(.horizontal, 28)
             }
-            Divider()
-            HStack {
-                if setup.state.stage == .choosing {
-                    Text("Connect at least one agent to continue.").font(.callout).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Continue setup") { setup.begin() }
-                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                        .disabled(setup.state.selected.isEmpty)
-                } else {
-                    Button("Back") { setup.back() }
-                    Spacer()
-                    if setup.state.stage == .feedback {
-                        if setup.checking { ProgressView("Checking connections…").controlSize(.small) }
-                        Button("Start chatting") { Task { await setup.finish() } }
+            if setup.state.stage != .connecting || setup.state.currentStep != .messages {
+                Divider()
+                HStack {
+                    if setup.state.stage == .choosing {
+                        Text("Connect at least one agent to continue.").font(.callout).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Continue setup") { setup.begin() }
                             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                            .disabled(setup.checking)
+                            .disabled(setup.state.selected.isEmpty)
                     } else {
-                        Button("Skip for now") { setup.skip() }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                        Button("Back") { setup.back() }
+                        Spacer()
+                        if setup.state.stage == .feedback {
+                            if setup.checking { ProgressView("Checking connections…").controlSize(.small) }
+                            Button("Start chatting") { Task { await setup.finish() } }
+                                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                                .disabled(setup.checking)
+                        } else {
+                            Button("Skip for now") { setup.skip() }
+                                .buttonStyle(.plain).foregroundStyle(.secondary)
+                        }
                     }
-                }
-            }.padding(24).disabled(model.busy)
+                }.padding(24).disabled(model.busy)
+            }
         }
         .frame(maxWidth: 840, maxHeight: .infinity)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -314,96 +316,117 @@ private struct OnboardingMessagesView: View {
     @ObservedObject var setup: OnboardingController
     @State private var choosingContact: OnboardingChoice?
     @State private var suggestions: [OnboardingChoice: [Agent]] = [:]
+    @State private var proposed: [OnboardingChoice: Agent] = [:]
+    @State private var included: Set<OnboardingChoice> = []
+    @State private var changedSelection: Set<OnboardingChoice> = []
     @State private var findingContacts = false
 
     private var choices: [OnboardingChoice] { OnboardingChoice.allCases.filter { $0.isMessages && setup.state.selected.contains($0) } }
+    private var accessAvailable: Bool { model.databaseAvailable && model.contactsAvailable }
+    private var canContinue: Bool {
+        !setup.checking && !model.busy && !findingContacts &&
+        (included.isEmpty ? setup.state.hasConnectedAgent : accessAvailable && included.allSatisfy { proposed[$0] != nil })
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("Connect your Messages agents").font(.title.bold())
-                Text("We’ll set up access once, then connect the conversations you choose.").foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(spacing: 10) {
+                    Text("Choose who to connect").font(.system(size: 28, weight: .bold))
+                    Text(accessAvailable ? "We found these contacts for your Messages agents." : "We’ll set up access once for your Messages agents.")
+                        .foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity).padding(.top, 24)
                 if !model.databaseAvailable {
-                    MessagesAccessRow(guide: model.accessGuide, check: { setup.checkMessages() })
+                    MessagesAccessRow(guide: model.accessGuide, check: { model.refresh() })
                 } else if !model.contactsAvailable {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Find your agents in Contacts").font(.headline)
                         Text("Allow access so you can choose and confirm the right conversation.").foregroundStyle(.secondary)
-                        Button("Connect Contacts") { Task { await model.connectContacts(); setup.checkMessages() } }
+                        Button("Connect Contacts") { Task { await model.connectContacts(); model.refresh() } }
                             .buttonStyle(.borderedProminent)
                     }.padding(18).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+                } else {
+                    if findingContacts { ProgressView("Looking in Contacts…").controlSize(.small) }
+                    VStack(spacing: 10) {
+                        ForEach(choices) { choice in messageRow(choice) }
+                    }
+                    Text("Sending permission is requested when you send your first message.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(choices) { choice in messageRow(choice) }
-                Text("Sending permission is requested when you send your first message.")
-                    .font(.caption).foregroundStyle(.secondary)
                 if !model.contactStatus.isEmpty { Text(model.contactStatus).font(.callout).foregroundStyle(.orange) }
-            }.padding(28)
+            }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            Divider()
+            HStack(spacing: 18) {
+                Button("Back") { setup.back() }.buttonStyle(.plain).foregroundStyle(.secondary)
+                Spacer()
+                if setup.checking { ProgressView("Connecting…").controlSize(.small) }
+                else if accessAvailable { Text("\(included.count) \(included.count == 1 ? "agent" : "agents") selected").font(.callout).foregroundStyle(.secondary) }
+                Button(included.isEmpty && setup.state.hasConnectedAgent ? "Continue" : "Connect selected") {
+                    if accessAvailable { Task { await setup.connectMessages(proposed, selected: included) } }
+                    else { setup.skip() }
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!canContinue)
+            }.padding(24).disabled(setup.checking || model.busy)
         }
-        .scrollIndicators(.hidden)
-        .task(id: model.databaseAvailable && model.contactsAvailable) {
-            setup.checkMessages()
+        .task(id: accessAvailable) {
+            model.refresh()
             await findSuggestions()
         }
-        .onChange(of: model.databaseAvailable) { _, _ in setup.checkMessages(refresh: false) }
-        .onChange(of: model.contactsAvailable) { _, _ in setup.checkMessages(refresh: false) }
-        .onChange(of: model.chats) { _, _ in setup.checkMessages(refresh: false) }
         .sheet(item: $choosingContact) { choice in
-            OnboardingContactPicker(model: model, setup: setup, choice: choice)
+            OnboardingContactPicker(model: model, choice: choice) { agent in
+                proposed[choice] = agent
+                included.insert(choice)
+            }
         }
     }
 
     private func messageRow(_ choice: OnboardingChoice) -> some View {
-        let completed = setup.state.completed.contains(choice)
-        let skipped = setup.state.skipped.contains(choice)
-        let candidate = setup.candidate(for: choice)
+        let selected = included.contains(choice)
+        let contact = proposed[choice]
+        let completed = setup.state.completed.contains(choice) && contact.flatMap(model.savedAgent(matching:))?.id == setup.state.messageAgentIDs[choice.rawValue]
+        let name = choice == .otherMessages ? contact?.name ?? "Another Messages agent" : choice.name
+        let artwork = Agent(name: name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice) ?? contact?.avatar)
+        let needsConversation = contact.map { model.route($0) == nil } ?? false
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                AgentAvatar(agent: candidate, name: choice == .otherMessages ? "Your agent" : choice.name, size: 40)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(choice == .otherMessages ? "Another Messages agent" : choice.name).font(.headline)
-                    if completed { Text("\(choice.name) connected").font(.caption).foregroundStyle(.green) }
-                    else if skipped { Text("Skipped for now").font(.caption).foregroundStyle(.secondary) }
-                    else if let candidate { Text(candidate.handles.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary) }
-                }
-                Spacer()
-                if completed { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
-                else if !skipped {
-                    Button(suggestions[choice, default: []].isEmpty ? "Choose contact" : "Search instead") { choosingContact = choice }
-                        .accessibilityLabel("Choose contact for \(choice.name)")
-                        .disabled(!model.databaseAvailable || !model.contactsAvailable || model.busy)
-                    Button("Skip") { setup.edit { $0.skip(choice) } }.buttonStyle(.plain)
-                        .foregroundStyle(.secondary).accessibilityLabel("Skip \(choice.name)").disabled(model.busy)
-                }
-            }
-            if candidate == nil, !completed, !skipped, model.contactsAvailable, model.databaseAvailable, choice != .otherMessages {
-                if findingContacts {
-                    ProgressView("Looking in Contacts…").controlSize(.small)
-                } else {
+            HStack(spacing: 20) {
+                Button {
+                    if selected { included.remove(choice) } else { included.insert(choice) }
+                    changedSelection.insert(choice)
+                } label: {
+                    HStack(spacing: 16) {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 22)).foregroundStyle(selected ? Color.blue : .secondary)
+                        AgentAvatar(agent: artwork, name: name, size: 44)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(name).font(.headline).foregroundStyle(.primary).lineLimit(1)
+                            if needsConversation { Text("No conversation yet").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Select \(choice.name)")
+                    .accessibilityValue(selected ? "Selected" : "Not selected")
+                Menu {
                     ForEach(suggestions[choice, default: []]) { agent in
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(agent.name).font(.callout.bold())
-                                Text(agent.handles.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
-                                Text(model.route(agent) == nil ? "No conversation yet" : "Existing conversation")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Use contact") { Task { _ = await setup.use(agent, for: choice) } }
-                                .accessibilityIdentifier("Use suggested \(choice.name) contact")
-                                .accessibilityLabel("Use \(agent.name), \(agent.handles.joined(separator: ", "))").disabled(model.busy)
+                        Button("\(agent.name) · \(agent.handles.joined(separator: ", "))") {
+                            proposed[choice] = agent
+                            included.insert(choice)
                         }
                     }
-                }
+                    if !suggestions[choice, default: []].isEmpty { Divider() }
+                    Button("Search Contacts…") { choosingContact = choice }
+                    if needsConversation, let contact {
+                        Button("Open Messages") { setup.openMessages(for: contact) }
+                    }
+                } label: {
+                    Text(contact?.handles.joined(separator: ", ") ?? (suggestions[choice, default: []].count > 1 ? "Choose a match" : "Choose contact"))
+                        .font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }.menuStyle(.borderlessButton).frame(maxWidth: 260, alignment: .leading)
+                    .accessibilityLabel("Contact for \(choice.name)")
+                Spacer(minLength: 0)
+                if completed { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("\(choice.name) connected") }
             }
-            if let candidate, !completed, !skipped {
-                Text("Start a one-to-one conversation with this agent in Messages, then return here.")
-                    .font(.callout).foregroundStyle(.secondary)
-                HStack {
-                    Button("Open Messages") { setup.openMessages(for: candidate) }
-                    Button("Check again") { setup.checkMessages() }
-                }
-            }
-        }.padding(18).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(18).frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            .background(selected ? Color.blue.opacity(0.09) : .primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.blue.opacity(0.55) : .primary.opacity(0.12)))
+            .disabled(setup.checking || model.busy)
     }
 
     private func findSuggestions() async {
@@ -415,6 +438,12 @@ private struct OnboardingMessagesView: View {
             let contacts = try await model.onboardingContactSuggestions()
             guard !Task.isCancelled else { return }
             suggestions = Dictionary(uniqueKeysWithValues: choices.map { ($0, $0.contactSuggestions(in: contacts)) })
+            for choice in choices where proposed[choice] == nil && !changedSelection.contains(choice) {
+                let matches = suggestions[choice, default: []]
+                if let candidate = setup.candidate(for: choice) { proposed[choice] = candidate }
+                else if matches.count == 1 { proposed[choice] = matches[0] }
+                if proposed[choice] != nil && !setup.state.skipped.contains(choice) { included.insert(choice) }
+            }
         } catch {
             guard !Task.isCancelled else { return }
             model.contactStatus = error.localizedDescription
@@ -424,15 +453,15 @@ private struct OnboardingMessagesView: View {
 
 private struct OnboardingContactPicker: View {
     @ObservedObject var model: AppModel
-    @ObservedObject var setup: OnboardingController
     let choice: OnboardingChoice
+    let choose: (Agent) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Choose \(choice == .otherMessages ? "your agent" : choice.name)’s conversation").font(.title2.bold())
-            Text("Confirm the contact and address you already use. No message will be sent.")
+            Text("Choose the contact and address you already use, then confirm with Connect selected.")
                 .font(.callout).foregroundStyle(.secondary)
             TextField("Search contacts, phone or email", text: $query).textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Find onboarding contact")
@@ -447,9 +476,8 @@ private struct OnboardingContactPicker: View {
                                 Text(model.route(agent) == nil ? "No conversation yet" : "Existing conversation").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("Use") {
-                                Task { if await setup.use(agent, for: choice) { dismiss() } }
-                            }.accessibilityLabel("Use \(agent.name)").disabled(model.busy)
+                            Button("Choose") { choose(agent); dismiss() }
+                                .accessibilityLabel("Choose \(agent.name) contact").disabled(model.busy)
                         }.padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
                     }
                     if model.contactResults.isEmpty {
