@@ -267,6 +267,7 @@ private struct PermissionSourceAnchor: NSViewRepresentable {
 struct MessagesAccessRow: View {
     @ObservedObject var guide: MessagesAccessGuide
     let check: () -> Void
+    var showsExplanation = true
     var body: some View {
         let handedOff = guide.flow.stage == .guiding || guide.flow.stage == .waitingForAccess
         VStack(alignment: .leading, spacing: 10) {
@@ -280,8 +281,10 @@ struct MessagesAccessRow: View {
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Connect Messages").font(.headline)
-                        Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
-                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if showsExplanation {
+                            Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
                     if guide.flow.stage == .verified {

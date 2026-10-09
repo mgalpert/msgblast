@@ -2,7 +2,7 @@
 
 New installations choose agents from one multi-select grid. All tiles have the same dimensions, including Another Messages agent. The picker has no scrolling, category headings, help-to-choose link, or Set up later action. At least one selected agent must be ready for chat before the workspace opens.
 
-Onboarding shows primary headings and controls without explanatory subtitles or sending-status captions. Required Grok Bot routine instructions, contact addresses, installation/account status, errors, and accurate demo labels remain visible.
+Onboarding shows primary headings and controls without explanatory subtitles or sending-status captions. The Messages access card contains Connect Messages and Open Settings, with permission instructions in the visual Settings guide. The shared workspace and Discover card keep their explanatory text. Required Grok Bot routine instructions, contact addresses, installation/account status, errors, and accurate demo labels remain visible.
 
 ## Connection queue
 
