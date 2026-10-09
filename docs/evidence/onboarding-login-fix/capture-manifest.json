@@ -1,5 +1,5 @@
 {
-  "application_source": "45b3ff886791990b607b877795bf33364dfde0e1",
+  "application_source": "d9df26988fa96232fcd83519b97c8e48e7bdff38",
   "before_source": "ecbf3f9dce67ec05fbdf8e263c06b6042f064dbf",
   "capture": "Native macOS CUA",
   "video": "Edited screenshot sequence, 18 seconds; labels distinguish fixture from live Dev",
@@ -7,15 +7,17 @@
   "release_limit": "Live Messages/Contacts access not yet verified",
   "files": {
     "after-chooser.png": "07796afc4a4bc2982ce7e68534d57771889e372ce6015124cfaa7ccd1bc88669",
-    "after-feedback.png": "4fa2c6345d2baee6140d35b67d0d79ead2690a754aefc56b1cc28b92d00c3b86",
-    "after-messages.png": "71e89eb824ec8636042aedd27416d2d2dd5ea5e332a716aff0ed4458c23e64ce",
-    "after-muse.png": "6796ca0b5a91f56dbec413f536b69f77dd4e713c39c7b7f266063bb22002ff7c",
+    "after-feedback.png": "69daf66f838495b40affb8c940297a1cb8496ca3014c3532f59f32704e1a306b",
+    "after-messages.png": "1a6a5838449405e142807cef74a64b249a5d5e902779c4cc4ddad3d90a96435c",
+    "after-muse.png": "21de7394acf0c4e2fa8f26bb8a0522f10ed3393acd64c5f5ba762b45e2401417",
     "before-chooser.png": "543e4d21f9af29254ea81a46432461a4762d19ed47f7734561b2342c496c3ba0",
     "before-muse.png": "528fa30cd21bdd325b02f4a5810c5937889775f65d7cfadcb36fd649f1a51f60",
-    "live-dev-auto-next-step.png": "e2df36ec810d67d842073c9bc8dbbbc7a5dd5f100638f4b1bb029e9097a01623",
-    "live-dev-selected-agents.png": "7add18503fd65149736f9d936c43bc8e5c5f96e9a298849984738b912b7ac098",
-    "onboarding-workflow.mp4": "1caf8869d39817d20300372167b148b87c47cfff6d430bcc363da70161995748",
-    "signed-in-muse.png": "f4fe90ef9b36073fb3fa37c5376c0bef7f0b5645f483fe589d7ddf2c9c610ed7",
-    "signed-out-muse.png": "ee8c0bd238e619290db2e1ed8f22d75b9fae36419149fca43246fc0f746a015e"
-  }
+    "live-dev-auto-next-step.png": "7291fa597bfccb4519679f0c275b02069b085de33f849c6d6f1b75bef1b76d06",
+    "live-dev-selected-agents.png": "572a595a6e75bad80ec03dc4f505eee2c5eee38e89867ed2ad7c62239dc0fb81",
+    "messages-access-card.png": "bce9cdd761fa1438c7368482c080ff48776ded50c1cccd446521a93502d4b527",
+    "onboarding-workflow.mp4": "1c8a5db5b73ffebd95b6cd92f5201ab9471122dd85e5728019714a0b83e807ae",
+    "signed-in-muse.png": "2ec768e418ef135d206f2f642a81c803fe11ee51eb0b0c7ee8f30f4879f5ac9c",
+    "signed-out-muse.png": "9ad429747b328617dea0d6e09e50861a087be9ebfb8874940b1e5d5855277553"
+  },
+  "privacy_badge_scope": "Local contact/conversation matching, using CNContactStore and read-only chat.db."
 }
