@@ -4,6 +4,22 @@ import WebKit
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testWorkspaceReloadPreservesNewProvidersAlongsideComparisonDrafts() throws {
+        var state = WebWorkspaceState()
+        let comparison = UUID().uuidString
+        state.dotsURL = URL(string: "https://chatgpt.com/dots/home")!
+        state.savedAvatar = Data([1, 2, 3])
+        state.grokBotRememberedConnection = false
+        state.webDrafts[comparison] = "Keep this private web draft"
+        state.localDrafts[comparison] = "Keep this native draft"
+        let restored = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(restored.dotsURL, state.dotsURL)
+        XCTAssertEqual(restored.savedAvatar, state.savedAvatar)
+        XCTAssertEqual(restored.grokBotRememberedConnection, false)
+        XCTAssertEqual(restored.webDrafts, state.webDrafts)
+        XCTAssertEqual(restored.localDrafts, state.localDrafts)
+    }
+
     func testUnconfirmedWebSubmissionsNeverShowAnAttemptBanner() {
         for provider in WebProvider.webDefaults {
             XCTAssertFalse(WebSendStatus.uncertain.showsAttemptBanner(for: provider), provider.name)
@@ -67,16 +83,20 @@ final class WebServiceTests: XCTestCase {
         XCTAssertNil(session.error, "New comparison must invalidate an older reopen's timeout")
     }
 
-    func testSwitchingComparisonPreservesFreshPageDraft() async throws {
+    func testSwitchingComparisonPreservesDraftInItsOriginalPage() async throws {
         let session = try makeSession()
-        session.connect()
-        try await waitFor { session.snapshot.ready }
-        let first = await session.send("First comparison", comparisonID: UUID())
-        _ = try await session.webView.callAsyncJavaScript("document.querySelector('textarea').value = 'Keep this draft'", arguments: [:], in: nil, contentWorld: .page)
+        session.connect(); try await waitFor { session.snapshot.ready }
+        let firstID = UUID()
+        let first = await session.send("First comparison", comparisonID: firstID)
+        let originalPage = session.webView
+        _ = try await originalPage.callAsyncJavaScript("document.querySelector('textarea').value = 'Keep this draft'", arguments: [:], in: nil, contentWorld: .page)
         await session.openComparison(UUID())
+        XCTAssertFalse(session.webView === originalPage)
+        XCTAssertEqual(session.snapshot.draft, "")
+        await session.openComparison(firstID)
+        XCTAssertTrue(session.webView === originalPage)
         XCTAssertEqual(session.webView.url, first?.conversationURL)
         XCTAssertEqual(session.snapshot.draft, "Keep this draft")
-        XCTAssertNotNil(session.error)
     }
 
     func testInvalidSavedConversationNeverStartsAnotherChat() async throws {

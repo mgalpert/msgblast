@@ -1,0 +1,151 @@
+{
+  "source_revision": "a8ae8e96e34d05c5a929fd231fa8271bebad467e",
+  "base_main_revision": "d4e20144612e313b4c2f0b623d68c12c547cba85",
+  "capture_date": "2026-10-08",
+  "app_variant": "isolated blue msgblast Demo Review",
+  "app_version": "0.6.6 (1), local preview",
+  "fixture": true,
+  "screenshots": [
+    {
+      "name": "01-shared-send",
+      "label": "One shared send to Claude and Grok",
+      "captured_at": "2026-10-08T23:00:39.053Z"
+    },
+    {
+      "name": "02-a-replies",
+      "label": "Both models reply in comparison A",
+      "captured_at": "2026-10-08T23:00:53.246Z"
+    },
+    {
+      "name": "03-a-followup",
+      "label": "Shared follow-up stays in the original chats",
+      "captured_at": "2026-10-08T23:01:15.494Z"
+    },
+    {
+      "name": "04-a-drafts",
+      "label": "Private and shared drafts stay with comparison A",
+      "captured_at": "2026-10-08T23:02:02.052Z"
+    },
+    {
+      "name": "05-b-replies",
+      "label": "Comparison B has its own chats and replies",
+      "captured_at": "2026-10-08T23:02:36.774Z"
+    },
+    {
+      "name": "06-a-restored",
+      "label": "Returning to A restores history and both unsent drafts",
+      "captured_at": "2026-10-08T23:02:58.469Z"
+    },
+    {
+      "name": "07-cold-model-prepared",
+      "label": "A cold model opens first; click its recipient again when ready",
+      "captured_at": "2026-10-08T23:53:55.086Z"
+    },
+    {
+      "name": "08-plain-new-model-context",
+      "label": "New model receives the ask and shared follow-up, without added instructions",
+      "captured_at": "2026-10-08T23:54:17.751Z"
+    },
+    {
+      "name": "09-feedback-before",
+      "label": "Feedback note before a local synthetic submission",
+      "captured_at": "2026-10-08T23:54:50.256Z"
+    },
+    {
+      "name": "10-feedback-receipt",
+      "label": "Visible fixed-footer receipt from localhost HTTP 201 fixture",
+      "captured_at": "2026-10-08T23:55:13.754Z"
+    },
+    {
+      "name": "11-reporter-credit",
+      "label": "0.6.6 notes thank schultetrevor for the report and recording",
+      "captured_at": "2026-10-08T23:55:45.267Z"
+    }
+  ],
+  "video": {
+    "file": "walkthrough.mp4",
+    "duration_seconds": 33,
+    "format": "H.264 MP4",
+    "timing": "11 actual UI screenshots with three-second holds; sampled states, edited timing; not a continuous recording or latency measurement"
+  },
+  "checks": {
+    "native_tests": 242,
+    "native_failures": 0,
+    "app_controller_and_lifecycle_fixtures": "passed",
+    "a_to_b_to_a": "original histories and private/shared drafts retained",
+    "new_model_payload": "Suggest a short hiking route.\n\nKeep it under two hours.",
+    "private_draft_excluded_from_join": true,
+    "chat_count_strip_absent": true,
+    "persistent_draft_warning_absent": true,
+    "shared_send_disabled_help": "Finish or clear the draft in Grok, or deselect Grok to send to the other agents.",
+    "feedback_receipt": "visible in fixed footer; matching HTTP 201 receipt from localhost fixture",
+    "reporter_credit": "schultetrevor in 0.6.6 notes",
+    "fixture_send_ledger": {
+      "claude": 3,
+      "grok": 3,
+      "chatgpt": 1
+    },
+    "fixture_native_recipients": 0,
+    "live_model_requests": 0,
+    "production_feedback_submissions": 0
+  },
+  "limitations": [
+    "Synthetic prompts, local HTML, and simulated replies; this capture does not establish live provider delivery.",
+    "Cold add-model setup required a second recipient click after the page became ready; signing in or loading alone never queued a send.",
+    "The feedback endpoint was http://127.0.0.1:8766/api/feedback; no report was written to production R2.",
+    "Native macOS UI; mobile screenshots do not apply.",
+    "The user recording and R2 report contents are excluded."
+  ],
+  "source_fingerprints": {
+    "msgblast/App/AppModel.swift": "3f4bcbe2fce8615065b709da3b3a8101a432d7707382f17bd1cbb7e1dfc26eba",
+    "msgblast/App/AppUpdater.swift": "13f170c76fbeefd98f0a9e31c47e2fd10350e3e1a3c1e462a26c399c76e36dd8",
+    "msgblast/App/AttachmentDelivery.swift": "8af59b2eb4fe283f9ed09aaa74e09916f2a54e25f9ef0b983b7cbdaf64fd438e",
+    "msgblast/App/FeedbackFacts.swift": "9d5ea7224bb110ca5d1832513414d7b9f1cdf024ef77739093c4b6c9089cc31d",
+    "msgblast/App/PersonalAgentController.swift": "395bd6c3137c7df89224f2f6bd93c72cd3c7fe51edce3e2ea97e3d2cd437b4d9",
+    "msgblast/App/UpdateProbe.swift": "e024b8f136e61175ffafda1e0c511f91b554f61e241eb46d3f993da730fd390e",
+    "msgblast/App/msgblastApp.swift": "6d62f4a95d575e88d3dbef6c8d517d750decd812cb5082c82bd71c43ea0dfd08",
+    "msgblast/Contacts/ContactSearch.swift": "ac55b9bc8b2d9fd9c9653382aaf37c04a0dcc30b9c56dfff3f8c02e1eca7462f",
+    "msgblast/Core/AttachmentImport.swift": "761d330c74811f3633eb262b64372966aa5665faa3591ec94dc518a255af4cd1",
+    "msgblast/Core/AttachmentTextView.swift": "ddb56b70009078357fece5f70e5857e165ec2704a776c5d94cef543f53243d8e",
+    "msgblast/Core/Attachments.swift": "7e2424deec29a0552da68d60f99153423368343655e8a41dcaabcb00a157e3b6",
+    "msgblast/Core/ComparisonSummary.swift": "43d44bf7c8d2554459f739d987e8a5d204bbf6262e858428e64c60401f6d3f2e",
+    "msgblast/Core/DiagnosticReport.swift": "89dfdc7919121a2480b270303dcca94a53af714d8c9b40acc727efe601556ad3",
+    "msgblast/Core/DiscoverCatalog.swift": "5ae7b2215f7ea50231c262bb7c359164000cfe2ebb322771a962753d76fb77bd",
+    "msgblast/Core/FeedbackSubmission.swift": "833f5d56d26d65402603476ea49104c1a14c76c08f9d93eab66a29214350acf4",
+    "msgblast/Core/GrokBotCallbackReceiver.swift": "b9026e67d0354f9a3986db47f78288ec7ca6c4906485704c3a98dc3a371c3fb5",
+    "msgblast/Core/GrokBotCredentialVault.swift": "3fc64d70d8d6ca904f542f02ad94d45af0de6bb210f3f307ad576ad48836c72b",
+    "msgblast/Core/GrokBotService.swift": "9e77b8f5c46c3613ea0ec9623f8695cabb307ea087bbf554b4431a9abbb41710",
+    "msgblast/Core/GrokBotTunnel.swift": "1d58bc25337e6107ae25764cb765b99f9a7b7b5d3d659b12c8bfdddbc8bbcf28",
+    "msgblast/Core/InstallationLocation.swift": "0124afeae4155261400918b2dcf44b2707c2f2d6ac71258e634d89fabb63b184",
+    "msgblast/Core/LocalAgentDetection.swift": "ebb09c0ea0581017b4bb3995adb165c1704a14b708568d916b08de647b56c595",
+    "msgblast/Core/LocalPersonalAgent.swift": "98a4b03a421f97215425bc4ad6cfee2e58336eb32820ca92a820fe93346b9e60",
+    "msgblast/Core/MessagesDatabase.swift": "8f8899f730a204529e3eb9d494cec0c112760e3bc4674ea8842fb2cc120b27b5",
+    "msgblast/Core/Models.swift": "53352951ef511f456977d07233bac8ccabcbc09197f22bc0a0f5ac993f3f27ae",
+    "msgblast/Core/MusePageScript.swift": "3f6ad188f19c42c73af300b8de52f0076048a6ae022d84a179957fe2b190cada",
+    "msgblast/Core/PermissionHandoff.swift": "2d38af33027dd4b2ed42e6362440e5e979898e8ff99995d8f31977c95994dfa5",
+    "msgblast/Core/ReleaseHistory.swift": "4f0389df70e6f402a166b820620a6253a26e969489d669747e7d26edfd273280",
+    "msgblast/Core/Routing.swift": "68d99857d1046a325cfb5100e234463f7d9c4d826ba018fad4f5d9cabe43d40a",
+    "msgblast/Core/UpdateConfiguration.swift": "ec0d9e55fadeeadc01e4de885c657c0f86182f349f7bc95786773738fec7d513",
+    "msgblast/Core/UpdateTermination.swift": "14d7206349b054461605288ec36b3195d8e3d055ab15e9fd2f1a9d536b1dfcf8",
+    "msgblast/Core/WebAgentSession.swift": "1047743543e0f20fed19040ddc786b9ae971066757608d312c754bef4f652441",
+    "msgblast/Core/WebAgents.swift": "41fef9ca22d49d2b6d5e0f5e725eeb695952e0ba37d45d206ac46ccbff38e252",
+    "msgblast/Core/WebPageScript.swift": "ee2b2036b95d92dcb6b2d2a36ea41ccf737013edce62c9eca467b0534b23e98d",
+    "msgblast/Core/WebProvider.swift": "dc8c75f3ec34e946c6479fb145baec2620411a3f570a54808fd893e339ebf630",
+    "msgblast/Core/WebServices.swift": "347a6b3e366acd74087a4df357763d03e3975b72c3e60262fc022e8046dfc342",
+    "msgblast/Messages/MessageSender.swift": "66093bcdf945641125e23699c37abe398a559486fc59d95dbf0e821fd6563f10",
+    "msgblast/Permissions/MessagesAccessGuide.swift": "fe7f15d25ba5be99b60cc28f9099da4b2dd751b6e8d5ba5a767204bf6f45f330",
+    "msgblast/Storage/LocalStore.swift": "6759f614bbb6a48d92755a549ba8eef5ffd513fc60d3df4c69b824d99114b914",
+    "msgblast/Windows/AttachmentViews.swift": "6234d5abf4819574c86db55507fce9f1aa42c919b7d9c4e23e984dfb3eeb98ce",
+    "msgblast/Windows/DiscoverView.swift": "e0f37bd4f18bc1c2436bd1ce6bcfc066104cfb8250134da30412c08c1abff48c",
+    "msgblast/Windows/FeedbackView.swift": "55fc7c55b5c0cd9a98a3bddc7708aa0b064b639e7529204f8df28126ebe7f3ae",
+    "msgblast/Windows/GrokBotSettingsView.swift": "cbd52417eed8c83584e436bd70738c5ee2716b39eac5d9f617ca90a21ab688c8",
+    "msgblast/Windows/InstallationView.swift": "12ce477190f96d4ab83e6a1b07ad2389d84cb1bcd0d513cadf448bf0de6765ce",
+    "msgblast/Windows/MessageEditor.swift": "6bb9ebd9a773ddb0030fb29ca5608935db120ab41447b6382b5ab58b09afcd08",
+    "msgblast/Windows/PersonalAgentView.swift": "548fec62cb49eeb9e6cc18476045f0343046ec4e2bc1454932ff3414a3a360ea",
+    "msgblast/Windows/RichMessageViews.swift": "8faae47a404fe27ead3d5171a2c3830898903aa1ef672e21bff4afc706b7d7d4",
+    "msgblast/Windows/Views.swift": "0307f07672e505faacea6360e2100339f78c89644efb5a39d6f6c9c039f940b7",
+    "msgblast/Windows/WebServicesView.swift": "65b7c6a8b2f9fd20e7142f0d476d5f6f20effcde2084881795766430e040a5c7",
+    "msgblast/Windows/WhatsNewView.swift": "51afdf2257d5eb9874cff9de4a4f7fc97ee07396318641bf16433190c0c4a4ef",
+    "msgblast/Windows/WindowCoordinator.swift": "cbdc90434caaef20c5cb0a79690a7f6e6e4af91eaf74eb11d63897d81bdcc9a7"
+  }
+}

@@ -12,10 +12,12 @@ final class CoreTests: XCTestCase {
         comparison.followUps = [shared, privateMessage]
         let context = comparison.joiningContext()
         XCTAssertEqual(context.map(\.text), ["Original ask", "Shared follow-up"])
+        XCTAssertEqual(comparison.joiningPrompt(), "Original ask\n\nShared follow-up")
         comparison.sharedContext = Array(context.dropFirst())
         comparison.members.append(Member(agentID: UUID(), name: "C", chat: Chat(id: "C", handle: "C", lastActivity: 0)))
         let restored = try JSONDecoder().decode(Comparison.self, from: JSONEncoder().encode(comparison))
         XCTAssertEqual(restored.joiningContext().map(\.text), ["Original ask", "Shared follow-up"])
+        XCTAssertEqual(restored.joiningPrompt(), "Original ask\n\nShared follow-up")
     }
 
     func testUnmarkedMultiProviderLegacyHistoryIsExcluded() throws {
@@ -121,7 +123,7 @@ final class CoreTests: XCTestCase {
         let parts = restored.joiningPayload().parts
         XCTAssertEqual(parts.compactMap(\.text), ["Original", "A", "B"])
         XCTAssertEqual(parts.compactMap(\.attachment), [fileA, fileB])
-        XCTAssertTrue(restored.joiningPrompt().contains("Follow-up 1:\nA\n\nFollow-up 2:\nB"))
+        XCTAssertEqual(restored.joiningPrompt(), "Original\n\nA\n\nB")
     }
 
     func testDelayedBroadcastCompletionMarksOnlyItsExactFollowUp() {

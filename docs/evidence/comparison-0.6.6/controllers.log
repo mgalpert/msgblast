@@ -1,0 +1,19 @@
+PASS: LocalStore loads healthy comparisons despite a referenced corrupt provider, preserves that file, and retries successfully after repair.
+PASS: actual AppModel switches independent A/B shared drafts and persists both across LocalStore reload.
+PASS: attachment-only and text-plus-attachment native follow-ups submit their comparison drafts; native retry does not resend Muse. Controlled local fixture inputs.
+PASS: PR #27's private Messages pane entry point stays private with one original recipient; adding another agent sends only original + shared follow-up. Actual AppModel, isolated simulated Messages.
+PASS: a new web agent receives only the original ask and shared follow-ups, in order, without generated instructions or labels. Local fixture; no real send.
+PASS: partial-failure receipt fixture -> B sent through AppModel -> A retried through AppModel -> new agent receives Original,A,B once, in original order. No real sends.
+PASS: deterministic delayed web completion preserves the exact broadcast UUID; private send is blocked with draft retained, injected later private ledger remains unmarked, and a new agent receives only Original + Shared. Actual AgentBroadcast + AppModel with simulated transport.
+PASS: actual AppModel + WindowCoordinator restore comparison ID, native recipient, provider selection, saved website URLs including the ongoing Dots thread and separate Codex CLI/Claude Code sessions; disabled archived CLI remains readable without sending. All sends use local fixtures.
+/Users/contains/.codex/worktrees/comparison-history-isolation/msgblast/scripts/fixtures/web_broadcast_lifecycle.swift:70:20: warning: 'init(dictionary:)' is deprecated: Properties that depend on the system or application version are not supported when used with this initializer. The designated initializer is available in SUAppcastItem+Private.h. Please first explore other APIs or contact us to describe your use case. [#DeprecatedDeclaration]
+68 |         print("PASS: ordinary idle web Quit waits for the draft flush; a failed flush cancels Quit before shutdown. Controlled replies; no actual app termination.")
+69 |         let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
+70 |         let item = SUAppcastItem(dictionary: ["title":"Local fixture", "enclosure":["url":"https://example.invalid/fixture.zip","sparkle:version":"2"]])!
+   |                    `- warning: 'init(dictionary:)' is deprecated: Properties that depend on the system or application version are not supported when used with this initializer. The designated initializer is available in SUAppcastItem+Private.h. Please first explore other APIs or contact us to describe your use case. [#DeprecatedDeclaration]
+71 |         let model = AppModel(), lifecycle = AppLifecycle()
+72 |         lifecycle.configure(model: model)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+PASS: ordinary idle web Quit waits for the draft flush; a failed flush cancels Quit before shutdown. Controlled replies; no actual app termination.
+PASS: web-only broadcast defers quit; update waits for web and native sends, resumes exactly once. No updater started, downloads, or app termination.

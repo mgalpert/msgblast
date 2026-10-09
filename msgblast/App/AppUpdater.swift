@@ -120,6 +120,8 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     private var pendingInstall: (() -> Void)?
     #if DEBUG
     var didPostponeRelaunch: (() -> Void)?
+    var terminationReplyHandler: ((Bool) -> Void)?
+    var saveErrorHandler: ((String) -> Void)?
     #endif
 
     func observeUpdates(with updater: AppUpdater) { updateUI = updater }
@@ -175,9 +177,11 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         guard let model else { return .terminateNow }
         switch termination.request(isBusy: model.busy || model.webBroadcastBusy, persist: { try model.saveForTermination() }) {
         case .allowed:
-            model.personalAgent.beginShutdown()
-            model.webAgents.beginShutdown()
-            guard !model.personalAgent.running.isEmpty || model.webAgents.hasNativeRequests else { return .terminateNow }
+            guard !model.personalAgent.running.isEmpty || model.webAgents.hasNativeRequests || model.webAgents.hasConnectedWebSessions else {
+                model.personalAgent.beginShutdown()
+                model.webAgents.beginShutdown()
+                return .terminateNow
+            }
             replyToTermination(sender, allowed: true)
             return .terminateLater
         case .deferred: return .terminateLater
@@ -188,18 +192,33 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
     }
     private func replyToTermination(_ sender: NSApplication, allowed: Bool) {
         guard allowed, let model else {
-            sender.reply(toApplicationShouldTerminate: false)
+            completeTerminationReply(sender, allowed: false)
             return
         }
-        model.personalAgent.beginShutdown()
-        model.webAgents.beginShutdown()
         Task {
+            do { try await model.webAgents.saveBrowserDrafts() }
+            catch {
+                showSaveError("Your browser drafts could not be saved: \(error.localizedDescription)")
+                completeTerminationReply(sender, allowed: false)
+                return
+            }
+            model.personalAgent.beginShutdown()
+            model.webAgents.beginShutdown()
             await model.personalAgent.cancelAndWait()
             await model.webAgents.cancelAndWait()
-            sender.reply(toApplicationShouldTerminate: true)
+            completeTerminationReply(sender, allowed: true)
         }
     }
+    private func completeTerminationReply(_ sender: NSApplication, allowed: Bool) {
+        #if DEBUG
+        if let terminationReplyHandler { terminationReplyHandler(allowed); return }
+        #endif
+        sender.reply(toApplicationShouldTerminate: allowed)
+    }
     private func showSaveError(_ message: String) {
+        #if DEBUG
+        if let saveErrorHandler { saveErrorHandler(message); return }
+        #endif
         model?.error = message
         let alert = NSAlert()
         alert.messageText = "msgblast could not quit safely"

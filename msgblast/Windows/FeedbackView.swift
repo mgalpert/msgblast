@@ -20,7 +20,7 @@ final class FeedbackSession: ObservableObject {
     }
 
     var canSend: Bool { canExport && !isSending && sentRequest != request }
-    var sendTitle: String { isSending ? "Sending…" : "Send feedback" }
+    var sendTitle: String { isSending ? "Sending…" : sentRequest == request ? "Feedback sent" : "Send feedback" }
 
     init(facts: DiagnosticFacts) { self.facts = facts }
 
@@ -152,8 +152,14 @@ struct FeedbackView: View {
                     .disabled(session.isSending)
             }
             Divider()
-            exportButtons
-                .padding(16)
+            VStack(alignment: .leading, spacing: 12) {
+                if let message = session.message {
+                    Text(message).font(.callout).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("Feedback status")
+                        .accessibilityValue(message)
+                }
+                exportButtons
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -204,9 +210,6 @@ struct FeedbackView: View {
             } else {
                 Text("A diagnostic report is not included.")
                     .font(.callout)
-            }
-            if let message = session.message {
-                Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

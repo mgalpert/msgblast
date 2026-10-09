@@ -14,7 +14,16 @@ import msgblastCore
 }
 @MainActor final class FakeWebAgents {
     let hasNativeRequests = false
-    func beginShutdown() {}
+    var hasConnectedWebSessions = false
+    var flushed = false
+    var shutdownStarted = false
+    var failFlush = false
+    func saveBrowserDrafts() async throws {
+        try await Task.sleep(for: .milliseconds(60))
+        if failFlush { throw NSError(domain: "IsolatedDraftStorage", code: 1) }
+        flushed = true
+    }
+    func beginShutdown() { shutdownStarted = true }
     func cancelAndWait() async {}
 }
 @MainActor final class FakePersonalAgent {
@@ -32,6 +41,31 @@ import msgblastCore
             precondition(lifecycle.applicationShouldTerminate(application) == .terminateLater)
             // Leave the controlled broadcast busy; no real quit is requested or completed.
         }
+        do {
+            let model = AppModel(), lifecycle = AppLifecycle()
+            lifecycle.configure(model: model)
+            model.webAgents.hasConnectedWebSessions = true
+            var reply: Bool?
+            lifecycle.terminationReplyHandler = { reply = $0; precondition(model.webAgents.flushed) }
+            precondition(lifecycle.applicationShouldTerminate(application) == .terminateLater)
+            precondition(reply == nil && !model.webAgents.flushed)
+            for _ in 0..<50 where reply == nil { try await Task.sleep(for: .milliseconds(10)) }
+            precondition(reply == true && model.webAgents.shutdownStarted)
+        }
+        do {
+            let model = AppModel(), lifecycle = AppLifecycle()
+            lifecycle.configure(model: model)
+            model.webAgents.hasConnectedWebSessions = true
+            model.webAgents.failFlush = true
+            var reply: Bool?, displayedError = false
+            lifecycle.terminationReplyHandler = { reply = $0 }
+            lifecycle.saveErrorHandler = { _ in displayedError = true }
+            precondition(lifecycle.applicationShouldTerminate(application) == .terminateLater)
+            for _ in 0..<50 where reply == nil { try await Task.sleep(for: .milliseconds(10)) }
+            precondition(reply == false && displayedError)
+            precondition(!model.webAgents.shutdownStarted, "A failed save must leave the app usable")
+        }
+        print("PASS: ordinary idle web Quit waits for the draft flush; a failed flush cancels Quit before shutdown. Controlled replies; no actual app termination.")
         let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
         let item = SUAppcastItem(dictionary: ["title":"Local fixture", "enclosure":["url":"https://example.invalid/fixture.zip","sparkle:version":"2"]])!
         let model = AppModel(), lifecycle = AppLifecycle()

@@ -1,0 +1,40 @@
+{
+  "source_revision": "b3b4eb54f7b400417248b54181fc00b89b6dd0b2",
+  "providers": {
+    "muse": {
+      "a_requests": 2,
+      "b_requests": 1,
+      "all_confirmed": true,
+      "distinct_saved_conversations": true
+    },
+    "chatgpt": {
+      "a_requests": 2,
+      "b_requests": 1,
+      "all_confirmed": true,
+      "distinct_saved_conversations": true
+    },
+    "claude": {
+      "a_requests": 2,
+      "b_requests": 1,
+      "all_confirmed": true,
+      "distinct_saved_conversations": true
+    },
+    "grok": {
+      "a_requests": 2,
+      "b_requests": 1,
+      "all_confirmed": true,
+      "distinct_saved_conversations": true
+    }
+  },
+  "claude_restart_draft_saved": true,
+  "b_shared_draft_saved": true,
+  "web_mode": "live",
+  "fixture_mode": false,
+  "history_and_drafts_after_relaunch_verified_in_native_ui": true,
+  "chatgpt_first_send_recovery_used": true,
+  "cold_b_first_click_prepared_without_sending": true,
+  "live_inflight_switch_observed": false,
+  "messages_access_granted": false,
+  "original_dev_bundle_modified_by_this_test": false,
+  "existing_dev_running_at_end": true
+}

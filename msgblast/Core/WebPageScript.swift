@@ -88,11 +88,11 @@ struct WebPageScript {
             else if (modal) reason=`Finish the open dialog in ${config.name} first.`;
             else if (generating) reason=`Wait for ${config.name} to finish its current reply.`;
             else if (!input || input.disabled || input.readOnly || input.getAttribute('aria-disabled')==='true') reason=`Waiting for ${config.name}’s message field.`;
-            return {url:conversationLocation(),ready:!reason,signedIn,reason:reason||`${config.name} chat ready`,draft:draft(input),...(config.provider==='dots'?{signedOut:login && !all(config.account).length}:{})};
+            return {url:conversationLocation(),ready:!reason,signedIn,reason:reason||`${config.name} chat ready`,draft:draft(input),draftAvailable:!!input,...(config.provider==='dots'?{signedOut:login && !all(config.account).length}:{})};
         };
         const submissionStatus = () => {
             const current=status();
-            if (!current.ready || current.url!==expectedURL || current.draft!==text || observation.interrupted)
+            if (!current.ready || current.url!==expectedURL || current.draft!==preparedDraft || observation.interrupted)
                 return {ready:false,retryable:false,reason:`${config.name} changed during preparation. Review its draft; nothing was clicked.`};
             const candidates=all(config.send),send=candidates.length===1?candidates[0]:null;
             const ready=!!send && !send.disabled && send.getAttribute('aria-disabled')!=='true';
@@ -189,7 +189,11 @@ struct WebPageScript {
             if (!document.execCommand('insertText',false,text)) return {ok:false,reason:'The page did not accept text. Use its composer directly.'};
         }
         observation.interrupted=false;
-        return {ok:true,messageIDs:baseline.map(m=>m.id),messages:baseline,existingConversationPaths};
+        // innerText can collapse repeated spaces even though the editing operation
+        // accepted them. Check the accepted rendering, then guard that exact draft.
+        const preparedDraft=draft(input);
+        if (normalized(preparedDraft)!==normalized(text)) return {ok:false,reason:'The page changed the inserted text. Review its draft.'};
+        return {ok:true,preparedDraft,messageIDs:baseline.map(m=>m.id),messages:baseline,existingConversationPaths};
         """#
     }
     var sendReadiness: String { helpers + "\nreturn submissionStatus();" }
@@ -223,7 +227,8 @@ struct WebPageScript {
         <div id="login" hidden><p>Sign in to continue.</p><button data-testid="login-button" \(login) onclick="chat.hidden=false;login.hidden=true">Sign in to fixture</button></div>
         <script>
         const provider='\(provider.rawValue)',input=document.querySelector('textarea,[contenteditable]'),send=document.getElementById('fixture-send');
-        const fixtureThreads = {},newPath='\(provider.newChatURL.path)';
+        const fixtureThreads = JSON.parse(localStorage.getItem('msgblastFixtureThreads')||'{}'),newPath='\(provider.newChatURL.path)';
+        function saveFixtureThread(){if(location.pathname!==newPath){fixtureThreads[location.pathname]=document.getElementById('transcript').innerHTML;localStorage.setItem('msgblastFixtureThreads',JSON.stringify(fixtureThreads));}}
         function updateFixtureTitle(){document.getElementById('thread-title').textContent=location.pathname===newPath?'New \(provider.name) chat':'\(provider.name) chat · '+location.pathname.slice(-6);}
         function navigateFixtureThread(url){
           fixtureThreads[location.pathname]=document.getElementById('transcript').innerHTML;
@@ -232,6 +237,7 @@ struct WebPageScript {
           updateFixtureTitle();
         }
         if(provider==='dots' && location.pathname===newPath)history.replaceState({},'', '/dots/'+crypto.randomUUID());
+        document.getElementById('transcript').innerHTML=fixtureThreads[location.pathname]||'';
         updateFixtureTitle();
         function changeFixtureAvatar(){document.querySelector('#fixture-dot-avatar rect').setAttribute('fill','#8667df');}
         const value=()=>input.tagName==='TEXTAREA'?input.value:input.innerText;
@@ -242,9 +248,9 @@ struct WebPageScript {
         if(provider==='chatgpt'){a.dataset.messageAuthorRole=role;a.dataset.messageId=crypto.randomUUID();}
         if(provider==='claude'){a.dataset.testid=role==='user'?'user-message':'assistant-message';}
         if(provider==='grok'){a.dataset.messageRole=role;a.dataset.messageId=crypto.randomUUID();a.className='message-bubble';}
-        a.textContent=text;document.getElementById('transcript').append(a);a.scrollIntoView({block:'nearest'});}
+        a.textContent=text;document.getElementById('transcript').append(a);a.scrollIntoView({block:'nearest'});saveFixtureThread();}
         add('user',text);if(input.tagName==='TEXTAREA')input.value='';else input.textContent='';send.disabled=true;
-        if(location.pathname===newPath){history.replaceState(null,'',(provider==='claude'?'/chat/':'/c/')+crypto.randomUUID());updateFixtureTitle();}
+        if(location.pathname===newPath){history.replaceState(null,'',(provider==='claude'?'/chat/':'/c/')+crypto.randomUUID());updateFixtureTitle();saveFixtureThread();}
         setTimeout(()=>add('assistant','\(provider.name) fixture reply: '+text),350);});
         </script></body></html>
         """

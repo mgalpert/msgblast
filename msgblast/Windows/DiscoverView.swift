@@ -44,6 +44,8 @@ struct DiscoverView: View {
                     Text("Find an agent or add someone you already know.").foregroundStyle(.secondary)
                 }
                 DiscoverAccessView(model: model)
+                Text("Agents in the demo, such as Instinct, are examples. To use your own messaging agents, start a Messages chat with their phone number or email, then connect Messages and Contacts to select or add the existing chat below. Selecting Grok in Agents opens its website; Grok Bot is a separate service.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 12) {
                     HStack(spacing: 9) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)

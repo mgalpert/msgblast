@@ -1,0 +1,16 @@
+{
+  "msgblast/App/AppModel.swift": "3f4bcbe2fce8615065b709da3b3a8101a432d7707382f17bd1cbb7e1dfc26eba",
+  "msgblast/App/AppUpdater.swift": "13f170c76fbeefd98f0a9e31c47e2fd10350e3e1a3c1e462a26c399c76e36dd8",
+  "msgblast/Core/Models.swift": "929f76dd2cceb6272ba1d627fb17cd943d3697d3c269610b4b337f9c7ad91570",
+  "msgblast/Core/MusePageScript.swift": "3f6ad188f19c42c73af300b8de52f0076048a6ae022d84a179957fe2b190cada",
+  "msgblast/Core/WebAgentSession.swift": "c25cce000e4d9617088b71530415f9dc4d9a6faaa029d6343a45f62608d7c787",
+  "msgblast/Core/WebAgents.swift": "94091c0a6b75868f9a9b8a57e1f9285f0a329e0fe01429190344ffafc1f4c2f5",
+  "msgblast/Core/WebPageScript.swift": "767af9ca4f257073eedcb832561bc26996763823f27b6fdea10a46bd720d6499",
+  "msgblast/Core/WebServices.swift": "84fe6eb7f4ad875ee138c87c6e71ef3c9052606e2456d5b189838599207a7e73",
+  "msgblast/Windows/Views.swift": "b2b562fbd9e7f56f39f7facb037d76f870e4f20651a56ac73d232c8a9178e87f",
+  "msgblast/Windows/WebServicesView.swift": "52db55edadda7c89835b3fa9a6af79cdb00d9166587e3fb3d4816a13cdbd0800",
+  "msgblastTests/MultiWebAgentTests.swift": "c647b887af146053c0c42e89b68aba8debc3d23d3528edcaee38182e319aa3cd",
+  "msgblastTests/WebServiceTests.swift": "e4c50218fd8d052363d29d759513ba9a3453db6a3201a8f92bae6a57a8f3b8ac",
+  "scripts/fixtures/web_broadcast_lifecycle.swift": "9b760a0c6b086e3ebef0670a705ed818ecd78de7ef1e846c5d76827cefb122d1",
+  "scripts/fixtures/web_comparison_model.swift": "373b4f7ebab06aac468116f6da5900feb18ceb7ff8bda8a3f540fcb9148bad04"
+}

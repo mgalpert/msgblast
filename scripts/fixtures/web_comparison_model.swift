@@ -82,6 +82,18 @@ import msgblastCore
                 precondition(firstResults[session.provider]?.conversationURL == secondResults[session.provider]?.conversationURL)
             } else { precondition(firstResults[session.provider]?.conversationURL != secondResults[session.provider]?.conversationURL) }
         }
+        model.setSharedDraft("Shared draft for B")
+        model.openWebComparison(first)
+        model.setSharedDraft("Shared draft for A")
+        model.openWebComparison(second)
+        precondition(model.state.draft == "Shared draft for B")
+        model.openWebComparison(first)
+        precondition(model.state.draft == "Shared draft for A")
+        let restoredDrafts = try model.local.load()
+        precondition(restoredDrafts.workspaceDrafts?[first.uuidString] == "Shared draft for A")
+        precondition(restoredDrafts.workspaceDrafts?[second.uuidString] == "Shared draft for B")
+        model.setSharedDraft("")
+        print("PASS: actual AppModel switches independent A/B shared drafts and persists both across LocalStore reload.")
         model.coordinator?.open(first)
         try await waitUntil { model.webAgents.availableSessions.allSatisfy { session in
             if session.provider.personalAgentProvider != nil {
@@ -172,6 +184,16 @@ import msgblastCore
         let thirdMember = ordered.members.first { $0.id == third.id }!
         precondition(model.transcript(ordered, member: thirdMember).filter(\.outgoing).map(\.text) == ["Chronology original", "Shared A", "Shared B"])
         precondition(ordered.joiningContext().dropFirst().map(\.followUpID) == [earlier.id, ordered.followUps[1].id])
+        let webJoin = WebAgentSession(provider: .grok, storageURL: migrationDirectory.appendingPathComponent("plain-join.json"), fixture: true)
+        webJoin.connect()
+        try await waitUntil { webJoin.snapshot.ready }
+        let joinedPrompt = ordered.joiningPrompt()
+        precondition(joinedPrompt == "Chronology original\n\nShared A\n\nShared B")
+        let joinedAttempt = await webJoin.send(joinedPrompt, comparisonID: orderID)
+        precondition(joinedAttempt?.status == .observed)
+        let renderedJoin = try await webJoin.webView.callAsyncJavaScript("return document.querySelector('#transcript article').textContent", arguments: [:], in: nil, contentWorld: .page) as? String
+        precondition(renderedJoin == joinedPrompt)
+        print("PASS: a new web agent receives only the original ask and shared follow-ups, in order, without generated instructions or labels. Local fixture; no real send.")
         print("PASS: partial-failure receipt fixture -> B sent through AppModel -> A retried through AppModel -> new agent receives Original,A,B once, in original order. No real sends.")
         model.state.selection = [recipient.id]
         model.state.draft = "Delayed broadcast original"

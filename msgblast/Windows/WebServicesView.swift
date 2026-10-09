@@ -19,11 +19,18 @@ struct AgentsWorkspaceView: View {
     private var nativeRecipients: [Agent] { model.state.agents.filter { model.state.selection.contains($0.id) } }
     private var attachmentComparisonID: UUID? { showingComparison ? nativeComparison?.id : nil }
     private var attachments: [MessageAttachment] { model.attachmentDraft(comparisonID: attachmentComparisonID) }
+    private var sharedSendDisabledReason: String? {
+        guard !busy else { return nil }
+        let drafts = web.selected.filter { $0.snapshot.hasDraft }.map { $0.provider.name }
+        guard !drafts.isEmpty else { return nil }
+        let names = drafts.formatted(.list(type: .and))
+        return "Finish or clear the draft in \(names), or deselect \(names) to send to the other agents."
+    }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         return !busy && !showingConnectionIntro && (!web.selected.isEmpty || !nativeRecipients.isEmpty)
             && (web.selected.isEmpty || (!text.isEmpty && attachments.isEmpty))
-            && web.selected.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.hasUnresolvedSend(text) }
+            && web.selected.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
     }
 
@@ -46,7 +53,7 @@ struct AgentsWorkspaceView: View {
                 Button {
                     showingConnectionIntro = false
                     showingComparison = false
-                    web.setComparison(nil)
+                    model.selectWorkspace(nil)
                 } label: {
                     Label("New Blast", systemImage: "square.and.pencil")
                         .labelStyle(.titleAndIcon)
@@ -110,7 +117,8 @@ struct AgentsWorkspaceView: View {
     private func tileSize(_ geometry: GeometryProxy) -> CGFloat { min(100, max(48, (geometry.size.width - 80) / 3)) }
 
     private var comparisonPanes: some View {
-        chatColumns.background(ChatWindowFrame(chatCount: comparisonChatCount))
+        chatColumns
+            .background(ChatWindowFrame(chatCount: comparisonChatCount))
     }
 
     private var chatColumns: some View {
@@ -172,11 +180,12 @@ struct AgentsWorkspaceView: View {
             if showingComparison, let comparison = nativeComparison {
                 FollowUpStatus(model: model, comparison: comparison, universal: true).disabled(busy)
             }
-            MessageInput(text: Binding(get: { model.state.draft }, set: { model.state.draft = $0; model.persist() }),
+            MessageInput(text: Binding(get: { model.state.draft }, set: { model.setSharedDraft($0) }),
                          attachments: attachments, addAttachments: { await model.addAttachments($0, comparisonID: attachmentComparisonID) },
                          removeAttachment: { id in model.setAttachmentDraft(attachments.filter { $0.id != id }, comparisonID: attachmentComparisonID) },
                          placeholder: "Message", accessibilityName: "Shared prompt", sendLabel: "Send & compare",
-                         disabled: !canSend, attachmentsEnabled: web.selected.isEmpty, send: send, focusRequest: newBlastRequest)
+                         disabled: !canSend, attachmentsEnabled: web.selected.isEmpty,
+                         sendDisabledReason: sharedSendDisabledReason, send: send, focusRequest: newBlastRequest)
         }.padding(20)
     }
 
@@ -279,7 +288,7 @@ struct AgentsWorkspaceView: View {
             } ?? false
             let followUpID = UUID()
             let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, clearDraft: {
-                model.state.draft = ""; model.persist()
+                model.setSharedDraft("")
             }, web: { text in
                 await WebAgents.send(text, to: sessions, comparisonID: comparisonID)
             }, messages: { text in
@@ -513,16 +522,23 @@ private struct WebAgentPane: View {
                     .accessibilityElement(children: .contain)
             }
             if let error = session.error { Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading) }
+            if let draft = session.draftRecoveryText {
+                HStack {
+                    Text("Your saved draft is retained. Copy it into this chat to continue.").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Copy saved draft") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(draft, forType: .string)
+                    }
+                }.padding(10)
+            }
             if session.provider.usesNativeConversation {
                 nativeConversation(session.provider.personalAgentProvider)
             } else if session.connected {
-                if !session.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.isSending {
-                    Text("\(session.provider.name) has a draft. Send or clear it in the page before using the shared composer.").font(.caption).foregroundStyle(.orange).padding(8)
-                }
                 if session.provider == .dots {
                     Text("Blasts continue your ongoing dot conversation.").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
                 }
-                EmbeddedServicePage(webView: session.webView)
+                EmbeddedServicePage(webView: session.webView).id(ObjectIdentifier(session.webView))
             } else {
                 VStack(spacing: 18) {
                     AgentAvatar(agent: AgentArtwork.agent(for: session), name: session.provider.name, size: 80)

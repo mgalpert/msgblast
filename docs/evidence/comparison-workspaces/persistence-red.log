@@ -1,0 +1,15 @@
+Test Suite 'Selected tests' started at 2026-10-08 09:44:29.714.
+Test Suite 'msgblastTests.xctest' started at 2026-10-08 09:44:29.720.
+Test Suite 'MultiWebAgentTests' started at 2026-10-08 09:44:29.720.
+Test Case '-[msgblastTests.MultiWebAgentTests testFailedDraftRestorationKeepsPersistedText]' started.
+Test Case '-[msgblastTests.MultiWebAgentTests testFailedDraftRestorationKeepsPersistedText]' passed (1.810 seconds).
+Test Case '-[msgblastTests.MultiWebAgentTests testSignOutOrMissingEditorNeverErasesSavedPageDraft]' started.
+/Users/contains/.codex/worktrees/comparison-history-isolation/msgblast/msgblastTests/MultiWebAgentTests.swift:134: error: -[msgblastTests.MultiWebAgentTests testSignOutOrMissingEditorNeverErasesSavedPageDraft] : XCTAssertEqual failed: ("Optional("")") is not equal to ("Optional("Retain my unsent draft")") - chat.hidden=true;login.hidden=false
+/Users/contains/.codex/worktrees/comparison-history-isolation/msgblast/msgblastTests/MultiWebAgentTests.swift:134: error: -[msgblastTests.MultiWebAgentTests testSignOutOrMissingEditorNeverErasesSavedPageDraft] : XCTAssertEqual failed: ("Optional("")") is not equal to ("Optional("Retain my unsent draft")") - input.remove()
+Test Case '-[msgblastTests.MultiWebAgentTests testSignOutOrMissingEditorNeverErasesSavedPageDraft]' failed (1.104 seconds).
+Test Suite 'MultiWebAgentTests' failed at 2026-10-08 09:44:32.636.
+	 Executed 2 tests, with 2 failures (0 unexpected) in 2.914 (2.915) seconds
+Test Suite 'msgblastTests.xctest' failed at 2026-10-08 09:44:32.636.
+	 Executed 2 tests, with 2 failures (0 unexpected) in 2.914 (2.915) seconds
+Test Suite 'Selected tests' failed at 2026-10-08 09:44:32.636.
+	 Executed 2 tests, with 2 failures (0 unexpected) in 2.914 (2.922) seconds

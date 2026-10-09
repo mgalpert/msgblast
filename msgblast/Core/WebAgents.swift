@@ -72,6 +72,8 @@ public final class WebAgents: ObservableObject {
         }
         return providers
     }
+    public var hasConnectedWebSessions: Bool { sessions.contains { !$0.provider.usesNativeConversation && $0.connected } }
+    public func saveBrowserDrafts() async throws { for session in sessions { try await session.saveBrowserDrafts() } }
     public var hasNativeRequests: Bool { sessions.contains { $0.provider.usesNativeConversation && $0.isSending } }
     public func beginShutdown() { sessions.forEach { $0.beginShutdown() } }
     public func cancelAndWait() async { for session in sessions { await session.cancelAndWait() } }

@@ -343,6 +343,31 @@ final class AppModel: ObservableObject {
             await submit(comparison.id, retry: false)
         } catch { self.error = error.localizedDescription }
     }
+    func setSharedDraft(_ text: String) {
+        state.draft = text
+        if state.workspaceDrafts == nil { state.workspaceDrafts = [:] }
+        state.workspaceDrafts?[webAgents.comparisonID?.uuidString ?? "new"] = text
+        persist()
+    }
+    func selectWorkspace(_ id: UUID?, promotingDraft: Bool = false) {
+        let previous = webAgents.comparisonID
+        guard previous != id else { return }
+        var drafts = state.workspaceDrafts ?? [:]
+        drafts[previous?.uuidString ?? "new"] = state.draft
+        let key = id?.uuidString ?? "new"
+        if promotingDraft {
+            drafts["new"] = ""
+            drafts[key] = state.draft
+        } else {
+            // New Blast keeps an unsent draft while the original comparison retains its copy.
+            state.draft = drafts[key].flatMap { id == nil && $0.isEmpty ? nil : $0 } ?? (id == nil ? state.draft : "")
+            drafts[key] = state.draft
+        }
+        state.workspaceDrafts = drafts
+        webAgents.setComparison(id)
+        persist()
+    }
+
     func prepareWebComparison(_ text: String, recipientIDs: Set<UUID>, providers: [WebProvider]) async -> UUID? {
         guard !busy else { return nil }
         do {
@@ -353,7 +378,7 @@ final class AppModel: ObservableObject {
             state.comparisons.insert(comparison, at: 0)
             do { try save() }
             catch { state.comparisons.removeAll { $0.id == comparison.id }; throw error }
-            webAgents.setComparison(comparison.id)
+            selectWorkspace(comparison.id, promotingDraft: true)
             return comparison.id
         } catch { self.error = error.localizedDescription; return nil }
     }
@@ -380,7 +405,7 @@ final class AppModel: ObservableObject {
     }
     func openWebComparison(_ id: UUID) {
         guard !webBroadcastBusy, let comparison = comparison(id) else { return }
-        webAgents.setComparison(id)
+        selectWorkspace(id)
         state.selection = Set(comparison.members.map(\.id))
         webAgents.restoreSelection(for: comparison.webProviders ?? [])
         webAgents.connectSelected()

@@ -233,6 +233,10 @@ final class GrokBotTests: XCTestCase {
         let agents = WebAgents(directory: directory, fixture: true)
         agents.setEnabled(true, for: .grokbot)
         let session = try XCTUnwrap(agents.sessions.first { $0.provider == .grokbot })
+        XCTAssertFalse(agents.hasConnectedWebSessions, "The Bot's connection must not be treated as a browser session")
+        session.updateState { $0.webDrafts["new"] = "Legacy browser draft" }
+        XCTAssertNil(session.draftRecoveryText, "Browser draft recovery must not block native Bot requests")
+        try await agents.saveBrowserDrafts()
         let signedOut = await agents.signInRequired(for: [session])
         XCTAssertTrue(signedOut.isEmpty)
         let signIn = await session.checkSignIn()

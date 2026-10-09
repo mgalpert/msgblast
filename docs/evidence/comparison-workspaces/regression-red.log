@@ -1,0 +1,14 @@
+Test Suite 'Selected tests' started at 2026-10-08 09:19:23.201.
+Test Suite 'msgblastTests.xctest' started at 2026-10-08 09:19:23.203.
+Test Suite 'MultiWebAgentTests' started at 2026-10-08 09:19:23.203.
+Test Case '-[msgblastTests.MultiWebAgentTests testLegacyUnlinkedComparisonCannotDisplayAnotherComparisonsChat]' started.
+/Users/contains/.codex/worktrees/comparison-history-isolation/msgblast/msgblastTests/MultiWebAgentTests.swift:45: error: -[msgblastTests.MultiWebAgentTests testLegacyUnlinkedComparisonCannotDisplayAnotherComparisonsChat] : XCTAssertEqual failed: ("["Research B"]") is not equal to ("["Unlinked research A"]")
+/Users/contains/.codex/worktrees/comparison-history-isolation/msgblast/msgblastTests/MultiWebAgentTests.swift:46: error: -[msgblastTests.MultiWebAgentTests testLegacyUnlinkedComparisonCannotDisplayAnotherComparisonsChat] : XCTAssertTrue failed
+/Users/contains/.codex/worktrees/comparison-history-isolation/msgblast/msgblastTests/MultiWebAgentTests.swift:48: error: -[msgblastTests.MultiWebAgentTests testLegacyUnlinkedComparisonCannotDisplayAnotherComparisonsChat] : XCTAssertEqual failed: ("nil") is not equal to ("Optional(https://chatgpt.com/c/3ce8e52f-8e75-4c9f-8455-907bd1b4688d)")
+Test Case '-[msgblastTests.MultiWebAgentTests testLegacyUnlinkedComparisonCannotDisplayAnotherComparisonsChat]' failed (2.671 seconds).
+Test Suite 'MultiWebAgentTests' failed at 2026-10-08 09:19:25.874.
+	 Executed 1 test, with 3 failures (0 unexpected) in 2.671 (2.671) seconds
+Test Suite 'msgblastTests.xctest' failed at 2026-10-08 09:19:25.874.
+	 Executed 1 test, with 3 failures (0 unexpected) in 2.671 (2.671) seconds
+Test Suite 'Selected tests' failed at 2026-10-08 09:19:25.874.
+	 Executed 1 test, with 3 failures (0 unexpected) in 2.671 (2.673) seconds

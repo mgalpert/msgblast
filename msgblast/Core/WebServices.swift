@@ -36,6 +36,9 @@ public struct WebSendAttempt: Codable, Equatable, Identifiable, Sendable {
     // A safely observed chat identity survives invalidation of automatic receipt attribution.
     var recoveryConversationURL: URL?
     var receiptContext: WebReceiptContext?
+    // Preparation can succeed before automatic Send is rejected. A later page
+    // submission is observed separately; it is never an automatic-send receipt.
+    var manualContext: WebReceiptContext?
     var pinnedConversationURL: URL? { recoveryConversationURL ?? receiptContext?.candidateURL }
     public init(text: String, status: WebSendStatus = .preparing) {
         self.text = text; self.status = status
@@ -63,6 +66,7 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var comparisonID: UUID?
     public var attempts: [WebSendAttempt] = []
     public var conversationURLs: [String: URL] = [:]
+    public var webDrafts: [String: String] = [:]
     public var localConversations: [String: [WebPageMessage]] = [:]
     public var localSessionIDs: [String: String] = [:]
     // Mark the exact session created with configured tools. Old IDs stay available
@@ -72,7 +76,7 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
@@ -88,6 +92,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         comparisonID = try c.decodeIfPresent(UUID.self, forKey: .comparisonID)
         conversationURLs = try c.decodeIfPresent([String: URL].self, forKey: .conversationURLs)
             ?? c.decodeIfPresent([String: URL].self, forKey: .museConversations) ?? [:]
+        webDrafts = try c.decodeIfPresent([String: String].self, forKey: .webDrafts) ?? [:]
         localConversations = try c.decodeIfPresent([String: [WebPageMessage]].self, forKey: .localConversations) ?? [:]
         localSessionIDs = try c.decodeIfPresent([String: String].self, forKey: .localSessionIDs) ?? [:]
         localSessionPolicyVersions = try c.decodeIfPresent([String: Int].self, forKey: .localSessionPolicyVersions) ?? [:]
@@ -110,6 +115,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encodeIfPresent(comparisonID, forKey: .comparisonID)
         try c.encode(attempts, forKey: .attempts)
         try c.encode(conversationURLs, forKey: .conversationURLs)
+        try c.encode(webDrafts, forKey: .webDrafts)
         try c.encode(localConversations, forKey: .localConversations)
         try c.encode(localSessionIDs, forKey: .localSessionIDs)
         try c.encode(localDrafts, forKey: .localDrafts)
@@ -169,6 +175,8 @@ public struct WebPageSnapshot: Decodable, Equatable, Sendable {
     public var signedIn: Bool?
     public var reason = "Open this agent to sign in here."
     public var draft = ""
+    public var draftAvailable: Bool?
+    public var hasDraft: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     public var messages: [WebPageMessage] = []
     public var submissionInterrupted: Bool?
     public var signedOut: Bool?

@@ -280,7 +280,8 @@ struct MessagesAccessRow: View {
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Connect Messages").font(.headline)
-                        Text("Access the agents you text with.").font(.callout).foregroundStyle(.secondary)
+                        Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     if guide.flow.stage == .verified {

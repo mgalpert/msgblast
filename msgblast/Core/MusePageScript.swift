@@ -32,7 +32,7 @@ enum MusePageScript {
         else if (login || !chatVisible) reason = 'Sign in to Muse and open a side chat.';
         else if (document.querySelector('[role="dialog"],[aria-modal="true"]')) reason = 'Finish the open Muse dialog first.';
         else if (!input || input.disabled || input.readOnly) reason = 'Waiting for Muse’s message field.';
-        return {url:location.href,ready:reason === '',signedIn,reason:reason || 'Muse side chat ready',draft:input?.value || ''};
+        return {url:location.href,ready:reason === '',signedIn,reason:reason || 'Muse side chat ready',draft:input?.value || '',draftAvailable:!!input};
     };
     const inspect = () => ({...status(),messages:pathAllowed() ? messages() : [],submissionInterrupted:observation.interrupted});
     """#
@@ -105,7 +105,9 @@ enum MusePageScript {
     <button onclick="chat.hidden=true;login.hidden=false">Sign out of fixture</button>
     <button onclick="changeFixtureAvatar()">Change fixture avatar</button></div>
     <script>
-    const fixtureThreads = {};
+    const fixtureThreads = JSON.parse(localStorage.getItem('msgblastFixtureThreads')||'{}');
+    function saveFixtureThread(){if(location.pathname!=='/thread/new'){fixtureThreads[location.pathname]=document.getElementById('hatch-chat-scroll').innerHTML;localStorage.setItem('msgblastFixtureThreads',JSON.stringify(fixtureThreads));}}
+    document.getElementById('hatch-chat-scroll').innerHTML=fixtureThreads[location.pathname]||'';
     function navigateFixtureThread(url) {
       fixtureThreads[location.pathname] = document.getElementById('hatch-chat-scroll').innerHTML;
       history.replaceState({},'',url);
@@ -119,7 +121,7 @@ enum MusePageScript {
     input.addEventListener('input',()=>{send.disabled=!input.value.trim()});
     send.addEventListener('click',()=>{
       const text=input.value;if(!text.trim())return;
-      function add(role,text){const a=document.createElement('article');a.dataset.messageItem='true';a.dataset.messageId=crypto.randomUUID();a.dataset.messageRole=role;a.textContent=text;document.getElementById('hatch-chat-scroll').append(a);a.scrollIntoView({block:'nearest'});}
+      function add(role,text){const a=document.createElement('article');a.dataset.messageItem='true';a.dataset.messageId=crypto.randomUUID();a.dataset.messageRole=role;a.textContent=text;document.getElementById('hatch-chat-scroll').append(a);a.scrollIntoView({block:'nearest'});saveFixtureThread();}
       if(location.pathname === '/thread/new') {
         history.replaceState({},'', '/thread/'+crypto.randomUUID());
         document.getElementById('thread-title').textContent='Muse side chat · '+location.pathname.slice(-6);

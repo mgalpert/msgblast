@@ -6,24 +6,72 @@ import WebKit
 @MainActor
 public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published public private(set) var state = WebWorkspaceState()
-    @Published public private(set) var snapshot = WebPageSnapshot()
+    @Published public private(set) var snapshot = WebPageSnapshot() { didSet { activePage?.snapshot = snapshot } }
     @Published public private(set) var isSending = false
     @Published public private(set) var connected = false
-    @Published public private(set) var loading = false
-    @Published public private(set) var error: String?
+    @Published public private(set) var loading = false { didSet { activePage?.loading = loading } }
+    @Published public private(set) var error: String? { didSet { activePage?.error = error } }
     @Published public private(set) var popup: WKWebView?
     @Published public private(set) var popupURL = ""
-    @Published public private(set) var avatar: Data?
-    // Optional CLI providers never touch this lazy view: their transcript is native.
-    public lazy var webView: WKWebView = {
+    @Published public private(set) var avatar: Data? { didSet { activePage?.avatar = avatar } }
+    // Account cookies are shared; DOM, navigation and receipt ownership belong to a comparison.
+    private lazy var websiteDataStore = fixture ? WKWebsiteDataStore.nonPersistent() : WKWebsiteDataStore(forIdentifier: state.sessionID)
+    private var pages: [String: WebConversationPage] = [:]
+    private var activePage: WebConversationPage?
+    public var webView: WKWebView { currentPage().view }
+    private func makePage(_ id: UUID?) -> WebConversationPage {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = fixture ? .nonPersistent() : WKWebsiteDataStore(forIdentifier: state.sessionID)
+        configuration.websiteDataStore = websiteDataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
-        return view
-    }()
+        return WebConversationPage(comparisonID: id, view: view)
+    }
+    private func currentPage() -> WebConversationPage {
+        if let activePage { return activePage }
+        let page = makePage(state.comparisonID)
+        if provider == .dots { page.avatar = state.savedAvatar }
+        pages[page.key] = page
+        activePage = page
+        return page
+    }
+    private func selectPage(previous: UUID?) {
+        guard let old = activePage else { return }
+        let key = state.comparisonID?.uuidString ?? "new"
+        if old.key == key { return }
+        // Dots has one ongoing account conversation. Preserve its live page so a
+        // fresh blast uses the currently open dot, including changes before polling.
+        if provider == .dots {
+            pages.removeValue(forKey: old.key)
+            old.comparisonID = state.comparisonID
+            pages[key] = old
+            return
+        }
+        // The first send adopts the signed-in new-chat pane prepared by the composer.
+        if previous == nil, let id = state.comparisonID, pages[key] == nil,
+           state.attempts.filter({ $0.comparisonID == id }).allSatisfy({ $0.status == .preparing }),
+           (state.conversationURLs[key] == nil && !old.snapshot.messages.contains(where: { $0.role == "user" })) ||
+           (state.conversationURLs[key] != nil && old.view.url.flatMap(provider.canonicalConversationURL) == state.conversationURLs[key]) {
+            pages.removeValue(forKey: old.key)
+            old.comparisonID = id
+            pages[key] = old
+            return
+        }
+        let page = pages[key] ?? makePage(state.comparisonID)
+        pages[key] = page
+        page.lastUsed = Date()
+        activePage = page
+        publish(page)
+        if connected && page.view.url == nil { loadComparisonChat() }
+    }
+    private func publish(_ page: WebConversationPage) {
+        guard activePage === page else { return }
+        if snapshot != page.snapshot { snapshot = page.snapshot }
+        if loading != page.loading { loading = page.loading }
+        if !storageFailed && error != page.error { error = page.error }
+        if avatar != page.avatar { avatar = page.avatar }
+    }
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
@@ -44,12 +92,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var grokBotReplyStorageFailure: UUID?
     private var poll: Task<Void, Never>?
     private var refreshing = false
-    private var navigationGeneration = 0
+    private var flushingDrafts = false
+    private var navigationGeneration: Int { activePage?.generation ?? 0 }
     private var comparisonGeneration = 0
-    private var avatarKey: String?
-    private var navigationError: String?
-    private var readinessError: String?
-    private var receiptGenerations: [UUID: Int] = [:]
+    private var readinessError: String? { get { activePage?.readinessError } set { currentPage().readinessError = newValue } }
+    private var receiptGenerations: [UUID: WebReceiptGeneration] = [:]
     public let provider: WebProvider
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
@@ -89,7 +136,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let previous = state.comparisonID
         let previousDraft = state.draft
         edit(&state)
-        if state.comparisonID != previous { comparisonGeneration += 1 }
+        if state.comparisonID != previous {
+            comparisonGeneration += 1
+            if !provider.usesNativeConversation { selectPage(previous: previous) }
+        }
         if provider.usesNativeConversation {
             if previous != state.comparisonID {
                 state.localDrafts[previous?.uuidString ?? "new"] = previousDraft
@@ -143,7 +193,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard automaticallyRefresh else { return }
         poll = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
+                await self?.refreshPages()
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }
@@ -165,26 +215,46 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         else { loadComparisonChat() }
     }
 
-    private var comparisonURL: URL {
-        if let id = state.comparisonID,
+    private var comparisonURL: URL { comparisonURL(for: state.comparisonID) }
+    private func comparisonURL(for id: UUID?) -> URL {
+        if let id,
            let url = state.conversationURLs[id.uuidString], provider.isSavedConversation(url) { return url }
-        if let url = unresolvedWebAttempt?.pinnedConversationURL, provider.isSavedConversation(url) { return url }
+        if let url = unresolvedWebAttempt(for: id)?.pinnedConversationURL, provider.isSavedConversation(url) { return url }
         if provider == .dots, let url = state.dotsURL, provider.isSavedConversation(url) { return url }
         return provider.newChatURL
     }
 
     private var unresolvedWebAttempt: WebSendAttempt? {
-        guard !provider.usesNativeConversation, state.comparisonID != nil else { return nil }
-        return state.attempts.first { $0.comparisonID == state.comparisonID && $0.status == .uncertain }
+        unresolvedWebAttempt(for: state.comparisonID)
+    }
+    private func unresolvedWebAttempt(for id: UUID?) -> WebSendAttempt? {
+        guard !provider.usesNativeConversation, id != nil else { return nil }
+        return state.attempts.first { $0.comparisonID == id && $0.status == .uncertain }
+    }
+
+    private var linkableWebAttempt: WebSendAttempt? {
+        guard !provider.usesNativeConversation else { return nil }
+        if let attempt = unresolvedWebAttempt { return attempt }
+        guard let id = state.comparisonID, state.conversationURLs[id.uuidString] == nil else { return nil }
+        // Older versions did not retain preparation context for a rejected send.
+        // Link only after the user reviews its existing request and reply.
+        return state.attempts.first { $0.comparisonID == id && $0.status == .notSent && $0.manualContext == nil }
+    }
+
+    public var draftRecoveryText: String? {
+        guard !provider.usesNativeConversation, snapshot.ready, !snapshot.hasDraft,
+              activePage?.restoredDraft == false,
+              let draft = state.webDrafts[state.comparisonID?.uuidString ?? "new"], !draft.isEmpty else { return nil }
+        return draft
     }
 
     public var needsConversationLink: Bool {
-        unresolvedWebAttempt != nil
+        linkableWebAttempt != nil
     }
 
     public var canLinkCurrentConversation: Bool {
         guard needsConversationLink, !isSending, !loading, snapshot.ready, snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let attempt = unresolvedWebAttempt, let comparison = state.comparisonID, let current = URL(string: snapshot.url),
+              let attempt = linkableWebAttempt, let comparison = state.comparisonID, let current = URL(string: snapshot.url),
               let url = provider.canonicalConversationURL(current),
               webView.url.flatMap(provider.canonicalConversationURL) == url,
               (provider == .dots || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
@@ -208,7 +278,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             snapshot = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
         } catch { return }
         guard comparisonGeneration == generation, !isSending, canLinkCurrentConversation,
-              var attempt = unresolvedWebAttempt, let comparison, let current = URL(string: snapshot.url),
+              var attempt = linkableWebAttempt, let comparison, let current = URL(string: snapshot.url),
               let url = provider.canonicalConversationURL(current) else { return }
         attempt.status = .observed
         attempt.messageID = snapshot.messages.first { $0.role == "user" && Self.normalized($0.text) == Self.normalized(attempt.text) }?.id
@@ -259,6 +329,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             error = message
             return false
         }
+        catch WebSessionFailure.notSent(let message) {
+            // Viewing a retained draft is allowed; only shared submission is blocked.
+            if !snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               webView.url == comparisonURL || webView.url.flatMap(provider.canonicalConversationURL) == comparisonURL {
+                self.error = nil
+            } else { self.error = message }
+            return false
+        }
         catch { self.error = error.localizedDescription; return false }
     }
 
@@ -284,11 +362,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             snapshot = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
             recordCurrentDot(from: snapshot)
             reconcileUnconfirmedReceipt()
+            reconcileManualSubmission(in: currentPage())
             readyBeforeSetup = snapshot.ready
         }
         try checkCurrent()
         guard snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw WebSessionFailure.notSent("\(provider.name) has a draft. Send or clear it before switching chats.")
+            throw WebSessionFailure.notSent("\(provider.name) has a draft. Send or clear it before sending from the shared composer.")
         }
         let target = comparisonURL // Inspection above may have recovered a late receipt.
         func matchesTarget(_ location: String) -> Bool {
@@ -298,6 +377,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 URL(string: location).flatMap(provider.canonicalConversationURL) != nil
         }
         let pinned = unresolvedWebAttempt?.pinnedConversationURL
+        // Viewing an unlinked live page must not navigate it away, including a
+        // request sent directly in the website after automatic preparation failed.
+        if let id = state.comparisonID, state.conversationURLs[id.uuidString] == nil, !needsConversationLink,
+           let current = webView.url, provider.canonicalConversationURL(current) != nil,
+           snapshot.messages.contains(where: { $0.role == "user" }) || state.attempts.contains(where: { $0.comparisonID == id && $0.manualContext != nil }) {
+            return readyBeforeSetup
+        }
         // A missed first receipt must not erase the live chat before recovery can inspect it.
         if needsConversationLink, state.comparisonID.flatMap({ state.conversationURLs[$0.uuidString] }) == nil,
            let current = URL(string: snapshot.url), let currentChat = provider.canonicalConversationURL(current),
@@ -362,11 +448,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func closePopup() { popup = nil; popupURL = ""; Task { await refresh() } }
 
     public func refresh() async {
-        guard connected, !loading, !refreshing else { return }
-        if provider == .grokbot { await refreshGrokBot(); return }
+        guard connected else { return }
+        if provider == .grokbot {
+            guard !loading, !refreshing else { return }
+            await refreshGrokBot(); return
+        }
         if let localProvider = provider.personalAgentProvider {
-            refreshing = true
-            loading = true
+            guard !loading, !refreshing else { return }
+            refreshing = true; loading = true
             defer { refreshing = false; loading = false }
             if fixture { accountStatus = .subscription }
             else {
@@ -376,82 +465,180 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             updateNativeSnapshot()
             return
         }
-        guard canInspectWebsite else {
-            var current = WebPageSnapshot()
-            current.url = webView.url?.absoluteString ?? ""
-            current.reason = provider == .muse ? "Sign in to Muse and open this comparison’s side chat." : "Sign in to \(provider.name) and open a chat."
-            if snapshot != current { snapshot = current }
-            if provider != .dots { clearAvatar() }
-            if provider == .dots, state.savedAvatar != nil || state.dotsURL != nil, ["/auth/login", "/auth/logout", "/login", "/logout"].contains(webView.url?.path ?? "") {
-                clearAvatar()
-                updateState { $0.savedAvatar = nil; $0.dotsURL = nil }
+        await refresh(currentPage())
+    }
+
+    private func refreshPages() async {
+        guard connected, !shuttingDown, !flushingDrafts else { return }
+        for page in Array(pages.values) { await refresh(page) }
+        await unloadInactivePages()
+    }
+
+    private func refresh(_ page: WebConversationPage) async {
+        guard !shuttingDown, !flushingDrafts, !page.loading, !page.refreshing, pages[page.key] === page else { return }
+        page.refreshing = true
+        defer { page.refreshing = false }
+        guard let url = page.view.url, url.scheme == "https", url.host == provider.homeURL.host else {
+            var current = WebPageSnapshot(); current.url = page.view.url?.absoluteString ?? ""
+            current.reason = "Sign in to \(provider.name) and open this comparison’s chat."
+            page.snapshot = current
+            if provider != .dots { clearAvatar(in: page) }
+            if provider == .dots, state.savedAvatar != nil || state.dotsURL != nil,
+               ["/auth/login", "/auth/logout", "/login", "/logout"].contains(page.view.url?.path ?? "") {
+                clearSavedDot(in: page)
             }
+            publish(page)
             return
         }
-        refreshing = true
-        defer { refreshing = false }
-        let generation = navigationGeneration
+        let generation = page.generation
         do {
-            if (provider == .chatgpt || provider == .dots) && !isSending && webView.url.map(provider.isChatURL) == true {
-                _ = try await webView.callAsyncJavaScript(script.configureInitialLayout, arguments: [:], in: nil, contentWorld: .defaultClient)
-                guard generation == navigationGeneration else { return }
+            if (provider == .chatgpt || provider == .dots) && !isSending && provider.isChatURL(url) {
+                _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: [:], in: nil, contentWorld: .defaultClient)
+                guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
             }
-            let result = try await webView.callAsyncJavaScript(script.inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
-            guard generation == navigationGeneration, let result else { return }
-            let fresh = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
-            if snapshot != fresh { snapshot = fresh }
-            if provider == .dots, fresh.signedOut == true {
-                clearAvatar()
-                if state.savedAvatar != nil || state.dotsURL != nil {
-                    updateState { $0.savedAvatar = nil; $0.dotsURL = nil }
-                }
+            let result = try await page.view.callAsyncJavaScript(script.inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
+            guard generation == page.generation, !shuttingDown, !flushingDrafts, let result else { return }
+            page.snapshot = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
+            if provider == .dots, page.snapshot.signedOut == true {
+                clearSavedDot(in: page)
+                publish(page)
                 return
             }
-            recordCurrentDot(from: fresh)
-            reconcileUnconfirmedReceipt()
-            if fresh.ready, fresh.url == comparisonURL.absoluteString, !storageFailed,
-               let readinessError, error == readinessError {
-                error = nil
-                self.readinessError = nil
+            recordCurrentDot(from: page.snapshot, in: page)
+            reconcileUnconfirmedReceipt(in: page)
+            reconcileManualSubmission(in: page)
+            if page.snapshot.draftAvailable != true || page.snapshot.signedIn == false { page.restoredDraft = false }
+            // Restore only an empty editor at its saved destination; restoring never submits.
+            if !page.restoredDraft, page.snapshot.ready, page.snapshot.url == comparisonURL(for: page.comparisonID).absoluteString {
+                if !page.snapshot.hasDraft, let draft = state.webDrafts[page.key], !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let restored = try await page.view.callAsyncJavaScript(script.prepare, arguments: ["text": draft], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                    guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
+                    if restored?["ok"] as? Bool == true {
+                        page.snapshot.draft = draft
+                        page.restoredDraft = true
+                    }
+                } else { page.restoredDraft = true }
             }
-            await refreshAvatar(generation: generation)
+            try recordDraft(in: page, from: page.snapshot)
+            if page.snapshot.ready, page.snapshot.url == comparisonURL(for: page.comparisonID).absoluteString,
+               let readiness = page.readinessError, page.error == readiness {
+                page.error = nil; page.readinessError = nil
+            }
+            publish(page)
+            await refreshAvatar(in: page, generation: generation)
         } catch {
-            guard generation == navigationGeneration else { return }
+            guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
+            if storageFailed {
+                self.error = "Could not save this comparison’s draft. Repair storage before quitting."
+                return
+            }
             var current = WebPageSnapshot()
             current.reason = "\(provider.name)’s page is not ready. Reload or use the page directly."
-            if snapshot != current { snapshot = current }
-            if provider != .dots { clearAvatar() }
+            page.snapshot = current
+            if provider != .dots { clearAvatar(in: page) }
+            publish(page)
+        }
+    }
+
+    private func recordDraft(in page: WebConversationPage, from snapshot: WebPageSnapshot) throws {
+        // An unavailable editor is not an empty draft. Failed restoration retains its saved text.
+        guard snapshot.draftAvailable == true, snapshot.signedIn != false,
+              page.restoredDraft || snapshot.hasDraft else { return }
+        if state.webDrafts[page.key] != snapshot.draft {
+            state.webDrafts[page.key] = snapshot.draft
+            try save()
+        }
+    }
+
+    // Read the editors directly at Quit rather than waiting for unrelated avatar/media polling.
+    public func saveBrowserDrafts() async throws {
+        guard !provider.usesNativeConversation, connected else { return }
+        flushingDrafts = true
+        defer { flushingDrafts = false }
+        for page in Array(pages.values) where !page.loading && page.view.url != nil {
+            let generation = page.generation
+            let result = try await page.view.callAsyncJavaScript(script.inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
+            guard generation == page.generation, pages[page.key] === page, let result else { continue }
+            let fresh = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
+            page.snapshot = fresh
+            reconcileManualSubmission(in: page)
+            try recordDraft(in: page, from: fresh)
+        }
+        try save()
+    }
+
+    // Four recent panes per account normally suffice. Freshly inspect each candidate:
+    // an edit or a pending reply may have arrived since its last polling snapshot.
+    func unloadInactivePages(limit: Int = 4) async {
+        guard pages.count > limit, !shuttingDown, !flushingDrafts else { return }
+        let candidates = pages.values.sorted { $0.lastUsed < $1.lastUsed }
+        for page in candidates where pages.count > limit {
+            guard page !== activePage, !page.loading, !page.refreshing else { continue }
+            let generation = page.generation
+            page.refreshing = true
+            defer { page.refreshing = false }
+            do {
+                let result = try await page.view.callAsyncJavaScript(script.inspect, arguments: [:], in: nil, contentWorld: .defaultClient)
+                guard !shuttingDown, !flushingDrafts, generation == page.generation, pages[page.key] === page, let result else { continue }
+                let fresh = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
+                page.snapshot = fresh
+                try recordDraft(in: page, from: fresh)
+                guard page !== activePage, fresh.ready, fresh.draftAvailable == true, !fresh.hasDraft,
+                      page.restoredDraft, state.webDrafts[page.key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      unresolvedWebAttempt(for: page.comparisonID) == nil else { continue }
+                if page.comparisonID == nil {
+                    guard !fresh.messages.contains(where: { $0.role == "user" }) else { continue }
+                } else {
+                    guard let saved = state.conversationURLs[page.key],
+                          provider.canonicalConversationURL(page.view.url ?? provider.newChatURL) == saved,
+                          fresh.messages.last?.role == "assistant", fresh.messages.last?.text.isEmpty == false else { continue }
+                }
+                page.view.navigationDelegate = nil; page.view.uiDelegate = nil
+                page.view.stopLoading()
+                pages.removeValue(forKey: page.key)
+            } catch { continue } // A page we could not inspect safely stays alive.
         }
     }
 
     private func recordCurrentDot(from fresh: WebPageSnapshot) {
-        guard provider == .dots, fresh.ready, !loading, let url = URL(string: fresh.url),
-              webView.url == url, let saved = provider.canonicalConversationURL(url), saved != state.dotsURL else { return }
+        recordCurrentDot(from: fresh, in: currentPage())
+    }
+
+    private func recordCurrentDot(from fresh: WebPageSnapshot, in page: WebConversationPage) {
+        guard provider == .dots, fresh.ready, !page.loading, let url = URL(string: fresh.url),
+              page.view.url == url, let saved = provider.canonicalConversationURL(url), saved != state.dotsURL else { return }
         updateState { $0.dotsURL = saved; $0.savedAvatar = nil }
-        clearAvatar()
+        clearAvatar(in: page)
     }
 
-    private func clearAvatar() {
-        avatarKey = nil
-        if avatar != nil { avatar = nil }
+    private func clearAvatar(in page: WebConversationPage) {
+        page.avatarKey = nil; page.avatar = nil
+        publish(page)
     }
 
-    private func refreshAvatar(generation: Int) async {
+    private func clearSavedDot(in page: WebConversationPage) {
+        clearAvatar(in: page)
+        if state.savedAvatar != nil || state.dotsURL != nil {
+            updateState { $0.savedAvatar = nil; $0.dotsURL = nil }
+        }
+    }
+
+    private func refreshAvatar(in page: WebConversationPage, generation: Int) async {
         guard provider == .muse || provider == .dots else { return }
-        if provider == .dots && webView.window == nil { return }
-        if provider == .muse && !snapshot.ready { clearAvatar(); return }
+        if provider == .dots && page.view.window == nil { return }
+        if provider == .muse && !page.snapshot.ready { clearAvatar(in: page); return }
         do {
-            let result = try await webView.callAsyncJavaScript(script.avatar, arguments: ["previousKey": avatarKey ?? ""], in: nil, contentWorld: .defaultClient) as? [String: Any]
-            guard generation == navigationGeneration else { return }
+            let result = try await page.view.callAsyncJavaScript(script.avatar, arguments: ["previousKey": page.avatarKey ?? ""], in: nil, contentWorld: .defaultClient) as? [String: Any]
+            guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
             guard let key = result?["key"] as? String else {
-                if provider == .muse { clearAvatar() }
+                if provider == .muse { clearAvatar(in: page) }
                 return
             }
-            if key == avatarKey { return }
+            if key == page.avatarKey { return }
             let data: Data
             if provider == .dots {
-                let bounds = webView.bounds
-                guard webView.window != nil, !loading, let capturedURL = webView.url, let result,
+                let bounds = page.view.bounds
+                guard page.view.window != nil, !page.loading, let capturedURL = page.view.url, let result,
                       result["url"] as? String == capturedURL.absoluteString,
                       let viewport = result["viewport"] as? [String: Double],
                       let viewportWidth = viewport["width"], let viewportHeight = viewport["height"],
@@ -466,15 +653,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 configuration.rect = bounds
                 configuration.snapshotWidth = NSNumber(value: bounds.width)
                 let image: NSImage = try await withCheckedThrowingContinuation { continuation in
-                    webView.takeSnapshot(with: configuration) { image, error in
+                    page.view.takeSnapshot(with: configuration) { image, error in
                         if let image { continuation.resume(returning: image) }
                         else { continuation.resume(throwing: error ?? WebSessionFailure.unconfirmed) }
                     }
                 }
                 // Layout and artwork can change while WebKit captures. Leave the old
                 // image and key intact on mismatch so the next refresh retries.
-                let verified = try await webView.callAsyncJavaScript(script.avatar, arguments: ["previousKey": key], in: nil, contentWorld: .defaultClient) as? [String: Any]
-                guard generation == navigationGeneration, !loading, webView.url == capturedURL, webView.bounds == bounds,
+                let verified = try await page.view.callAsyncJavaScript(script.avatar, arguments: ["previousKey": key], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                guard generation == page.generation, !shuttingDown, !flushingDrafts, !page.loading, page.view.url == capturedURL, page.view.bounds == bounds,
                       let verified, NSDictionary(dictionary: result).isEqual(to: verified),
                       state.dotsURL == capturedURL, let png = Self.avatarPNG(image, crop: crop) else { return }
                 data = png
@@ -482,13 +669,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             } else {
                 guard let png = result?["png"] as? String, png.hasPrefix("data:image/png;base64,"), png.count < 400_000,
                       let decoded = Data(base64Encoded: String(png.dropFirst(22))),
-                      let image = NSBitmapImageRep(data: decoded), image.pixelsWide == 256, image.pixelsHigh == 256 else { clearAvatar(); return }
+                      let image = NSBitmapImageRep(data: decoded), image.pixelsWide == 256, image.pixelsHigh == 256 else { clearAvatar(in: page); return }
                 data = decoded
             }
-            avatarKey = key
-            avatar = data
+            page.avatarKey = key
+            page.avatar = data
+            publish(page)
         } catch {
-            if generation == navigationGeneration && provider == .muse { clearAvatar() }
+            if generation == page.generation && provider == .muse { clearAvatar(in: page) }
         }
     }
 
@@ -528,14 +716,20 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             guard !state.attempts.contains(where: { $0.comparisonID == id && [.attempting, .uncertain].contains($0.status) }) else {
                 throw WebSessionFailure.notSent("Open the original \(provider.name) chat and choose Use this conversation before sending a follow-up.")
             }
-            if state.comparisonID != id { comparisonGeneration += 1 }
-            state.comparisonID = id
+            updateState { $0.comparisonID = id }
             try save()
             connect()
             try await prepareConversation()
             await refresh()
+            guard draftRecoveryText == nil else {
+                throw WebSessionFailure.notSent("Your saved draft is preserved. Copy it into this chat before sending another message.")
+            }
             guard let url = webView.url, provider.isChatURL(url), snapshot.ready, !loading else {
                 throw WebSessionFailure.notSent(snapshot.reason)
+            }
+            if let destination = provider.canonicalConversationURL(url), state.conversationURLs[id.uuidString] != destination,
+               !(provider == .dots && state.dotsURL == destination) {
+                throw WebSessionFailure.notSent("This page’s conversation is not linked to this comparison. Review it and continue in the page; nothing was sent from the shared composer.")
             }
             let generation = navigationGeneration
             let expectedURL = snapshot.url
@@ -557,14 +751,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let baseline = try JSONDecoder().decode([WebPageMessage].self, from: JSONSerialization.data(withJSONObject: messages))
             let existingPaths = Set(paths)
             attempt.receiptContext = WebReceiptContext(originalURL: url, baseline: baseline, existingPaths: existingPaths)
-            receiptGenerations[attempt.id] = generation
+            receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
+            let preparedDraft = preparation?["preparedDraft"] as? String ?? text
             if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
-            else { try await waitForSendControl(text, expectedURL: expectedURL, generation: generation) }
+            else { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
             guard generation == navigationGeneration, !loading else { throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.") }
             attempt.status = .attempting
             try store(attempt) // The possible external side effect is durably recorded first.
             submissionWasPossible = true
-            let result = try await webView.callAsyncJavaScript(script.clickSend, arguments: ["text": text, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
+            let result = try await webView.callAsyncJavaScript(script.clickSend, arguments: ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
             if result?["clicked"] as? Bool == false {
                 submissionWasPossible = false
                 throw WebSessionFailure.notSent(result?["reason"] as? String ?? "\(provider.name)’s Send control was not clicked.")
@@ -589,6 +784,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
         }
         if attempt.status == .notSent {
+            attempt.manualContext = attempt.receiptContext
             attempt.recoveryConversationURL = nil
             attempt.receiptContext = nil
             receiptGenerations.removeValue(forKey: attempt.id)
@@ -598,6 +794,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     private func observeReceipt(_ attempt: inout WebSendAttempt) -> Bool {
+        observeReceipt(&attempt, in: currentPage())
+    }
+
+    private func observeReceipt(_ attempt: inout WebSendAttempt, in page: WebConversationPage) -> Bool {
+        let snapshot = page.snapshot
         guard var context = attempt.receiptContext else { return false }
         func invalidate() -> Bool {
             attempt.recoveryConversationURL = attempt.pinnedConversationURL
@@ -608,7 +809,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard snapshot.submissionInterrupted != true, let current = URL(string: snapshot.url) else { return invalidate() }
         // Across reloads/restarts only the already pinned candidate can be recovered.
         let pinned = attempt.pinnedConversationURL
-        guard receiptGenerations[attempt.id] == navigationGeneration || pinned != nil else { return invalidate() }
+        guard receiptGenerations[attempt.id]?.matches(page) == true || pinned != nil else { return invalidate() }
         if context.originalURL == provider.newChatURL, current == context.originalURL { return false }
         guard provider.acceptsReceipt(from: context.originalURL, at: current), let url = provider.canonicalConversationURL(current),
               pinned == nil || pinned == url,
@@ -633,12 +834,39 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return true
     }
 
-    private func reconcileUnconfirmedReceipt() {
-        guard !isSending, !storageFailed, var attempt = unresolvedWebAttempt, attempt.receiptContext != nil else { return }
+    private func reconcileUnconfirmedReceipt() { reconcileUnconfirmedReceipt(in: currentPage()) }
+    private func reconcileManualSubmission(in page: WebConversationPage) {
+        guard !isSending, !storageFailed, let comparison = page.comparisonID,
+              var attempt = state.attempts.first(where: { $0.comparisonID == comparison && $0.status == .notSent && $0.manualContext != nil }),
+              let context = attempt.manualContext, let current = page.view.url,
+              let url = provider.canonicalConversationURL(current),
+              URL(string: page.snapshot.url).flatMap(provider.canonicalConversationURL) == url,
+              page.snapshot.draftAvailable == true, page.snapshot.signedIn != false,
+              page.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              provider.acceptsReceipt(from: context.originalURL, at: current),
+              state.conversationURLs[page.key] == nil || state.conversationURLs[page.key] == url,
+              (provider == .dots || !state.conversationURLs.contains(where: { $0.key != page.key && provider.canonicalConversationURL($0.value) == url })),
+              current.path == context.originalURL.path || !context.existingPaths.contains(current.path),
+              page.snapshot.messages.starts(with: context.baseline) else { return }
+        let previous = Set(context.baseline.map(\.id))
+        let expectedText = Self.normalized(attempt.text)
+        let matches = page.snapshot.messages.filter { !previous.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == expectedText }
+        guard matches.count == 1 else { return }
+        attempt.status = .observed
+        attempt.messageID = matches[0].id
+        attempt.conversationURL = url
+        attempt.manualContext = nil
+        attempt.detail = "The request appeared after using the page directly. MsgBlast did not click Send."
+        state.conversationURLs[page.key] = url
+        do { try store(attempt); page.error = nil; page.readinessError = nil; publish(page) }
+        catch { self.error = "Could not save the conversation used in the page. Repair storage before sending." }
+    }
+    private func reconcileUnconfirmedReceipt(in page: WebConversationPage) {
+        guard !isSending, !storageFailed, var attempt = unresolvedWebAttempt(for: page.comparisonID), attempt.receiptContext != nil else { return }
         let previous = attempt
-        _ = observeReceipt(&attempt)
+        _ = observeReceipt(&attempt, in: page)
         guard attempt != previous else { return }
-        do { try store(attempt); if attempt.status == .observed { error = nil } }
+        do { try store(attempt); if attempt.status == .observed { page.error = nil; publish(page) } }
         catch { self.error = "Could not save the recovered conversation. Repair storage before sending." }
     }
 
@@ -677,6 +905,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
     public func beginShutdown() { shuttingDown = true; poll?.cancel(); cancelNativeRequest(); stopGrokBotConnection() }
     public func cancelAndWait() async {
+        if !shuttingDown { try? await saveBrowserDrafts() }
         beginShutdown()
         while provider.usesNativeConversation && isSending { try? await Task.sleep(for: .milliseconds(20)) }
     }
@@ -745,7 +974,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return attempt
     }
 
-    private func waitForSendControl(_ text: String, expectedURL: String, generation: Int) async throws {
+    private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
             try Task.checkCancellation()
@@ -756,7 +985,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             // A navigation that cancels this read is still "not sent", with the same detail as the generation check.
             let result: [String: Any]?
             do {
-                result = try await webView.callAsyncJavaScript(script.sendReadiness, arguments: ["text": text, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                result = try await webView.callAsyncJavaScript(script.sendReadiness, arguments: ["preparedDraft": preparedDraft, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
             } catch {
                 guard generation == navigationGeneration, !loading else {
                     throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.")
@@ -794,35 +1023,40 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do { try save() } catch { storageFailed = true; self.error = "Could not save the web session: \(error.localizedDescription)" }
     }
 
+    private func page(for view: WKWebView) -> WebConversationPage? {
+        pages.values.first { $0.view === view }
+    }
     public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        if webView === self.webView {
-            navigationGeneration += 1; loading = true; snapshot = WebPageSnapshot(); if provider != .dots { clearAvatar() }
-        }
+        guard let page = page(for: webView) else { return }
+        page.generation += 1; page.loading = true; page.snapshot = WebPageSnapshot()
+        if provider != .dots { clearAvatar(in: page) }; page.restoredDraft = false
+        publish(page)
     }
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if webView === self.webView {
-            loading = false
-            if let navigationError, error == navigationError { error = nil }
-            navigationError = nil
-            Task { await refresh() }
-        }
-        else { popupURL = webView.url?.absoluteString ?? "" }
+        guard let page = page(for: webView) else { popupURL = webView.url?.absoluteString ?? ""; return }
+        page.loading = false
+        if let navigation = page.navigationError, page.error == navigation { page.error = nil }
+        page.navigationError = nil
+        publish(page)
+        Task { await refresh(page) }
     }
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failedNavigation(webView, error: error) }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failedNavigation(webView, error: error) }
     private func failedNavigation(_ view: WKWebView, error: Error) {
-        guard view === webView else { return }
-        loading = false
+        guard let page = page(for: view) else { return }
+        page.loading = false
         if (error as NSError).code != NSURLErrorCancelled, !storageFailed {
-            navigationError = "\(provider.name) could not load: \(error.localizedDescription)"
-            self.error = navigationError
+            page.navigationError = "\(provider.name) could not load: \(error.localizedDescription)"
+            page.error = page.navigationError
         }
+        publish(page)
     }
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        if webView === self.webView {
-            navigationGeneration += 1; loading = false; snapshot = WebPageSnapshot(); if provider != .dots { clearAvatar() }
-            error = "\(provider.name)’s web process stopped. Reload its page. Pending submissions will not be resent."
-        }
+        guard let page = page(for: webView) else { return }
+        page.generation += 1; page.loading = false; page.snapshot = WebPageSnapshot()
+        if provider != .dots { clearAvatar(in: page) }
+        page.error = "\(provider.name)’s web process stopped. Reload its page. Pending submissions will not be resent."
+        publish(page)
     }
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = navigationAction.request.url else { return .cancel }
@@ -833,8 +1067,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let allowed = fixture ? (url.absoluteString == "about:blank" || provider.isChatURL(url))
             : url.scheme == "https" || blankPage || (!mainFrame && ["blob", "data"].contains(url.scheme ?? ""))
         if !allowed, mainFrame, navigationAction.navigationType == .linkActivated, !storageFailed {
-            navigationError = "This link cannot open inside MsgBlast. Stay on \(provider.name)’s website to continue."
-            error = navigationError
+            if let page = page(for: webView) {
+                page.navigationError = "This link cannot open inside MsgBlast. Stay on \(provider.name)’s website to continue."
+                page.error = page.navigationError; publish(page)
+            }
         }
         if webView === popup { popupURL = url.absoluteString }
         return allowed ? .allow : .cancel
@@ -849,6 +1085,34 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return view
     }
     public func webViewDidClose(_ webView: WKWebView) { if webView === popup { closePopup() } }
+}
+
+@MainActor
+private final class WebConversationPage {
+    let id = UUID()
+    var comparisonID: UUID?
+    var key: String { comparisonID?.uuidString ?? "new" }
+    let view: WKWebView
+    var snapshot = WebPageSnapshot()
+    var loading = false
+    var refreshing = false
+    var generation = 0
+    var error: String?
+    var navigationError: String?
+    var readinessError: String?
+    var avatarKey: String?
+    var avatar: Data?
+    var restoredDraft = false
+    var lastUsed = Date()
+    init(comparisonID: UUID?, view: WKWebView) { self.comparisonID = comparisonID; self.view = view }
+}
+
+@MainActor
+private struct WebReceiptGeneration {
+    let pageID: UUID
+    let generation: Int
+    init(page: WebConversationPage, generation: Int) { pageID = page.id; self.generation = generation }
+    func matches(_ page: WebConversationPage) -> Bool { page.id == pageID && page.generation == generation }
 }
 
 extension WebAgentSession {
