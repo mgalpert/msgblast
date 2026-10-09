@@ -1,0 +1,51 @@
+{
+  "source_revision": "8baa8bc0d9f0154bd7f0ca591668af8f9faa7cf9",
+  "run_url": "Local committed conflict-resolution verification (no Actions run)",
+  "retention_days": 14,
+  "expiry": "GitHub deletes these artifacts 14 days after the workflow run.",
+  "production_feed_used": false,
+  "variants": [
+    {
+      "id": "development",
+      "label": "blue-green development",
+      "fixture": false,
+      "app_name": "msgblast Dev.app",
+      "bundle_id": "com.msgblast.development",
+      "support_directory": "~/Library/Application Support/msgblast-Dev",
+      "zip": "msgblast-dev-8baa8bc0d9f0.zip",
+      "sha256": "1320318839f8b5aeea58b4088b935fe1c77f8986baaf08697cbe1d4befb54b84",
+      "compiled_icon": "AppIcon.icns",
+      "compiled_icon_representation": "ic13",
+      "compiled_icon_sha256": "c98ec59998f24b23d6d7eff18df429859fae6aa605baf25ff2ca692b1a2c7ccd",
+      "compiled_icon_rgb": [
+        8.0,
+        143.0,
+        124.5
+      ],
+      "icon_fill_sha256": "121fb234b4774341b371520478c43a495940e94559ff795ee222adc633617229",
+      "updates": "disabled",
+      "instructions": "Unzip msgblast Dev.app and use it to exercise this branch with live data. Do not pass --demo or --isolated-demo; use the blue msgblast Demo.app for fixtures and simulated demonstrations. It is not a fixture and can read real Messages. Grant this bundle Full Disk Access, Contacts, and Messages Automation. Those permissions belong to com.msgblast.development, do not transfer from com.msgblast.mac, and may need to be granted again after a rebuild because the ad-hoc code hash changes. Preferences are the standard defaults for that bundle ID. Grok Bot remembers its connection using hardware-encrypted storage when a Secure Enclave is available. Settings labels session-only storage if no secure backend is available. Saved state is in ~/Library/Application Support/msgblast-Dev. A quarantined download may App Translocate and show an install gate. Drag this app file to Applications and leave /Applications/msgblast.app in place. Ad-hoc builds may need System Settings \u2192 Privacy & Security \u2192 Open Anyway. There is no Sparkle feed, so this app will not download or relaunch over the installed production app."
+    },
+    {
+      "id": "demo",
+      "label": "blue demo fixture",
+      "fixture": true,
+      "app_name": "msgblast Demo.app",
+      "bundle_id": "com.msgblast.demo",
+      "support_directory": "~/Library/Application Support/msgblast-Demo",
+      "zip": "msgblast-demo-8baa8bc0d9f0.zip",
+      "sha256": "63f6af9ce53a8279c1acfc9c22208b440ddf7ca1ee9843235e6d5ca3f98e6060",
+      "compiled_icon": "AppIconDemo.icns",
+      "compiled_icon_representation": "ic13",
+      "compiled_icon_sha256": "3e233b2177364f165add299fa575edd050c02a43ec24d65dd0ebd65da6b0e4f7",
+      "compiled_icon_rgb": [
+        64.8,
+        38.8,
+        216.0
+      ],
+      "icon_fill_sha256": "32ec7e63c53a2cbcbea32d82b508b033f1dffd1821bd74d1b304a67d07a80194",
+      "updates": "disabled",
+      "instructions": "Unzip msgblast Demo.app. Fixture mode is explicit (msgblastDemo): it uses simulated Cedar, Lumen, and Orbit data and does not read Messages. A blue icon alone is not what turns fixture mode on. Preferences follow the bundle ID com.msgblast.demo. Saved state is in ~/Library/Application Support/msgblast-Demo, which other local demo builds also use, and is separate from production and from msgblast Dev. A quarantined download may App Translocate and show an install gate. Drag this app file to Applications and leave /Applications/msgblast.app in place. Ad-hoc builds may need System Settings \u2192 Privacy & Security \u2192 Open Anyway. There is no Sparkle feed, so this app will not download or relaunch over the installed production app."
+    }
+  ]
+}

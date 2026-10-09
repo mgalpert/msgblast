@@ -1,0 +1,12 @@
+I'm using msgblast and want to build a feature for myself, then share it with other users.
+Installed app: msgblast 0.4.3 (build 1). Check the source revision separately.
+
+My feature idea: Pin my favorite comparisons
+
+Use https://github.com/mgalpert/msgblast. Help me fork and clone it locally, or work in my existing clone. Downloading the source ZIP is also an option for personal use; use a Git clone of my fork to contribute.
+
+Read AGENTS.md, CONTRIBUTING.md, docs/build-from-source.md, docs/architecture.md, and docs/testing.md before making changes. Start from current upstream main for new work, preserve existing edits, and record the base SHA.
+
+Implement a focused change on a feature branch. Build separate Dev and Demo apps without replacing my installed app or changing its saved data. Use the blue Demo app with sample data for testing and screenshots/video. Dev uses live data. Run the relevant checks and explain their limits.
+
+Help me run my own build. Then prepare a PR against upstream main with a clear description of the problem and feature, validation, Base-SHA, Evidence-SHA, and Screenshots and Video sections showing this change with accessible images and a short playable video. Follow the repository's current evidence requirements. PR review and app release are separate from using my own build.
