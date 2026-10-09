@@ -144,10 +144,16 @@ final class OnboardingController: ObservableObject {
 
     func connectMessages(_ contacts: [OnboardingChoice: Agent], selected: Set<OnboardingChoice>) async {
         guard state.stage == .connecting, state.currentStep == .messages, !checking, !model.busy else { return }
-        model.refresh()
-        guard model.databaseAvailable, model.contactsAvailable else { return }
         let choices = Set(state.selected.filter(\.isMessages))
         let selected = selected.intersection(choices)
+        if selected.isEmpty {
+            model.accessGuide.cancel()
+            error = nil
+            edit { $0.confirmMessages(connected: [], skipped: choices) }
+            return
+        }
+        model.refresh()
+        guard model.databaseAvailable, model.contactsAvailable else { return }
         guard selected.allSatisfy({ contacts[$0] != nil }) else { return }
         checking = true
         let generation = UUID()

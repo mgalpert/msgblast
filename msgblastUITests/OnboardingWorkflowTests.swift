@@ -218,7 +218,6 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["Choose Fo"].waitForExistence(timeout: 5))
         app.buttons["Choose Fo"].click()
-        app.buttons["Choose Szn"].click()
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.staticTexts["Choose who to connect"].waitForExistence(timeout: 10))
         let contact = app.descendants(matching: .any).matching(identifier: "Contact for Fo").firstMatch
@@ -227,10 +226,10 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.menuItems["Search Contacts…"].click()
         XCTAssertTrue(app.buttons["Choose Fo contact"].waitForExistence(timeout: 10))
         app.buttons["Choose Fo contact"].click()
+        XCTAssertTrue(app.staticTexts["Choose who to connect"].exists)
+        XCTAssertFalse(app.images["Fo connected"].exists)
         XCTAssertFalse(app.buttons["Start chatting"].exists)
-        XCTAssertTrue(app.buttons["Select Szn"].exists)
         XCTAssertFalse(app.buttons["New Blast"].exists)
-        app.buttons["Select Szn"].click()
         app.buttons["Connect selected"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
         app.buttons["Start chatting"].click()

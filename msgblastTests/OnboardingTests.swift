@@ -2,6 +2,21 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testEmptyMessagesConfirmationClearsOldRowsWhileAnotherProviderPermitsFinish() {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.chatgpt, .fo, .szn] { onboarding.toggle(choice) }
+        onboarding.begin()
+        onboarding.complete(.chatgpt)
+        onboarding.confirmMessages(connected: [.fo], skipped: [])
+        XCTAssertEqual(onboarding.currentStep, .messages)
+        onboarding.confirmMessages(connected: [], skipped: [.fo, .szn])
+        XCTAssertEqual(onboarding.completed, [.chatgpt])
+        XCTAssertEqual(onboarding.skipped, [.fo, .szn])
+        onboarding.finish()
+        XCTAssertTrue(onboarding.isFinished)
+        XCTAssertFalse(onboarding.completed.contains(where: \.isMessages))
+    }
+
     func testMessagesConfirmationConnectsOnlySelectedRowsAndSkipsTheRest() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.instinct, .fo, .szn] { onboarding.toggle(choice) }

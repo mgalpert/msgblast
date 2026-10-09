@@ -362,8 +362,7 @@ private struct OnboardingMessagesView: View {
                 if setup.checking { ProgressView("Connecting…").controlSize(.small) }
                 else if accessAvailable { Text("\(included.count) \(included.count == 1 ? "agent" : "agents") selected").font(.callout).foregroundStyle(.secondary) }
                 Button(included.isEmpty && setup.state.hasConnectedAgent ? "Continue" : "Connect selected") {
-                    if accessAvailable { Task { await setup.connectMessages(proposed, selected: included) } }
-                    else { setup.skip() }
+                    Task { await setup.connectMessages(proposed, selected: included) }
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!canContinue)
             }.padding(24).disabled(setup.checking || model.busy)
         }
