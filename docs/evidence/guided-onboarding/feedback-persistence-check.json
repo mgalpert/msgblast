@@ -1,0 +1,46 @@
+{
+  "fixture": true,
+  "bundle": "com.msgblast.feedback-persistence-demo",
+  "icon": "AppIconDemo",
+  "before_acknowledgment_quit": {
+    "onboarding": {
+      "completed": [
+        "chatgpt"
+      ],
+      "stage": "feedback",
+      "skipped": [],
+      "selected": [
+        "chatgpt"
+      ],
+      "messageAgentIDs": {}
+    },
+    "comparisons": 0
+  },
+  "unfinished_relaunch": {
+    "onboarding": {
+      "skipped": [],
+      "messageAgentIDs": {},
+      "stage": "connecting",
+      "completed": [],
+      "selected": [
+        "chatgpt"
+      ]
+    },
+    "comparisons": 0
+  },
+  "after_acknowledgment_relaunch": {
+    "onboarding": {
+      "completed": [
+        "chatgpt"
+      ],
+      "skipped": [],
+      "stage": "finished",
+      "selected": [
+        "chatgpt"
+      ],
+      "messageAgentIDs": {}
+    },
+    "comparisons": 0
+  },
+  "live_requests": false
+}

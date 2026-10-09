@@ -2,6 +2,19 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testResolvedSetupWaitsForFinalAcknowledgement() {
+        var onboarding = OnboardingState()
+        onboarding.toggle(.chatgpt)
+        onboarding.begin()
+        onboarding.complete(.chatgpt)
+        XCTAssertTrue(onboarding.hasConnectedAgent)
+        XCTAssertTrue(onboarding.pendingSteps.isEmpty)
+        XCTAssertEqual(onboarding.stage, .feedback)
+        XCTAssertFalse(onboarding.isFinished)
+        onboarding.finish()
+        XCTAssertTrue(onboarding.isFinished)
+    }
+
     func testMixedSelectionHasOrderedAgentStepsAndOneMessagesStep() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.szn, .claudeCode, .fo, .chatgpt, .instinct, .grokbot, .otherMessages] {
@@ -27,6 +40,8 @@ final class OnboardingTests: XCTestCase {
         XCTAssertFalse(onboarding.isFinished)
 
         onboarding.skipCurrentStep()
+        XCTAssertEqual(onboarding.stage, .feedback)
+        onboarding.finish()
         XCTAssertTrue(onboarding.isFinished)
         XCTAssertEqual(onboarding.completed, [.fo])
         XCTAssertEqual(onboarding.skipped, [.instinct, .szn])
@@ -140,15 +155,23 @@ final class OnboardingTests: XCTestCase {
         onboarding.toggle(.fo)
         XCTAssertEqual(onboarding.selected, [.chatgpt])
         onboarding.complete(.chatgpt)
+        onboarding.finish()
         XCTAssertTrue(onboarding.isFinished)
     }
 
-    func testFinishSkipsOnlyIncompleteChoicesAndCompletingClearsSkip() {
+    func testFinishRequiresResolvedChoicesAndCompletingClearsSkip() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .claude, .fo] { onboarding.toggle(choice) }
         onboarding.begin()
         onboarding.skip(.chatgpt)
         onboarding.complete(.chatgpt)
+        onboarding.finish()
+
+        XCTAssertEqual(onboarding.stage, .connecting)
+        XCTAssertTrue(onboarding.skipped.isEmpty)
+        onboarding.skip(.claude)
+        onboarding.skip(.fo)
+        XCTAssertEqual(onboarding.stage, .feedback)
         onboarding.finish()
 
         XCTAssertTrue(onboarding.isFinished)
@@ -181,6 +204,7 @@ final class OnboardingTests: XCTestCase {
         onboarding.begin()
         XCTAssertEqual(onboarding.pendingSteps, [.agent(.chatgpt)])
         onboarding.complete(.chatgpt)
+        onboarding.finish()
         XCTAssertTrue(onboarding.isFinished)
     }
 
@@ -195,5 +219,27 @@ final class OnboardingTests: XCTestCase {
         onboarding.begin()
         XCTAssertEqual(onboarding.skipped, [.grokbot])
         XCTAssertEqual(onboarding.pendingSteps, [.agent(.chatgpt), .messages])
+    }
+
+    func testRestartOnFeedbackScreenRechecksConnectionsWithoutLosingSkips() throws {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.chatgpt, .grokbot] { onboarding.toggle(choice) }
+        onboarding.begin()
+        onboarding.complete(.chatgpt)
+        onboarding.skip(.grokbot)
+        var restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(onboarding))
+        XCTAssertEqual(restored.stage, .feedback)
+        restored.recheckConnections()
+        XCTAssertEqual(restored.stage, .connecting)
+        XCTAssertEqual(restored.skipped, [.grokbot])
+        XCTAssertEqual(restored.pendingSteps, [.agent(.chatgpt)])
+        restored.finish()
+        XCTAssertFalse(restored.isFinished)
+        restored.complete(.chatgpt)
+        restored.finish()
+        XCTAssertTrue(restored.isFinished)
+        restored.recheckConnections()
+        XCTAssertTrue(restored.isFinished)
+        XCTAssertEqual(restored.completed, [.chatgpt])
     }
 }

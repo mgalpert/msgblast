@@ -2,6 +2,34 @@ import XCTest
 
 final class OnboardingWorkflowTests: XCTestCase {
     @MainActor
+    func testDisablingTheOnlyConnectedAgentBeforeAcknowledgementKeepsOnboardingOpen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
+        app.launch()
+        defer { app.terminate() }
+        app.buttons["Choose Claude Code"].click()
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
+        app.buttons["Continue"].click()
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
+        app.typeKey(",", modifierFlags: .command)
+        let enabled = app.switches["Enable Claude Code"]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 5))
+        XCTAssertTrue(["1", "on"].contains(String(describing: enabled.value ?? "")))
+        enabled.click()
+        XCTAssertTrue(["0", "off"].contains(String(describing: enabled.value ?? "")))
+        let settings = app.windows.containing(.switch, identifier: "Enable Claude Code").firstMatch
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        app.buttons["Start chatting"].click()
+        XCTAssertTrue(app.staticTexts["Which agents do you use?"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["New Blast"].exists)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "disabled-agent-keeps-onboarding-open"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testRuntimeDetectionUpdatesWithoutLeavingTheScreen() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
@@ -37,6 +65,8 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
         app.buttons["Continue"].click()
         app.buttons["Skip Szn"].click()
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
+        app.buttons["Start chatting"].click()
         XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["Fo"].value as? String, "Not selected")
     }
@@ -73,6 +103,8 @@ final class OnboardingWorkflowTests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["New Blast"].exists)
         app.buttons["Skip for now"].click()
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
+        app.buttons["Start chatting"].click()
         XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Finish setup"].exists)
         XCTAssertFalse(app.staticTexts["Connect Contacts"].exists)
@@ -118,8 +150,38 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Choose contact for Szn"].exists)
         XCTAssertFalse(app.buttons["New Blast"].exists)
         app.buttons["Skip Szn"].click()
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
+        app.buttons["Start chatting"].click()
         XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Fo"].exists)
         XCTAssertFalse(app.buttons["Send & compare"].exists, "An empty draft cannot be submitted")
+    }
+
+    @MainActor
+    func testFeedbackTipAppearsBeforeFinishingAndTheMenuOpensFeedback() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
+        app.launch()
+        defer { app.terminate() }
+        app.buttons["Choose ChatGPT"].click()
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
+        app.buttons["Continue"].click()
+        XCTAssertTrue(app.staticTexts["Share feedback anytime"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.images["Help menu with Share Feedback highlighted"].exists)
+        XCTAssertFalse(app.buttons["New Blast"].exists)
+        XCTAssertFalse(app.buttons["Skip for now"].exists)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "feedback-tip-before-workspace"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.menuBars.menuBarItems["Help"].click()
+        app.menuBars.menuBarItems["Help"].menuItems["Share Feedback…"].click()
+        let feedback = app.windows["Send Feedback"]
+        XCTAssertTrue(feedback.waitForExistence(timeout: 5))
+        feedback.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(app.staticTexts["Share feedback anytime"].exists)
+        app.buttons["Start chatting"].click()
+        XCTAssertTrue(app.buttons["New Blast"].waitForExistence(timeout: 5))
     }
 }

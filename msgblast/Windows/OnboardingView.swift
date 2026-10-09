@@ -14,6 +14,7 @@ struct OnboardingView: View {
     var body: some View {
         VStack(spacing: 0) {
             if setup.state.stage == .choosing { chooser }
+            else if setup.state.stage == .feedback { OnboardingFeedbackView() }
             else if let step = setup.state.currentStep {
                 switch step {
                 case .agent(let provider):
@@ -39,8 +40,13 @@ struct OnboardingView: View {
                 } else {
                     Button("Back") { setup.back() }
                     Spacer()
-                    Button("Skip for now") { setup.skip() }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                    if setup.state.stage == .feedback {
+                        Button("Start chatting") { setup.finish() }
+                            .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Skip for now") { setup.skip() }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
                 }
             }.padding(24).disabled(model.busy)
         }
@@ -98,6 +104,38 @@ struct OnboardingView: View {
             .accessibilityValue(selected ? "Selected" : "Not selected")
     }
 
+}
+
+private struct OnboardingFeedbackView: View {
+    private static let screenshot: NSImage? = {
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle.main
+        #endif
+        return bundle.url(forResource: "feedback-menu", withExtension: "png", subdirectory: "Onboarding")
+            .flatMap(NSImage.init(contentsOf:))
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("You’re ready to go").font(.callout).foregroundStyle(.secondary)
+                Text("Share feedback anytime").font(.system(size: 28, weight: .bold))
+                Text("Have an idea or run into something unexpected? Choose Help → Share Feedback… in the menu bar whenever you need us.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let screenshot = Self.screenshot {
+                Image(nsImage: screenshot).resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12)))
+                    .accessibilityLabel("Help menu with Share Feedback highlighted")
+            }
+            Text("Feedback helps us make msgblast better for you.").font(.callout).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: 680).padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
 
 private struct OnboardingProviderView: View {

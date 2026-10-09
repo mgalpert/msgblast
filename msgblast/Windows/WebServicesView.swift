@@ -358,7 +358,8 @@ struct LocalAgentSettingsView: View {
                 Toggle("Enable \(webProvider.name)", isOn: Binding(
                     get: { web.sessions.first(where: { $0.provider == webProvider })?.isEnabled == true },
                     set: { web.setEnabled($0, for: webProvider) }
-                )).toggleStyle(.switch).disabled(isBusy).padding(.top, 8)
+                )).toggleStyle(.switch).accessibilityIdentifier("Enable \(webProvider.name)")
+                    .disabled(isBusy).padding(.top, 8)
                 let installed = agent.installed.contains { $0.provider == provider }
                 let connected = [.subscription, .apiKey, .other].contains(agent.accounts[provider] ?? PersonalAgentAccountStatus.unknown)
                 accountRow(name: webProvider.name,

@@ -43,7 +43,7 @@ public enum OnboardingStep: Hashable, Sendable {
 }
 
 public struct OnboardingState: Codable, Equatable, Sendable {
-    public enum Stage: String, Codable, Sendable { case choosing, connecting, finished }
+    public enum Stage: String, Codable, Sendable { case choosing, connecting, feedback, finished }
 
     public var selected: Set<OnboardingChoice> = []
     public var completed: Set<OnboardingChoice> = []
@@ -105,9 +105,13 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         finishIfResolved()
     }
     public mutating func finish() {
-        guard hasConnectedAgent else { return }
-        skipped.formUnion(selected.subtracting(completed))
+        guard stage == .feedback, hasConnectedAgent, pendingSteps.isEmpty else { return }
         stage = .finished
+    }
+    public mutating func recheckConnections() {
+        guard !isFinished else { return }
+        completed = []
+        if stage == .feedback { stage = .connecting }
     }
     public mutating func resume() {
         skipped.removeAll()
@@ -115,7 +119,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     }
     private mutating func finishIfResolved() {
         if stage == .connecting && pendingSteps.isEmpty {
-            stage = hasConnectedAgent ? .finished : .choosing
+            stage = hasConnectedAgent ? .feedback : .choosing
         }
     }
 }

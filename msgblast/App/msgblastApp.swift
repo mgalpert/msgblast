@@ -32,7 +32,7 @@ struct msgblastApp: App {
         .commands {
             BlastCommands()
             CommandGroup(after: .appInfo) {
-                Button("Send Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
+                Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
                 Button("Check for Updates…") { updater.checkForUpdates() }
                     .disabled(updater.configuration.isEnabled && !updater.canCheckForUpdates)
             }
@@ -41,7 +41,7 @@ struct msgblastApp: App {
                 ForEach(model?.state.comparisons ?? []) { comparison in Button(comparison.title) { model?.coordinator?.open(comparison.id) } }
             }
             CommandGroup(replacing: .help) {
-                Button("Send Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
+                Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
             }
         }
         Settings {

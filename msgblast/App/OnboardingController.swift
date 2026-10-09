@@ -52,6 +52,25 @@ final class OnboardingController: ObservableObject {
         edit { $0.resume(); $0.completed = [] }
     }
 
+    func finish() {
+        guard state.stage == .feedback else { return }
+        model.refresh()
+        let hasUsableAgent = state.completed.intersection(state.selected).contains { choice in
+            if let provider = choice.provider {
+                let session = session(for: provider)
+                return session.isEnabled && isReady(session)
+            }
+            guard choice.isMessages, model.databaseAvailable, let agent = candidate(for: choice) else { return false }
+            return model.route(agent) != nil
+        }
+        guard hasUsableAgent else {
+            edit { $0.recheckConnections(); $0.chooseAgain() }
+            error = "Connect at least one agent before starting a chat."
+            return
+        }
+        edit { $0.finish() }
+    }
+
     func completeRuntime(_ runtime: LocalAgentRuntime) {
         guard state.stage == .connecting, state.currentStep == .runtime(runtime),
               model.personalAgent.detectedLocalAgents.contains(where: { $0.runtime == runtime }),

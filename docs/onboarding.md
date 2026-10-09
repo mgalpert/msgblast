@@ -12,13 +12,15 @@ OpenClaw and Hermes reuse their existing installation detection and user-trigger
 
 Instinct, Fo, Szn, and Another Messages agent share one screen. Messages history and Contacts access are requested once, only when missing. Users choose and confirm each contact/address. An agent with no eligible existing one-to-one conversation shows Open Messages and Check again. Its selection is not considered connected until routing succeeds. Automation permission stays contextual to the first explicit Messages send.
 
+After the connection queue is resolved, a final screen explains that feedback is available anytime from Help → Share Feedback… and shows the native menu with that command highlighted. Start chatting checks that a selected connection is still usable, acknowledges the tip, and opens the workspace. Disabling the sole connected agent during the tip returns to the picker for another connection. Opening the feedback window leaves onboarding in place and never submits feedback automatically.
+
 Individual agents may be skipped. Skipping every chat-capable selection returns to the picker; it cannot open an empty workspace. After one connection is ready, remaining selections can be skipped and revisited through Finish setup.
 
 ## State and lifecycle
 
 `AppState.onboarding` is optional so legacy stores still load. `AppModel` distinguishes a fresh store before saving it and only initializes onboarding for new installations. Legacy accounts, drafts, comparisons, receipts, and web-store identities retain their existing paths.
 
-`OnboardingState` persists selection, completion/skip intent, and chosen Messages contact IDs. On a partial-setup restart, completion is recomputed from actual accounts and permissions. No credential or Messages transcript is added to onboarding state. Skipped providers are not selected for shared sends or shown as chat panes.
+`OnboardingState` persists selection, completion/skip intent, and chosen Messages contact IDs. On a partial-setup restart, completion is recomputed from actual accounts and permissions. Restarting from the feedback tip returns to connection verification before showing the tip again; finished onboarding remains finished. No credential or Messages transcript is added to onboarding state. Skipped providers are not selected for shared sends or shown as chat panes.
 
 The Grok Bot resource stays unchanged; `AgentArtwork` crops and masks its displayed avatar to a circle for all app surfaces.
 

@@ -70,7 +70,7 @@ final class AppModel: ObservableObject {
             if !existingStore && (!demo || onboardingPreview) { state.onboarding = OnboardingState() }
             // Saved intent survives a restart; readiness is checked against the
             // actual accounts and permissions again before opening any chats.
-            if let setup = state.onboarding, !setup.isFinished { state.onboarding?.completed = [] }
+            state.onboarding?.recheckConnections()
             try local.save(state)
         } catch { storageLoadFailed = true; self.error = "Local state could not be loaded or saved: \(error.localizedDescription). Sending is unavailable until storage works." }
         if demo { setupDemo() }

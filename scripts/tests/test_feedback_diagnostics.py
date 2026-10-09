@@ -38,7 +38,7 @@ class FeedbackDiagnosticTests(unittest.TestCase):
         self.assertIn("@Published var includeDiagnostics = true", view)
         self.assertIn("This ZIP is a local copy created when you choose Save.", core)
         self.assertIn("Only your note, optional reply email, and the diagnostics you choose are sent.", view)
-        self.assertIn('Button("Send Feedback…")', app)
+        self.assertIn('Button("Share Feedback…")', app)
         self.assertIn("FeedbackWindowController.show", app)
         self.assertNotIn("URLSession", view)
         self.assertNotIn("mailto:", view)
