@@ -84,7 +84,29 @@ Reports are saved with the comparison and update when you request it. Unlike CLI
 
 Website layout changes can affect sending. Review a failed or unconfirmed send before retrying; msgblast does not automatically resend it. Shared web/CLI blasts are text-only, and there is no shared model or thinking selector. Your prompts go to the selected services; CLI tools may act within their configured permissions.
 
-For developers: [build from source](docs/build-from-source.md).
+## Build your own feature
+
+Choose **msgblast → Build a New Feature…** to describe your idea and copy a
+starting prompt for your coding agent. The window links to the public repository,
+fork page, source download, and build guide. You can also find it in **Help**.
+
+[msgblast's source is public](https://github.com/mgalpert/msgblast). Fork it, build
+the feature you want to use, and share it through a pull request with a description,
+screenshots, and a short video. You can also clone or download the source for a
+personal build.
+
+Start with [Build from source](docs/build-from-source.md) to create separate
+**msgblast Dev** and **msgblast Demo** apps without replacing your installed app.
+Local previews need Xcode 27 and Python, but no production release credentials.
+Use Demo with sample data for testing and recordings; Dev uses live accounts.
+
+[Contributing](CONTRIBUTING.md) covers forks and PRs.
+[Architecture](docs/architecture.md) maps the codebase, [Testing](docs/testing.md)
+lists checks, and the [documentation index](docs/README.md) links the current
+integration and maintainer guides. Coding agents should read [AGENTS.md](AGENTS.md).
+
+You can use your own build while your contribution is reviewed. Maintainers
+publish reviewed changes separately; merging source does not distribute an app.
 
 ## License
 

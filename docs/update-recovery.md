@@ -1,5 +1,11 @@
 # Recover an update blocked by saved state
 
+This is user recovery guidance. Contributor previews should use the separate
+profiles in [Build from source](build-from-source.md). For developer storage and
+migration work, read [Architecture](architecture.md#state-credentials-and-compatibility)
+and [Testing](testing.md). Version numbers below describe the historical
+compatibility issue, not the current latest release.
+
 An older msgblast can reject state written by a newer app or preview. For example, 0.4.3 cannot decode comparisons containing the separate Codex CLI or Claude Code providers introduced in 0.5.0. Its save guard protects the file, but also refuses the quit request required by Sparkle.
 
 ## If an older app is already stuck

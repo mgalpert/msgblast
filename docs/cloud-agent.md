@@ -1,5 +1,11 @@
 # Cloud Agent and release capability
 
+For the general contributor path, use [Contributing](../CONTRIBUTING.md),
+[Build from source](build-from-source.md), [Architecture](architecture.md), and
+[Testing](testing.md). This runbook adds details for the owner's configured Cursor
+environment and maintainer CI/release operations. Owner-specific access and old
+release baselines below are observations, not prerequisites for a public fork.
+
 Hosted Cursor Cloud Agents run on Ubuntu. This runbook is the durable source for what they can verify, how native macOS checks run, and how a requested release is shipped. Recheck the live feed, Actions, and `gh` access before every release. The figures below are a baseline from October 6, 2026, not the next version.
 
 Do not commit `.cursor/environment.json` to switch this repo onto a repository-managed environment. A committed environment file overrides the saved Cloud Agent environment. Keep the saved install equivalent to `scripts/cloud-agent-install.sh`, and change it only after that command has been run successfully.
@@ -100,7 +106,18 @@ The demo app calls the existing simulated Cedar, Lumen, and Orbit setup because 
 
 Always launch blue-green `msgblast Dev.app` with live data, without `--demo` or `--isolated-demo`. Use blue `msgblast Demo.app` for synthetic conversations, simulated sends, fixture tests, and PR demonstrations. If Dev lacks Messages access, show its actual permission state; do not substitute fixture data. Release preflight still requires the affected live workflow on Dev.
 
-`UserDefaults.standard` is stored per bundle ID, so the two previews and `com.msgblast.mac` do not share preferences. The app does not use the keychain. Application Support is not derived from the bundle ID. `msgblastSupportDirectory` selects `msgblast-Dev` or `msgblast-Demo`, and any other value is ignored. Live web previews keep `~/Library/Application Support/MsgBlast-WebPreview` unless that override is set. Launching with the `--demo` argument still uses the shared suite `com.msgblast.demo-permissions`. Opening the downloadable demo from Finder does not pass that argument. The demo support folder is the same one local `scripts/build_demo.sh` builds already use, so those demo builds share fixture state with each other and stay separate from production and from `msgblast Dev`.
+`UserDefaults.standard` is stored per bundle ID, so the two previews and
+`com.msgblast.mac` do not share preferences. CLI authentication stays with the
+installed CLI. Grok Bot uses the hardware-backed vault, permitted noninteractive
+data-protection Keychain fallback, or labeled session-only storage described in
+[Grok Bot](grokbot.md); do not assume the app never uses secure storage.
+Application Support is not derived from the bundle ID. `msgblastSupportDirectory`
+accepts sanitized `msgblast-…` profile names; packaging selects `msgblast-Dev` or
+`msgblast-Demo`. Live web previews retain their separate profile. Launching with
+`--demo` uses the shared `com.msgblast.demo-permissions` suite. Opening a packaged
+Demo from Finder does not pass that argument. Local Demo builds share their
+fixture support folder and stay separate from production and Dev. See
+[Architecture](architecture.md#state-credentials-and-compatibility).
 
 A quarantined ZIP can App Translocate. Debug builds then show an install gate that names the actual app file and says to leave `msgblast.app` alone. Ad-hoc signature means the first launch may need System Settings → Privacy & Security → Open Anyway.
 
@@ -160,7 +177,10 @@ Tag push and `workflow_dispatch` of `release-adhoc.yml` were not attempted. Eith
 
 The user stated that these Actions variables and secrets already exist: `MSGBLAST_PUBLIC_BASE_URL`, `MSGBLAST_R2_ACCOUNT_ID`, `MSGBLAST_R2_BUCKET`, `MSGBLAST_PUBLIC_KEY`, `MSGBLAST_SPARKLE_PRIVATE_KEY`, `MSGBLAST_R2_ACCESS_KEY_ID`, and `MSGBLAST_R2_SECRET_ACCESS_KEY`. This agent could not list them. Keep signing and R2 secrets only in Actions. No Apple credentials are required for the ad-hoc path.
 
-Repository metadata from this integration reported `"visibility": "public"`. The release docs still say the source repository stays private. This setup did not change visibility.
+Repository metadata reported `"visibility": "public"`; the source repository is
+public. The October 6 access checks above did not change visibility. Recheck
+current permissions for an operation instead of treating that integration's old
+access as proof of a contributor's access.
 
 ## Release baseline and procedure
 
