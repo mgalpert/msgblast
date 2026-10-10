@@ -1,0 +1,82 @@
+{
+  "captured_source_revision": "81c4763876f45df300ea2119f1ee405c1eeed931",
+  "initial_base_revision": "5cd8a394f28f37eab71359645810421da2fa19d5",
+  "integrated_main_revision": "53ef8e9067dc90f7086481c4bf6c189194d58352",
+  "captured_at_utc": "2026-10-10T18:48:45.220195+00:00",
+  "build": "Local scripts/build_preview_apps.py packaging with task-specific identities; clean committed source",
+  "capturing_tool": "CUA native app screenshot captures around actual UI interactions",
+  "fixture_limits": [
+    "All published captures are from Demo; accounts, installation status and rabbit replies are synthetic.",
+    "Terminal setup, sign-in, browser import, Messages, Contacts, paid requests and production updates were not exercised.",
+    "Video repeats sampled frames and edits playback timing; not a continuous real-time recording; no audio or drawn interface pixels."
+  ],
+  "source_file_sha256": {
+    "msgblast/Core/AgentGrid.swift": "f195c204838c6ab90695e8f9103f11a2696356cc87a1ac26acbdf3930c8792aa",
+    "msgblast/Core/Onboarding.swift": "05097b2da61496a6c64a368a5efe75a181b12cc1e986e0b872d4b39a39528b8a",
+    "msgblast/Core/WebProvider.swift": "9b075b69fb1d2900f2b6c189d3c1a12e83c3916652928b9e70e45100c9c80d13",
+    "msgblast/Core/WebAgentSession.swift": "7af48416d9f69f436488540eb235ba37d6d555c3009450fd1d9339185bc668bf",
+    "msgblast/Core/WebPageScript.swift": "97f07f58e27edd7f61e6f0386f2209057bc067f2fb66768f19b707e223ea7ed0",
+    "msgblast/Core/LocalAgentDetection.swift": "42b07d3767302f42ed29a3dbf8718cd5ac750fa20b6f05aff79e60264e966fd4",
+    "msgblast/Windows/AgentArtwork.swift": "53f7ad089cd2248ac9e03f5f1368b64426b611f46bc804711933caa9631ed645",
+    "msgblast/Windows/OnboardingView.swift": "c0428728cf382572c669e8573f095117930eef8b4a71f7329a9a8ade0239c850",
+    "msgblast/Windows/WebServicesView.swift": "e7ebbce84f6f7b44c45a1c4c5100c6932ffc68b2949ad260bcc764108679d8a7",
+    "docs/personal-agent-reports.md": "22887f300a138f83fbd2f2edd239e1f8c5d378712f4baea61de7415444aff3b8",
+    "msgblast/Resources/WebAgentIcons/os3.png": "5e3aaff6e262feea0a6c4c2c73af5e30706108009f78741b2b0ca24f3fb88c6c"
+  },
+  "media_sha256": {
+    "01-onboarding-order.png": "29d5a13ec8059e60c77c0a4fec57d52e7d8c55fa88075afe1b25100c9c494cea",
+    "02-selected-agents.png": "c32ea57a6bd56e5f2cf0f3cb25c71c9163339cad53457096e9f098f319acdb49",
+    "03-openclaw-onboarding.png": "81e590f6e96a81a8d6d52baeee391d17fc42ef58e15417619fd33e320f377758",
+    "04-hermes-onboarding.png": "9175a3b136d839acd9d267d8b4e8e9d406a18b7cdbdc5d732f758f1f498b4255",
+    "05-rabbit-ready.png": "aceccebdb8f1a100d38be0581dd0741623884617d9d69a5db786c2f31c61c673",
+    "06-rabbit-featured.png": "f99c753132a2ab7db763a72abfe74d0b231fc055aa77cfd57858032945419668",
+    "07-rabbit-first-reply.png": "637a39ed3bec725c615210a985c8a60f569f021e09c444a2228115f90bb6fb1c",
+    "08-rabbit-shared-conversation.png": "dc6a0aee179771d742a56c659f4dd5d0a3773ef2269a4817cc3eb926428bf3a2",
+    "09-settings-status.png": "134dce59ea523a9f433b82b8ecc973d876de7a6bbb7ddeed997272fb6147884e",
+    "10-openclaw-settings.png": "faccf4728274865473bec1bc767e13cd342b8bbe3c1032e98e3045480fb2db74",
+    "11-hermes-settings.png": "7fa6da72a4a1e4de942089d393d2c912ca11073ae4ed00186f50e36a5344bf6c",
+    "workflow.mp4": "2aece39940b395e3b8981a304b223938458f4c3076177c5ab5803d6fe3b5151d"
+  },
+  "preview_variants": [
+    {
+      "CFBundleName": "msgblast Dev",
+      "CFBundleIdentifier": "com.msgblast.development.rabbit-os3-1cf34eb3d88f",
+      "CFBundleShortVersionString": "0.4.3",
+      "CFBundleVersion": "1",
+      "msgblastSourceRevision": "81c4763876f45df300ea2119f1ee405c1eeed931",
+      "msgblastDemo": false,
+      "msgblastDisableUpdates": true,
+      "msgblastOnboardingPreview": null,
+      "msgblastSupportDirectory": "msgblast-Dev-RabbitOS3-1cf34eb3d88f"
+    },
+    {
+      "CFBundleName": "msgblast Demo",
+      "CFBundleIdentifier": "com.msgblast.demo.runtime-guide-81c4763876f4",
+      "CFBundleShortVersionString": "0.4.3",
+      "CFBundleVersion": "1",
+      "msgblastSourceRevision": "81c4763876f45df300ea2119f1ee405c1eeed931",
+      "msgblastDemo": true,
+      "msgblastDisableUpdates": true,
+      "msgblastOnboardingPreview": true,
+      "msgblastSupportDirectory": "msgblast-Demo-RuntimeGuide-81c4763876f4"
+    }
+  ],
+  "video": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "h264",
+        "width": 1440,
+        "height": 1440,
+        "side_data_list": [
+          {}
+        ]
+      }
+    ],
+    "format": {
+      "duration": "41.000000",
+      "size": "536221"
+    }
+  }
+}
