@@ -317,8 +317,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func canAutomaticallyRecoverManual(_ attempt: WebSendAttempt, in page: WebConversationPage?) -> Bool {
         guard provider.sharesOneConversation else { return true }
-        guard let scope = manualRecoveryScopes[attempt.id], let page else { return false }
+        guard !hasCompetingUnresolvedAttempt(for: attempt),
+              let scope = manualRecoveryScopes[attempt.id], let page else { return false }
         return scope.comparison == comparisonGeneration && scope.page.matches(page)
+    }
+
+    private func hasCompetingUnresolvedAttempt(for attempt: WebSendAttempt) -> Bool {
+        state.attempts.contains {
+            $0.id != attempt.id && $0.status.isUnresolved &&
+            Self.normalized($0.text) == Self.normalized(attempt.text)
+        }
     }
 
     public var draftRecoveryText: String? {
@@ -346,10 +354,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
         if let saved = state.conversationURLs[comparison.uuidString], provider.canonicalConversationURL(saved) != url { return false }
         if let candidate = attempt.pinnedConversationURL, candidate != url { return false }
-        if provider.sharesOneConversation, state.attempts.contains(where: {
-            $0.id != attempt.id && $0.comparisonID != comparison && $0.status.isUnresolved &&
-            Self.normalized($0.text) == Self.normalized(attempt.text)
-        }) { return false }
+        if provider.sharesOneConversation, hasCompetingUnresolvedAttempt(for: attempt) { return false }
         let matches = linkCandidates(for: attempt)
         guard matches.count == 1 else { return false }
         return snapshot.messages.dropFirst(matches[0] + 1).prefix { $0.role != "user" }.contains { $0.role == "assistant" }
@@ -839,7 +844,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
         guard !isSending else { return nil }
-        guard !state.hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
+        guard !hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
         isSending = true
         defer { isSending = false }
         var attempt = WebSendAttempt(text: text)
@@ -1039,6 +1044,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public func hasUnresolvedSend(_ text: String) -> Bool {
+        if provider.sharesOneConversation {
+            return state.attempts.contains { $0.status.isUnresolved && Self.normalized($0.text) == Self.normalized(text) }
+        }
         if !provider.usesNativeConversation { return state.hasUnresolvedSend(text) }
         return hasIncompleteNativeRequest(for: state.comparisonID)
     }

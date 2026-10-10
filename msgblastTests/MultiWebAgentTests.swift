@@ -1265,6 +1265,60 @@ final class MultiWebAgentTests: XCTestCase {
         await session.cancelAndWait()
     }
 
+    func testOS3UncertainSubmissionBlocksWhitespaceVariantInAnotherComparison() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        try await delayNextOS3FixtureEcho(in: session)
+        let sentID = UUID(), failedID = UUID()
+        let sent = await session.send("Same question", comparisonID: sentID)
+        XCTAssertEqual(sent?.status, .uncertain)
+        _ = await session.openComparison(failedID)
+        XCTAssertTrue(session.hasUnresolvedSend("Same \n question"), "Shared receipts normalize whitespace, so pending requests must use the same identity")
+        let blocked = await session.send("Same  question", comparisonID: failedID)
+        XCTAssertNil(blocked, "A whitespace variant must not start another submission or prepare a recovery context")
+        _ = try await session.webView.callAsyncJavaScript("input.value='';globalThis.releaseOS3Echo()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertNil(session.latestComparisonAttempt?.messageID)
+        _ = await session.openComparison(sentID)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .observed)
+        XCTAssertEqual(session.state.attempts.count, 1)
+        await session.cancelAndWait()
+    }
+
+    func testOS3ManualRecoveryReservesNormalizedPendingReceipt() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let failedID = UUID(), pendingID = UUID()
+        _ = try await session.webView.callAsyncJavaScript("send.setAttribute('aria-disabled','true')", arguments: [:], in: nil, contentWorld: .page)
+        let failed = await session.send("Same  question", comparisonID: failedID)
+        XCTAssertEqual(failed?.status, .notSent)
+        XCTAssertNotNil(failed?.manualContext)
+        // Simulate a persisted uncertain request from before normalized send guards.
+        var pending = WebSendAttempt(text: "Same question")
+        pending.comparisonID = pendingID
+        pending.status = .uncertain
+        session.updateState { $0.attempts.append(pending) }
+        _ = try await session.webView.callAsyncJavaScript("""
+        input.value='';
+        for (const role of ['user','assistant']) {
+            const message=document.createElement('article');
+            message.className='dial-msg '+(role==='user'?'dial-user':'dial-system');
+            message.dataset.renderId='msg-pending-'+role;
+            message.textContent=role==='user'?'Same question':'Delayed fixture reply';
+            document.querySelector('#transcript').append(message);
+        }
+        """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .notSent, "A's valid manual scope must not claim a normalized receipt reserved by B")
+        XCTAssertNil(session.latestComparisonAttempt?.messageID)
+        XCTAssertFalse(session.canLinkCurrentConversation)
+        XCTAssertEqual(session.state.attempts.first { $0.id == pending.id }?.status, .uncertain)
+        await session.cancelAndWait()
+    }
+
     func testOS3ExplicitLinkUsesNewUnclaimedMessageWithoutResending() async throws {
         let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
         session.connect()
