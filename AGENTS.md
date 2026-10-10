@@ -96,9 +96,9 @@ them as current setup instructions or proof that today's branch passes.
 
 ## Building and publishing app updates
 
-The default distribution path is now **automated ad-hoc releases without Apple credentials**. `.github/workflows/release-adhoc.yml` runs for pushed `vVERSION` tags or manual dispatches from the default branch. Pushing ordinary source commits does not distribute a new app. The workflow tests, builds, ad-hoc signs, signs the Sparkle ZIP/feed, uploads to an existing public R2 host and verifies anonymous downloads. No coding agent needs to repeat build/sign/upload commands each release.
+Production distribution uses **automated Developer ID signing and Apple notarization**. `.github/workflows/release-adhoc.yml` retains its historical filename and supports both signing modes; the repository's `MSGBLAST_SIGNING_MODE` is configured as `developer-id`. It runs for pushed `vVERSION` tags or manual dispatches from the default branch. Pushing ordinary source commits does not distribute a new app. Actions tests, builds, signs and notarizes the app, signs the Sparkle ZIP/feed, publishes to the existing R2 host, and verifies anonymous downloads. Reuse the configured credentials and verify the live mode; never fall back to ad-hoc signing for production.
 
-These are maintainer operations. Read `docs/automated-releases.md` before activating or changing the pipeline; use `docs/developer-id-signing.md` for optional Developer ID/notarization and `docs/updates.md` for updater/local preparation details. The workflow must be on the default branch and release source must be reachable from it. The source repository is public; installed apps still use the separately configured public HTTPS archive/feed host.
+These are maintainer operations. Read `docs/automated-releases.md` before activating or changing the pipeline; use `docs/developer-id-signing.md` for the production signing identity and notarization setup, and `docs/updates.md` for updater/local preparation details. The workflow must be on the default branch and release source must be reachable from it. The source repository is public; installed apps still use the separately configured public HTTPS archive/feed host.
 
 ### One-time activation
 
@@ -149,7 +149,7 @@ gh workflow run release-adhoc.yml -R mgalpert/msgblast --ref main -f version=0.1
 
 Dispatch builds `main` as resolved for that run. Verify the run's `headSha` matches the intended source; use a tag when the revision must be pinned. Choose **one** trigger per release. Do not push a tag and dispatch the same release as two separate jobs.
 
-Actions handles testing, building, ad-hoc signing, Sparkle signing, counter allocation and R2 publication. Do not repeat those steps manually or add Apple credentials for this distribution path.
+Actions handles testing, building, the configured signing/notarization mode, Sparkle signing, counter allocation and R2 publication. Do not repeat those steps manually or recreate the existing Apple credentials. The explicit ad-hoc mode needs no Apple credentials and is not the active production path.
 
 ### Verify publication before calling it released
 

@@ -36,7 +36,7 @@ building locally does not need to activate them.
   archives, counters, signing modes, and public hosting.
 - [Updater and local release preparation](updates.md): Sparkle configuration,
   update fixtures, and direct-script diagnostics.
-- [Developer ID signing](developer-id-signing.md): optional Apple signing and
+- [Developer ID signing](developer-id-signing.md): production Apple signing and
   notarization migration.
 - [Cloud agents](cloud-agent.md): Ubuntu checks, native CI, branch previews, and
   the configured Cursor environment.

@@ -33,7 +33,6 @@ struct OnboardingView: View {
                 Divider()
                 HStack {
                     if setup.state.stage == .choosing {
-                        Text("Connect at least one agent to continue.").font(.callout).foregroundStyle(.secondary)
                         Spacer()
                         Button("Continue setup") { setup.begin() }
                             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
@@ -63,10 +62,7 @@ struct OnboardingView: View {
     private var chooser: some View {
         VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Welcome to msgblast").font(.callout).foregroundStyle(.secondary)
                     Text("Which agents do you use?").font(.system(size: 28, weight: .bold))
-                    Text("Choose the agents you already use. We’ll help you connect each one.")
-                        .foregroundStyle(.secondary)
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
                     ForEach(OnboardingChoice.allCases) { choice in
@@ -124,10 +120,7 @@ private struct OnboardingFeedbackView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("You’re ready to go").font(.callout).foregroundStyle(.secondary)
                 Text("Share feedback anytime").font(.system(size: 28, weight: .bold))
-                Text("Have an idea or run into something unexpected? Choose Help → Share Feedback… in the menu bar whenever you need us.")
-                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if let screenshot = Self.screenshot {
                 Image(nsImage: screenshot).resizable().scaledToFit()
@@ -135,7 +128,6 @@ private struct OnboardingFeedbackView: View {
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12)))
                     .accessibilityLabel("Help menu with Share Feedback highlighted")
             }
-            Text("Feedback helps us make msgblast better for you.").font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: 680).padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -159,11 +151,7 @@ private struct OnboardingProviderView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
                 AgentAvatar(agent: AgentArtwork.agent(for: session), name: session.provider.name, size: 48)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Let’s connect \(session.provider.name)").font(.title.bold())
-                    Text(setup.state.hasConnectedAgent ? "Connect this agent, or skip it and finish setup later." : "Connect an agent to start chatting. You can skip this choice and try another.")
-                        .foregroundStyle(.secondary)
-                }
+                Text("Let’s connect \(session.provider.name)").font(.title.bold())
             }
             if session.provider == .grokbot {
                 ScrollView { GrokBotSetupView(session: session, busy: model.busy, selectAfterConnecting: false).padding(2) }.scrollIndicators(.hidden)
@@ -171,8 +159,6 @@ private struct OnboardingProviderView: View {
                 cliSetup(provider)
                 Spacer()
             } else {
-                Text("Sign in with the account you already use. Your question won’t be sent during setup.")
-                    .font(.callout).foregroundStyle(.secondary)
                 ServiceLoginPage(session: session)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12)))
@@ -184,20 +170,14 @@ private struct OnboardingProviderView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 } else if setup.isReady(session) {
                     Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                } else {
-                    Text(session.provider == .grokbot && !session.grokBotRemembersConnection
-                         ? "Paste your Bot’s webhook details above to connect."
-                         : session.snapshot.reason).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Check again") { Task { await setup.refresh(session) } }
-                    .disabled(setup.checking || session.configuringGrokBot)
                 Button("Continue") { setup.complete(session) }
                     .buttonStyle(.borderedProminent).disabled(!setup.isReady(session) || setup.checking)
             }
         }.padding(28)
         .task { await setup.refresh(session) }
-        .onChange(of: session.snapshot.ready) { _, _ in setup.advanceIfReady(session) }
+        .onChange(of: setup.isReady(session)) { _, _ in setup.advanceIfReady(session) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await setup.refresh(session) }
         }
@@ -206,13 +186,10 @@ private struct OnboardingProviderView: View {
     private func cliSetup(_ provider: PersonalAgentProvider) -> some View {
         let installed = personalAgent.installed.contains { $0.provider == provider }
         return VStack(alignment: .leading, spacing: 18) {
-            Text("Use the account and setup you already have in \(session.provider.name).")
-                .foregroundStyle(.secondary)
             if session.fixture { Label("Demo account · no provider requests", systemImage: "testtube.2").font(.caption).foregroundStyle(.secondary) }
             if !installed {
                 Label("\(session.provider.name) isn’t installed yet", systemImage: "arrow.down.circle")
                 Link("Install \(session.provider.name)", destination: URL(string: provider == .codex ? "https://developers.openai.com/codex/cli" : "https://code.claude.com/docs/en/setup")!)
-                Text("Return here after installation, then choose Check again.").font(.callout).foregroundStyle(.secondary)
             } else if provider == .claude && setup.compatibility[session.provider] == false {
                 Label("Update Claude Code to continue", systemImage: "arrow.clockwise.circle")
                 Text(PersonalAgentError.conversationVersionRequired.localizedDescription).font(.callout).foregroundStyle(.secondary)
@@ -222,10 +199,7 @@ private struct OnboardingProviderView: View {
                 if !setup.isReady(session) {
                     Button("Sign in to \(session.provider.name)") { personalAgent.signIn(provider) }
                         .buttonStyle(.borderedProminent).disabled(session.fixture)
-                    Text("Finish signing in in Terminal, then return here. We’ll check your connection again.")
-                        .font(.callout).foregroundStyle(.secondary)
                 }
-                Text("Your existing tools and permissions still apply.").font(.caption).foregroundStyle(.secondary)
             }
             if let error = personalAgent.accountError { Text(error).font(.callout).foregroundStyle(.orange) }
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -271,25 +245,18 @@ private struct OnboardingRuntimeView: View {
                 AgentAvatar(agent: Agent(name: runtime.name, handles: [], avatar: AgentArtwork.runtimeAvatar(for: runtime)), name: runtime.name, size: 48)
                 Text("Set up \(runtime.name)").font(.title.bold())
             }
-            Text(runtime == .hermes
-                 ? "Hermes can create comparison reports for your Messages conversations. Chat conversations aren’t connected to msgblast yet."
-                 : "You can configure OpenClaw here. Its chat conversations aren’t connected to msgblast yet.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if !setup.state.hasConnectedAgent {
-                Text("Connect at least one other agent to start chatting.").font(.callout).foregroundStyle(.secondary)
-            }
+            Label(runtime == .hermes ? "Comparison reports only" : "Terminal setup only", systemImage: "terminal")
+                .font(.headline)
             VStack(alignment: .leading, spacing: 16) {
                 if personalAgent.detectingLocalAgents {
                     ProgressView("Checking installation…")
                 } else if installed {
                     Label("Installed on this Mac", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("Continue in Terminal to choose your provider and finish setup, then return here.").foregroundStyle(.secondary)
                     Button("Continue in Terminal") { personalAgent.setUp(runtime) }
                         .buttonStyle(.borderedProminent).disabled(model.demo)
                 } else {
                     Text("\(runtime.name) isn’t installed yet.").font(.headline)
                     Link("Install \(runtime.name)", destination: runtime.documentation)
-                    Text("Return here after installation, then choose Check again.").foregroundStyle(.secondary)
                 }
                 if model.demo { Label("Demo installation · Terminal setup is disabled", systemImage: "testtube.2").font(.caption).foregroundStyle(.secondary) }
                 if let error = personalAgent.accountError { Text(error).foregroundStyle(.orange) }
@@ -298,8 +265,6 @@ private struct OnboardingRuntimeView: View {
             Spacer()
             HStack {
                 Spacer()
-                Button("Check again") { Task { await personalAgent.detectLocalAgents() } }
-                    .disabled(personalAgent.detectingLocalAgents)
                 Button("Done with setup") { setup.completeRuntime(runtime) }
                     .buttonStyle(.borderedProminent).disabled(!installed || personalAgent.detectingLocalAgents)
             }
@@ -333,15 +298,12 @@ private struct OnboardingMessagesView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(spacing: 10) {
                     Text("Choose who to connect").font(.system(size: 28, weight: .bold))
-                    Text(accessAvailable ? "We found these contacts for your Messages agents." : "We’ll set up access once for your Messages agents.")
-                        .foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity).padding(.top, 24)
                 if !model.databaseAvailable {
-                    MessagesAccessRow(guide: model.accessGuide, check: { model.refresh() })
+                    MessagesAccessRow(guide: model.accessGuide, check: { model.refresh() }, isOnboarding: true)
                 } else if !model.contactsAvailable {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Find your agents in Contacts").font(.headline)
-                        Text("Allow access so you can choose and confirm the right conversation.").foregroundStyle(.secondary)
                         Button("Connect Contacts") { Task { await model.connectContacts(); model.refresh() } }
                             .buttonStyle(.borderedProminent)
                     }.padding(18).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
@@ -350,8 +312,6 @@ private struct OnboardingMessagesView: View {
                     VStack(spacing: 10) {
                         ForEach(choices) { choice in messageRow(choice) }
                     }
-                    Text("Sending permission is requested when you send your first message.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if !model.contactStatus.isEmpty { Text(model.contactStatus).font(.callout).foregroundStyle(.orange) }
             }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -460,8 +420,6 @@ private struct OnboardingContactPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Choose \(choice == .otherMessages ? "your agent" : choice.name)’s conversation").font(.title2.bold())
-            Text("Choose the contact and address you already use, then confirm with Connect selected.")
-                .font(.callout).foregroundStyle(.secondary)
             TextField("Search contacts, phone or email", text: $query).textFieldStyle(.roundedBorder)
                 .accessibilityLabel("Find onboarding contact")
             ScrollView {

@@ -8,11 +8,11 @@ msgblast integrates Sparkle 2.10.0's native updater. A configured installed app 
 
 Ordinary development builds have no feed or signing key, so updates remain unavailable. Demos, permission previews, unbundled SwiftPM runs and XCTest do not query production feeds. Local update verification uses separate temporary fixtures, not the user's running app.
 
-## Developer ID distribution (optional)
+## Developer ID distribution
 
-For the automated ad-hoc path without Apple credentials, use [automated-releases.md](automated-releases.md). The instructions below describe the separate Developer ID/notarization mode, which remains the default for direct `scripts/release.py` calls.
+Production uses the [automated release pipeline](automated-releases.md) with Developer ID signing and Apple notarization. The instructions below describe local preparation and diagnostics in that mode, which is also the default for direct `scripts/release.py` calls. Explicit ad-hoc personal builds remain available without Apple credentials.
 
-The current update host and Sparkle key are already configured. Use [developer-id-signing.md](developer-id-signing.md) to add Developer ID and notarization to the automated release workflow. The direct-script instructions below are for local preparation and diagnostics; Actions remains the production publishing path.
+The update host, Sparkle key, and production Developer ID/notarization credentials are already configured. Use [developer-id-signing.md](developer-id-signing.md) for the maintained setup and identity-continuity requirements. Reuse those credentials; Actions remains the production publishing path.
 
 ### Before the first Developer ID release
 
@@ -113,10 +113,10 @@ These focused tests use temporary synthetic app/ZIP/feed artifacts and simulated
 Isolated updater integration evidence is recorded under `docs/evidence/updates/`
 at its stated revision. Run current checks with [Testing](testing.md#isolated-updater-tests).
 Local fixtures do not prove production signing, hosting, or permission retention.
-The optional Developer ID path needs its Apple credentials; the automated ad-hoc
-path needs the configured host and Sparkle/R2 secrets, without Apple credentials.
+The production Developer ID path needs its configured Apple credentials; explicit
+ad-hoc builds need the host and Sparkle/R2 secrets without Apple credentials.
 
-The direct preparation script produces one stable release locally and never uploads. The separate [automated ad-hoc pipeline](automated-releases.md) adds CI secret handling, counter allocation and publication. Neither path adds phased rollout, delta updates or authenticated download hosting.
+The direct preparation script produces one stable release locally and never uploads. The separate [automated pipeline](automated-releases.md) adds CI secret handling, counter allocation and publication in the configured signing mode. Neither path adds phased rollout, delta updates or authenticated download hosting.
 
 References: [Sparkle publishing guidance](https://sparkle-project.org/documentation/publishing/), [Sparkle 2.10.0 generate_appcast command contract](https://github.com/sparkle-project/Sparkle/blob/2.10.0/generate_appcast/main.swift), [Sparkle signing tools](https://github.com/sparkle-project/Sparkle/blob/2.10.0/sign_update/main.swift), [Apple Developer ID distribution](https://developer.apple.com/developer-id/), [Apple notarization guidance](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
@@ -124,4 +124,4 @@ References: [Sparkle publishing guidance](https://sparkle-project.org/documentat
 
 Publishing source does not require an Apple Developer ID. Ad-hoc apps can use cryptographically signed Sparkle updates; the isolated local fixtures exercise that path. Developer ID signing and notarization provide Apple-verified publisher identity and a smoother first install. Stable signing also helps macOS recognize the app across versions for privacy permissions.
 
-For a personal app or technical beta, ad-hoc distribution is possible with manual first-launch approval and persistent Sparkle signing keys. The preparation script defaults to Developer ID/notarization and never silently falls back when credentials are missing. Its explicit `--signing-mode ad-hoc` mode builds a Release app without Apple credentials and supports `--ed-key-file` for persistent CI Sparkle signing. The tag-triggered [automated pipeline](automated-releases.md) uses that mode, allocates counters and publishes to configured R2 hosting. The localhost fixtures remain temporary tests, not a public beta release or a long-lived feed.
+For a personal app or technical beta, ad-hoc distribution is possible with manual first-launch approval and persistent Sparkle signing keys. The preparation script defaults to Developer ID/notarization and never silently falls back when credentials are missing. Its explicit `--signing-mode ad-hoc` mode builds a Release app without Apple credentials and supports `--ed-key-file` for persistent CI Sparkle signing. The tag-triggered [automated pipeline](automated-releases.md) uses production's configured Developer ID mode, allocates counters and publishes to configured R2 hosting. The localhost fixtures remain temporary tests, not a public beta release or a long-lived feed.

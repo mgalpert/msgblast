@@ -4,9 +4,9 @@ This is a maintainer publishing runbook. For personal feature builds, use
 [Build from source](build-from-source.md); for PRs, use [Contributing](../CONTRIBUTING.md).
 Local previews and PR validation do not need the production secrets below.
 
-`.github/workflows/release-adhoc.yml` runs on a pushed `vVERSION` tag, or a manual workflow dispatch from the default branch. It tests, prepares an ad-hoc signed Release app, signs the ZIP and appcast with Sparkle, publishes to an existing Cloudflare R2 host, and checks anonymous downloads. In the default ad-hoc mode, no Apple Developer account, Developer ID certificate or notarization credentials are used. The source repository is public; archives and the updater feed use the separately configured R2 host.
+`.github/workflows/release-adhoc.yml` runs on a pushed `vVERSION` tag, or a manual workflow dispatch from the default branch. It tests, prepares a Release app in the configured signing mode, signs the ZIP and appcast with Sparkle, publishes to the existing Cloudflare R2 host, and checks anonymous downloads. Production is configured with `MSGBLAST_SIGNING_MODE=developer-id`, including Apple notarization. The historical workflow filename does not select ad-hoc signing. The source repository is public; archives and the updater feed use the separately configured R2 host.
 
-For stable Developer ID signing and Apple notarization, follow [developer-id-signing.md](developer-id-signing.md). The same workflow supports that mode when `MSGBLAST_SIGNING_MODE=developer-id`; the existing ad-hoc mode stays the default until migration is activated. Missing Developer ID credentials stop a selected Developer ID run rather than falling back.
+For the persistent Developer ID identity and Apple notarization setup, follow [developer-id-signing.md](developer-id-signing.md). Verify the repository variable and prior published manifest before each release. The workflow's unset-variable fallback is ad-hoc, but the publisher refuses a production downgrade after a Developer ID release. Missing credentials stop the run; reuse the existing credentials rather than switching signing modes. Explicit ad-hoc builds remain available for personal or diagnostic use without Apple credentials.
 
 ## One-time activation
 
@@ -108,7 +108,7 @@ Only one stable release workflow runs at a time. GitHub concurrency can replace 
 
 ## Install and operational limits
 
-Install the first updater-enabled `msgblast.app` manually in `/Applications`. Ad-hoc downloads may require macOS first-launch approval; this app has no Apple-verified publisher identity or notarization. Confirm Full Disk Access, Contacts and Messages Automation, and test their retention during a real distributed update. Stable bundle ID and Sparkle key do not guarantee TCC permission retention with ad-hoc code signing.
+Install the first updater-enabled `msgblast.app` manually in `/Applications`. Verify Developer ID identity, hardened runtime, notarization, stapling and Gatekeeper acceptance in the actual production download. Explicit ad-hoc builds may require macOS first-launch approval and do not have Apple-verified publisher identity or notarization. Confirm Full Disk Access, Contacts and Messages Automation, and test their retention during a real distributed update; source or fixture checks alone do not prove installed permission retention.
 
 Later releases can install through Check for Updates or automatic checks. Preserve app-owned drafts/attachments and verify the version after the first distributed update. Publishing an update does not force an immediate installation on every client.
 

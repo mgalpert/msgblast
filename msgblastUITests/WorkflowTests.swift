@@ -49,7 +49,7 @@ final class WorkflowTests: XCTestCase {
         let editor = app.textViews["Shared prompt"]
         editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText(prompt)
         app.buttons["Send & compare"].click()
-        let workspace = app.windows["All 3 · \(prompt) [Demo]"]
+        let workspace = app.windows["\(prompt) [Demo]"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10))
         let summarize = workspace.toolbars.buttons["Summarize"]
         guard summarize.waitForExistence(timeout: 5) else { return XCTFail("Summarize must be in the window toolbar") }
@@ -214,7 +214,7 @@ final class WorkflowTests: XCTestCase {
         let previewName = "Preview \(file.lastPathComponent)"
         XCTAssertTrue(app.buttons[previewName].waitForExistence(timeout: 5))
         app.buttons["Send & compare"].click()
-        let workspace = app.windows["All 3 · \(prompt) [Demo]"]
+        let workspace = app.windows["\(prompt) [Demo]"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10))
         let images = workspace.buttons.matching(identifier: previewName)
         XCTAssertTrue(images.firstMatch.waitForExistence(timeout: 5))
@@ -315,7 +315,7 @@ final class WorkflowTests: XCTestCase {
         let prompt = app.textViews["Shared prompt"]
         prompt.click(); prompt.typeKey("a", modifierFlags: .command); prompt.typeText("Pending contact regression fixture")
         app.buttons["Send & compare"].click()
-        let workspace = app.windows["All 3 · Pending contact regression fixture [Demo]"]
+        let workspace = app.windows["Pending contact regression fixture [Demo]"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10))
         for name in ["Cedar", "Lumen", "Orbit"] { XCTAssertTrue(workspace.buttons["Recipient \(name)"].exists) }
         XCTAssertFalse(workspace.buttons["Recipient pending@example.com"].exists)
@@ -349,7 +349,7 @@ final class WorkflowTests: XCTestCase {
         let prompt = app.textViews["Shared prompt"]
         prompt.click(); prompt.typeKey("a", modifierFlags: .command); prompt.typeText("Connected workspace fixture")
         app.buttons["Send & compare"].click()
-        let workspace = app.windows["All 3 · Connected workspace fixture [Demo]"]
+        let workspace = app.windows["Connected workspace fixture [Demo]"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10))
         for name in ["Cedar", "Lumen", "Orbit"] { XCTAssertTrue(workspace.textViews["Private reply to \(name)"].exists) }
         let cedarInput = workspace.textViews["Private reply to Cedar"]

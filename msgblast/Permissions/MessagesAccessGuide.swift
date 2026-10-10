@@ -267,6 +267,7 @@ private struct PermissionSourceAnchor: NSViewRepresentable {
 struct MessagesAccessRow: View {
     @ObservedObject var guide: MessagesAccessGuide
     let check: () -> Void
+    var isOnboarding = false
     var body: some View {
         let handedOff = guide.flow.stage == .guiding || guide.flow.stage == .waitingForAccess
         VStack(alignment: .leading, spacing: 10) {
@@ -279,9 +280,15 @@ struct MessagesAccessRow: View {
                     Button("Check again", action: check)
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Connect Messages").font(.headline)
-                        Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
-                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(isOnboarding ? "Chat with the agents you text on Messages" : "Connect Messages").font(.headline)
+                        if isOnboarding {
+                            Text("Your messages are yours. You choose what to share.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
                     if guide.flow.stage == .verified {
