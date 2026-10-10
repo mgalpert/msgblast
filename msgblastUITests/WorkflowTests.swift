@@ -121,7 +121,7 @@ final class WorkflowTests: XCTestCase {
         defer { app.terminate() }
         let applicationMenu = app.menuBars.menuBarItems["msgblast"]
         applicationMenu.click()
-        for title in ["About msgblast", "Check for Updates…", "Settings…", "Hide msgblast", "Quit msgblast"] {
+        for title in ["About msgblast", "Build a New Feature…", "Check for Updates…", "Settings…", "Hide msgblast", "Quit msgblast"] {
             XCTAssertTrue(app.menuItems[title].exists, "Missing application menu action: \(title)")
         }
         let menu = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -132,6 +132,56 @@ final class WorkflowTests: XCTestCase {
         app.menuItems["Check for Updates…"].click()
         XCTAssertTrue(app.dialogs.staticTexts["Updates unavailable"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.dialogs.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "Version ")).firstMatch.exists)
+    }
+    @MainActor
+    func testBuildFeatureInvitationCopiesIdeaAndReusesWindow() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        app.menuBars.menuBarItems["msgblast"].click()
+        let command = app.menuItems["Build a New Feature…"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        guard command.exists else { return }
+        command.click()
+        let window = app.windows["Build a New Feature"]
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        XCTAssertTrue(window.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Excited to see what you build.", "Excited to see what you build.")).firstMatch.exists)
+        let preview = window.staticTexts["Coding agent prompt"]
+        XCTAssertTrue(preview.exists)
+        let emptyPrompt = try XCTUnwrap(preview.value as? String)
+        XCTAssertTrue(emptyPrompt.contains("[Describe the problem and the behavior you want.]"))
+        XCTAssertTrue(emptyPrompt.contains("https://github.com/mgalpert/msgblast"))
+        XCTAssertTrue(emptyPrompt.contains("AGENTS.md"))
+        XCTAssertTrue(emptyPrompt.contains("Screenshots"))
+        XCTAssertTrue(emptyPrompt.contains("Video"))
+        let idea = window.textFields["Feature idea, optional"]
+        XCTAssertTrue(idea.exists)
+        idea.click()
+        idea.typeText("Pin my favorite comparisons")
+        let enteredPrompt = try XCTUnwrap(preview.value as? String)
+        XCTAssertTrue(enteredPrompt.contains("My feature idea: Pin my favorite comparisons"))
+        window.buttons["Copy Prompt"].click()
+        XCTAssertTrue(window.buttons["Copied"].waitForExistence(timeout: 3))
+        XCTAssertTrue(window.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Prompt copied. Paste it into your coding agent to get started.", "Prompt copied. Paste it into your coding agent to get started.")).firstMatch.exists)
+        // Exercise the actual clipboard via the idea field, without reading any
+        // pre-existing clipboard contents or importing live app data.
+        idea.click()
+        idea.typeKey("a", modifierFlags: .command)
+        idea.typeKey("v", modifierFlags: .command)
+        XCTAssertEqual(idea.value as? String, enteredPrompt)
+        XCTAssertTrue(window.buttons["Copy Prompt"].exists, "Editing resets copy confirmation")
+        idea.typeKey("a", modifierFlags: .command)
+        idea.typeText("Pin my favorite comparisons")
+        app.menuBars.menuBarItems["Help"].click()
+        app.menuItems["Build a New Feature…"].click()
+        XCTAssertEqual(app.windows.matching(identifier: "Build a New Feature").count, 1)
+        XCTAssertEqual(idea.value as? String, "Pin my favorite comparisons")
+        window.buttons[XCUIIdentifierCloseWindow].click()
+        app.menuBars.menuBarItems["msgblast"].click()
+        app.menuItems["Build a New Feature…"].click()
+        XCTAssertTrue(window.waitForExistence(timeout: 3))
+        XCTAssertEqual(window.textFields["Feature idea, optional"].value as? String, "")
     }
     @MainActor
     func testSentAttachmentQuickLookKeepsItsSelectedFileInJoinedColumns() throws {

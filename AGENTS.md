@@ -1,5 +1,86 @@
 # msgblast agent instructions
 
+## Contributor quickstart
+
+msgblast is a public native macOS app for comparing AI answers across websites,
+existing Messages chats, optional local CLI conversations, and Grok Bot. Help the
+user build their feature locally and share a focused PR. Production distribution
+is a separate maintainer action.
+
+Read [Contributing](CONTRIBUTING.md), [Build from source](docs/build-from-source.md),
+[Architecture](docs/architecture.md), and [Testing](docs/testing.md) before making
+a feature change. [docs/README.md](docs/README.md) indexes the current guides.
+Older plans, research, and evidence record their stated revisions; do not use
+them as current setup instructions or proof that today's branch passes.
+
+### Start from the intended source
+
+- Inspect branch, index, working tree, remotes, and applicable instructions before
+  editing. Preserve existing work and commit only the requested files.
+- For a new task, fetch the current upstream default branch and record its full
+  SHA. In a fork, `origin` is normally the user's fork and `upstream` is
+  `mgalpert/msgblast`; verify rather than assuming. Use a descriptive `codex/`
+  branch by default. Existing authorized work continues from its intended ref.
+- Verify the recorded base is an ancestor of the working branch. Report a stale
+  or wrong base instead of resetting existing work. Include `Base-SHA:` and
+  `Evidence-SHA:` in the PR.
+- No production secret, Apple Developer ID, Cloudflare login, or release tag is
+  needed to implement a feature or package the local previews.
+
+### Build and inspect the right app
+
+- Use full Xcode 27 and Python 3.11+. The recommended preview packager is
+  `scripts/build_preview_apps.py`; exact commands are in the build guide.
+  It creates separate blue-green **msgblast Dev** and blue **msgblast Demo**
+  identities/profiles with production updates disabled, and preserves the
+  committed production icon by staging changes in a temporary workspace.
+- Use Demo for simulated sends, fixture demonstrations, and PR evidence. Dev
+  uses live accounts/data; do not pass `--demo` or `--isolated-demo` to Dev.
+- Keep the installed production app and its support folder intact. A different
+  output path, bundle name, icon, or derived-data folder alone does not isolate
+  state. Preview packaging configures both identity and support folder.
+- The preview script copies working-tree edits; its `--sha` is metadata, not
+  proof that the built source matches a commit. For reviewed evidence, rebuild
+  the committed revision and record fixture/live limits.
+- Inspect the actual changed workflow. Do not send real Messages, write real
+  Contacts, request paid model work, or reset permissions merely to get evidence
+  without authorization for that workflow.
+
+### Implement with the existing boundaries
+
+- Menus/scenes: `msgblast/App/msgblastApp.swift`; main orchestration:
+  `AppModel.swift`; native views/windows: `msgblast/Windows/`; shared models and
+  integrations: `msgblast/Core/`; state/attachments: `msgblast/Storage/`.
+- Treat `scripts/generate_project.py` as the Xcode project source. After adding
+  or removing Swift files, or changing targets/resources/settings, regenerate
+  with `python3 scripts/generate_project.py` and review the generated diff.
+  Keep both icon resources registered. Do not fix only generated output.
+- Preserve existing Codable data, session/working-directory identity, migration
+  backups, drafts, attachments, private/shared scope, and send receipts.
+  Never replace failed-to-load state with an empty store or mutate Messages'
+  database; history access stays read-only.
+- Websites, optional configured CLI conversations, restricted comparison reports,
+  and Grok Bot are distinct execution/account boundaries. Do not merge their
+  authentication, permissions, private histories, or retry policies.
+- Keep updates and fixture/live behavior explicit. A successful send call is
+  submission evidence, not delivery; uncertain sends are not automatically retried.
+- Keep documentation and third-party notices current with behavior/dependencies.
+
+### Verify and share
+
+- Use the testing guide to select native unit/UI tests, controller fixtures,
+  Python tooling, Worker/feedback checks, or updater verification. Use meaningful
+  existing tests; documentation-only changes need instruction/link verification.
+- Linux checks do not prove a native app build. CI core tests do not prove native
+  UI interactions. Record pending or unavailable validation honestly.
+- PRs must include the real changed-feature screenshots and playable video,
+  revision identifiers, a description of the behavior, and validation limits.
+  See Contributing and the evidence requirements below. Refresh evidence when
+  it no longer represents the reviewed change.
+- Contributor PRs do not require release tags, production counters, deployments,
+  or Actions secret changes. Perform those only for an explicitly requested
+  maintainer operation using the corresponding runbook.
+
 ## App icons
 
 - **Live/production app (default for users):** use the green icon imported from the user's `msgblast.icon` bundle. Its canonical project source is `output/app-icons/msgblast.icon`. Ensure `msgblast/AppIcon.icon` matches this bundle exactly when preparing a live build or release.
@@ -8,21 +89,21 @@
 - **Demo/fixture app:** use `output/app-icons/msgblast-demo.icon`, a duplicate of the live artwork with the saved blue background. Its app resource is `msgblast/AppIconDemo.icon`.
 - Standard builds select `ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon`. `scripts/build_demo.sh` selects `AppIconDemo`. Verify the selected artwork matches the intended live, development, or demo build before building or publishing; choosing Release alone does not switch the development icon to green.
 - The previous exploration 32 bundles under `output/icon-gradients/` are historical artwork. Do not use them for new builds or site branding.
-- The public website at `https://msgblast.app` is served by the Cloudflare `msgblast-landing` Worker from `/Users/contains/projects/msgblast/landing/dist`; its source and deployment instructions are in that checkout’s `README.md` and `wrangler.jsonc`. The Sites URL is a separate private preview.
+- The public website at `https://msgblast.app` is served by the Cloudflare `msgblast-landing` Worker from the owner's separate landing checkout (currently `/Users/contains/projects/msgblast/landing/dist`); its source and deployment instructions are in that checkout's `README.md` and `wrangler.jsonc`. This owner-local path is not a contributor prerequisite. The Sites URL is a separate private preview.
 - The public website uses a native macOS export of `output/app-icons/msgblast.icon` for its brand icon, favicon, and social card. Refresh those assets when the canonical live artwork changes; updating the private Sites preview does not update the public domain.
 - Preserve the user's saved artwork when copying these icons into the app resources. Keep both icon resources registered in `scripts/generate_project.py` and the generated Xcode project.
 - Validate icon changes with an isolated derived data directory. The demo script uses `build/icon-demo` and packages `build/Build/Products/Debug/msgblast Demo.app`. Do not overwrite or restart the user's running development app merely to validate an icon change.
 
 ## Building and publishing app updates
 
-The default distribution path is now **automated ad-hoc releases without Apple credentials**. `.github/workflows/release-adhoc.yml` runs for pushed `vVERSION` tags or manual dispatches from the default branch. Pushing ordinary source commits does not distribute a new app. The workflow tests, builds, ad-hoc signs, signs the Sparkle ZIP/feed, uploads to an existing public R2 host and verifies anonymous downloads. No coding agent needs to repeat build/sign/upload commands each release.
+Production distribution uses **automated Developer ID signing and Apple notarization**. `.github/workflows/release-adhoc.yml` retains its historical filename and supports both signing modes; the repository's `MSGBLAST_SIGNING_MODE` is configured as `developer-id`. It runs for pushed `vVERSION` tags or manual dispatches from the default branch. Pushing ordinary source commits does not distribute a new app. Actions tests, builds, signs and notarizes the app, signs the Sparkle ZIP/feed, publishes to the existing R2 host, and verifies anonymous downloads. Reuse the configured credentials and verify the live mode; never fall back to ad-hoc signing for production.
 
-Read `docs/automated-releases.md` before activating or changing the pipeline; use `docs/updates.md` for the optional Developer ID/notarization path. The workflow must be on the default branch and release source must be reachable from it. The source repo remains private; installed apps need a separately configured public HTTPS archive/feed host.
+These are maintainer operations. Read `docs/automated-releases.md` before activating or changing the pipeline; use `docs/developer-id-signing.md` for the production signing identity and notarization setup, and `docs/updates.md` for updater/local preparation details. The workflow must be on the default branch and release source must be reachable from it. The source repository is public; installed apps still use the separately configured public HTTPS archive/feed host.
 
 ### One-time activation
 
 - Configure a dedicated Cloudflare R2 bucket and HTTPS custom domain. Set Actions variables `MSGBLAST_PUBLIC_BASE_URL` (ending in `/`), `MSGBLAST_R2_ACCOUNT_ID`, `MSGBLAST_R2_BUCKET` and `MSGBLAST_PUBLIC_KEY`.
-- Set Actions secrets `MSGBLAST_SPARKLE_PRIVATE_KEY` (persistent base64 32-byte seed), `MSGBLAST_R2_ACCESS_KEY_ID` and `MSGBLAST_R2_SECRET_ACCESS_KEY`. Scope the R2 credential to the release bucket. Apple certificate/team/notarization credentials are not required.
+- Set Actions secrets `MSGBLAST_SPARKLE_PRIVATE_KEY` (persistent base64 32-byte seed), `MSGBLAST_R2_ACCESS_KEY_ID` and `MSGBLAST_R2_SECRET_ACCESS_KEY`. Scope the R2 credential to the release bucket. These are shared by both signing modes; production also reuses the configured Developer ID and notarization credentials described in `docs/developer-id-signing.md`. Apple credentials are unnecessary for explicit ad-hoc builds and local previews.
 - Generate the Sparkle key once, retain its Keychain copy and secure backup, and reuse it across releases. Never put private keys in YAML, command arguments, logs, PRs, source or assets. The workflow uses an owner-only temporary seed file outside artifacts and removes it with `always()` cleanup.
 - Respect archive cache headers and bypass cache for `appcast.xml` and `release-counter.json`. Do not host the feed behind GitHub login, expiring tokens or a development `r2.dev` URL.
 - Preserve bundle identifier `com.msgblast.mac`, update key and installed app location. Users whose current version lacks Sparkle need one manual installation into `/Applications`; ordinary development builds with no feed/key cannot receive updates.
@@ -47,6 +128,8 @@ The README download URL is fixed at `https://updates.msgblast.app/latest.zip`. T
 
 ### Trigger a release
 
+Before tagging, use native computer use to check the affected flow in the blue-green functional Dev app from the exact reviewed source. Keep Demo fixture evidence separate; it cannot prove the live Dev behavior. Preserve the running production app and state, and do not send real messages, write Contacts, reset permissions, or make paid requests solely for this check. Record the app identity, source SHA, signing/entitlement checks, interactions, and limits.
+
 Prefer an annotated tag pinned to the reviewed revision. Run the commands separately, check each result, and stop on failure. First confirm the version is newer than the published version and the tag is unused. After the source and release notes are merged:
 
 ```sh
@@ -68,7 +151,7 @@ gh workflow run release-adhoc.yml -R mgalpert/msgblast --ref main -f version=0.1
 
 Dispatch builds `main` as resolved for that run. Verify the run's `headSha` matches the intended source; use a tag when the revision must be pinned. Choose **one** trigger per release. Do not push a tag and dispatch the same release as two separate jobs.
 
-Actions handles testing, building, ad-hoc signing, Sparkle signing, counter allocation and R2 publication. Do not repeat those steps manually or add Apple credentials for this distribution path.
+Actions handles testing, building, the configured signing/notarization mode, Sparkle signing, counter allocation and R2 publication. Do not repeat those steps manually or recreate the existing Apple credentials. The explicit ad-hoc mode needs no Apple credentials and is not the active production path.
 
 ### Verify publication before calling it released
 
@@ -113,7 +196,7 @@ Hosted Cloud Agents run on Ubuntu and cannot validate the native Mac app. Follow
 - Linux checks: `python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v`, then `npm test --prefix download` and `npm run check --prefix download`. The Wrangler check is a dry-run and does not deploy.
 - Native core checks belong to `validate.yml` (`msgblastTests` plus `scripts/test_updates.py` on `xcode-27`). Cursor PR branches (`cursor/*`) and manual `workflow_dispatch` also build two ad-hoc preview ZIPs in that workflow: blue-green `msgblast Dev.app` (`com.msgblast.development`) and blue fixture `msgblast Demo.app` (`com.msgblast.demo`, `msgblastDemo` true). Artifacts stay on the Actions run for 14 days. Do not dispatch `release-adhoc.yml` as a test.
 - Pull request descriptions need `## Screenshots`, `## Video`, and `Evidence-SHA: <branch head>`. `.github/workflows/pr-evidence.yml` rejects missing, local-only, placeholder, or stale evidence, including an empty or local `<video>` tag. Cursor branch previews also need separate `msgblast Dev SHA-256:` and `msgblast Demo SHA-256:` lines. A human still checks that the pictures show the change. A written exception is for that person to review; the checker does not treat it as a pass. Native UI evidence needs an authorized isolated Mac; Ubuntu cannot capture it, and an `.xcresult` is not a video. Do not use the user's live Mac without setup authorization.
-- Keep Sparkle and R2 secrets in Actions only. Recheck `gh auth status` and the live appcast before any release. The October 6, 2026 baseline is 0.2.2 build 7 at `f86cce472649d5468792d04a86dd05a7b763774a`.
+- Keep Sparkle and R2 secrets in Actions only. Recheck `gh auth status`, the live appcast, and recent successful runs before any release. Historical baselines in `docs/cloud-agent.md` are observations from their stated dates, not the current published version or a next-version setting.
 
 ## Pull request evidence
 

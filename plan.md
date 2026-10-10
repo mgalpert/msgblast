@@ -9,6 +9,12 @@ execution: code
 
 # Native Agent iMessage Comparison - Plan
 
+Historical initial plan from September 30, 2026. Later recorded product decisions
+and implementations expanded this scope. For current contributor setup and the
+present codebase, use [the documentation index](docs/README.md),
+[Architecture](docs/architecture.md), and [AGENTS.md](AGENTS.md). Preserve the
+requirements and verification record below as historical context.
+
 ## Goal Capsule
 
 **Objective:** A Mac user can send one prompt to several agents through separate existing iMessage conversations, compare their live replies side by side, and continue either with everyone or with one agent without copying messages or creating a group chat.

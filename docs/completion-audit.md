@@ -1,5 +1,11 @@
 # Completion audit — October 2, 2026
 
+Historical audit of the original Messages-focused implementation. Status and
+permission observations below belong to that date and the revisions named in
+the record. They are not the current release status or today's contributor
+checklist. Use [the documentation index](README.md) and [Testing](testing.md)
+for current setup and validation.
+
 The original `plan.md` remains the completion contract, with the user's later native Messages styling, link previews/reaction display, pinned compose, attachments, and connected-window default instructions applied. The October 1 connected-window request expressly supersedes separate-only window decisions: separate windows remain available in Settings. Source implementation and fixture evidence do not prove the live integration. The full goal is not complete.
 
 ## Initial evidence (superseded by subsequent verification updates)
