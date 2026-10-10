@@ -132,11 +132,10 @@ final class PersonalAgentController: ObservableObject {
                     let report: ComparisonReport
                     if self.demo {
                         try await Task.sleep(for: .seconds(1))
-                        let names = model.comparison(id)?.members.map(\.name).joined(separator: ", ") ?? "the participants"
+                        let sources = "[1] Demo fixture: synthetic comparison criteria.\n[2] Demo fixture: synthetic trial proposal.\n[3] Demo fixture: synthetic context-gap analysis."
                         report = ComparisonReport(
-                            bestNextAction: "Choose one representative example and test each approach against the same success criteria.",
-                            rationale: "A small trial turns the different recommendations into evidence you can compare before committing.",
-                            comparison: "Across \(names), the shared recommendation is to make assumptions visible and compare options against one concrete goal.\n\n**Agreement**\nStart small and evaluate each answer against consistent criteria.\n\n**Differences**\nCedar emphasizes clarity, cost, and reversibility. Lumen emphasizes a small trial and explicit assumptions. Orbit starts with the desired outcome and follows up on unclear reasoning.",
+                            overview: "The conversations examine how to compare approaches using clear goals, consistent criteria, and practical evidence. This is a simulated team synthesis.",
+                            comparison: "**Context**\nThis is a simulated comparison of approaches. The goal and success criteria still need to be confirmed.\n\n**Shared findings**\n- Clarity, cost, and reversibility are proposed comparison criteria. [1]\n\n**Complementary approach**\n- A small trial is proposed as a way to gather practical evidence against consistent criteria. [2]\n\n**Context gaps**\n- The desired outcome and unclear assumptions are identified as context gaps. [3]\n\n**Tradeoffs**\nDefining criteria makes the decision easier to explain; a trial adds practical evidence but takes effort. Clarifying the goal can change which approach fits.\n\n**Sources**\n\(sources)",
                             uncertainties: ["Which outcome matters most to you: clarity, cost, or reversibility?", "Simulated demo report. No installed agent was contacted."])
                     } else {
                         let response = try await LocalPersonalAgent.summarize(snapshot, using: agent)

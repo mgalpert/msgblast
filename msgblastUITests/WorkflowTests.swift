@@ -72,7 +72,7 @@ final class WorkflowTests: XCTestCase {
     }
 
     @MainActor
-    func testPersonalAgentOpensComparisonReportWithBestNextAction() {
+    func testPersonalAgentOpensComparisonReportWithTeamSynthesis() {
         let app = launchFixture(separateWindows: false)
         defer { app.terminate() }
         let prompt = "Personal agent comparison fixture"
@@ -97,13 +97,19 @@ final class WorkflowTests: XCTestCase {
         XCTAssertFalse(report.buttons["Sign in with Claude"].exists)
         XCTAssertEqual(app.sheets.count, 0, "The report must be a separate window")
         XCTAssertTrue(workspace.exists)
-        let action = report.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Choose one representative example", "Choose one representative example")).firstMatch
+        let action = report.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "The conversations examine how to compare approaches", "The conversations examine how to compare approaches")).firstMatch
         XCTAssertTrue(action.waitForExistence(timeout: 10), "One toolbar click must generate the report")
-        XCTAssertTrue((action.label + (action.value as? String ?? "")).contains("representative example"))
-        XCTAssertTrue(report.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Cedar emphasizes clarity", "Cedar emphasizes clarity")).firstMatch.exists)
-        XCTAssertTrue(report.staticTexts["Demo analyst (simulated) · 3 of 3 participants · 6 responses"].exists)
+        XCTAssertTrue((action.label + (action.value as? String ?? "")).contains("consistent criteria"))
+        XCTAssertTrue(report.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Shared findings", "Shared findings")).firstMatch.exists)
+        XCTAssertTrue(report.staticTexts["3 of 3 participants · 6 responses"].exists)
+        XCTAssertFalse(report.buttons["Refresh agents"].exists)
+        XCTAssertFalse(report.popUpButtons["Personal agent"].exists)
+        report.menuButtons["Report actions"].click()
+        app.menuItems["Report options…"].click()
+        XCTAssertTrue(app.buttons["Refresh agents"].waitForExistence(timeout: 5))
+        report.typeKey(.escape, modifierFlags: [])
         let after = XCTAttachment(screenshot: report.screenshot())
-        after.name = "Comparison report — best next action — simulated output"
+        after.name = "Comparison report — team synthesis — simulated output"
         after.lifetime = .keepAlways; add(after)
         // Keep the report open while continuing the source conversation.
         let input = workspace.textViews["Universal message"]
@@ -114,7 +120,7 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(workspace.staticTexts.matching(identifier: "Recipient reacted ✅").element(boundBy: 5).waitForExistence(timeout: 10))
         workspace.toolbars.buttons["Summarize"].click()
         XCTAssertEqual(app.windows.matching(identifier: "Comparison report · \(prompt) [Demo]").count, 1)
-        XCTAssertTrue(report.staticTexts["Demo analyst (simulated) · 3 of 3 participants · 12 responses"].waitForExistence(timeout: 10))
+        XCTAssertTrue(report.staticTexts["3 of 3 participants · 12 responses"].waitForExistence(timeout: 10))
         XCTAssertFalse(stale.exists)
         XCTAssertTrue(action.waitForExistence(timeout: 10))
         report.buttons[XCUIIdentifierCloseWindow].click()
@@ -137,7 +143,7 @@ final class WorkflowTests: XCTestCase {
         cedar.toolbars.buttons["Summarize"].click()
         let report = app.windows["Comparison report · \(prompt) [Demo]"]
         XCTAssertTrue(report.waitForExistence(timeout: 5))
-        XCTAssertTrue(report.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Choose one representative example", "Choose one representative example")).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(report.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "The conversations examine how to compare approaches", "The conversations examine how to compare approaches")).firstMatch.waitForExistence(timeout: 10))
         app.windows["Lumen · \(prompt)"].toolbars.buttons["Summarize"].click()
         XCTAssertEqual(app.windows.matching(identifier: "Comparison report · \(prompt) [Demo]").count, 1)
         XCTAssertEqual(app.sheets.count, 0)
