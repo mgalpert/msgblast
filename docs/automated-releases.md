@@ -1,8 +1,12 @@
 # Automated msgblast releases
 
-`.github/workflows/release-adhoc.yml` runs on a pushed `vVERSION` tag, or a manual workflow dispatch from the default branch. It tests, prepares an ad-hoc signed Release app, signs the ZIP and appcast with Sparkle, publishes to an existing Cloudflare R2 host, and checks anonymous downloads. In the default ad-hoc mode, no Apple Developer account, Developer ID certificate or notarization credentials are used. The source repository stays private.
+This is a maintainer publishing runbook. For personal feature builds, use
+[Build from source](build-from-source.md); for PRs, use [Contributing](../CONTRIBUTING.md).
+Local previews and PR validation do not need the production secrets below.
 
-For stable Developer ID signing and Apple notarization, follow [developer-id-signing.md](developer-id-signing.md). The same workflow supports that mode when `MSGBLAST_SIGNING_MODE=developer-id`; the existing ad-hoc mode stays the default until migration is activated. Missing Developer ID credentials stop a selected Developer ID run rather than falling back.
+`.github/workflows/release-adhoc.yml` runs on a pushed `vVERSION` tag, or a manual workflow dispatch from the default branch. It tests, prepares a Release app in the configured signing mode, signs the ZIP and appcast with Sparkle, publishes to the existing Cloudflare R2 host, and checks anonymous downloads. Production is configured with `MSGBLAST_SIGNING_MODE=developer-id`, including Apple notarization. The historical workflow filename does not select ad-hoc signing. The source repository is public; archives and the updater feed use the separately configured R2 host.
+
+For the persistent Developer ID identity and Apple notarization setup, follow [developer-id-signing.md](developer-id-signing.md). Verify the repository variable and prior published manifest before each release. The workflow's unset-variable fallback is ad-hoc, but the publisher refuses a production downgrade after a Developer ID release. Missing credentials stop the run; reuse the existing credentials rather than switching signing modes. Explicit ad-hoc builds remain available for personal or diagnostic use without Apple credentials.
 
 ## One-time activation
 
@@ -43,16 +47,31 @@ Keep `release-notes/VERSION.md` brief: start with at most three short bullets ab
 
 `release-notes/unpublished.json` excludes historical updater fixtures and failed release attempts from the app's history. Their original Markdown remains in the repository; the changes from 0.3.0–0.4.2 first shipped in 0.4.3.
 
-1. Commit/review the intended source and write `release-notes/VERSION.md` with user-facing notes. Include the source on the default branch.
-2. Push the release tag. For example:
+1. Commit/review the intended source and write `release-notes/VERSION.md` with user-facing notes. Include the source on the default branch. Use native computer use to verify the affected flow in the blue-green functional Dev app built from that reviewed revision; Demo fixtures and CI do not replace this preflight. Record identity, source, effective entitlements, interactions, and any limits while preserving production state and permissions.
+2. Read the live signed appcast and recent successful runs; choose a newer unused
+   marketing version. Fetch the default branch and tags, identify the exact
+   reviewed source SHA, and confirm that revision contains its release notes.
+   Follow [AGENTS.md's tag procedure](../AGENTS.md#trigger-a-release) to push one
+   annotated tag pinned to that revision. Do not tag an unreviewed local HEAD or
+   move a published tag.
 
-   ```sh
-   git tag -a v0.1.1 -m 'Release 0.1.1'
-   git push origin v0.1.1
-   ```
+   Alternatively, dispatch **Release msgblast** from the default branch with the
+   numeric marketing version, without a `v` prefix. Verify that run's headSha
+   matches the intended source. Choose one trigger; never tag and dispatch the
+   same release as two jobs. A source push alone does not distribute a build.
+3. GitHub Actions performs the remaining steps. Its summary provides the published
+   version/build, source revision, ZIP/installer URLs, and feed URL. Workflow
+   artifacts have 30-day retention and repository Actions access rules; public
+   archives and immutable release manifests remain on R2.
+4. Follow [publication verification](../AGENTS.md#verify-publication-before-calling-it-released):
+   successful run and correct SHA, signed feed and manifest, no-store latest.zip
+   redirect, downloaded hash, bundle version/build/identity, and compiled green
+   icon. Inspect the published manifest before retrying a failed final check.
 
-   Alternatively, run **Release msgblast** from the default branch in Actions and enter `0.1.1`. Version values are numeric; branch names and shell expressions are rejected. A source push without a release tag does not distribute a build.
-3. GitHub Actions performs the remaining steps. Its summary provides the published version/build, source revision, ZIP URL and feed URL. Successful artifacts are retained privately in Actions for 30 days; public archives and immutable release manifests remain on R2.
+Use the actual signing mode and allocated build from the successful run/manifest
+when reporting a release. Defaults do not prove the mode of an existing release.
+Historical version examples and development project defaults are not next-version
+instructions; the production counter is allocated by Actions, never manually.
 
 No coding agent is needed for repetitive build/sign/upload steps once activation is complete. Release notes and the decision to release a source revision remain part of preparing the tag.
 
@@ -70,8 +89,16 @@ The README uses [the latest-download URL](https://updates.msgblast.app/latest.zi
 2. Runs Python release/publication tests, core/controller Xcode regressions and the real Sparkle Debug integration fixtures. No live sends or Contacts writes are used for these tests.
 3. Reads the prior appcast directly from authenticated R2, verifies its Sparkle signature, and reads the highest published build. Missing feed means first release; authentication/network/signature failures stop the release.
 4. Atomically reserves the next counter in `release-counter.json`, taking the maximum of reserved and published counters before incrementing. Failed runs consume a number; gaps are expected and a rerun gets a fresh archive filename. Counters do not depend on Git commit count. A competing reservation fails safely instead of silently reusing a number.
-5. Builds a Release archive without Apple signing, copies its app, signs nested frameworks/helpers inside-out while preserving helper entitlements, then ad-hoc signs the outer app with hardened runtime and Automation entitlement. This mode explicitly disables library validation for ad-hoc nested code. Strict code-signature checks still apply; there is no Apple notarization or Gatekeeper acceptance claim.
-6. Packages the app and signs/verifies both archive and feed with the persistent Sparkle key. The local manifest records ad-hoc mode, `notarization: null`, hashes and source revision.
+5. In ad-hoc mode, builds a Release archive without Apple signing, copies its app,
+   signs nested frameworks/helpers inside-out while preserving helper entitlements,
+   then ad-hoc signs the outer app with hardened runtime and Automation entitlement.
+   This mode explicitly disables library validation for ad-hoc nested code. Strict
+   code-signature checks still apply; there is no Apple notarization or Gatekeeper
+   acceptance claim. Developer ID mode instead follows the signing/notarization
+   checks in [the signing runbook](developer-id-signing.md).
+6. Packages the app and signs/verifies both archive and feed with the persistent
+   Sparkle key. The manifest records the selected signing mode, notarization result
+   (null for ad-hoc), hashes, and source revision.
 7. Uploads the ZIP with an immutable filename, downloads it anonymously and checks its SHA-256, then uploads an immutable version/build manifest. It never overwrites an existing archive.
 8. Publishes the signed appcast **last**, conditional on the prior feed's ETag (or its absence for the first release), then anonymously downloads and checks the feed hash. A concurrent publisher cannot replace a newer feed. A failed archive/download check leaves the previous feed intact.
 
@@ -81,7 +108,7 @@ Only one stable release workflow runs at a time. GitHub concurrency can replace 
 
 ## Install and operational limits
 
-Install the first updater-enabled `msgblast.app` manually in `/Applications`. Ad-hoc downloads may require macOS first-launch approval; this app has no Apple-verified publisher identity or notarization. Confirm Full Disk Access, Contacts and Messages Automation, and test their retention during a real distributed update. Stable bundle ID and Sparkle key do not guarantee TCC permission retention with ad-hoc code signing.
+Install the first updater-enabled `msgblast.app` manually in `/Applications`. Verify Developer ID identity, hardened runtime, notarization, stapling and Gatekeeper acceptance in the actual production download. Explicit ad-hoc builds may require macOS first-launch approval and do not have Apple-verified publisher identity or notarization. Confirm Full Disk Access, Contacts and Messages Automation, and test their retention during a real distributed update; source or fixture checks alone do not prove installed permission retention.
 
 Later releases can install through Check for Updates or automatic checks. Preserve app-owned drafts/attachments and verify the version after the first distributed update. Publishing an update does not force an immediate installation on every client.
 

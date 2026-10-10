@@ -1,5 +1,9 @@
 # Personal agent reports
 
+This guide covers current website/CLI conversations and the separate restricted
+comparison-report policy. For building and validation, use [Build from source](build-from-source.md)
+and [Testing](testing.md). The source map is in [Architecture](architecture.md).
+
 ## Website chats and optional CLI conversations
 
 ChatGPT and Claude use embedded websites by default, alongside Muse and Grok. These four web agents are selected on a new installation. Each website keeps its own sign-in and saved chat for each comparison. Browser cookies and CLI accounts are separate.
@@ -36,6 +40,10 @@ Click **Sign in with ChatGPT** or **Sign in with Claude** to open the detected o
 
 ### Research: bb and local subscription accounts
 
+The bb comparisons below are revision-pinned design research. Prior validation
+results describe the earlier tested change, not a passing result for a new branch.
+Use the current test commands below when changing these adapters.
+
 Inspected [bb revision 937e5a9](https://github.com/get-bb/bb/tree/937e5a9b92cb57522a1e14a30ee237231d4cecac). Its [Codex provider](https://github.com/get-bb/bb/blob/937e5a9b92cb57522a1e14a30ee237231d4cecac/plugins/provider-codex/src/bridge/provider-maintenance.ts) advertises `codex login`; its [Claude provider](https://github.com/get-bb/bb/blob/937e5a9b92cb57522a1e14a30ee237231d4cecac/plugins/provider-claude-code/src/bridge/provider-maintenance.ts) advertises `claude /login`. Provider execution uses local runtimes. Separately, its optional [account-pool import](https://github.com/get-bb/bb/blob/937e5a9b92cb57522a1e14a30ee237231d4cecac/plugins/account-pool/src/credentials.ts) reads Codex's `~/.codex/auth.json` and Claude Code's Keychain credentials or `~/.claude/.credentials.json`, then manages imported tokens. That credential-pool design is unnecessary for msgblast's one-shot local report workflow.
 
 The implementation uses the documented CLI paths: [OpenAI authentication](https://developers.openai.com/codex/auth) covers shared cached authentication and token refresh; [Claude CLI reference](https://code.claude.com/docs/en/cli-reference) documents `claude auth login`, JSON status, and exit codes; [Claude authentication](https://code.claude.com/docs/en/authentication) explains subscription and API credential precedence. Browser cookies and a ChatGPT/Claude desktop login alone do not establish a usable local CLI account. The chosen CLI owns subscription eligibility, limits, account policy, credential storage, and renewal.
@@ -50,28 +58,22 @@ This follows [bb's local CLI integration approach](https://github.com/get-bb/bb/
 
 The chosen CLI uses its existing account and provider billing/usage limits; msgblast does not add an API-key form or promise that every CLI configuration bills a subscription. The comparison text is sent to the selected provider only when you request a summary. Unsent drafts, contact addresses, unrelated conversations, and attachment contents/paths are excluded (attachment filenames remain as context). For comparison reports, Codex and Hermes use their isolated configuration modes while retaining CLI-owned authentication; other adapters disable tools or request the CLI's read-only mode. These are provider controls, not an OS-level isolation guarantee for third-party executables. Each run uses a private temporary working directory, direct arguments and stdin, a three-minute timeout, cancellation, and bounded output. Cancellation, timeout, and normal app quit stop the request process group before removing temporary request/output files; force quitting or a system crash cannot run that cleanup. After a completed run those files are removed; the provider may maintain its own history under its own policy.
 
-The demo always uses a clearly labeled simulated report and never invokes an installed agent. Adapter tests use local executable fixtures, so they prove transport/parsing and failure behavior, not live provider authentication or billing. Validate without replacing the live app with:
-
-```sh
-xcodebuild -project msgblast.xcodeproj -scheme msgblast \
-  -derivedDataPath build/personal-agent-validation \
-  -destination 'platform=macOS,arch=arm64' \
-  MSGBLAST_APP_BUNDLE_IDENTIFIER=com.msgblast.personal-agent-validation \
-  ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
-  -only-testing:msgblastTests \
-  -only-testing:msgblastUITests/WorkflowTests/testSeparateConversationWindowsShareOneComparisonReport \
-  -only-testing:msgblastUITests/WorkflowTests/testPersonalAgentOpensComparisonReportWithBestNextAction test
-```
-
-After the isolated build, run `scripts/test_personal_agent_shutdown.sh build/personal-agent-validation` to verify that delayed discovery cannot start a report during shutdown. It compiles the actual controller with controlled in-memory model and provider substitutes; no UI, Messages access, or provider request is involved.
+The demo always uses a clearly labeled simulated report and never invokes an
+installed agent. Adapter fixtures prove transport/parsing and failure behavior,
+not live provider authentication or billing. Run the [native core tests](testing.md#native-core-tests)
+and [controller fixtures](testing.md#controller-and-executable-fixtures) first.
+On an authorized Mac, select the UI cases
+`testSeparateConversationWindowsShareOneComparisonReport` and
+`testPersonalAgentOpensComparisonReportWithBestNextAction` with the isolated UI
+test command in that guide. No fixture run establishes live account eligibility.
 
 
 ## Configured conversation fixture
 
-After building the reviewed source in an isolated derived-data directory, run:
+After the testing guide's core build, run:
 
 ```sh
-scripts/test_configured_cli_conversations.sh build/cli-configured-validation build/cli-configured-evidence
+bash scripts/test_configured_cli_conversations.sh build/contributor-tests build/cli-configured-evidence
 ```
 
 The harness invokes the real core adapter with a deterministic local executable and temporary fixture configuration. It prints actual inputs/results for new and resumed Codex/Claude conversations, a denied write, a still-restricted comparison summary, and legacy-session retention. The optional second directory receives `requests.jsonl` containing actual fixture arguments, stdin, outputs, and working directories. No installed provider CLI, credential, paid model, live skill, or connector is used. It verifies adapter configuration transport and policy separation, not live provider configuration interpretation or connector access. Claude’s unattended permission behavior follows its [programmatic CLI documentation](https://code.claude.com/docs/en/headless#turn-off-permission-prompts-in-unattended-runs).

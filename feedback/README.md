@@ -1,5 +1,10 @@
 # Private feedback intake
 
+For native contributor setup, see [Build from source](../docs/build-from-source.md),
+[Architecture](../docs/architecture.md), and [Testing](../docs/testing.md).
+The source and handler are public, but submitted reports and their storage remain
+private. Local handler/schema fixtures need no production account or R2 secret.
+
 The native app sends an explicit, user-approved report to `POST https://msgblast.app/api/feedback`. The response is a receipt ID. This endpoint does not create GitHub issues, send email, return report contents, or publish downloadable files.
 
 ## Contract
@@ -24,7 +29,19 @@ Reports are available in the private bucket's dashboard object browser. Open onl
 
 Run `node --test feedback/worker.test.mjs` from the repository root; no dependency installation is required. These tests use in-memory R2 and rate-limit fixtures and cover validation, streamed size limits, failure responses, opt-in omission, duplicate retries and races. They do not prove live Cloudflare bindings or deployment.
 
-The `wrangler.jsonc` is a local/template configuration with no route. With Wrangler installed, run `wrangler dev` from this directory for an isolated local API, or `wrangler deploy --dry-run` to validate the bundle. Production deployment belongs to the authoritative landing checkout, followed by a clearly labeled fixture request and authenticated verification that the private object was written.
+The `wrangler.jsonc` is a local/template configuration with no route. If needed,
+use the pinned Wrangler installed by `npm ci --prefix download`. From `feedback/`,
+run `../download/node_modules/.bin/wrangler dev` for a local API, or
+`../download/node_modules/.bin/wrangler deploy --dry-run` to validate the bundle.
+Inspect the template's local bindings before exercising it. These commands do
+not deploy the production landing Worker or prove its private storage bindings.
+
+Production deployment belongs to the owner's separate authoritative landing
+checkout, followed by a clearly labeled fixture request and authenticated
+verification that the private object was written. Its local path is not a
+contributor prerequisite. Coordinate native diagnostic-schema changes with that
+handler and keep the existing assets/routes intact. Never deploy this template
+as a replacement for the landing site or include private reports in public PR media.
 
 API semantics: [R2 Workers bindings](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and [Workers rate limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
 

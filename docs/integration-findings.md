@@ -1,5 +1,10 @@
 # Integration findings
 
+Historical observations follow, each scoped to its recorded date/revision.
+They are not the current build guide, release status, or authorization for new
+live actions. Use [the documentation index](README.md), [Architecture](architecture.md),
+and [Testing](testing.md) for current contributor instructions.
+
 Observed on macOS 27.2 (26B5091g), Xcode 27.0 (27A5218g), Swift 6.4, September 30, 2026, America/Los_Angeles.
 
 ## Observed live Messages UI

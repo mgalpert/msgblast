@@ -1,8 +1,14 @@
 # Stable Developer ID releases
 
+This is the active production signing path and its maintainer setup guide. Contributors can build the
+separate local [Dev/Demo apps](build-from-source.md#recommended-separate-dev-and-demo-apps)
+without an Apple Developer account or these production credentials. Source
+visibility is independent of app signing. See [Automated releases](automated-releases.md)
+for the publishing path and [Updates](updates.md) for local diagnostics.
+
 Use one Apple Developer Program team and a Developer ID Application identity for all future msgblast production releases. An Apple Development certificate or a free Xcode Personal Team is insufficient for Developer ID distribution. The first transition from an ad-hoc build may need permission approval again; permission retention must be checked across the first two Developer ID releases.
 
-The existing `.github/workflows/release-adhoc.yml` workflow supports both signing modes. Its filename remains unchanged so existing release commands keep working. `MSGBLAST_SIGNING_MODE` defaults to `ad-hoc` until migration is explicitly activated. When selected, missing Apple credentials stop a Developer ID release. The publisher also reads the prior release manifest from authenticated R2: after the first Developer ID publication, it refuses any ad-hoc downgrade even if the mode variable is removed. A missing or inconsistent existing manifest stops the release before reserving a counter; only an absent feed is treated as a first release. Deliberate signing-identity migrations require a separate reviewed change.
+The existing `.github/workflows/release-adhoc.yml` workflow supports both signing modes. Its filename remains unchanged so existing release commands keep working. Production's `MSGBLAST_SIGNING_MODE` is set to `developer-id`; the workflow's unset-variable fallback is ad-hoc and must not replace this configuration. Missing Apple credentials stop a Developer ID release. The publisher also reads the prior release manifest from authenticated R2: after the first Developer ID publication, it refuses any ad-hoc downgrade even if the mode variable is removed. A missing or inconsistent existing manifest stops the release before reserving a counter; only an absent feed is treated as a first release. Deliberate signing-identity migrations require a separate reviewed change. The setup below is for activation or an authorized migration, not a task to repeat on each release.
 
 ## Apple account setup
 
