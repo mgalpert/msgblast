@@ -1,0 +1,23 @@
+{
+  "review_run_id": "20261009-185542-c8fa6841",
+  "review_status": "complete",
+  "reviewed_scope": "Original eight-file staged Settings implementation; fixes applied afterwards",
+  "initial_verdict": "Ready with fixes",
+  "application_source_sha": "9fffacd86138231792d5375d0335f3d76eca1cde",
+  "findings": [
+    {
+      "number": 1,
+      "disposition": "fixed",
+      "verification": "8 production-controller permission-boundary regressions pass with injected native responses; native CI includes the harness"
+    },
+    {
+      "number": 2,
+      "disposition": "fixed; native UI execution unverified",
+      "verification": "Three combined-row queries use matching(predicate); app and UI test targets compile. Native runner failed before assertions; manual native AX confirms combined leaf row labels."
+    }
+  ],
+  "peer": "Cross-model adversarial peer failed before egress because acpx@0.19.4 was unavailable; local adversarial lens completed. No cross-model independence claimed.",
+  "residual_risks": [
+    "Full Disk Access recovery uses a different access test from the displayed status. AppPermissions.historyStatus performs a fresh FileHandle open (msgblast/Permissions/AppPermissions.swift:144), but the Settings action calls guide.start (msgblast/Windows/PermissionsSettingsView.swift:17), whose early success path invokes AppModel.refresh through checkHistory (msgblast/Permissions/MessagesAccessGuide.swift:42; msgblast/App/AppModel.swift:82-85). AppModel.refresh reuses an existing SQLite handle (msgblast/App/AppModel.swift:192). If the fresh open denies access while the retained handle still succeeds after permission revocation, the row can show Off while its Open Settings action immediately declares success and never opens System Settings. This mismatch is code-grounded, but whether revocation produces that divergence on supported macOS versions was not verified; the native checks supplied with this review did not exercise grants or revocations. Verify that divergent access results still let the Settings recovery action open the Full Disk Access pane."
+  ]
+}

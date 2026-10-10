@@ -73,6 +73,12 @@ configuration interpretation, or live resumption. The configured CLI script can
 export fixture `requests.jsonl` to an optional second directory for evidence;
 label it as fixture input/output.
 
+`bash scripts/test_app_permissions.sh` needs only the macOS Swift SDK. It compiles
+the actual Settings permission controller with injected native responses and a
+minimal model substitute. It verifies checks without consent, explicit Enable
+requests, denied recovery, changed access, Messages launch failure, and demo
+isolation without reading user data or requesting a real OS grant.
+
 ## Native UI tests and manual checks
 
 Use an authorized Mac with an interactive desktop and native runner permissions.

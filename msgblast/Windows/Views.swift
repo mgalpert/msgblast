@@ -640,6 +640,9 @@ struct AppSettingsView: View {
     @ObservedObject var updater: AppUpdater
     var body: some View {
         Form {
+            Section("Permissions") {
+                PermissionsSettingsView(model: model)
+            }
             Picker("Conversations", selection: Binding(get: { model.state.effectiveWindowStyle }, set: { model.setWindowStyle($0) })) {
                 Text("One window").tag(ComparisonWindowStyle.connected)
                 Text("Separate windows").tag(ComparisonWindowStyle.separate)

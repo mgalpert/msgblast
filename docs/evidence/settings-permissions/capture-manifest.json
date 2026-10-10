@@ -1,0 +1,76 @@
+{
+  "application_source_sha": "9fffacd86138231792d5375d0335f3d76eca1cde",
+  "original_base_sha": "b0559167c53b9a9f004923ceb8ce8a8cc7dd6f80",
+  "integrated_main_sha": "62610406a631135fbf7ad28596e99320a19436ea",
+  "baseline_application_source_sha": "f8fd41d4ace12481d969a732577ba37f21e649b3",
+  "apps": [
+    {
+      "source_sha": "9fffacd86138231792d5375d0335f3d76eca1cde",
+      "variant": "development",
+      "bundle_id": "com.msgblast.permissions-development",
+      "support_directory": "msgblast-Dev-settings-permissions-20261009",
+      "fixture": false,
+      "icon": "AppIcon.icns",
+      "icon_sha256": "c98ec59998f24b23d6d7eff18df429859fae6aa605baf25ff2ca692b1a2c7ccd",
+      "icon_rgb": [
+        8.0,
+        143.0,
+        124.5
+      ],
+      "compiled_executable_sha256": "3c287487f25a32d54f46105542e310f73e343d3e3ca0900a85fccbdab464547f",
+      "updates": "disabled",
+      "app": "msgblast Permissions Dev.app",
+      "compiled_app_dylib_sha256": "13b821b3a3b368ed9762fccc9625b93442d9522f87f43ed500f9e429344fbce9"
+    },
+    {
+      "source_sha": "9fffacd86138231792d5375d0335f3d76eca1cde",
+      "variant": "demo",
+      "bundle_id": "com.msgblast.demo",
+      "support_directory": "msgblast-Demo-settings-permissions-20261009",
+      "fixture": true,
+      "icon": "AppIconDemo.icns",
+      "icon_sha256": "3e233b2177364f165add299fa575edd050c02a43ec24d65dd0ebd65da6b0e4f7",
+      "icon_rgb": [
+        64.75,
+        38.75,
+        216.0
+      ],
+      "compiled_executable_sha256": "e9273887f135274e30c6adfa6525a13fecddf1f5c2eb72135d486fb5731d5c8b",
+      "updates": "disabled",
+      "app": "msgblast Demo.app",
+      "compiled_app_dylib_sha256": "6da782ba2d615a6c67c3b7c704c9203c3809b12c110f96b2e88fb318546e46d0"
+    }
+  ],
+  "source_files_sha256": {
+    ".github/workflows/validate.yml": "97d55035084f4a7f3942de2b43b88124c1888f04db679615ef91f007df387ff5",
+    "docs/onboarding.md": "5cc370cac7f677d521b6c312c4a62c8df6d8f030c46a5fc28416deff3b41d89d",
+    "docs/permissions.md": "fc2ddec359edb5eb7a681070b693d0173bb802dfdf02a04695e734733733fd99",
+    "docs/testing.md": "37a6322a4ad78cf7f851a417ce7137e3976e747a0d76d2aa0c4efd7be34f4de0",
+    "msgblast.xcodeproj/project.pbxproj": "a307d28afc3b50f549d5f18fa158e910704b1c6505efb3658259125be57b8e8a",
+    "msgblast/App/AppModel.swift": "fb043cf519c0b2c5f77145477d78d03d84bc76bfadd9efdb2ad821900bae77df",
+    "msgblast/Permissions/AppPermissions.swift": "03a1df77c32754bf770725fa9a072e6b9ca81390acfdefb01d57ba3fb65c74ea",
+    "msgblast/Windows/PermissionsSettingsView.swift": "26e68b02f8f0edccf6a631b05f6ca0b52fc1378b113cc1ec7d6fa63443cfd688",
+    "msgblast/Windows/Views.swift": "8257fea8cd19613fe3d18ee1086c5b19b32d5c49e7917e8a12f93e554c702b39",
+    "msgblastUITests/WorkflowTests.swift": "2f4d171f39f4e01a6b1f08cdf67387d6314b0b0415808fbeff96869fc87f980b",
+    "scripts/fixtures/app_permissions.swift": "930435b47a63dd7903539b8e6e6d7a43c0c2765edbcc7b93b473924addf065c4",
+    "scripts/test_app_permissions.sh": "249bcaaa89f2d8ab692f2e0513bfb74d85c9398f6026840d563adda9fdff1568"
+  },
+  "media_sha256": {
+    "01-before-settings.png": "16520eada5e1048fd0e8a80daad24135515f115add80fe942284acc2d8fd047c",
+    "02-live-permissions.png": "4700345e0a170167e707529abfe04196264f67adc863bf1e2a67cd73be8bd21e",
+    "03-demo-permissions.png": "4d420cbe5a8cbc21bb42ba8de8a1eac2d69c0452838da2f41d82a621dc4e5a94",
+    "04-full-disk-access.png": "f40329d9a713239da3b4cddc5768181090f73f7d1a9531652c13e4da386cc6e6",
+    "05-contacts-settings.png": "d6f85b845bba09b7a4b6c4844faf9605c625c8a24aa787dc1a117b5ca8be989a",
+    "06-automation-settings.png": "cca3b8ccd681072c7da566869515c0d24ae910b96dc525c42a7a4f6a6fe7aafe",
+    "07-live-refresh.png": "634869c66d55dfce0d0660ae90622738a6653a60eba636421c302fdcf2febae7",
+    "workflow.mp4": "e985d1990ecdea7c405c5f20b269171a4e71f55134d373a053a6b64c609800bf"
+  },
+  "video": "Edited native screenshot sequence, repeated still frames, shortened timing, outside-UI captions, privacy crops; no controls or UI text edited",
+  "limits": [
+    "No real Messages sent, provider requests, Contacts writes, or permission grants/refusals performed by the agent",
+    "Raw captures with unrelated account/app inventories remain local and ignored",
+    "Full Disk Access changed from Off to Allowed across observed checks without agent toggling a system switch; this does not establish the cause or production permission retention",
+    "UI test target compiled; local runner did not initialize automation mode and executed no UI assertions",
+    "macOS only; no mobile UI changed"
+  ]
+}

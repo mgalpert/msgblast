@@ -219,7 +219,8 @@ final class AppModel: ObservableObject {
         }
     }
     func connectContacts() async {
-        guard databaseAvailable, !busy else { return }
+        guard !busy else { return }
+        contactStatus = ""
         if demo {
             demoContactsConnected = true
             refreshContactAccess()

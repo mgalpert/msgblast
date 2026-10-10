@@ -2,6 +2,36 @@ import XCTest
 import AppKit
 final class WorkflowTests: XCTestCase {
     @MainActor
+    func testSettingsCanEnableContactsWhileMessagesAccessIsOff() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--permission-guide-preview", "--contacts-access-preview"]
+        app.launch()
+        defer { app.terminate() }
+        app.typeKey(",", modifierFlags: .command)
+        let history = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Messages access")).firstMatch
+        guard history.waitForExistence(timeout: 5) else { return XCTFail("Settings must show the permissions table") }
+        XCTAssertTrue(history.label.contains("Not connected"))
+        let contacts = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Contacts")).firstMatch
+        XCTAssertTrue(contacts.label.contains("Not requested"))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Sending Messages")).firstMatch.label.contains("Allowed"))
+        XCTAssertTrue(app.staticTexts["Demo permissions are simulated. No system access is changed."].exists)
+        let before = XCTAttachment(screenshot: app.windows["com_apple_SwiftUI_Settings_window"].screenshot())
+        before.name = "Permissions — simulated Contacts not requested"
+        before.lifetime = .keepAlways
+        add(before)
+        app.buttons["enable-contacts-permission"].click()
+        let allowed = NSPredicate(format: "label CONTAINS %@", "Allowed")
+        expectation(for: allowed, evaluatedWith: contacts)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(history.label.contains("Not connected"), "Contacts must be manageable independently of Messages access")
+        XCTAssertEqual(app.sheets.count, 0, "The fixture must never ask for real system access")
+        let screenshot = XCTAttachment(screenshot: app.windows["com_apple_SwiftUI_Settings_window"].screenshot())
+        screenshot.name = "Permissions — simulated Contacts enabled independently"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testShareFeedbackMenuIsAvailableAnytime() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]

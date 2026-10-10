@@ -1,0 +1,61 @@
+{
+  "application_source_sha": "9fffacd86138231792d5375d0335f3d76eca1cde",
+  "app_compile": "passed",
+  "ui_test_compile": "passed",
+  "permission_controller_regressions": {
+    "passed": 8,
+    "failed": 0,
+    "scope": "Actual production controller through normal refresh/enable methods, injected native responses and minimal model stub; no OS access or user data"
+  },
+  "native_core": [
+    {
+      "check": "Full core run",
+      "result": "Failed",
+      "passed": 263,
+      "failed": 1,
+      "failure_details": [
+        {
+          "test": "MultiWebAgentTests/testDotsSavesRenderedAvatarUpdatesItAndClearsOnSignOut()",
+          "message": "XCTAssertGreaterThan failed: (\"0.15692797303199768\") is not greater than (\"0.8\") - Crop the orange sprite frame, not the whole purple sheet"
+        }
+      ]
+    },
+    {
+      "check": "Full core confirmation",
+      "result": "Failed",
+      "passed": 263,
+      "failed": 1,
+      "failure_details": [
+        {
+          "test": "MultiWebAgentTests/testDotsSavesRenderedAvatarUpdatesItAndClearsOnSignOut()",
+          "message": "XCTAssertGreaterThan failed: (\"0.15692797303199768\") is not greater than (\"0.8\") - Crop the orange sprite frame, not the whole purple sheet"
+        }
+      ]
+    },
+    {
+      "check": "Focused avatar rerun",
+      "result": "Passed",
+      "passed": 1,
+      "failed": 0,
+      "failure_details": []
+    }
+  ],
+  "unchanged_core_and_unit_test_source_against_main": true,
+  "native_ui_runner": {
+    "result": "failed before assertions",
+    "reason": "Timed out while enabling automation mode",
+    "passing_ui_suite_claimed": false
+  },
+  "manual": [
+    "Committed live Dev showed off/unrequested states without requesting new access",
+    "Messages access recovery opened Full Disk Access",
+    "Contacts and Sending Messages Manage in Demo opened actual Contacts and Automation panes",
+    "Returning to live Settings rechecked history and reflected an Allowed read; no agent changed a system switch",
+    "Demo statuses carried the explicit simulation label"
+  ],
+  "limits": [
+    "No real native first-time grant/refusal, revocation, or production update/permission retention verified",
+    "An earlier 264/264 core pass belongs to the pre-client, pre-main-merge working tree; final combined full runs are not claimed as passing",
+    "No real messages, Contacts writes, provider requests, TCC resets, or agent-changed OS grants"
+  ]
+}
