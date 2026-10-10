@@ -636,23 +636,36 @@ final class PersonalAgentTests: XCTestCase {
     }
 
     func testReportRequiresActionAndRationaleAndPreservesLegacySummary() throws {
-        let response = #"{"bestNextAction":"Run a small trial","rationale":"The replies disagree on cost","comparison":"Cedar favors clarity; Lumen favors a trial.","uncertainties":["Actual cost is unknown"]}"#
+        let response = #"{"bestNextAction":"Run a small trial","rationale":"The replies disagree on cost","comparison":"Clarity is the priority. [1]\n\n**Sources**\n[1] Cedar: cost comparison.","uncertainties":["Actual cost is unknown"]}"#
         let report = try XCTUnwrap(ComparisonReport(response: response))
         XCTAssertEqual(report.bestNextAction, "Run a small trial")
+        XCTAssertEqual(report.overviewText, "Run a small trial\n\nThe replies disagree on cost")
         XCTAssertEqual(report.uncertainties, ["Actual cost is unknown"])
+        XCTAssertTrue(report.text.contains("[1] Cedar: cost comparison."))
         XCTAssertTrue(report.text.contains("## Best next action\nRun a small trial"))
         XCTAssertEqual(ComparisonReport(response: "```json\n\(response)\n```"), report)
         XCTAssertNil(ComparisonReport(response: response.replacingOccurrences(of: "Run a small trial", with: " ")))
         XCTAssertNil(ComparisonReport(response: "A summary without a recommended action"))
         let comparison = Comparison(prompt: "Choose an approach", members: [])
         let input = try ComparisonSummaryInput(comparison: comparison, comparisons: [comparison], messages: [:])
-        XCTAssertTrue(input.prompt.contains("ONE best next action"))
+        XCTAssertTrue(input.prompt.contains("coherent project summary"))
         let saved = ComparisonSummary(provider: "Fixture", report: report, input: input)
         XCTAssertEqual(try JSONDecoder().decode(ComparisonSummary.self, from: JSONEncoder().encode(saved)), saved)
         let legacy = ComparisonSummary(provider: "Fixture", text: "Previously saved summary", input: input)
         let decoded = try JSONDecoder().decode(ComparisonSummary.self, from: JSONEncoder().encode(legacy))
         XCTAssertNil(decoded.report)
         XCTAssertEqual(decoded.text, "Previously saved summary")
+    }
+
+    func testSynthesisReportParsesWithoutRecommendationAndRoundTrips() throws {
+        let response = #"{"overview":"The team examined caching behavior.","comparison":"**Shared findings**\n- Caching reduces repeated requests. [1]\n\n**Differences**\n- Expiry remains disputed. [2]","uncertainties":["Expiry is unresolved"]}"#
+        let report = try XCTUnwrap(ComparisonReport(response: response))
+        XCTAssertEqual(report.overview, "The team examined caching behavior.")
+        XCTAssertEqual(report.overviewText, "The team examined caching behavior.")
+        XCTAssertFalse(report.text.contains("Best next action"))
+        XCTAssertEqual(try JSONDecoder().decode(ComparisonReport.self, from: JSONEncoder().encode(report)), report)
+        XCTAssertNil(ComparisonReport(response: response.replacingOccurrences(of: "The team examined caching behavior.", with: " ")))
+        XCTAssertNil(ComparisonReport(response: #"{"overview":"Summary","comparison":" ","uncertainties":[]}"#))
     }
 
     func testSnapshotIncludesEveryMemberAndBoundedRepliesButNoDraftsOrAddresses() throws {
