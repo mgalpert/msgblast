@@ -7,7 +7,7 @@ public enum LocalAgentRuntime: String, CaseIterable, Codable, Identifiable, Send
     var setupSubcommand: String { self == .openclaw ? "configure" : "setup" }
     public var setup: String { "\(rawValue) \(setupSubcommand)" }
     public var documentation: URL {
-        URL(string: self == .openclaw ? "https://docs.openclaw.ai/start/getting-started" : "https://hermes-agent.nousresearch.com/docs/")!
+        URL(string: self == .openclaw ? "https://docs.openclaw.ai/start/getting-started" : "https://hermes-agent.nousresearch.com/docs/getting-started/quickstart/")!
     }
 }
 

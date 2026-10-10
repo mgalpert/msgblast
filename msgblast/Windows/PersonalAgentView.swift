@@ -25,7 +25,7 @@ struct ComparisonReportView: View {
             } else if agent.installed.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("No supported agent CLI found").font(.headline)
-                    Text("Install and sign in to Codex, Claude Code, Gemini CLI, Pi, Grok, or Hermes in Terminal, then refresh.")
+                    Text("Install and sign in to Codex, Claude Code, Gemini CLI, Pi, or Hermes in Terminal, then refresh.")
                         .foregroundStyle(.secondary)
                 }
             } else {

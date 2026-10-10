@@ -392,13 +392,18 @@ struct LocalAgentSettingsView: View {
             ForEach(LocalAgentRuntime.allCases) { runtime in
                 let installed = agent.detectedLocalAgents.contains { $0.runtime == runtime }
                 accountRow(name: runtime.name, icon: runtime == .openclaw ? "openclaw" : "hermes",
-                           status: agent.detectingLocalAgents ? "Checking installation…" : installed ? "Installed on this Mac" : "Not installed") {
+                           status: agent.detectingLocalAgents ? "Checking installation…" : installed ? "CLI found · Provider setup not checked" : "CLI not found") {
                     if installed {
                         Button("Set up \(runtime.name)") { setupRuntime = runtime }.disabled(isBusy)
                     } else {
+                        Button("Setup instructions") { setupRuntime = runtime }.disabled(isBusy)
                         Link("Install \(runtime.name)", destination: runtime.documentation)
                     }
                 }
+                Text(runtime == .openclaw
+                     ? "Setup shortcut only · OpenClaw chats and reports are not connected yet."
+                     : "Messages comparison reports · Configure your provider and model in Terminal.")
+                    .font(.caption).foregroundStyle(.secondary).padding(.leading, 44).padding(.bottom, 10)
                 if runtime != LocalAgentRuntime.allCases.last { Divider() }
             }
             if agent.demo {
@@ -447,21 +452,63 @@ struct LocalAgentSettingsView: View {
     }
 }
 
+struct LocalAgentTerminalInstructions: View {
+    let runtime: LocalAgentRuntime
+
+    private var steps: [String] {
+        runtime == .openclaw ? [
+            "Choose Model in the wizard, then select your AI provider.",
+            "Complete the provider’s sign-in flow or enter its API key in Terminal.",
+            "Choose a default model and save the configuration."
+        ] : [
+            "Choose your AI provider and model in the setup wizard.",
+            "Complete the provider’s sign-in flow or enter its API key in Terminal, then save the setup.",
+            "Return to msgblast and refresh local accounts. In a Messages comparison, open Summarize, choose Hermes, and click Generate report or Update report."
+        ]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(runtime == .openclaw
+                 ? "This configures OpenClaw itself. OpenClaw is not connected to msgblast chats or comparison reports yet; you can skip this setup."
+                 : "Hermes can generate comparison reports from Messages replies. It does not have a msgblast chat pane. Reports use your configured provider and its usage limits.")
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            Text("In Terminal").font(.headline)
+            Text(runtime.setup).font(.body.monospaced()).textSelection(.enabled)
+            Text("Continue in Terminal runs this command for you. Complete these steps in its wizard:")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .top, spacing: 8) {
+                    Text("\(index + 1).").foregroundStyle(.secondary)
+                    Text(step).fixedSize(horizontal: false, vertical: true)
+                }.font(.callout)
+            }
+            Text(runtime == .openclaw
+                 ? "First-time OpenClaw setup? Run openclaw onboard for its full setup wizard. Returning here does not connect OpenClaw to msgblast."
+                 : "To change a configured provider or model, run hermes model. A messaging gateway is not required for comparison reports.")
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Link("Official \(runtime.name) setup guide", destination: runtime.documentation)
+                .font(.callout)
+        }
+    }
+}
+
 private struct LocalAgentSetupView: View {
     @ObservedObject var agent: PersonalAgentController
     let runtime: LocalAgentRuntime
     @Environment(\.dismiss) private var dismiss
     @State private var showingDetails = false
+    private var installed: Bool { agent.detectedLocalAgents.contains { $0.runtime == runtime } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Set up \(runtime.name)").font(.title2.bold())
-            Text("Continue in Terminal to choose your provider and finish \(runtime.name)’s setup. Return here when you’re done.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(runtime == .openclaw
-                 ? "OpenClaw is detected. Conversations in msgblast are not connected yet."
-                 : "Hermes is detected. After setup, select it in a comparison report to use it.")
-                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            if !installed {
+                Text("Install the command-line app from the guide below, then return here and refresh local accounts.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            LocalAgentTerminalInstructions(runtime: runtime)
             if agent.demo {
                 Label("Simulated installation · Terminal setup is disabled", systemImage: "info.circle")
                     .font(.caption).foregroundStyle(.secondary)
@@ -471,8 +518,8 @@ private struct LocalAgentSetupView: View {
                     if let installation = agent.detectedLocalAgents.first(where: { $0.runtime == runtime }), !agent.demo {
                         Text(installation.executableURL.path).font(.caption).textSelection(.enabled)
                     }
-                    Text(runtime.setup).font(.caption.monospaced()).textSelection(.enabled)
-                    Link("\(runtime.name) setup guide", destination: runtime.documentation)
+                    Text("msgblast finds the command-line app; it does not verify provider sign-in or model configuration.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }.padding(.top, 8)
             }.font(.callout)
             HStack {
@@ -481,9 +528,10 @@ private struct LocalAgentSetupView: View {
                 Button("Continue in Terminal") {
                     agent.setUp(runtime)
                     dismiss()
-                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(agent.demo)
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(agent.demo || !installed || agent.detectingLocalAgents)
             }
-        }.padding(24).frame(width: 420)
+        }.padding(24).frame(width: 520)
     }
 }
 

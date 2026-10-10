@@ -80,7 +80,7 @@ Messages comparisons can stay in one window or use separate conversation windows
 
 Click **Summarize** in a Messages comparison to generate a **Comparison report** with a recommended next action, supporting reasoning, differences between replies, and open questions. Reports use an installed, signed-in **Codex, Claude Code, Gemini CLI, Pi, or Hermes**. They use available Messages replies and reactions; website and CLI chat replies are not included. Attachment contents are not sent to the report agent.
 
-Reports are saved with the comparison and update when you request it. Unlike CLI conversations, report generation keeps tools restricted to analyze the supplied responses. OpenClaw setup is available in Settings, but OpenClaw conversations are not connected yet.
+Reports are saved with the comparison and update when you request it. Unlike CLI conversations, report generation keeps tools restricted to analyze the supplied responses. Hermes requires a provider and model configured in Terminal; OpenClaw currently offers only a setup shortcut, with no chat or report integration. See [OpenClaw and Hermes terminal setup](docs/personal-agent-reports.md#openclaw-and-hermes-terminal-setup) for the commands, wizard steps, and how to use Hermes in a report.
 
 ## Current limits
 

@@ -22,9 +22,58 @@ Codex uses noninteractive `exec` with its configured/default sandbox and headles
 
 On the first explicit follow-up to a conversation created with the old restricted adapter, msgblast starts a configured session using the saved transcript as quoted history. This removes the old session’s persistent tool restrictions and “Do not use tools” instruction. The comparison identity, history, drafts, and working directory stay intact; previous CLI session IDs are retained in saved state for recovery. The new session’s explicit policy version and exact ID are recorded after a completed reply, making the transition idempotent. Later follow-ups resume that configured session. No CLI request is made during upgrade alone. CLI-only context absent from msgblast’s saved transcript is not reconstructed.
 
-Settings also shows OpenClaw and Hermes installation status and their official icons. **Set up** opens a sheet, then **Continue in Terminal** hands off to the detected `openclaw configure` or `hermes setup` command. Detection does not launch either runtime, and installation does not prove sign-in or gateway health. Hermes has a comparison-report adapter; OpenClaw conversations are not connected yet. Demo sign-in and setup are disabled and clearly labeled.
+Settings also shows OpenClaw and Hermes installation status and their official icons. **Set up** or **Setup instructions** opens the terminal steps below, including when the CLI is missing. **Continue in Terminal** runs the detected `openclaw configure` or `hermes setup` command. Detection only finds the executable; it does not launch either runtime or verify provider sign-in, model configuration, or gateway health. Demo sign-in and setup are disabled and clearly labeled.
 
 Tests use local website and executable fixtures; they do not prove current live website layouts, provider authentication, billing, or live CLI resumption. Demo replies never invoke installed CLIs or provider services. Session handling follows [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive) and [Claude Code programmatic conversations](https://code.claude.com/docs/en/headless#continue-conversations).
+
+## OpenClaw and Hermes terminal setup
+
+Install the command-line app using its official guide. A desktop app alone may
+not put `openclaw` or `hermes` on your PATH. Open a new Terminal window and run
+`command -v openclaw` or `command -v hermes` to check that the command can be
+found, then use **Refresh accounts** in msgblast Settings. Finding the CLI is
+installation evidence, not proof that its provider account and model work.
+
+### OpenClaw: setup shortcut only
+
+OpenClaw currently has no chat or comparison-report adapter in msgblast.
+Configuring it does not add it as a recipient. You can skip its onboarding step
+and connect a supported chat agent instead.
+
+For an installed OpenClaw, **Continue in Terminal** runs:
+
+```sh
+openclaw configure
+```
+
+Choose **Model** in the wizard, select your AI provider, complete its sign-in
+flow or enter its API key in Terminal, then choose a default model and save.
+For a first-time OpenClaw installation, run `openclaw onboard` for its full
+setup wizard instead. See the official [getting-started guide](https://docs.openclaw.ai/start/getting-started)
+and [configure command reference](https://docs.openclaw.ai/cli/configure).
+This configures OpenClaw itself; returning to msgblast does not connect it.
+
+### Hermes: Messages comparison reports
+
+Hermes can summarize the replies in a Messages comparison. It has no msgblast
+chat pane. **Continue in Terminal** runs:
+
+```sh
+hermes setup
+```
+
+Choose a provider and model, complete the provider's sign-in flow or enter its
+API key in Terminal, and save the setup. To change an existing provider or
+model, run `hermes model`. A messaging gateway is not required for msgblast
+reports. The official [Hermes quickstart](https://hermes-agent.nousresearch.com/docs/getting-started/quickstart/)
+explains the available setup modes and authentication choices.
+
+Return to msgblast and refresh local accounts. In a Messages comparison with
+received replies, open **Summarize**, select **Hermes**, and choose **Generate
+report** or **Update report**. Reports use the configured provider and its
+account's billing/usage limits. Onboarding's **Done with setup** acknowledges
+your setup; it does not test authentication or make a model request. OpenClaw
+or Hermes setup alone does not satisfy onboarding's chat-ready requirement.
 
 ## Comparison reports
 
