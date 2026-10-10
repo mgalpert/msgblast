@@ -2,7 +2,9 @@
 
 New installations choose agents from one multi-select grid. All tiles have the same dimensions, including Another Messages agent. The picker has no scrolling, category headings, help-to-choose link, or Set up later action. At least one selected agent must be ready for chat before the workspace opens.
 
-Onboarding shows primary headings and controls without explanatory paragraphs or sending-status captions. The Messages access card leads with “Chat with the agents you text,” has a short privacy badge (“Matched on your Mac. Nothing uploaded or shared.”), and one Open Settings action. The badge describes local contact/conversation matching through Contacts and the read-only Messages database. Permission instructions appear in the visual Settings guide. The shared workspace and Discover card keep their explanatory text. Required Grok Bot routine instructions, contact addresses, installation/account status, errors, and accurate demo labels remain visible.
+Onboarding shows primary headings and controls without explanatory paragraphs or sending-status captions. The Messages access card leads with “Chat with the agents you text on Messages,” has plain subtext (“Your messages are yours. You choose what to share.”) without an additional icon or badge, and one Open Settings action. Chat composers have no sharing footer. The Summarize screen retains its disclosure about sending conversation text to the selected agent’s provider using its existing sign-in and plan, with attachment contents excluded. Permission instructions appear in the visual Settings guide. The shared workspace and Discover card keep their explanatory text. Required Grok Bot routine instructions, contact addresses, installation/account status, errors, and accurate demo labels remain visible.
+
+Normal Messages sends do not show per-agent Ready or Submitting captions, or queued Submit unsent actions. Failed and uncertain sends retain their errors, and interrupted unsent recipients can be resumed once sending stops.
 
 ## Connection queue
 

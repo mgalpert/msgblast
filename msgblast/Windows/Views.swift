@@ -356,7 +356,7 @@ struct ConversationView: View {
                     .frame(maxWidth: .infinity).background(.bar)
                     .disabled(model.busy)
                 if let error = member.error { Text(error).font(.caption).foregroundStyle(.orange).padding(12) }
-                if member.submission == .ready {
+                if member.submission == .ready && !model.busy {
                     Button("Submit unsent recipients") { Task { await model.submit(comparisonID, retry: false) } }.disabled(model.busy).padding(8)
                 }
                 if member.submission.canRetry {
@@ -486,7 +486,14 @@ struct FollowUpStatus: View {
     var universal = false
     var body: some View {
         if let attempt = comparison.followUps.last(where: { universal || (only == nil ? $0.memberIDs.count == comparison.members.count : $0.memberIDs == [only!]) }) {
-            let failures = comparison.members.filter { attempt.memberIDs.contains($0.id) && attempt.states[$0.id.uuidString] != .submitted }
+            let failures = comparison.members.filter { member in
+                guard attempt.memberIDs.contains(member.id) else { return false }
+                switch attempt.states[member.id.uuidString] {
+                case .failed, .uncertain: return true
+                case .ready, nil: return !model.busy
+                case .sending, .submitted: return false
+                }
+            }
             if !failures.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(failures) { member in
@@ -495,7 +502,7 @@ struct FollowUpStatus: View {
                     if attempt.states.values.contains(.failed) {
                         Button("Retry failed follow-up recipients") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id) } }.disabled(model.busy)
                     }
-                    if attempt.states.values.contains(.ready) {
+                    if attempt.states.values.contains(.ready) && !model.busy {
                         Button("Resume unsent follow-up recipients") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id, resumeUnsent: true) } }.disabled(model.busy)
                     }
                 }.padding(.horizontal, 12).padding(.bottom, 8)

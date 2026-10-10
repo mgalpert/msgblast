@@ -141,7 +141,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let composerKey = id.uuidString + ":all"
         if windows[composerKey] == nil {
             let panel = ComposerPanel(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            panel.title = "All \(comparison.members.count) · \(comparison.title)" + (model.demo ? " [Demo]" : "")
+            panel.title = comparison.title + (model.demo ? " [Demo]" : "")
             panel.identifier = NSUserInterfaceItemIdentifier(composerKey)
             panel.contentView = NSHostingView(rootView: FloatingComposer(model: model, comparisonID: id))
             configureChrome(panel)
@@ -164,7 +164,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
             defer { placing = false }
             let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = "All \(comparison.members.count) · \(comparison.title)" + (model.demo ? " [Demo]" : "")
+            window.title = comparison.title + (model.demo ? " [Demo]" : "")
             window.identifier = NSUserInterfaceItemIdentifier(windowKey)
             window.contentView = NSHostingView(rootView: ComparisonWorkspace(model: model, comparisonID: comparison.id))
             configureChrome(window)
