@@ -84,11 +84,11 @@ final class OnboardingController: ObservableObject {
                 guard checkGeneration == generation, state.stage == .importing else { return }
                 checking = false
                 if profiles.count == 1, let profile = profiles.first { importBrowserProfile(profile) }
-                else if profiles.isEmpty { await finishBrowserImport(notice: "No accounts could be imported from \(source.name). Sign in on the next screen.", resetImports: true) }
+                else if profiles.isEmpty { await finishBrowserImport(notice: "No accounts could be imported from \(source.name). Sign in here to continue.", resetImports: true) }
                 else { browserProfiles = profiles }
             } catch {
                 guard checkGeneration == generation, state.stage == .importing else { return }
-                await finishBrowserImport(notice: "Couldn't access \(source.name). Sign in on the next screen.", resetImports: true)
+                await finishBrowserImport(notice: "Couldn't access \(source.name). Sign in here to continue.", resetImports: true)
             }
         }
     }
@@ -129,10 +129,10 @@ final class OnboardingController: ObservableObject {
                     registered += (try? await session(for: provider).registerBrowserCookies(result.cookies[provider] ?? [])) ?? 0
                     guard checkGeneration == generation, state.stage == .importing else { return }
                 }
-                await finishBrowserImport(notice: registered == 0 ? "No accounts could be imported from \(source.name). Sign in on the next screen." : nil)
+                await finishBrowserImport(notice: registered == 0 ? "No accounts could be imported from \(source.name). Sign in here to continue." : nil)
             } catch {
                 guard checkGeneration == generation, state.stage == .importing else { return }
-                await finishBrowserImport(notice: "Couldn't import from \(source.name). Sign in on the next screen.", resetImports: true)
+                await finishBrowserImport(notice: "Couldn't import from \(source.name). Sign in here to continue.", resetImports: true)
             }
         }
     }
