@@ -1,6 +1,6 @@
 import Foundation
 
-public enum LocalAgentRuntime: String, CaseIterable, Identifiable, Sendable {
+public enum LocalAgentRuntime: String, CaseIterable, Codable, Identifiable, Sendable {
     case openclaw, hermes
     public var id: String { rawValue }
     public var name: String { self == .openclaw ? "OpenClaw" : "Hermes" }

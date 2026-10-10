@@ -148,10 +148,11 @@ final class WebServiceWorkflowTests: XCTestCase {
             XCTAssertTrue(app.buttons[name].waitForExistence(timeout: 5))
             XCTAssertEqual(app.buttons[name].value as? String, "Selected")
         }
-        XCTAssertFalse(app.buttons["Codex CLI"].exists)
+        XCTAssertTrue(app.buttons["Codex CLI"].exists)
+        XCTAssertEqual(app.buttons["Codex CLI"].value as? String, "Set up")
         XCTAssertFalse(app.buttons["Claude Code"].exists)
         XCTAssertFalse(app.staticTexts["Your local accounts (simulated)"].exists)
-        capture(app, name: "Four website agents by default — isolated fixture")
+        capture(app, name: "Featured grid with optional CLI setup — isolated fixture")
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
@@ -190,7 +191,8 @@ final class WebServiceWorkflowTests: XCTestCase {
         settings.switches["Enable Codex CLI"].click()
         settings.buttons[XCUIIdentifierCloseWindow].click()
         app.buttons["New Blast"].click()
-        XCTAssertFalse(app.buttons["Codex CLI"].exists)
+        XCTAssertTrue(app.buttons["Codex CLI"].exists)
+        XCTAssertEqual(app.buttons["Codex CLI"].value as? String, "Set up")
         comparison.click()
         XCTAssertTrue(reply(app, containing: "Codex CLI fixture reply: Web and CLI comparison fixture").waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Recipient Codex CLI"].isEnabled)

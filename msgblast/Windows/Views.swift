@@ -10,7 +10,7 @@ struct AgentAvatar: View {
     private let colors: [Color] = [.gray, .indigo, .orange, .pink, .purple, .blue]
     var body: some View {
         Group {
-            if let data = agent?.avatar, let image = NSImage(data: data) {
+            if let data = AgentArtwork.avatar(for: agent, name: name), let image = NSImage(data: data) {
                 Image(nsImage: image).resizable().scaledToFill()
             } else {
                 ZStack {
@@ -162,35 +162,6 @@ struct MessageInput: View {
                 } catch { attachmentError = error.localizedDescription }
             }
         }
-    }
-}
-
-struct PinnedAgentTile: View {
-    let agent: Agent
-    let selected: Bool
-    let size: CGFloat
-    let toggle: () -> Void
-    var body: some View {
-        Button(action: toggle) {
-            VStack(spacing: 9) {
-                AgentAvatar(agent: agent, name: agent.name, size: size)
-                    .overlay(alignment: .bottomTrailing) {
-                        ZStack {
-                            Circle().fill(selected ? Color.blue : Color(nsColor: .windowBackgroundColor))
-                            if selected {
-                                Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-                            } else {
-                                Circle().stroke(.secondary, lineWidth: 1)
-                            }
-                        }.frame(width: 24, height: 24)
-                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
-                            .offset(x: 2, y: 2)
-                    }
-                Text(agent.name).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
-            }.frame(maxWidth: .infinity).contentShape(Rectangle())
-        }.buttonStyle(.plain)
-            .accessibilityLabel(agent.name)
-            .accessibilityValue(selected ? "Selected" : "Not selected")
     }
 }
 

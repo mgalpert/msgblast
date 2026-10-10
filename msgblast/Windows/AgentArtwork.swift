@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import msgblastCore
 
 @MainActor
@@ -37,6 +38,21 @@ enum AgentArtwork {
         }
     )
     static func messageAvatar(for choice: OnboardingChoice) -> Data? { messageAvatars[choice] }
+    static func avatar(for agent: Agent?, name: String) -> Data? {
+        let saved = agent?.avatar
+        guard let choice = [OnboardingChoice.instinct, .fo, .szn].first(where: {
+            name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare($0.name) == .orderedSame
+        }) else { return saved }
+        if choice == .instinct, let saved, saved.count == 17_474 {
+            // Older saved agents contain the retired beige Instinct placeholder.
+            let digest = SHA256.hash(data: saved).map { String(format: "%02x", $0) }.joined()
+            if digest == "8448ce8c893c026e174a30c2fa9b29fdf24862e042f3496729d2bc7875da2d06" {
+                return messageAvatar(for: choice) ?? saved
+            }
+        }
+        return saved ?? messageAvatar(for: choice)
+    }
     private static let runtimeAvatars: [LocalAgentRuntime: Data] = Dictionary(uniqueKeysWithValues:
         LocalAgentRuntime.allCases.compactMap { runtime in
             guard let url = bundle.url(forResource: runtime.rawValue, withExtension: "png", subdirectory: "WebAgentIcons"),
