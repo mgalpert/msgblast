@@ -41,7 +41,7 @@ struct AgentGridView: View {
                                 Text("Your agents").font(.headline)
                                 Spacer()
                                 Text("Drag to reorder · − to hide").font(.callout).foregroundStyle(.secondary)
-                            }.id("your-agents")
+                            }
                         }
                         if shown.isEmpty {
                             ContentUnavailableView("Choose your agents", systemImage: "person.2",
@@ -80,6 +80,7 @@ struct AgentGridView: View {
                                 .help("Restore the featured agents and your connected agents in their default order")
                         }
                     }.padding(.horizontal, 24).padding(.top, 18).padding(.bottom, 24)
+                        .id("agent-grid-top")
                 }.accessibilityIdentifier("Agent grid scroll area")
                     .coordinateSpace(name: "agent-grid")
                     .onPreferenceChange(AgentGridFrames.self) { tileFrames = $0 }
@@ -231,7 +232,7 @@ struct AgentGridView: View {
         guard saved else { return }
         Task { @MainActor in
             await Task.yield()
-            withAnimation(motion) { scroll.scrollTo(editing ? "your-agents" : id.id, anchor: .top) }
+            withAnimation(motion) { scroll.scrollTo("agent-grid-top", anchor: .top) }
             if needsSetup(id) {
                 if !reduceMotion { try? await Task.sleep(for: .milliseconds(650)) }
                 if setup == nil, arrived == id, model.isVisibleInAgentGrid(id) { setup = id }
@@ -257,7 +258,7 @@ struct AgentGridView: View {
     private func scrollToTop(_ scroll: ScrollViewProxy) {
         Task { @MainActor in
             await Task.yield()
-            withAnimation(motion) { scroll.scrollTo("your-agents", anchor: .top) }
+            withAnimation(motion) { scroll.scrollTo("agent-grid-top", anchor: .top) }
         }
     }
 
