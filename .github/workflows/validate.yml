@@ -91,6 +91,9 @@ jobs:
       - name: Exercise real Sparkle updater with isolated fixtures
         run: python3 scripts/test_updates.py --derived-data build/updater-validation
 
+      - name: Verify Settings permission checks and consent boundaries
+        run: bash scripts/test_app_permissions.sh
+
   preview:
     if: >-
       github.event_name == 'workflow_dispatch' ||
