@@ -1,0 +1,28 @@
+Executable=/Users/contains/.codex/worktrees/4ce9/msgblast/build/feature-release-reviewed/msgblast Dev.app/Contents/MacOS/msgblast
+warning: Specifying ':' in the path is deprecated and will not work in a future release
+Executable=/Users/contains/.codex/worktrees/4ce9/msgblast/build/feature-release-reviewed/msgblast Dev.app/Contents/MacOS/msgblast
+Identifier=com.msgblast.development
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=441 flags=0x10002(adhoc,runtime) hashes=3+7 location=embedded
+VersionPlatform=1
+VersionMin=983040
+VersionSDK=1769472
+Hash type=sha256 size=32
+CandidateCDHash sha256=0430028f63b4f7cc71ad189e0a124004c77a7897
+CandidateCDHashFull sha256=0430028f63b4f7cc71ad189e0a124004c77a7897fa047432bc50502b8ea274cb
+Hash choices=sha256
+CMSDigest=0430028f63b4f7cc71ad189e0a124004c77a7897fa047432bc50502b8ea274cb
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=16384
+Executable Segment flags=0x1
+Page size=16384
+CDHash=0430028f63b4f7cc71ad189e0a124004c77a7897
+Signature=adhoc
+Info.plist entries=36
+TeamIdentifier=not set
+Runtime Version=27.0.0
+Sealed Resources version=2 rules=13 files=138
+Internal requirements count=0 size=12
+Total signatures=1
+Chosen signature=1

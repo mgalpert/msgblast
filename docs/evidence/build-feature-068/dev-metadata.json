@@ -1,0 +1,16 @@
+{
+  "path": "/Users/contains/.codex/worktrees/4ce9/msgblast/build/feature-release-reviewed/msgblast Dev.app",
+  "info": {
+    "CFBundleIdentifier": "com.msgblast.development",
+    "CFBundleDisplayName": "msgblast Dev",
+    "CFBundleShortVersionString": "0.4.3",
+    "CFBundleVersion": "1",
+    "msgblastSourceRevision": "90694d90b5002395ca98b2bb5f4241734be64220",
+    "msgblastDemo": false,
+    "msgblastSupportDirectory": "msgblast-Dev",
+    "SUFeedURL": "",
+    "SUPublicEDKey": "",
+    "CFBundleIconName": "AppIcon",
+    "NSContactsUsageDescription": "Find agent contacts and save accounts you add manually to Contacts for use with their existing Messages chats."
+  }
+}
