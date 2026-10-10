@@ -40,9 +40,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let old = activePage else { return }
         let key = state.comparisonID?.uuidString ?? "new"
         if old.key == key { return }
-        // Dots has one ongoing account conversation. Preserve its live page so a
-        // fresh blast uses the currently open dot, including changes before polling.
-        if provider == .dots {
+        // Account-wide conversations keep their live page across comparisons,
+        // including unsent drafts and replies that arrive between polls.
+        if provider == .dots || provider.sharesOneConversation {
             pages.removeValue(forKey: old.key)
             old.comparisonID = state.comparisonID
             pages[key] = old
@@ -272,8 +272,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     // In a shared conversation, a message another attempt already observed belongs to that attempt.
+    private func claimedMessageIDs(excluding attempt: WebSendAttempt) -> Set<String> {
+        provider.sharesOneConversation ? Set(state.attempts.compactMap { $0.id == attempt.id ? nil : $0.messageID }) : []
+    }
+
     private func linkCandidates(for attempt: WebSendAttempt) -> [Int] {
-        let claimed = provider.sharesOneConversation ? Set(state.attempts.compactMap { $0.id == attempt.id ? nil : $0.messageID }) : []
+        let claimed = claimedMessageIDs(excluding: attempt)
         return snapshot.messages.indices.filter { snapshot.messages[$0].role == "user" && !claimed.contains(snapshot.messages[$0].id) && Self.normalized(snapshot.messages[$0].text) == Self.normalized(attempt.text) }
     }
 
@@ -317,6 +321,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .grokbot { return fixture ? "Simulated webhook · no Bot contacted" : "Webhook connection" }
         if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
+        if provider.sharesOneConversation { return "\(host) · Shared account conversation" }
         return provider == .dots ? "\(host) · Your dot" : provider == .muse && webView.url.map(provider.isChatURL) == true ? "\(host) · Side chat" : host
     }
 
@@ -758,6 +763,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 throw WebSessionFailure.notSent(snapshot.reason)
             }
             if let destination = provider.canonicalConversationURL(url), state.conversationURLs[id.uuidString] != destination,
+               !provider.sharesOneConversation,
                !(provider == .dots && state.dotsURL == destination) {
                 throw WebSessionFailure.notSent("This page’s conversation is not linked to this comparison. Review it and continue in the page; nothing was sent from the shared composer.")
             }
@@ -850,7 +856,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         attempt.receiptContext = context
         let before = Set(context.baseline.map(\.id))
         let text = Self.normalized(attempt.text)
-        let matches = snapshot.messages.filter { !before.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == text }
+        let claimed = claimedMessageIDs(excluding: attempt)
+        let matches = snapshot.messages.filter { !before.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == text }
         guard matches.count <= 1 else { return invalidate() }
         guard let match = matches.first, let comparison = attempt.comparisonID else { return false }
         attempt.status = .observed
@@ -880,7 +887,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               page.snapshot.messages.starts(with: context.baseline) else { return }
         let previous = Set(context.baseline.map(\.id))
         let expectedText = Self.normalized(attempt.text)
-        let matches = page.snapshot.messages.filter { !previous.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == expectedText }
+        let claimed = claimedMessageIDs(excluding: attempt)
+        let matches = page.snapshot.messages.filter { !previous.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == expectedText }
         guard matches.count == 1 else { return }
         attempt.status = .observed
         attempt.messageID = matches[0].id

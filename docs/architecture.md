@@ -49,7 +49,7 @@ There are four distinct connection types:
 | Connection | How it works |
 | --- | --- |
 | Messages | Existing one-to-one iMessage chats, read-only history, and Apple Events submission |
-| Websites | Muse, ChatGPT, Claude, Grok, and optional Dots inside persistent WebKit stores |
+| Websites | Muse, ChatGPT, Claude, Grok, Dots, and rabbit OS3 inside persistent WebKit stores |
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
 
@@ -57,6 +57,12 @@ Website login does not authenticate a CLI. CLI configuration does not replace th
 website. Grok Bot is distinct from Grok's website. Comparisons keep each provider's
 identity and private history; joining another agent shares only explicitly shared
 context, not private one-to-one turns.
+
+rabbit OS3 is featured in the agent grid and available during onboarding, but
+is not selected until the user connects or chooses it. Its account has one
+ongoing conversation: switching comparisons retains that page, its draft, and
+earlier context. Receipts remain attached to each comparison's own send attempt;
+an already observed message cannot be linked to another attempt.
 
 **Comparison reports** are a separate execution policy. They summarize available
 Messages replies with restricted local adapters; they do not inherit the full

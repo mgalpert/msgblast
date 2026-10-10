@@ -150,10 +150,12 @@ Info.plist, entitlements, frameworks, resources, and helper.
 
 ## Accounts, permissions, and state
 
-Muse, ChatGPT, Claude, Grok, and optional Dots use embedded websites. Sign in
+Muse, ChatGPT, Claude, Grok, Dots, and rabbit OS3 use embedded websites. Sign in
 inside the app for live web use. Codex CLI and Claude Code are separate optional
 agents enabled in Settings; they use their installed CLI's authentication and
 configuration. Neither a CLI nor a provider account is needed to build or use Demo.
+rabbit OS3 is available in onboarding and the featured grid. It continues the
+account's single conversation across comparisons, including earlier context.
 See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbot.md).
 
 Dev needs its own Full Disk Access for Messages history, Contacts permission for

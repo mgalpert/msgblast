@@ -159,6 +159,10 @@ private struct OnboardingProviderView: View {
                 cliSetup(provider)
                 Spacer()
             } else {
+                if session.provider.sharesOneConversation {
+                    Text("rabbit OS3 uses one conversation for your account. Each comparison continues that conversation and can use its earlier context.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 ServiceLoginPage(session: session)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12)))

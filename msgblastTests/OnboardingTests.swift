@@ -2,6 +2,20 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testRabbitWebsiteSetupCanCompleteWithoutMessagesAccess() throws {
+        var onboarding = OnboardingState()
+        onboarding.toggle(.os3)
+        onboarding.begin()
+        XCTAssertEqual(onboarding.currentStep, .agent(.os3))
+        onboarding.complete(.os3)
+        XCTAssertEqual(onboarding.stage, .feedback)
+        onboarding.finish()
+        let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(onboarding))
+        XCTAssertTrue(restored.isFinished)
+        XCTAssertEqual(restored.selected, [.os3])
+        XCTAssertEqual(restored.completed, [.os3])
+    }
+
     func testEmptyMessagesConfirmationClearsOldRowsWhileAnotherProviderPermitsFinish() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .fo, .szn] { onboarding.toggle(choice) }

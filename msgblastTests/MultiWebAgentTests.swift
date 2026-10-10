@@ -1054,6 +1054,57 @@ final class MultiWebAgentTests: XCTestCase {
         XCTAssertEqual(WebAgentSession(provider: .dots, storageURL: storage, fixture: true).avatar, moved)
     }
 
+    func testOS3ComparisonSwitchPreservesLivePageAndDraft() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let firstID = UUID(), secondID = UUID()
+        let first = await session.send("Earlier context", comparisonID: firstID)
+        XCTAssertEqual(first?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        let page = session.webView
+        _ = try await page.callAsyncJavaScript("input.value='Keep my unsent rabbit draft';input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: [:], in: nil, contentWorld: .page)
+        session.updateState { $0.comparisonID = secondID }
+        XCTAssertTrue(session.webView === page, "One account conversation must not become an empty comparison pane")
+        let ready = await session.openComparison(secondID)
+        XCTAssertFalse(ready, "Switching comparisons must not overwrite an existing website draft")
+        XCTAssertEqual(session.snapshot.draft, "Keep my unsent rabbit draft")
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["Earlier context"])
+        XCTAssertEqual(session.state.attempts.count, 1)
+        _ = try await page.callAsyncJavaScript("input.value='';input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: [:], in: nil, contentWorld: .page)
+        let second = await session.send("Earlier context", comparisonID: secondID)
+        XCTAssertEqual(second?.status, .observed)
+        XCTAssertNotEqual(first?.messageID, second?.messageID)
+        let reopened = await session.openComparison(firstID)
+        XCTAssertTrue(reopened)
+        XCTAssertTrue(session.webView === page)
+        XCTAssertEqual(session.latestComparisonAttempt?.id, first?.id)
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["Earlier context", "Earlier context"])
+        session.beginShutdown()
+    }
+
+    func testOS3ReopeningFailedComparisonDoesNotClaimAnotherComparisonsReceipt() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let failedID = UUID(), sentID = UUID()
+        _ = try await session.webView.callAsyncJavaScript("send.setAttribute('aria-disabled','true')", arguments: [:], in: nil, contentWorld: .page)
+        let failed = await session.send("Same question", comparisonID: failedID)
+        XCTAssertEqual(failed?.status, .notSent)
+        XCTAssertNotNil(failed?.manualContext)
+        _ = try await session.webView.callAsyncJavaScript("input.value='';send.removeAttribute('aria-disabled');input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: [:], in: nil, contentWorld: .page)
+        let sent = await session.send("Same question", comparisonID: sentID)
+        XCTAssertEqual(sent?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        _ = await session.openComparison(failedID)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .notSent)
+        XCTAssertNil(session.latestComparisonAttempt?.messageID)
+        XCTAssertEqual(session.state.attempts.filter { $0.status == .observed }.count, 1)
+        XCTAssertFalse(session.canLinkCurrentConversation)
+        session.beginShutdown()
+    }
+
     func testOS3NeverLinksAMessageAnotherComparisonObserved() async throws {
         let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
         session.connect()
