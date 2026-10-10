@@ -1,0 +1,39 @@
+{
+  "source_sha": "8db5335639330f2125a51f6c31c77b1f4b5cdcd2",
+  "app": "/Users/contains/.codex/worktrees/cffe/msgblast/build/agent-grid-combined-previews/msgblast Dev.app",
+  "fixture": false,
+  "result": "passed",
+  "permission_states_before": {
+    "messages": "Off",
+    "contacts": "Not requested",
+    "sending": "Allowed"
+  },
+  "permission_states_after": {
+    "messages": "Allowed",
+    "contacts": "Allowed",
+    "sending": "Allowed"
+  },
+  "contacts_request": "Explicit native Enable while Messages access Off; returned Allowed. No agent clicked a Contacts system-grant button; the native alert was not captured.",
+  "messages_recovery": "Opened actual FDA; human completed Touch ID unlock; existing Dev grant restored for exact build through Add picker. System automatic reopen selected older installed Dev, so that old running instance was identified by path/AX and quit; choosing Later and manually restarting exact reviewed Dev resolved the signature/path collision.",
+  "actual_contact_fetch": {
+    "native": true,
+    "query": "Known featured Messages-agent contacts",
+    "results_count": 1,
+    "visible_fields_recorded_publicly": false,
+    "proof": "Fo setup displayed one native candidate with Connect/Open Messages after ContactSearch.knownAgents returned; demo false and no saved agent confirmed"
+  },
+  "current_process_path": "95724 /Users/contains/.codex/worktrees/cffe/msgblast/build/agent-grid-combined-previews/msgblast Dev.app/Contents/MacOS/msgblast",
+  "limits": [
+    "No real Messages sent, Contacts writes, provider requests, TCC resets, or production app changes",
+    "No first-time denied Contacts/Automation decision tested; sending access was already Allowed",
+    "No production installed-update permission retention claimed",
+    "Newer macOS 27.2 host; GUI checks are separate from native UI runner initialization failure"
+  ],
+  "public_images": [
+    "public-before-permissions.png",
+    "public-contacts-allowed-history-off.png",
+    "public-all-allowed.png"
+  ],
+  "private_evidence": "Contact lookup AX and raw app/system captures remain local and are excluded from publication",
+  "ended": "Only exact combined Dev left open on main Agents; native input handed back"
+}

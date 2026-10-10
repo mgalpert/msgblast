@@ -1,0 +1,25 @@
+{
+  "source_sha": "8db5335639330f2125a51f6c31c77b1f4b5cdcd2",
+  "result": "passed",
+  "app": "functional blue-green msgblast Dev",
+  "demo": false,
+  "checked": [
+    "featured default grid",
+    "hide Muse",
+    "actual drag ChatGPT after Claude",
+    "scroll catalog and search Grok Bot",
+    "plus adds Grok Bot first and scrolls to top",
+    "automatic onboarding overlay",
+    "recipient remains unselected",
+    "synthetic draft survives edit",
+    "saved first position verified on disk",
+    "pre-check Dev state restored and correct app reopened for the human"
+  ],
+  "photo_fixture": "Blue Demo with retired bundled Instinct JPEG on example.com contact displays current I artwork",
+  "ci": "https://github.com/mgalpert/msgblast/actions/runs/38024820111",
+  "native_tests": {
+    "passed": 269,
+    "failed": 0
+  },
+  "video": "33 sequential CUA window-frame captures over 7.776 seconds; about4fps, scaled to1512px, encoded20fps by frame repetition. Actual native input and UI; synthetic draft. No full-frame-rate smoothness claim."
+}

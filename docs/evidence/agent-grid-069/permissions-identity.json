@@ -1,0 +1,22 @@
+{
+  "app": "/Users/contains/.codex/worktrees/cffe/msgblast/build/agent-grid-combined-previews/msgblast Dev.app",
+  "source_sha": "8db5335639330f2125a51f6c31c77b1f4b5cdcd2",
+  "bundle_id": "com.msgblast.development",
+  "support_directory": "msgblast-Dev",
+  "fixture": false,
+  "updates": false,
+  "signing": "ad-hoc hardened",
+  "entitlements": {
+    "com.apple.security.automation.apple-events": true,
+    "com.apple.security.cs.disable-library-validation": true,
+    "com.apple.security.network.client": true,
+    "com.apple.security.personal-information.addressbook": true
+  },
+  "contacts_usage_description": "Find agent contacts and save accounts you add manually to Contacts for use with their existing Messages chats.",
+  "compiled_icon_rgb": [
+    8.0,
+    143.0,
+    124.5
+  ],
+  "compiled_icon_representation": "ic13"
+}
