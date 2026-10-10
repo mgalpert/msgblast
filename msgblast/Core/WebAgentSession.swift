@@ -19,6 +19,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var pages: [String: WebConversationPage] = [:]
     private var activePage: WebConversationPage?
     public var webView: WKWebView { currentPage().view }
+    private var fixtureBrowserSignInRequired = false
+    private var browserImportCookieBaseline: [HTTPCookie]?
     private func makePage(_ id: UUID?) -> WebConversationPage {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = websiteDataStore
@@ -162,6 +164,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 // continuous ownership of the page in this running session.
                 manualRecoveryScopes.removeAll()
             }
+            browserImportCookieBaseline = nil
             comparisonGeneration += 1
             if !provider.usesNativeConversation { selectPage(previous: previous) }
         }
@@ -194,6 +197,49 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func connect() {
         connect(automaticallyRefresh: true)
+    }
+
+    /// Register only this website's cookies before loading its onboarding page.
+    /// Existing comparison accounts must not be replaced by another browser profile.
+    public func registerBrowserCookies(_ cookies: [HTTPCookie]) async throws -> Int {
+        guard !provider.usesNativeConversation, !storageFailed, !isSending, !shuttingDown else {
+            throw WebSessionFailure.notSent("This account cannot import a browser login right now.")
+        }
+        // Back can return here after a provider page has already opened. Flush
+        // its draft and reconcile any manual submission before changing cookies.
+        try await saveBrowserDrafts()
+        guard state.conversationURLs.isEmpty, state.comparisonID == nil, state.dotsURL == nil else {
+            throw WebSessionFailure.notSent("Sign in to the account used by your saved conversations.")
+        }
+        let host = provider.homeURL.host!
+        let belongsToProvider: (HTTPCookie) -> Bool = { cookie in
+            let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            return BrowserLoginImporter.matches(domain: domain, websiteHost: host)
+        }
+        let applicable = cookies.filter { belongsToProvider($0) && ($0.expiresDate.map { $0 > Date() } ?? true) }
+        let store = websiteDataStore.httpCookieStore
+        let replacingImport = browserImportCookieBaseline != nil
+        // A second profile must replace this setup's first import, including
+        // server-refreshed cookies, while retaining the original app session.
+        if let baseline = browserImportCookieBaseline {
+            for cookie in await store.allCookies() where belongsToProvider(cookie) { await store.deleteCookie(cookie) }
+            for cookie in baseline { await store.setCookie(cookie) }
+        }
+        if fixture { fixtureBrowserSignInRequired = applicable.isEmpty }
+        guard !applicable.isEmpty else {
+            if connected && (fixture || replacingImport) { reload() }
+            return 0
+        }
+        if browserImportCookieBaseline == nil { browserImportCookieBaseline = await store.allCookies().filter(belongsToProvider) }
+        for cookie in applicable {
+            try Task.checkCancellation()
+            await store.setCookie(cookie)
+        }
+        let registered = await store.allCookies()
+        if connected { reload() }
+        return applicable.filter { candidate in
+            registered.contains { $0.name == candidate.name && $0.domain == candidate.domain && $0.path == candidate.path && $0.value == candidate.value }
+        }.count
     }
 
     // Controlled fixtures can own refresh boundaries without racing the poller.
@@ -348,7 +394,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { self.error = "Could not save the linked conversation. Repair storage before sending." }
     }
     private func loadComparisonChat() {
-        if fixture { webView.loadHTMLString(script.fixture, baseURL: comparisonURL) }
+        if fixture {
+            var html = script.fixture
+            if fixtureBrowserSignInRequired {
+                html = html.replacingOccurrences(of: "<div id=\"login\" hidden>", with: "<div id=\"login\">")
+                    .replacingOccurrences(of: "<main id=\"chat\">", with: "<main id=\"chat\" hidden>")
+                    .replacingOccurrences(of: "<div id=\"chat\">", with: "<div id=\"chat\" hidden>")
+            }
+            webView.loadHTMLString(html, baseURL: comparisonURL)
+        }
         else { webView.load(URLRequest(url: comparisonURL)) }
     }
 
@@ -493,6 +547,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 fresh.submissionInterrupted = snapshot.submissionInterrupted
             }
             if snapshot != fresh { snapshot = fresh }
+            if fixture, fresh.signedIn == true { fixtureBrowserSignInRequired = false }
             return fresh.signedIn
         } catch { return nil }
     }

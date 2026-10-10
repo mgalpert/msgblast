@@ -3,6 +3,15 @@ import AppKit
 import msgblastCore
 
 struct OnboardingView: View {
+    private static let browserIcons: [String: NSImage] = {
+        var icons: [String: NSImage] = [:]
+        for (source, identifier) in [("chrome", "com.google.Chrome"), ("safari", "com.apple.Safari")] {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) {
+                icons[source] = NSWorkspace.shared.icon(forFile: url.path)
+            }
+        }
+        return icons
+    }()
     @ObservedObject var model: AppModel
     @ObservedObject private var setup: OnboardingController
 
@@ -14,6 +23,7 @@ struct OnboardingView: View {
     var body: some View {
         VStack(spacing: 0) {
             if setup.state.stage == .choosing { chooser }
+            else if setup.state.stage == .importing { browserImport }
             else if setup.state.stage == .feedback { OnboardingFeedbackView() }
             else if let step = setup.state.currentStep {
                 switch step {
@@ -50,13 +60,88 @@ struct OnboardingView: View {
                                 .buttonStyle(.plain).foregroundStyle(.secondary)
                         }
                     }
-                }.padding(24).disabled(model.busy)
+                }.padding(24).disabled(model.busy || (setup.state.stage == .importing && setup.checking))
             }
         }
         .frame(maxWidth: 840, maxHeight: .infinity)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .frame(minWidth: 740, minHeight: 700)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var browserImport: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            HStack(spacing: 12) {
+                Label("Choose agents", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                Label("Connect accounts", systemImage: "circle.inset.filled").foregroundStyle(.blue)
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                Text("Start chatting").foregroundStyle(.secondary)
+            }.font(.callout).frame(maxWidth: .infinity).padding(.bottom, 22)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Use your existing logins").font(.system(size: 28, weight: .bold))
+                Text("Connect the accounts you're already signed into in your browser.")
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 10) {
+                Text("Selected agents").foregroundStyle(.secondary)
+                ForEach(WebProvider.allCases.filter { setup.state.pendingWebProviders.contains($0) }) { provider in
+                    Text(provider.name).font(.callout)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(.primary.opacity(0.06), in: Capsule())
+                }
+            }.padding(.bottom, 10)
+            ForEach(BrowserLoginSource.allCases) { source in
+                Button { setup.chooseBrowser(source) } label: {
+                    HStack(spacing: 18) {
+                        browserIcon(source).frame(width: 44, height: 44)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Import from \(source.name)").font(.title3.weight(.semibold)).foregroundStyle(.primary)
+                            Text(source == .chrome ? "Choose a profile to connect your accounts." : "Connect with the accounts you use in Safari.")
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.primary.opacity(0.015), in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.primary.opacity(0.14)))
+                        .contentShape(RoundedRectangle(cornerRadius: 12))
+                }.buttonStyle(.plain).accessibilityLabel("Import from \(source.name)")
+                    .disabled(setup.checking)
+            }
+            if setup.checking { ProgressView("Importing browser login…").controlSize(.small) }
+            if model.demo {
+                Label("Demo browser import · accounts and cookies are simulated", systemImage: "testtube.2")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }.padding(28)
+        .sheet(isPresented: Binding(get: { !setup.browserProfiles.isEmpty }, set: { if !$0 { setup.cancelBrowserProfileSelection() } })) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Choose a \(setup.browserSource?.name ?? "browser") profile").font(.title2.bold())
+                ForEach(setup.browserProfiles) { profile in
+                    Button { setup.importBrowserProfile(profile) } label: {
+                        HStack {
+                            Text(profile.name).foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                        }.padding(14).frame(maxWidth: .infinity)
+                            .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                    }.buttonStyle(.plain).accessibilityLabel("Import \(profile.name)")
+                }
+                Button("Cancel") { setup.cancelBrowserProfileSelection() }.keyboardShortcut(.cancelAction)
+            }.padding(24).frame(width: 420)
+        }
+    }
+
+    private func browserIcon(_ source: BrowserLoginSource) -> some View {
+        return Group {
+            if let icon = Self.browserIcons[source.rawValue] {
+                Image(nsImage: icon).resizable().scaledToFit()
+            } else {
+                Image(systemName: source == .safari ? "safari" : "globe").resizable().scaledToFit().padding(5).foregroundStyle(.blue)
+            }
+        }
     }
 
     private var chooser: some View {
@@ -162,6 +247,9 @@ private struct OnboardingProviderView: View {
                 if session.provider.sharesOneConversation {
                     Text("rabbit OS3 uses one conversation for your account. Each comparison continues that conversation and can use its earlier context.")
                         .font(.callout).foregroundStyle(.secondary)
+                }
+                if let notice = setup.browserImportNotice {
+                    Text(notice).font(.callout).foregroundStyle(.secondary)
                 }
                 ServiceLoginPage(session: session)
                     .clipShape(RoundedRectangle(cornerRadius: 12))

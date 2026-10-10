@@ -305,6 +305,85 @@ final class MultiWebAgentTests: XCTestCase {
         }
     }
 
+    func testBrowserImportRegistersOnlyThisProvidersUnexpiredCookies() async throws {
+        let session = WebAgentSession(provider: .chatgpt, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        let valid = try XCTUnwrap(HTTPCookie(properties: [.domain: ".chatgpt.com", .path: "/", .name: "fixture-session", .value: "local-only", .secure: "TRUE", .init("HttpOnly"): "TRUE", .init("SameSite"): "Lax"]))
+        let other = try XCTUnwrap(HTTPCookie(properties: [.domain: "grok.com", .path: "/", .name: "other-provider", .value: "local-only"]))
+        let expired = try XCTUnwrap(HTTPCookie(properties: [.domain: "chatgpt.com", .path: "/", .name: "expired", .value: "local-only", .expires: Date(timeIntervalSince1970: 1)]))
+        let registered = try await session.registerBrowserCookies([valid, other, expired])
+        XCTAssertEqual(registered, 1)
+        let cookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        XCTAssertEqual(cookies.map(\.name), [valid.name])
+        XCTAssertTrue(try XCTUnwrap(cookies.first).isHTTPOnly)
+        XCTAssertEqual(cookies.first?.domain, valid.domain)
+        XCTAssertEqual(cookies.first?.properties?[HTTPCookiePropertyKey("SameSite")] as? String, "lax")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertFalse(session.connected, "Registering cookies must not navigate or submit requests")
+    }
+
+    func testBrowserImportPreservesSavedConversationAccountAndDraft() async throws {
+        let session = WebAgentSession(provider: .chatgpt, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        let id = UUID()
+        session.updateState { $0.conversationURLs[id.uuidString] = URL(string: "https://chatgpt.com/c/retained")!; $0.draft = "Keep this draft" }
+        let original = session.state
+        let cookie = try XCTUnwrap(HTTPCookie(properties: [.domain: "chatgpt.com", .path: "/", .name: "another-account", .value: "local-only"]))
+        do {
+            _ = try await session.registerBrowserCookies([cookie])
+            XCTFail("Import must not replace an existing comparison account")
+        } catch { }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        XCTAssertEqual(try encoder.encode(session.state), try encoder.encode(original))
+        let cookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        XCTAssertTrue(cookies.isEmpty)
+    }
+
+    func testEmptyBrowserImportShowsManualSignInWithoutSending() async throws {
+        let session = WebAgentSession(provider: .chatgpt, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        let count = try await session.registerBrowserCookies([])
+        XCTAssertEqual(count, 0)
+        session.connect()
+        try await waitFor { session.snapshot.signedIn == false }
+        XCTAssertFalse(session.isReadyForOnboarding)
+        _ = try await session.webView.callAsyncJavaScript("document.querySelector('[data-testid=login-button]').click()", arguments: [:], in: nil, contentWorld: .page)
+        let signedIn = await session.checkSignIn()
+        XCTAssertEqual(signedIn, true)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+    }
+
+    func testBrowserImportReloadsAnAlreadyOpenPageAndRetainsItsDraft() async throws {
+        let session = WebAgentSession(provider: .chatgpt, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let sessionID = session.state.sessionID
+        _ = try await session.webView.callAsyncJavaScript("window.beforeBrowserImport = true; input.value = 'Retain this unsent question'", arguments: [:], in: nil, contentWorld: .page)
+        let cookie = try XCTUnwrap(HTTPCookie(properties: [.domain: "chatgpt.com", .path: "/", .name: "imported-fixture-session", .value: "local-only"]))
+        _ = try await session.registerBrowserCookies([cookie])
+        _ = await session.checkSignIn()
+        let reloaded = try await session.webView.callAsyncJavaScript("return window.beforeBrowserImport === undefined", arguments: [:], in: nil, contentWorld: .page) as? Bool
+        XCTAssertEqual(reloaded, true, "The next screen must inspect a page loaded with the imported cookies")
+        try await waitFor { session.snapshot.draft == "Retain this unsent question" }
+        XCTAssertEqual(session.state.sessionID, sessionID)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+    }
+
+    func testEmptyReplacementImportRemovesEarlierImportAndRetainsOriginalCookies() async throws {
+        let session = WebAgentSession(provider: .chatgpt, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        let original = try XCTUnwrap(HTTPCookie(properties: [.domain: "chatgpt.com", .path: "/", .name: "original-fixture-cookie", .value: "local-only"]))
+        let imported = try XCTUnwrap(HTTPCookie(properties: [.domain: "chatgpt.com", .path: "/", .name: "imported-fixture-session", .value: "local-only"]))
+        await session.webView.configuration.websiteDataStore.httpCookieStore.setCookie(original)
+        _ = try await session.registerBrowserCookies([imported])
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.registerBrowserCookies([])
+        let cookies = await session.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        XCTAssertFalse(cookies.contains { $0.name == imported.name }, "An empty second profile must not silently retain the first profile's login")
+        XCTAssertTrue(cookies.contains { $0.name == original.name && $0.value == original.value })
+        let signedIn = await session.checkSignIn()
+        XCTAssertEqual(signedIn, false)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+    }
+
     func testSignOutOrMissingEditorNeverErasesSavedPageDraft() async throws {
         for disruption in ["chat.hidden=true;login.hidden=false", "input.remove()"] {
             let session = WebAgentSession(provider: .chatgpt, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)

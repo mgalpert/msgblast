@@ -2,6 +2,67 @@ import XCTest
 
 final class OnboardingWorkflowTests: XCTestCase {
     @MainActor
+    private func skipBrowserImportIfPresent(_ app: XCUIApplication) {
+        if app.staticTexts["Use your existing logins"].waitForExistence(timeout: 1) {
+            app.buttons["Skip for now"].click()
+        }
+    }
+
+    @MainActor
+    func testBrowserImportScreenOffersChromeAndSafariWithProfileSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
+        app.launch()
+        defer { app.terminate() }
+        app.buttons["Choose ChatGPT"].click()
+        app.buttons["Choose Claude"].click()
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.staticTexts["Use your existing logins"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Import from Chrome"].exists)
+        XCTAssertTrue(app.buttons["Import from Safari"].exists)
+        XCTAssertFalse(app.buttons["Sign in manually"].exists)
+        XCTAssertFalse(app.staticTexts["Only sign-in information for your selected agents is imported."].exists)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "browser-import-onboarding-demo"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["Import from Chrome"].click()
+        XCTAssertTrue(app.staticTexts["Choose a Chrome profile"].waitForExistence(timeout: 5))
+        app.buttons["Import Demo profile"].click()
+        XCTAssertTrue(app.staticTexts["Let’s connect ChatGPT"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Continue"].isEnabled)
+        app.buttons["Continue"].click()
+        XCTAssertTrue(app.staticTexts["Let’s connect Claude"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Continue"].isEnabled)
+    }
+
+    @MainActor
+    func testMissingSafariCookiesFallsThroughToManualSignInOnNextScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
+        app.launch()
+        defer { app.terminate() }
+        app.buttons["Choose ChatGPT"].click()
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.buttons["Import from Safari"].waitForExistence(timeout: 5))
+        app.buttons["Import from Safari"].click()
+        XCTAssertTrue(app.staticTexts["Let’s connect ChatGPT"].waitForExistence(timeout: 10))
+        let signIn = app.webViews.buttons["Sign in to fixture"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        XCTAssertFalse(app.buttons["New Blast"].exists)
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "missing-browser-cookies-manual-sign-in-demo"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        signIn.click()
+        let ready = NSPredicate(format: "enabled == true")
+        expectation(for: ready, evaluatedWith: app.buttons["Continue"])
+        waitForExpectations(timeout: 10)
+    }
+
+    @MainActor
     func testExactMessagesContactsUseOneConfirmationAndUncheckedAgentsAreSkipped() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
@@ -9,6 +70,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         for name in ["Fo", "Instinct", "Szn"] { app.buttons["Choose \(name)"].click() }
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         for name in ["Fo", "Instinct", "Szn"] {
             let row = app.buttons["Select \(name)"]
             XCTAssertTrue(row.waitForExistence(timeout: 5))
@@ -41,6 +103,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         app.buttons["Choose Fo"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         let row = app.buttons["Select Fo"]
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         row.click()
@@ -59,6 +122,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         for name in ["Fo", "Szn"] { app.buttons["Choose \(name)"].click() }
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         let contact = app.descendants(matching: .any).matching(identifier: "Contact for Szn").firstMatch
         XCTAssertTrue(contact.waitForExistence(timeout: 5))
         contact.click()
@@ -88,6 +152,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         app.buttons["Choose Claude Code"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
         app.buttons["Continue"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
@@ -117,6 +182,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Choose OpenClaw"].waitForExistence(timeout: 5))
         app.buttons["Choose OpenClaw"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.staticTexts["Command-line app found"].waitForExistence(timeout: 5))
         app.buttons["Done with setup"].click()
         XCTAssertTrue(app.staticTexts["Which agents do you use?"].waitForExistence(timeout: 5))
@@ -133,6 +199,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Choose Fo"].click()
         app.buttons["Choose Szn"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.buttons["Connect selected"].waitForExistence(timeout: 5))
         app.buttons["Connect selected"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
@@ -140,6 +207,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Choose Fo"].click()
         app.buttons["Choose ChatGPT"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
         app.buttons["Continue"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
@@ -168,6 +236,7 @@ final class OnboardingWorkflowTests: XCTestCase {
             app.buttons["Choose \(name)"].click()
         }
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.staticTexts["Let’s connect ChatGPT"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["New Blast"].exists)
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
@@ -197,6 +266,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Choose Grok Bot"].waitForExistence(timeout: 5))
         app.buttons["Choose Grok Bot"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.staticTexts["Let’s connect Grok Bot"].waitForExistence(timeout: 10))
         let prompt = app.staticTexts["Grok Bot setup prompt"]
         XCTAssertTrue(prompt.exists)
@@ -219,6 +289,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Choose Fo"].waitForExistence(timeout: 5))
         app.buttons["Choose Fo"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.staticTexts["Choose who to connect"].waitForExistence(timeout: 10))
         let contact = app.descendants(matching: .any).matching(identifier: "Contact for Fo").firstMatch
         XCTAssertTrue(contact.waitForExistence(timeout: 5))
@@ -246,6 +317,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         app.buttons["Choose ChatGPT"].click()
         app.buttons["Continue setup"].click()
+        skipBrowserImportIfPresent(app)
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 10))
         app.buttons["Continue"].click()
         XCTAssertTrue(app.staticTexts["Share feedback anytime"].waitForExistence(timeout: 5))

@@ -16,7 +16,7 @@ config = Path(sys.argv[1])
 (config / 'fixture-config.json').write_text(json.dumps({'tool_file': str(config / 'tool.txt'), 'allow_write': False}))
 PY
 xcrun swiftc -swift-version 6 -parse-as-library -module-cache-path "$cli_tmp/modules" \
-    -target "$(uname -m)-apple-macos15.0" -F "$cli_frameworks" -framework msgblastCore \
+    -target "$(uname -m)-apple-macos15.0" -I "$cli_frameworks" -F "$cli_frameworks" -framework msgblastCore \
     -Xlinker -rpath -Xlinker "$cli_frameworks" \
     "$cli_root/scripts/fixtures/configured_cli_conversations.swift" -o "$cli_tmp/check"
 CODEX_HOME="$cli_tmp/config" CLAUDE_CONFIG_DIR="$cli_tmp/config" MSGBLAST_CLI_FIXTURE_LOG="$cli_tmp/requests.jsonl" \

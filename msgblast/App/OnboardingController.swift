@@ -8,6 +8,10 @@ final class OnboardingController: ObservableObject {
     @Published private(set) var checking = false
     @Published private(set) var compatibility: [WebProvider: Bool] = [:]
     @Published var error: String?
+    @Published var browserSource: BrowserLoginSource?
+    @Published private(set) var browserProfiles: [BrowserLoginProfile] = []
+    @Published private(set) var browserImportNotice: String?
+    private var browserTask: Task<Void, Never>?
     private var checkGeneration = UUID()
 
     init(model: AppModel) { self.model = model }
@@ -28,6 +32,7 @@ final class OnboardingController: ObservableObject {
 
     func begin() {
         error = nil
+        browserImportNotice = nil
         invalidateCheck()
         restoreRecipients(from: state)
         edit { $0.begin() }
@@ -41,6 +46,10 @@ final class OnboardingController: ObservableObject {
 
     func skip() {
         invalidateCheck()
+        if state.stage == .importing {
+            edit { $0.beginConnections() }
+            return
+        }
         if case .agent(let provider) = state.currentStep {
             model.webAgents.sessions.first { $0.provider == provider }?.updateState { $0.selected = false }
         }
@@ -50,6 +59,97 @@ final class OnboardingController: ObservableObject {
 
     func resume() {
         edit { $0.resume(); $0.completed = [] }
+    }
+
+    func chooseBrowser(_ source: BrowserLoginSource) {
+        guard state.stage == .importing, !checking else { return }
+        checking = true
+        error = nil
+        browserSource = source
+        let generation = UUID()
+        checkGeneration = generation
+        browserTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let profiles: [BrowserLoginProfile]
+                if model.demo {
+                    profiles = source == .chrome
+                        ? [BrowserLoginProfile(id: "demo", name: "Demo profile"), BrowserLoginProfile(id: "signed-out", name: "Signed-out profile")]
+                        : [BrowserLoginProfile(id: "signed-out", name: "Demo Safari")]
+                } else {
+                    profiles = try await Task.detached(priority: .userInitiated) {
+                        try BrowserLoginImporter().profiles(in: source)
+                    }.value
+                }
+                guard checkGeneration == generation, state.stage == .importing else { return }
+                checking = false
+                if profiles.count == 1, let profile = profiles.first { importBrowserProfile(profile) }
+                else if profiles.isEmpty { await finishBrowserImport(notice: "No accounts could be imported from \(source.name). Sign in here to continue.", resetImports: true) }
+                else { browserProfiles = profiles }
+            } catch {
+                guard checkGeneration == generation, state.stage == .importing else { return }
+                await finishBrowserImport(notice: "Couldn't access \(source.name). Sign in here to continue.", resetImports: true)
+            }
+        }
+    }
+
+    func cancelBrowserProfileSelection() {
+        browserProfiles = []
+        browserSource = nil
+    }
+
+    func importBrowserProfile(_ profile: BrowserLoginProfile) {
+        guard let source = browserSource, state.stage == .importing, !checking else { return }
+        let providers = state.pendingWebProviders
+        browserProfiles = []
+        checking = true
+        let generation = UUID()
+        checkGeneration = generation
+        browserTask = Task { [weak self] in
+            guard let self else { return }
+            var registered = 0
+            do {
+                let result: BrowserLoginImportResult
+                if model.demo {
+                    let cookies = Dictionary(uniqueKeysWithValues: providers.map { provider in
+                        let cookie = profile.id == "demo" ? HTTPCookie(properties: [
+                            .domain: provider.homeURL.host!, .path: "/", .name: "msgblast_demo_session",
+                            .value: "simulated", .secure: true, .expires: Date().addingTimeInterval(3600)
+                        ]) : nil
+                        return (provider, cookie.map { [$0] } ?? [])
+                    })
+                    result = BrowserLoginImportResult(cookies: cookies)
+                } else {
+                    result = try await Task.detached(priority: .userInitiated) {
+                        try BrowserLoginImporter().readCookies(in: source, profileID: profile.id, providers: providers)
+                    }.value
+                }
+                guard checkGeneration == generation, state.stage == .importing else { return }
+                for provider in WebProvider.allCases where providers.contains(provider) {
+                    registered += (try? await session(for: provider).registerBrowserCookies(result.cookies[provider] ?? [])) ?? 0
+                    guard checkGeneration == generation, state.stage == .importing else { return }
+                }
+                await finishBrowserImport(notice: registered == 0 ? "No accounts could be imported from \(source.name). Sign in here to continue." : nil)
+            } catch {
+                guard checkGeneration == generation, state.stage == .importing else { return }
+                await finishBrowserImport(notice: "Couldn't import from \(source.name). Sign in here to continue.", resetImports: true)
+            }
+        }
+    }
+
+    private func finishBrowserImport(notice: String?, resetImports: Bool = false) async {
+        let generation = checkGeneration
+        checking = true
+        if resetImports {
+            for provider in state.pendingWebProviders {
+                _ = try? await session(for: provider).registerBrowserCookies([])
+                guard checkGeneration == generation, state.stage == .importing else { return }
+            }
+        }
+        checking = false
+        cancelBrowserProfileSelection()
+        browserImportNotice = notice
+        edit { $0.beginConnections() }
     }
 
     func finish() async {
@@ -204,6 +304,9 @@ final class OnboardingController: ObservableObject {
     private func invalidateCheck() {
         checkGeneration = UUID()
         checking = false
+        browserTask?.cancel()
+        browserTask = nil
+        cancelBrowserProfileSelection()
     }
 
     private func restoreRecipients(from state: OnboardingState) {

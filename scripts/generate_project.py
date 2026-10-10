@@ -13,7 +13,7 @@ def configs(name, settings):
     ids = []
     for mode in ['Debug', 'Release']:
         s = dict(settings)
-        s.update({'SWIFT_OPTIMIZATION_LEVEL': '"-Onone"' if mode == 'Debug' else '"-O"', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '"DEBUG"' if mode == 'Debug' else '""'})
+        s.update({'SWIFT_OPTIMIZATION_LEVEL': '"-Onone"' if mode == 'Debug' else '"-O"', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '"DEBUG"' if mode == 'Debug' else '""', 'ONLY_ACTIVE_ARCH': 'YES' if mode == 'Debug' else 'NO'})
         if name == 'msgblast' and mode == 'Debug': s['CODE_SIGN_ENTITLEMENTS'] = 'msgblast/msgblastDebug.entitlements'
         ids.append(obj(name+mode, '{isa = XCBuildConfiguration; name = '+mode+'; buildSettings = {' + ''.join(f'{k} = {v};' for k,v in s.items()) + '};}'))
     return obj(name+'configs', '{isa = XCConfigurationList; buildConfigurations = '+seq(ids)+'; defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;}')
@@ -37,6 +37,8 @@ product_group = obj('products', '{isa = PBXGroup; name = Products; sourceTree = 
 main_group = obj('mainGroup', '{isa = PBXGroup; sourceTree = "<group>"; children = '+seq(list(files.values())+[icon, demo_icon, notice, discover, muse_avatar, web_agent_icons, onboarding, release_notes, cloudflared_manifest, cloudflared_notices, product_group])+';}')
 sparkle_package = obj('SparklePackage', '{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/sparkle-project/Sparkle"; requirement = {kind = exactVersion; version = 2.10.0;};}')
 sparkle_product = obj('SparkleProduct', '{isa = XCSwiftPackageProductDependency; package = '+sparkle_package+'; productName = Sparkle;}')
+cookie_package = obj('SweetCookieKitPackage', '{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/steipete/SweetCookieKit"; requirement = {kind = revision; revision = 29e7af6bb71f1b624380ab556330e8be8f7ddd65;};}')
+cookie_product = obj('SweetCookieKitProduct', '{isa = XCSwiftPackageProductDependency; package = '+cookie_package+'; productName = SweetCookieKit;}')
 targets = {}
 for name in products:
     own = [p for p in files if (p.startswith('msgblast/Core/') if name == 'msgblastCore' else p.startswith('msgblastTests/') if name == 'msgblastTests' else p.startswith('msgblastUITests/') if name == 'msgblastUITests' else p.startswith('msgblast/') and not p.startswith('msgblast/Core/'))]
@@ -50,6 +52,8 @@ for name in products:
         dependencies.append(obj(name+'dep', '{isa = PBXTargetDependency; target = '+ident('msgblastCoretarget')+';}'))
     if name == 'msgblast':
         framework_builds.append(obj('linkSparkle', '{isa = PBXBuildFile; productRef = '+sparkle_product+';}'))
+    if name == 'msgblastCore':
+        framework_builds.append(obj('linkSweetCookieKit', '{isa = PBXBuildFile; productRef = '+cookie_product+';}'))
     framework_phase = obj(name+'frameworks', '{isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = '+seq(framework_builds)+'; runOnlyForDeploymentPostprocessing = 0;}')
     phases = [sources, framework_phase]
     settings = {'PRODUCT_NAME': '"$(TARGET_NAME)"', 'PRODUCT_BUNDLE_IDENTIFIER': 'com.msgblast.'+name, 'MACOSX_DEPLOYMENT_TARGET': '15.0', 'SWIFT_VERSION': '6.0', 'CODE_SIGN_STYLE': 'Automatic', 'CODE_SIGN_IDENTITY': '"-"', 'ENABLE_HARDENED_RUNTIME': 'YES' if name == 'msgblast' else 'NO', 'ENABLE_TESTABILITY': 'YES', 'GENERATE_INFOPLIST_FILE': 'YES', 'LD_RUNPATH_SEARCH_PATHS': '"$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"'}
@@ -77,9 +81,9 @@ for name in products:
         phases.append(obj('embedCore','{isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = '+seq([embed])+'; name = "Embed Frameworks"; runOnlyForDeploymentPostprocessing = 0;}'))
     config = configs(name, settings)
     type_ = 'framework' if name == 'msgblastCore' else 'application' if name == 'msgblast' else 'bundle.ui-testing' if name == 'msgblastUITests' else 'bundle.unit-test'
-    targets[name] = obj(name+'target', '{isa = PBXNativeTarget; name = '+name+'; productName = '+name+'; productReference = '+products[name]+'; productType = "com.apple.product-type.'+type_+'"; buildConfigurationList = '+config+'; buildPhases = '+seq(phases)+'; buildRules = (); dependencies = '+seq(dependencies)+'; packageProductDependencies = '+seq([sparkle_product] if name == 'msgblast' else [])+';}')
+    targets[name] = obj(name+'target', '{isa = PBXNativeTarget; name = '+name+'; productName = '+name+'; productReference = '+products[name]+'; productType = "com.apple.product-type.'+type_+'"; buildConfigurationList = '+config+'; buildPhases = '+seq(phases)+'; buildRules = (); dependencies = '+seq(dependencies)+'; packageProductDependencies = '+seq([sparkle_product] if name == 'msgblast' else [cookie_product] if name == 'msgblastCore' else [])+';}')
 project_config = configs('project', {'SDKROOT':'macosx', 'CLANG_ENABLE_MODULES':'YES', 'SWIFT_VERSION':'6.0', 'MACOSX_DEPLOYMENT_TARGET':'15.0'})
-project = obj('project', '{isa = PBXProject; attributes = {LastUpgradeCheck = 2700;}; buildConfigurationList = '+project_config+'; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = '+main_group+'; productRefGroup = '+product_group+'; projectDirPath = ""; projectRoot = ""; packageReferences = '+seq([sparkle_package])+'; targets = '+seq(list(targets.values()))+';}')
+project = obj('project', '{isa = PBXProject; attributes = {LastUpgradeCheck = 2700;}; buildConfigurationList = '+project_config+'; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = '+main_group+'; productRefGroup = '+product_group+'; projectDirPath = ""; projectRoot = ""; packageReferences = '+seq([sparkle_package, cookie_package])+'; targets = '+seq(list(targets.values()))+';}')
 dest = root / 'msgblast.xcodeproj'; dest.mkdir(exist_ok=True)
 (dest/'project.pbxproj').write_text('// !$*UTF8*$!\n{archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+ '\n'.join(f'{k} = {v};' for k,v in objects.items())+'\n}; rootObject = '+project+';}\n')
 schemes = dest/'xcshareddata/xcschemes'; schemes.mkdir(parents=True, exist_ok=True)

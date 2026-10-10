@@ -1,0 +1,77 @@
+{
+  "captured_code_sha": "b3e4a297956066f90fe3848e8ddf2061970a4d15",
+  "initial_base_sha": "5cd8a394f28f37eab71359645810421da2fa19d5",
+  "integrated_main_sha": "9d9b978435717dd38b32a30c3c5ab4b219e5706d",
+  "app_name": "msgblast Browser Import Demo",
+  "bundle_id": "com.msgblast.browser-login.demo",
+  "support_directory": "msgblast-BrowserLogin-Demo",
+  "demo": true,
+  "production_updates_disabled": true,
+  "signing": "ad-hoc, codesign --verify --deep --strict passed",
+  "capture": "CUA native app screenshots; video assembled from screenshot samples with edited timing and repeated frames",
+  "fixture_limits": [
+    "Synthetic accounts and cookies only",
+    "No actual browser data, Keychain prompt or permission grant exercised",
+    "No live sign-in, provider request, Messages send, Contacts write or paid job",
+    "Native macOS UI; no mobile interface changed"
+  ],
+  "source_hashes": {
+    "msgblast/App/OnboardingController.swift": "d14ad08100e1016d9680bbc51892bcedb995762afda24c4153f5e558b8b99238",
+    "msgblast/Windows/OnboardingView.swift": "05cb394fac0463afd773e0142446461ca14181ad899232df7845b2b816f65c8b",
+    "msgblast/Core/BrowserLoginImporter.swift": "498d67fe3c4bfd6eb82cc949432351aa594889c08dd1da08fbda407c08c795b1",
+    "msgblast/Core/WebAgentSession.swift": "35e5940dfc2bcaf3c326f6dee345c67a632238e06a4dfe7fbc832753fec41fa8",
+    "msgblast/Core/Onboarding.swift": "7cbb4ed788b743cfc64b0fbccc882271aad258cae0841e3996f75fca5477a620"
+  },
+  "review_run_id": "20261010-101704-c4d100f9",
+  "preview_manifest": {
+    "source_revision": "b3e4a297956066f90fe3848e8ddf2061970a4d15",
+    "run_url": "local-browser-login-validation",
+    "retention_days": 14,
+    "expiry": "GitHub deletes these artifacts 14 days after the workflow run.",
+    "production_feed_used": false,
+    "variants": [
+      {
+        "id": "development",
+        "label": "blue-green development",
+        "fixture": false,
+        "app_name": "msgblast Dev.app",
+        "bundle_id": "com.msgblast.development",
+        "support_directory": "~/Library/Application Support/msgblast-Dev",
+        "zip": "msgblast-dev-b3e4a2979560.zip",
+        "sha256": "a2df63afbdfbfd717725d0e90a5a985fe9614cb7191f8dde18e293508ef5b204",
+        "compiled_icon": "AppIcon.icns",
+        "compiled_icon_representation": "ic13",
+        "compiled_icon_sha256": "c98ec59998f24b23d6d7eff18df429859fae6aa605baf25ff2ca692b1a2c7ccd",
+        "compiled_icon_rgb": [
+          8.0,
+          143.0,
+          124.5
+        ],
+        "icon_fill_sha256": "121fb234b4774341b371520478c43a495940e94559ff795ee222adc633617229",
+        "updates": "disabled",
+        "instructions": "Unzip msgblast Dev.app and use it to exercise this branch with live data. Do not pass --demo or --isolated-demo; use the blue msgblast Demo.app for fixtures and simulated demonstrations. It is not a fixture and can read real Messages. Grant this bundle Full Disk Access, Contacts, and Messages Automation. Those permissions belong to com.msgblast.development, do not transfer from com.msgblast.mac, and may need to be granted again after a rebuild because the ad-hoc code hash changes. Preferences are the standard defaults for that bundle ID. Grok Bot remembers its connection using hardware-encrypted storage when a Secure Enclave is available. Settings labels session-only storage if no secure backend is available. Saved state is in ~/Library/Application Support/msgblast-Dev. A quarantined download may App Translocate and show an install gate. Drag this app file to Applications and leave /Applications/msgblast.app in place. Ad-hoc builds may need System Settings \u2192 Privacy & Security \u2192 Open Anyway. There is no Sparkle feed, so this app will not download or relaunch over the installed production app."
+      },
+      {
+        "id": "demo",
+        "label": "blue demo fixture",
+        "fixture": true,
+        "app_name": "msgblast Demo.app",
+        "bundle_id": "com.msgblast.demo",
+        "support_directory": "~/Library/Application Support/msgblast-Demo",
+        "zip": "msgblast-demo-b3e4a2979560.zip",
+        "sha256": "34dc0d335d88cfdb6964f76d07f45e613dc6c562bbfe8ae441bbea29a3b01d05",
+        "compiled_icon": "AppIconDemo.icns",
+        "compiled_icon_representation": "ic13",
+        "compiled_icon_sha256": "3e233b2177364f165add299fa575edd050c02a43ec24d65dd0ebd65da6b0e4f7",
+        "compiled_icon_rgb": [
+          64.8,
+          38.8,
+          216.0
+        ],
+        "icon_fill_sha256": "32ec7e63c53a2cbcbea32d82b508b033f1dffd1821bd74d1b304a67d07a80194",
+        "updates": "disabled",
+        "instructions": "Unzip msgblast Demo.app. Fixture mode is explicit (msgblastDemo): it uses simulated Cedar, Lumen, and Orbit data and does not read Messages. A blue icon alone is not what turns fixture mode on. Preferences follow the bundle ID com.msgblast.demo. Saved state is in ~/Library/Application Support/msgblast-Demo, which other local demo builds also use, and is separate from production and from msgblast Dev. A quarantined download may App Translocate and show an install gate. Drag this app file to Applications and leave /Applications/msgblast.app in place. Ad-hoc builds may need System Settings \u2192 Privacy & Security \u2192 Open Anyway. There is no Sparkle feed, so this app will not download or relaunch over the installed production app."
+      }
+    ]
+  }
+}

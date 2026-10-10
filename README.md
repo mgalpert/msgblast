@@ -26,7 +26,7 @@ Planning a weekend, researching a purchase, or testing an idea? Write your quest
 
 | Connection | Agents | How it works |
 | --- | --- | --- |
-| Websites | **Muse, ChatGPT, Claude, Grok** | Choose during setup, sign in inside msgblast, and keep the chats in the app. |
+| Websites | **Muse, ChatGPT, Claude, Grok** | Choose during setup, import a Chrome or Safari login or sign in inside msgblast, and keep the chats in the app. |
 | Your dot | **Dots** | Select Dots to message your ongoing dot at chatgpt.com/dots. Its displayed avatar is saved locally. |
 | Messages | AI assistants you already text, including **Instinct, Fo, and Szn** | Connect existing one-to-one iMessage conversations. Photos and files are supported. |
 | Optional CLI conversations | **Codex CLI, Claude Code** | Enable each in Settings to add it alongside the websites. Uses the installed CLI’s sign-in, skills, tools, and connectors, subject to its permissions. |
@@ -62,7 +62,7 @@ Skipped agents stay available through **Finish setup**. Setup saves your progres
 
 ## Web accounts and optional CLI agents
 
-Muse, ChatGPT, Claude, Grok, and Dots run as websites inside msgblast. Dots is an optional selection and continues your existing dot conversation across blasts. Its rendered profile avatar, including custom pets, is saved locally and refreshed when it changes; signing out clears it. Sign-ins persist between launches. Signing in through Safari, Chrome, a desktop app, or a CLI does not automatically sign you in to these embedded pages. Choose models and thinking settings in each service’s own controls.
+Muse, ChatGPT, Claude, Grok, and Dots run as websites inside msgblast. Dots is an optional selection and continues your existing dot conversation across blasts. Its rendered profile avatar, including custom pets, is saved locally and refreshed when it changes; signing out clears it. Sign-ins persist between launches. During onboarding, choose **Import from Chrome** or **Import from Safari** to copy the selected websites' cookies from one browser profile. Chrome may ask for Keychain access; Safari may require Full Disk Access. Unavailable cookies, denied access, or a session the website does not accept lead to the normal sign-in pane on the next screen. **Skip for now** skips browser import and keeps every selected website in setup. Browser sessions are copied once, not continuously synced; CLI and Grok Bot accounts remain separate. Existing saved comparison accounts are retained and use their usual sign-in pane. Choose models and thinking settings in each service’s own controls.
 
 Enable **Codex CLI** or **Claude Code** in **msgblast → Settings** to add a separate agent. Enabling a CLI does not replace its website. Each keeps its own saved history and draft, so you can compare the web account’s capabilities with the CLI’s configured skills, tools, and connectors. Manage local account sign-in and switching in Settings.
 

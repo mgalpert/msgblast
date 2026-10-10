@@ -6,6 +6,8 @@ final class OnboardingTests: XCTestCase {
         var onboarding = OnboardingState()
         onboarding.toggle(.os3)
         onboarding.begin()
+        XCTAssertEqual(onboarding.pendingWebProviders, [.os3])
+        onboarding.beginConnections()
         XCTAssertEqual(onboarding.currentStep, .agent(.os3))
         onboarding.complete(.os3)
         XCTAssertEqual(onboarding.stage, .feedback)
@@ -16,10 +18,55 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(restored.completed, [.os3])
     }
 
+    func testWebsiteSelectionOffersBrowserImportBeforeProviderSignIn() {
+        var onboarding = OnboardingState()
+        onboarding.toggle(.chatgpt)
+        onboarding.toggle(.fo)
+        onboarding.begin()
+        XCTAssertEqual(onboarding.stage.rawValue, "importing")
+        XCTAssertTrue(onboarding.completed.isEmpty, "Offering import must not claim an account is connected")
+    }
+
+    func testSkippingBrowserImportRetainsEveryWebsiteForManualSignIn() throws {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.chatgpt, .claude, .grokbot, .codexCLI] { onboarding.toggle(choice) }
+        onboarding.begin()
+        XCTAssertEqual(onboarding.pendingWebProviders, [.chatgpt, .claude])
+        let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(onboarding))
+        XCTAssertEqual(restored.stage, .importing)
+        XCTAssertEqual(restored.selected, onboarding.selected)
+        onboarding.beginConnections()
+        XCTAssertEqual(onboarding.stage, .connecting)
+        XCTAssertTrue(onboarding.skipped.isEmpty)
+        XCTAssertEqual(onboarding.pendingSteps, [.agent(.chatgpt), .agent(.claude), .agent(.grokbot), .agent(.codexCLI)])
+    }
+
+    func testNativeOnlyChoicesDoNotOfferBrowserImport() {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.grokbot, .claudeCode, .fo] { onboarding.toggle(choice) }
+        onboarding.begin()
+        XCTAssertEqual(onboarding.stage, .connecting)
+        XCTAssertTrue(onboarding.pendingWebProviders.isEmpty)
+    }
+
+    func testReturningToSetupDoesNotImportCompletedWebsiteAccountsAgain() {
+        var onboarding = OnboardingState()
+        onboarding.toggle(.chatgpt)
+        onboarding.toggle(.fo)
+        onboarding.begin()
+        onboarding.beginConnections()
+        onboarding.complete(.chatgpt)
+        onboarding.chooseAgain()
+        onboarding.begin()
+        XCTAssertEqual(onboarding.stage, .connecting)
+        XCTAssertEqual(onboarding.currentStep, .messages)
+        XCTAssertTrue(onboarding.pendingWebProviders.isEmpty)
+    }
+
     func testEmptyMessagesConfirmationClearsOldRowsWhileAnotherProviderPermitsFinish() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .fo, .szn] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.complete(.chatgpt)
         onboarding.confirmMessages(connected: [.fo], skipped: [])
         XCTAssertEqual(onboarding.currentStep, .messages)
@@ -34,7 +81,7 @@ final class OnboardingTests: XCTestCase {
     func testMessagesConfirmationConnectsOnlySelectedRowsAndSkipsTheRest() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.instinct, .fo, .szn] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.confirmMessages(connected: [.instinct, .fo], skipped: [.szn])
         XCTAssertEqual(onboarding.completed, [.instinct, .fo])
         XCTAssertEqual(onboarding.skipped, [.szn])
@@ -45,7 +92,7 @@ final class OnboardingTests: XCTestCase {
     func testMessagesConfirmationKeepsMissingConversationsPending() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.fo, .szn, .otherMessages] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.confirmMessages(connected: [.fo], skipped: [.otherMessages])
         XCTAssertEqual(onboarding.pendingChoices, [.szn])
         XCTAssertEqual(onboarding.currentStep, .messages)
@@ -59,7 +106,7 @@ final class OnboardingTests: XCTestCase {
         var onboarding = OnboardingState()
         onboarding.toggle(.fo)
         onboarding.toggle(.chatgpt)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.confirmMessages(connected: [.fo, .szn, .chatgpt], skipped: [])
         XCTAssertTrue(onboarding.completed.isEmpty, "The provider step must finish first")
         onboarding.complete(.chatgpt)
@@ -87,7 +134,7 @@ final class OnboardingTests: XCTestCase {
     func testResolvedSetupWaitsForFinalAcknowledgement() {
         var onboarding = OnboardingState()
         onboarding.toggle(.chatgpt)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.complete(.chatgpt)
         XCTAssertTrue(onboarding.hasConnectedAgent)
         XCTAssertTrue(onboarding.pendingSteps.isEmpty)
@@ -102,7 +149,7 @@ final class OnboardingTests: XCTestCase {
         for choice: OnboardingChoice in [.szn, .claudeCode, .fo, .chatgpt, .instinct, .grokbot, .otherMessages] {
             onboarding.toggle(choice)
         }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
 
         XCTAssertEqual(onboarding.pendingSteps, [.agent(.chatgpt), .agent(.grokbot), .agent(.claudeCode), .messages])
         XCTAssertEqual(onboarding.currentStep, .agent(.chatgpt))
@@ -113,7 +160,7 @@ final class OnboardingTests: XCTestCase {
     func testMessagesCompletionAndIndividualSkipKeepTheGroupUntilResolved() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.instinct, .fo, .szn] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.complete(.fo)
         onboarding.skip(.instinct)
 
@@ -133,7 +180,7 @@ final class OnboardingTests: XCTestCase {
     func testSavedSetupResumesWithTheSamePendingTask() throws {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .grokbot, .fo] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.complete(.chatgpt)
         onboarding.skip(.grokbot)
         onboarding.messageAgentIDs[OnboardingChoice.fo.rawValue] = UUID()
@@ -151,7 +198,7 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(resumed.messageAgentIDs, onboarding.messageAgentIDs)
         XCTAssertTrue(resumed.skipped.isEmpty)
         XCTAssertEqual(resumed.pendingSteps, [.agent(.grokbot), .messages])
-        resumed.begin()
+        resumed.begin(); resumed.beginConnections()
         XCTAssertEqual(resumed.currentStep, .agent(.grokbot))
     }
 
@@ -182,7 +229,7 @@ final class OnboardingTests: XCTestCase {
         state.comparisons = [Comparison(prompt: "An earlier question", members: [Member(agentID: agent.id, name: agent.name, chat: chat)])]
         var onboarding = OnboardingState()
         onboarding.toggle(.fo)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         state.onboarding = onboarding
         let restored = try JSONDecoder().decode(AppState.self, from: JSONEncoder().encode(state)).recoveringInFlight()
 
@@ -197,7 +244,7 @@ final class OnboardingTests: XCTestCase {
     func testSkippingAllStepsRequiresConnectingAtLeastOneAgent() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .fo, .szn] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.skipCurrentStep()
         XCTAssertEqual(onboarding.currentStep, .messages)
         onboarding.skipCurrentStep()
@@ -213,14 +260,14 @@ final class OnboardingTests: XCTestCase {
         var onboarding = OnboardingState()
         onboarding.toggle(.chatgpt)
         onboarding.toggle(.fo)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.complete(.chatgpt)
         onboarding.chooseAgain()
         onboarding.toggle(.chatgpt)
         onboarding.toggle(.chatgpt)
         onboarding.toggle(.instinct)
         onboarding.toggle(.claudeCode)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
 
         XCTAssertEqual(onboarding.completed, [.chatgpt])
         XCTAssertEqual(onboarding.pendingSteps, [.agent(.claudeCode), .messages])
@@ -229,11 +276,11 @@ final class OnboardingTests: XCTestCase {
 
     func testCannotBeginAnEmptySelectionOrChangeItDuringConnection() {
         var onboarding = OnboardingState()
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         XCTAssertEqual(onboarding.stage, .choosing)
         XCTAssertFalse(onboarding.isFinished)
         onboarding.toggle(.chatgpt)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.toggle(.fo)
         XCTAssertEqual(onboarding.selected, [.chatgpt])
         onboarding.complete(.chatgpt)
@@ -244,7 +291,7 @@ final class OnboardingTests: XCTestCase {
     func testFinishRequiresResolvedChoicesAndCompletingClearsSkip() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .claude, .fo] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.skip(.chatgpt)
         onboarding.complete(.chatgpt)
         onboarding.finish()
@@ -265,7 +312,7 @@ final class OnboardingTests: XCTestCase {
     func testCannotFinishWithoutOneSelectedChatReadyAgent() {
         var onboarding = OnboardingState()
         onboarding.toggle(.chatgpt)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.finish()
         XCTAssertFalse(onboarding.isFinished)
     }
@@ -276,14 +323,14 @@ final class OnboardingTests: XCTestCase {
         onboarding.toggle(.hermes)
         XCTAssertFalse(OnboardingChoice.openclaw.isMessages)
         XCTAssertFalse(OnboardingChoice.hermes.isMessages)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         XCTAssertEqual(onboarding.pendingSteps, [.runtime(.openclaw), .runtime(.hermes)])
         onboarding.complete(.openclaw)
         onboarding.complete(.hermes)
         XCTAssertFalse(onboarding.hasConnectedAgent)
         XCTAssertEqual(onboarding.stage, .choosing)
         onboarding.toggle(.chatgpt)
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         XCTAssertEqual(onboarding.pendingSteps, [.agent(.chatgpt)])
         onboarding.complete(.chatgpt)
         onboarding.finish()
@@ -293,12 +340,12 @@ final class OnboardingTests: XCTestCase {
     func testRecheckingSavedConnectionsPreservesExplicitSkips() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .grokbot, .fo] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.complete(.chatgpt)
         onboarding.skip(.grokbot)
         onboarding.chooseAgain()
         onboarding.completed = []
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         XCTAssertEqual(onboarding.skipped, [.grokbot])
         XCTAssertEqual(onboarding.pendingSteps, [.agent(.chatgpt), .messages])
     }
@@ -306,7 +353,7 @@ final class OnboardingTests: XCTestCase {
     func testRestartOnFeedbackScreenRechecksConnectionsWithoutLosingSkips() throws {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.chatgpt, .grokbot] { onboarding.toggle(choice) }
-        onboarding.begin()
+        onboarding.begin(); onboarding.beginConnections()
         onboarding.complete(.chatgpt)
         onboarding.skip(.grokbot)
         var restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(onboarding))
