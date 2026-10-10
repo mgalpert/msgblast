@@ -186,6 +186,7 @@ struct AgentsWorkspaceView: View {
                          placeholder: "Message", accessibilityName: "Shared prompt", sendLabel: "Send & compare",
                          disabled: !canSend, attachmentsEnabled: web.selected.isEmpty,
                          sendDisabledReason: sharedSendDisabledReason, send: send, focusRequest: newBlastRequest)
+            if showingComparison { ComparisonPrivacyNotice(demo: model.demo) }
         }.padding(20)
     }
 

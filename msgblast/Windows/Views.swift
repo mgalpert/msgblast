@@ -556,8 +556,20 @@ struct SharedComposer: View {
                     Task { await model.followUp(comparisonID, recipients: recipientIDs) }
                 }
                 FollowUpStatus(model: model, comparison: comparison, universal: recipientIDs != nil)
+                ComparisonPrivacyNotice(demo: model.demo)
             }
         }
+    }
+}
+
+struct ComparisonPrivacyNotice: View {
+    let demo: Bool
+    var body: some View {
+        Text(demo ? "Demo uses simulated conversations. No provider request is made." : "Summarize sends this comparison’s conversation text to your selected agent’s provider.")
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("Comparison privacy disclosure")
     }
 }
 
