@@ -13,7 +13,7 @@ def configs(name, settings):
     ids = []
     for mode in ['Debug', 'Release']:
         s = dict(settings)
-        s.update({'SWIFT_OPTIMIZATION_LEVEL': '"-Onone"' if mode == 'Debug' else '"-O"', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '"DEBUG"' if mode == 'Debug' else '""'})
+        s.update({'SWIFT_OPTIMIZATION_LEVEL': '"-Onone"' if mode == 'Debug' else '"-O"', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '"DEBUG"' if mode == 'Debug' else '""', 'ONLY_ACTIVE_ARCH': 'YES' if mode == 'Debug' else 'NO'})
         if name == 'msgblast' and mode == 'Debug': s['CODE_SIGN_ENTITLEMENTS'] = 'msgblast/msgblastDebug.entitlements'
         ids.append(obj(name+mode, '{isa = XCBuildConfiguration; name = '+mode+'; buildSettings = {' + ''.join(f'{k} = {v};' for k,v in s.items()) + '};}'))
     return obj(name+'configs', '{isa = XCConfigurationList; buildConfigurations = '+seq(ids)+'; defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;}')
