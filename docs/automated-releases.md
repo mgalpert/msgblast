@@ -47,7 +47,7 @@ Keep `release-notes/VERSION.md` brief: start with at most three short bullets ab
 
 `release-notes/unpublished.json` excludes historical updater fixtures and failed release attempts from the app's history. Their original Markdown remains in the repository; the changes from 0.3.0–0.4.2 first shipped in 0.4.3.
 
-1. Commit/review the intended source and write `release-notes/VERSION.md` with user-facing notes. Include the source on the default branch.
+1. Commit/review the intended source and write `release-notes/VERSION.md` with user-facing notes. Include the source on the default branch. Use native computer use to verify the affected flow in the blue-green functional Dev app built from that reviewed revision; Demo fixtures and CI do not replace this preflight. Record identity, source, effective entitlements, interactions, and any limits while preserving production state and permissions.
 2. Read the live signed appcast and recent successful runs; choose a newer unused
    marketing version. Fetch the default branch and tags, identify the exact
    reviewed source SHA, and confirm that revision contains its release notes.

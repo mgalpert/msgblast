@@ -103,7 +103,7 @@ These are maintainer operations. Read `docs/automated-releases.md` before activa
 ### One-time activation
 
 - Configure a dedicated Cloudflare R2 bucket and HTTPS custom domain. Set Actions variables `MSGBLAST_PUBLIC_BASE_URL` (ending in `/`), `MSGBLAST_R2_ACCOUNT_ID`, `MSGBLAST_R2_BUCKET` and `MSGBLAST_PUBLIC_KEY`.
-- Set Actions secrets `MSGBLAST_SPARKLE_PRIVATE_KEY` (persistent base64 32-byte seed), `MSGBLAST_R2_ACCESS_KEY_ID` and `MSGBLAST_R2_SECRET_ACCESS_KEY`. Scope the R2 credential to the release bucket. Apple certificate/team/notarization credentials are not required.
+- Set Actions secrets `MSGBLAST_SPARKLE_PRIVATE_KEY` (persistent base64 32-byte seed), `MSGBLAST_R2_ACCESS_KEY_ID` and `MSGBLAST_R2_SECRET_ACCESS_KEY`. Scope the R2 credential to the release bucket. These are shared by both signing modes; production also reuses the configured Developer ID and notarization credentials described in `docs/developer-id-signing.md`. Apple credentials are unnecessary for explicit ad-hoc builds and local previews.
 - Generate the Sparkle key once, retain its Keychain copy and secure backup, and reuse it across releases. Never put private keys in YAML, command arguments, logs, PRs, source or assets. The workflow uses an owner-only temporary seed file outside artifacts and removes it with `always()` cleanup.
 - Respect archive cache headers and bypass cache for `appcast.xml` and `release-counter.json`. Do not host the feed behind GitHub login, expiring tokens or a development `r2.dev` URL.
 - Preserve bundle identifier `com.msgblast.mac`, update key and installed app location. Users whose current version lacks Sparkle need one manual installation into `/Applications`; ordinary development builds with no feed/key cannot receive updates.
@@ -127,6 +127,8 @@ The README download URL is fixed at `https://updates.msgblast.app/latest.zip`. T
 4. A source push or PR merge does **not** publish an app. Trigger distribution when the user requests a release/update. Report source-only work as source-only until publication has been verified.
 
 ### Trigger a release
+
+Before tagging, use native computer use to check the affected flow in the blue-green functional Dev app from the exact reviewed source. Keep Demo fixture evidence separate; it cannot prove the live Dev behavior. Preserve the running production app and state, and do not send real messages, write Contacts, reset permissions, or make paid requests solely for this check. Record the app identity, source SHA, signing/entitlement checks, interactions, and limits.
 
 Prefer an annotated tag pinned to the reviewed revision. Run the commands separately, check each result, and stop on failure. First confirm the version is newer than the published version and the tag is unused. After the source and release notes are merged:
 
