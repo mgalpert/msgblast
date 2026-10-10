@@ -463,7 +463,7 @@ struct LocalAgentTerminalInstructions: View {
         ] : [
             "Choose your AI provider and model in the setup wizard.",
             "Complete the provider’s sign-in flow or enter its API key in Terminal, then save the setup.",
-            "Return to msgblast and refresh local accounts. In a Messages comparison, open Summarize, choose Hermes, and click Generate report or Update report."
+            "Return to msgblast and refresh local accounts. Open a Messages comparison’s report with Summarize. Choose Hermes in Report options from the ellipsis menu for your next Generate report or Update report."
         ]
     }
 

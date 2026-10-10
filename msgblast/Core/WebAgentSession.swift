@@ -97,6 +97,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var comparisonGeneration = 0
     private var readinessError: String? { get { activePage?.readinessError } set { currentPage().readinessError = newValue } }
     private var receiptGenerations: [UUID: WebReceiptGeneration] = [:]
+    private var manualRecoveryScopes: [UUID: (comparison: Int, page: WebReceiptGeneration)] = [:]
+    private static let sharedDraftKey = "shared-account"
     public let provider: WebProvider
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
@@ -116,6 +118,17 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do { loaded = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storageURL)).recoveringInFlight() }
         catch CocoaError.fileReadNoSuchFile { }
         catch { failure = "Web session state could not be read. The saved file has been preserved: \(error.localizedDescription)" }
+        // Import the last active draft before WebAgents can select a different
+        // comparison. Retain old entries for recovery; an empty shared value
+        // records an explicit clear and must never revive a legacy draft.
+        if failure == nil, provider.sharesOneConversation, loaded.webDrafts[Self.sharedDraftKey] == nil {
+            if let draft = loaded.webDrafts[loaded.comparisonID?.uuidString ?? "new"] {
+                loaded.webDrafts[Self.sharedDraftKey] = draft
+            } else {
+                let drafts = Set(loaded.webDrafts.values.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                if drafts.count == 1 { loaded.webDrafts[Self.sharedDraftKey] = drafts.first }
+            }
+        }
         super.init()
         state = loaded
         if provider == .dots { avatar = loaded.savedAvatar }
@@ -143,6 +156,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let previousDraft = state.draft
         edit(&state)
         if state.comparisonID != previous {
+            if provider.sharesOneConversation {
+                // Keep failed request context for review, but a later echo may
+                // belong to the next comparison. Automatic recovery requires
+                // continuous ownership of the page in this running session.
+                manualRecoveryScopes.removeAll()
+            }
             comparisonGeneration += 1
             if !provider.usesNativeConversation { selectPage(previous: previous) }
         }
@@ -244,14 +263,29 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let id = state.comparisonID, state.conversationURLs[id.uuidString] == nil else { return nil }
         // Older versions did not retain preparation context for a rejected send.
         // Link only after the user reviews its existing request and reply.
-        return state.attempts.first { $0.comparisonID == id && $0.status == .notSent && $0.manualContext == nil }
+        return state.attempts.first {
+            $0.comparisonID == id && $0.status == .notSent &&
+            ($0.manualContext == nil || !canAutomaticallyRecoverManual($0, in: activePage))
+        }
+    }
+
+    private func canAutomaticallyRecoverManual(_ attempt: WebSendAttempt, in page: WebConversationPage?) -> Bool {
+        guard provider.sharesOneConversation else { return true }
+        guard let scope = manualRecoveryScopes[attempt.id], let page else { return false }
+        return scope.comparison == comparisonGeneration && scope.page.matches(page)
     }
 
     public var draftRecoveryText: String? {
         guard !provider.usesNativeConversation, snapshot.ready, !snapshot.hasDraft,
               activePage?.restoredDraft == false,
-              let draft = state.webDrafts[state.comparisonID?.uuidString ?? "new"], !draft.isEmpty else { return nil }
+              let draft = state.webDrafts[draftKey(for: state.comparisonID)] ??
+                (provider.sharesOneConversation ? state.webDrafts[state.comparisonID?.uuidString ?? "new"] : nil),
+              !draft.isEmpty else { return nil }
         return draft
+    }
+
+    private func draftKey(for comparison: UUID?) -> String {
+        provider.sharesOneConversation ? Self.sharedDraftKey : comparison?.uuidString ?? "new"
     }
 
     public var needsConversationLink: Bool {
@@ -266,6 +300,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
         if let saved = state.conversationURLs[comparison.uuidString], provider.canonicalConversationURL(saved) != url { return false }
         if let candidate = attempt.pinnedConversationURL, candidate != url { return false }
+        if provider.sharesOneConversation, state.attempts.contains(where: {
+            $0.id != attempt.id && $0.comparisonID != comparison && $0.status.isUnresolved &&
+            Self.normalized($0.text) == Self.normalized(attempt.text)
+        }) { return false }
         let matches = linkCandidates(for: attempt)
         guard matches.count == 1 else { return false }
         return snapshot.messages.dropFirst(matches[0] + 1).prefix { $0.role != "user" }.contains { $0.role == "assistant" }
@@ -301,6 +339,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         attempt.conversationURL = url
         attempt.recoveryConversationURL = nil
         attempt.receiptContext = nil
+        attempt.manualContext = nil
+        manualRecoveryScopes.removeValue(forKey: attempt.id)
         receiptGenerations.removeValue(forKey: attempt.id)
         attempt.detail = "Conversation linked after the user reviewed its existing request and reply."
         state.conversationURLs[comparison.uuidString] = url
@@ -545,13 +585,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if page.snapshot.draftAvailable != true || page.snapshot.signedIn == false { page.restoredDraft = false }
             // Restore only an empty editor at its saved destination; restoring never submits.
             if !page.restoredDraft, page.snapshot.ready, page.snapshot.url == comparisonURL(for: page.comparisonID).absoluteString {
-                if !page.snapshot.hasDraft, let draft = state.webDrafts[page.key], !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !page.snapshot.hasDraft, let draft = state.webDrafts[draftKey(for: page.comparisonID)], !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let restored = try await page.view.callAsyncJavaScript(script.prepare, arguments: ["text": draft], in: nil, contentWorld: .defaultClient) as? [String: Any]
                     guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
                     if restored?["ok"] as? Bool == true {
                         page.snapshot.draft = draft
                         page.restoredDraft = true
                     }
+                } else if provider.sharesOneConversation, state.webDrafts[Self.sharedDraftKey] == nil,
+                          state.webDrafts.values.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                    // Ambiguous legacy drafts remain available for explicit
+                    // recovery; an empty editor must not mark them discarded.
+                    page.restoredDraft = false
                 } else { page.restoredDraft = true }
             }
             try recordDraft(in: page, from: page.snapshot)
@@ -579,8 +624,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // An unavailable editor is not an empty draft. Failed restoration retains its saved text.
         guard snapshot.draftAvailable == true, snapshot.signedIn != false,
               page.restoredDraft || snapshot.hasDraft else { return }
-        if state.webDrafts[page.key] != snapshot.draft {
-            state.webDrafts[page.key] = snapshot.draft
+        let key = draftKey(for: page.comparisonID)
+        if state.webDrafts[key] != snapshot.draft {
+            state.webDrafts[key] = snapshot.draft
             try save()
         }
     }
@@ -821,6 +867,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         if attempt.status == .notSent {
             attempt.manualContext = attempt.receiptContext
+            if provider.sharesOneConversation, attempt.manualContext != nil, let page = receiptGenerations[attempt.id] {
+                manualRecoveryScopes[attempt.id] = (comparisonGeneration, page)
+            }
             attempt.recoveryConversationURL = nil
             attempt.receiptContext = nil
             receiptGenerations.removeValue(forKey: attempt.id)
@@ -875,6 +924,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private func reconcileManualSubmission(in page: WebConversationPage) {
         guard !isSending, !storageFailed, let comparison = page.comparisonID,
               var attempt = state.attempts.first(where: { $0.comparisonID == comparison && $0.status == .notSent && $0.manualContext != nil }),
+              canAutomaticallyRecoverManual(attempt, in: page),
               let context = attempt.manualContext, let current = page.view.url,
               let url = provider.canonicalConversationURL(current),
               URL(string: page.snapshot.url).flatMap(provider.canonicalConversationURL) == url,
@@ -894,6 +944,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         attempt.messageID = matches[0].id
         attempt.conversationURL = url
         attempt.manualContext = nil
+        manualRecoveryScopes.removeValue(forKey: attempt.id)
         attempt.detail = "The request appeared after using the page directly. MsgBlast did not click Send."
         state.conversationURLs[page.key] = url
         do { try store(attempt); page.error = nil; page.readinessError = nil; publish(page) }

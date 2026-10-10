@@ -69,8 +69,11 @@ reports. The official [Hermes quickstart](https://hermes-agent.nousresearch.com/
 explains the available setup modes and authentication choices.
 
 Return to msgblast and refresh local accounts. In a Messages comparison with
-received replies, open **Summarize**, select **Hermes**, and choose **Generate
-report** or **Update report**. Reports use the configured provider and its
+received replies, open **Summarize**. Choose **Report options** from the ellipsis
+menu and select **Hermes** for your next **Generate report** or **Update report**.
+Summarize initially uses the last selected CLI or the first detected CLI;
+changing the selection does not request another report until you update it.
+Reports use the configured provider and its
 account's billing/usage limits. Onboarding's **Done with setup** acknowledges
 your setup; it does not test authentication or make a model request. OpenClaw
 or Hermes setup alone does not satisfy onboarding's chat-ready requirement.
