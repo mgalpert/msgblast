@@ -1,5 +1,10 @@
 # msgblast updates
 
+Historical October 2 implementation plan and evidence. Current contributor
+validation is in [Testing](../testing.md); current updater/publishing guidance is
+in [Updates](../updates.md) and [Automated releases](../automated-releases.md).
+This record is not a new release instruction or proof of the current branch.
+
 ## Goal Capsule
 Use Sparkle 2.10.0 and its standard native UI to update installed msgblast bundles safely. Match the Flo State workflow: daily checks, automatic update preference, release notes, Install on Quit and Install and Relaunch. Preserve the live primary checkout and app.
 

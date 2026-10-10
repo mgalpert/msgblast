@@ -34,6 +34,7 @@ struct msgblastApp: App {
             BlastCommands()
             CommandGroup(after: .appInfo) {
                 Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
+                Button("Build a New Feature…") { BuildFeatureWindowController.show() }
                 Button("Check for Updates…") { updater.checkForUpdates() }
                     .disabled(updater.configuration.isEnabled && !updater.canCheckForUpdates)
             }
@@ -43,6 +44,7 @@ struct msgblastApp: App {
             }
             CommandGroup(replacing: .help) {
                 Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
+                Button("Build a New Feature…") { BuildFeatureWindowController.show() }
             }
         }
         Settings {

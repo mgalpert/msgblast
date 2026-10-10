@@ -1,5 +1,10 @@
 # Grok Bot in msgblast
 
+For contributor setup and checks, use [Build from source](build-from-source.md)
+and [Testing](testing.md). Demo uses simulated Bot replies and does not start a
+live tunnel or connect a real routine. Building the app does not require a Bot
+account; live connection and requests follow the user's explicit setup.
+
 Grok Bot is a separate optional agent from Grok's website. Its implementation lives in this repository. It sends directly from the Mac to a native Grok Bot webhook and receives the answer on the Mac through an app-managed temporary Cloudflare tunnel. There is no deployed Worker, hosted database, Tincan relay, Cloudflare account, domain or hosting subscription to manage.
 
 ## Connect once
@@ -50,4 +55,7 @@ The app stops its helper and listener on normal quit. Quitting, disconnecting, o
 
 Core tests exercise the actual local HTTP receiver and an intercepted HTTPS webhook transport. The native demo uses simulated callbacks with no tunnel, live Bot, messages or Contacts writes. A live account's routine and callback behavior still require a deliberate end-to-end check after setup.
 
-The feedback intake schema also recognizes the new `grokbot` provider. Before releasing this app change, refresh the matching `feedback/worker.mjs` in the authoritative landing Worker so reports mentioning Grok Bot remain accepted.
+The feedback intake schema recognizes the `grokbot` provider. Future diagnostic
+schema changes need matching validation in `feedback/worker.mjs` and the
+authoritative landing Worker; updating this checkout alone does not deploy that
+handler. See [feedback operations](../feedback/README.md).

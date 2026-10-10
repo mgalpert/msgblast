@@ -1,5 +1,10 @@
 # Codex-style permission onboarding research
 
+Historical design research, preserved with its original source revisions and
+validation limits. For current permission behavior and contributor setup, use
+[the README](../README.md#get-started), [Build from source](build-from-source.md),
+and [Testing](testing.md). Recommendations below are not new permission grants.
+
 Researched October 1, 2026. Source inspection only; no permissions were changed and no live drag-to-Settings test was performed. The Mac was locked during this research.
 
 ## Identified repository
