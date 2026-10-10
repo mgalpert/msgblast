@@ -282,9 +282,9 @@ struct MessagesAccessRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(isOnboarding ? "Chat with the agents you text on Messages" : "Connect Messages").font(.headline)
                         if isOnboarding {
-                            Label("Your Messages history is read locally on your Mac.", systemImage: "lock.shield")
-                                .font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(.primary.opacity(0.05), in: Capsule())
+                            Text("Your messages are yours. You choose what to share.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         } else {
                             Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
