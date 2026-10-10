@@ -52,7 +52,7 @@ public enum OnboardingStep: Hashable, Sendable {
 }
 
 public struct OnboardingState: Codable, Equatable, Sendable {
-    public enum Stage: String, Codable, Sendable { case choosing, connecting, feedback, finished }
+    public enum Stage: String, Codable, Sendable { case choosing, importing, connecting, feedback, finished }
 
     public var selected: Set<OnboardingChoice> = []
     public var completed: Set<OnboardingChoice> = []
@@ -74,6 +74,9 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         return choices.contains(where: \.isMessages) ? agents + [.messages] : agents
     }
     public var currentStep: OnboardingStep? { pendingSteps.first }
+    public var pendingWebProviders: Set<WebProvider> {
+        Set(pendingChoices.compactMap(\.provider).filter { !$0.usesNativeConversation })
+    }
     public var isFinished: Bool { stage == .finished }
     public var hasConnectedAgent: Bool {
         completed.intersection(selected).contains { $0.provider != nil || $0.isMessages }
@@ -86,6 +89,11 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     public mutating func begin() {
         guard !selected.isEmpty else { return }
         if !hasConnectedAgent && pendingSteps.isEmpty { skipped = [] }
+        stage = pendingWebProviders.isEmpty ? .connecting : .importing
+        finishIfResolved()
+    }
+    public mutating func beginConnections() {
+        guard stage == .importing else { return }
         stage = .connecting
         finishIfResolved()
     }

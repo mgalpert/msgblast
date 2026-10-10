@@ -91,6 +91,16 @@ sets both identity and profile. Preferences are per bundle ID; demo arguments
 also have a permission-fixture defaults suite. Other local builds of the same
 variant can share state. Never point a fixture at the production profile.
 
+`BrowserLoginImporter` reads only an explicitly chosen Chrome or Safari store
+during onboarding, using pinned SweetCookieKit code. Chromium reads use a private
+SQLite snapshot, exclude partitioned cookies, and preserve SameSite metadata;
+domain scope, expiry, Secure and HttpOnly survive conversion. Import never writes
+the browser database or copies CLI/Bot authentication. Cookies are registered in
+each provider's existing WebKit store before the page checks sign-in. Existing
+saved comparison accounts are not replaced by a browser profile. Missing cookies
+or access failures continue to the ordinary provider sign-in panes. Demo uses
+synthetic profiles/cookies and a local signed-out page, never live browser access.
+
 WebKit retains web sign-in separately. CLI-owned authentication remains with the
 CLI, rather than being copied into msgblast state. Grok Bot uses an encrypted
 hardware-backed vault when available, a permitted noninteractive data-protection
