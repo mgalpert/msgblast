@@ -1,22 +1,23 @@
 {
-  "application_source": "442aba482a6d9b89ae6535066352fb3e4f8ba767",
+  "application_source": "f8fd41d4ace12481d969a732577ba37f21e649b3",
   "asset_sources": {
     "after-card.png": "e3de33b7fa37ed8dae0ae6633856296219fd34eb",
     "after-full.png": "e3de33b7fa37ed8dae0ae6633856296219fd34eb",
     "chooser.png": "e3de33b7fa37ed8dae0ae6633856296219fd34eb",
     "before-chat-footer.png": "e3de33b7fa37ed8dae0ae6633856296219fd34eb",
-    "live-composer.png": "442aba482a6d9b89ae6535066352fb3e4f8ba767",
-    "demo-failure.png": "442aba482a6d9b89ae6535066352fb3e4f8ba767",
-    "demo-before-followup.png": "442aba482a6d9b89ae6535066352fb3e4f8ba767",
-    "demo-after-followup.png": "442aba482a6d9b89ae6535066352fb3e4f8ba767",
-    "demo-summary.png": "442aba482a6d9b89ae6535066352fb3e4f8ba767",
+    "live-composer.png": "f8fd41d4ace12481d969a732577ba37f21e649b3",
+    "demo-failure.png": "f8fd41d4ace12481d969a732577ba37f21e649b3",
+    "demo-before-followup.png": "f8fd41d4ace12481d969a732577ba37f21e649b3",
+    "demo-after-followup.png": "f8fd41d4ace12481d969a732577ba37f21e649b3",
+    "demo-summary.png": "f8fd41d4ace12481d969a732577ba37f21e649b3",
     "before-card.png": "d9df26988fa96232fcd83519b97c8e48e7bdff38",
-    "before-full.png": "d9df26988fa96232fcd83519b97c8e48e7bdff38"
+    "before-full.png": "d9df26988fa96232fcd83519b97c8e48e7bdff38",
+    "demo-title.png": "f8fd41d4ace12481d969a732577ba37f21e649b3"
   },
   "capture": "Native macOS CUA. Blue-green Dev uses real data; blue Demo uses simulated Cedar/Lumen/Orbit agents. No demo flags in Dev.",
   "onboarding_capture_note": "Onboarding images were captured at e3de33b; MessagesAccessGuide, OnboardingView and OnboardingController have no changes between that reviewed revision and final application source.",
-  "video": "20-second edited screenshot sequence, with repeated frames, labels, scaling/padding and edited timing. Not continuous recording or real-time send measurement.",
-  "result": "Final live Dev has usable history access and successfully fetched the existing Instinct contact. Main chat has no sharing footer. Demo preserved failed-only retry and a successful shared follow-up reached each of three fixture agents once.",
+  "video": "21-second edited screenshot sequence, with repeated frames, labels, scaling/padding and edited timing. Not continuous recording or real-time send measurement.",
+  "result": "Final live Dev has usable history access and successfully fetched the existing Instinct contact after native permission-state refresh. A saved comparison reopened with recipients intact, a question-only title, and no sharing footer. Final Demo preserved failed-only retry and a shared follow-up reached each of three fixture agents once.",
   "privacy": "Committed live chat evidence is a composer crop. No private addresses or conversation content included. No Contacts written; agent did not initiate real sends or provider requests for testing.",
   "limits": [
     "Normal send-progress timing was not measured with live messages; fixture sends complete synchronously.",
@@ -30,11 +31,12 @@
     "before-chat-footer.png": "edaeb7fde8d42c2c98c2791d8c170ed48efd3bf5b58273f2dc44197c4d038bf7",
     "before-full.png": "7291fa597bfccb4519679f0c275b02069b085de33f849c6d6f1b75bef1b76d06",
     "chooser.png": "802c42a9361ca953b08569cce0aef6f0cc9640937598d5239832886393a81b0b",
-    "demo-after-followup.png": "87c2e00a41dc7c143d3e697ced05da8b3da3d05ba5710f3ea0c806f83c1ce5eb",
-    "demo-before-followup.png": "6ff29230ce27842ba49a12d8587ad4073062661d9a004e281e17ea63691f90f0",
-    "demo-failure.png": "6bf12c00eacd1c937a03b38e0fd99bf224a39c3248c38592cb43b97d3e67b629",
-    "demo-summary.png": "24cd23a6a920ebaa082abce0d32f44c8b3f02bfd68bf7a8d05070331134cbbb4",
+    "demo-after-followup.png": "461daf694e5737dc710ea1eb110e2057d18cdf2d22524dc7e090a53d07e542e3",
+    "demo-before-followup.png": "e314212d215b45006774e0cd7defb78d28479393a87c0dfddbee2db7f4e78190",
+    "demo-failure.png": "5b5ad2c43d5490236eb84a75b5bbeef11b8ce1d2b4c259f61cbf016c3e459397",
+    "demo-summary.png": "eb51273b1bc77e55025174de490505f407207b2d8c2f8723fafc08cbcbe8935e",
+    "demo-title.png": "9b99ea6a77999ad7c92d1479b5ac29c30f8a311355783f3ec047c55bae26da82",
     "live-composer.png": "c6380b6b8b4860ebae55e9c7c96279b86ef710ca8e7983fd9f637b9ebe7a579a",
-    "workflow.mp4": "97f5a3330dca7e87a092d39a1641e8c5793dcb08a56a8871cf044ab337014d30"
+    "workflow.mp4": "a6cd32e3ebd1cae934daa2f2527fd2a82f81eb99a830837151cf3fe19fc30983"
   }
 }
