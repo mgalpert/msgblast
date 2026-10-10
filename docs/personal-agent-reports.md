@@ -28,7 +28,9 @@ Tests use local website and executable fixtures; they do not prove current live 
 
 ## Comparison reports
 
-Click **Summarize** in the top-right toolbar of a comparison window, a separate conversation window, or the floating shared composer. A separate, resizable **Comparison report** window opens and starts the personal agent selected last time (or the first detected CLI on first use). The report leads with **Best next action** and its reasoning, then compares the responses and lists open questions. Select a different personal agent in the report window and click **Update report** to use it.
+Click **Summarize** in the top-right toolbar of a comparison window, a separate conversation window, or the floating shared composer. A separate, resizable **Comparison report** window opens and starts the personal agent selected last time (or the first detected CLI on first use). The report opens with a project overview, then synthesizes findings in readable bullets: shared results, complementary contributions, meaningful differences, and open questions. It does not generate recommendations or choose a winning answer. The report keeps **Update report** as its main action. The **Report actions** (ellipsis) menu contains **Copy report** and **Report options**; options contains the personal-agent picker, setup guidance, and **Refresh agents**. Changing the agent does not make a provider request until you update the report.
+
+The review prompt adapts to places/travel, products/services, technical troubleshooting, plans/decisions, research/explanations, creative feedback, or other topics in the same request. There is no separate classifier yet. It asks for a self-contained team synthesis for readers who have not read the chats, organized around the suggestions and their tradeoffs with participant attribution in numbered source footnotes. Supplied reviews and practical details remain conversation claims; the report does not fetch maps, reviews, or fresh facts. Missing details are labeled as unknown. Existing saved reports keep their original content until explicitly updated.
 
 The report includes every participant's available responses, reactions, confirmed follow-ups, and explicit thread replies within the same boundaries as the conversation columns. It is independent of the message-recipient selection. At least one reply or recipient reaction is required to generate a report; the response count includes both. The report is saved with the comparison, can be copied, and becomes visibly stale when the conversation changes. Clicking **Summarize** again focuses the existing report window and requests an update; clicking while a request is running only focuses the report. New replies never trigger automatic provider requests. Existing saved summaries remain readable until replaced by a report.
 
@@ -64,7 +66,7 @@ not live provider authentication or billing. Run the [native core tests](testing
 and [controller fixtures](testing.md#controller-and-executable-fixtures) first.
 On an authorized Mac, select the UI cases
 `testSeparateConversationWindowsShareOneComparisonReport` and
-`testPersonalAgentOpensComparisonReportWithBestNextAction` with the isolated UI
+`testPersonalAgentOpensComparisonReportWithTeamSynthesis` with the isolated UI
 test command in that guide. No fixture run establishes live account eligibility.
 
 
