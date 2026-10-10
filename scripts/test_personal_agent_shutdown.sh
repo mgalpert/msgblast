@@ -15,7 +15,7 @@ for report_fixture in personal_agent_shutdown personal_agent_persistence; do
     xcrun swiftc -swift-version 6 -parse-as-library \
         -module-cache-path "$report_tmp/module-cache" \
         -target "$(uname -m)-apple-macos15.0" \
-        -F "$report_frameworks" -framework msgblastCore \
+        -I "$report_frameworks" -F "$report_frameworks" -framework msgblastCore \
         -Xlinker -rpath -Xlinker "$report_frameworks" \
         "$report_root/msgblast/App/PersonalAgentController.swift" \
         "$report_root/scripts/fixtures/$report_fixture.swift" \

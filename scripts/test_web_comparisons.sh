@@ -10,7 +10,7 @@ web_tmp="$(mktemp -d "${TMPDIR:-/tmp}/msgblast-web-checks.XXXXXX")"
 trap 'rm -rf "$web_tmp"' EXIT
 cp -R "$web_root/msgblast/Resources/WebAgentIcons" "$web_tmp/WebAgentIcons"
 web_flags=(-swift-version 6 -D DEBUG -parse-as-library -module-cache-path "$web_tmp/modules"
-    -target "$(uname -m)-apple-macos15.0" -F "$web_frameworks" -F "$web_sparkle"
+    -target "$(uname -m)-apple-macos15.0" -I "$web_frameworks" -F "$web_frameworks" -F "$web_sparkle"
     -framework msgblastCore -framework Sparkle
     -Xlinker -rpath -Xlinker "$web_frameworks" -Xlinker -rpath -Xlinker "$web_sparkle")
 web_sources=()
