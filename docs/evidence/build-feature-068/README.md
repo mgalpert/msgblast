@@ -32,6 +32,8 @@ production permission retention or runtime compatibility on older macOS versions
   keyboard copy. Pasting into the idea field is a test technique.
 - `demo-01` through `demo-03`: blue Demo invitation, fixture idea, and Copied.
   Demo ran with `--demo --isolated-demo` and simulated application state.
+- `09-build-guide.png` and `10-release-guide.png`: changed documentation rendered
+  on GitHub at the exact source revision, including the active production signing mode.
 - `dev-workflow.mp4`: 25-second sampled Dev interaction walkthrough.
 - `demo-workflow.mp4`: 9-second sampled Demo idea/copy walkthrough.
 
