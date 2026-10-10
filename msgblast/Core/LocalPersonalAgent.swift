@@ -25,7 +25,7 @@ public enum PersonalAgentProvider: String, CaseIterable, Identifiable, Sendable 
         case .gemini: "gemini"
         case .pi: "pi"
         case .grok: "grok login"
-        case .hermes: "hermes login"
+        case .hermes: LocalAgentRuntime.hermes.setup
         }
     }
 

@@ -116,16 +116,20 @@ import msgblastCore
         model.webAgents.availableSessions.forEach { $0.connect() }
         try await waitUntil { model.webAgents.availableSessions.allSatisfy { $0.snapshot.ready } }
         let firstResults = await WebAgents.send("First comparison", to: model.webAgents.availableSessions, comparisonID: first)
-        precondition(firstResults.values.allSatisfy { $0.status == .observed })
+        for (provider, result) in firstResults {
+            precondition(result.status == .observed, "\(provider.name) first send: \(result.status) · \(result.detail ?? "No detail")")
+        }
         let firstNativeSessions = Dictionary(uniqueKeysWithValues: model.webAgents.sessions.compactMap { session in session.state.localSessionIDs[first.uuidString].map { (session.provider, $0) } })
         await model.submit(first, retry: false)
         let second = await model.prepareWebComparison("Second comparison", recipientIDs: [], providers: WebProvider.webDefaults + WebProvider.optionalProviders)!
         let secondResults = await WebAgents.send("Second comparison", to: model.webAgents.availableSessions, comparisonID: second)
-        precondition(secondResults.values.allSatisfy { $0.status == .observed })
+        for (provider, result) in secondResults {
+            precondition(result.status == .observed, "\(provider.name) second send: \(result.status) · \(result.detail ?? "No detail")")
+        }
         for session in model.webAgents.availableSessions {
             if session.provider.personalAgentProvider != nil {
                 precondition(firstNativeSessions[session.provider] != session.state.localSessionIDs[second.uuidString])
-            } else if session.provider == .dots {
+            } else if session.provider == .dots || session.provider.sharesOneConversation {
                 precondition(firstResults[session.provider]?.conversationURL == secondResults[session.provider]?.conversationURL)
             } else { precondition(firstResults[session.provider]?.conversationURL != secondResults[session.provider]?.conversationURL) }
         }

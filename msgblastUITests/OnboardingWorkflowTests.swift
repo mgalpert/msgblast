@@ -183,7 +183,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Choose OpenClaw"].click()
         app.buttons["Continue setup"].click()
         skipBrowserImportIfPresent(app)
-        XCTAssertTrue(app.staticTexts["Installed on this Mac"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Command-line app found"].waitForExistence(timeout: 5))
         app.buttons["Done with setup"].click()
         XCTAssertTrue(app.staticTexts["Which agents do you use?"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["New Blast"].exists)

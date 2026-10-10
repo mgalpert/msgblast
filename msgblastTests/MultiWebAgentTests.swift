@@ -737,7 +737,7 @@ final class MultiWebAgentTests: XCTestCase {
     }
 
     func testProviderDestinationsAndFirstConversationTransition() {
-        for provider in WebProvider.webDefaults {
+        for provider in WebProvider.webDefaults + [.os3] {
             XCTAssertTrue(provider.isChatURL(provider.newChatURL))
             for invalid in ["https://\(provider.homeURL.host!).evil.test/", "http://\(provider.homeURL.host!)/", "https://\(provider.homeURL.host!)/login", "https://\(provider.homeURL.host!)/settings", "https://\(provider.homeURL.host!):444/", "https://user@\(provider.homeURL.host!)/"] {
                 XCTAssertFalse(provider.isChatURL(URL(string: invalid)!), invalid)
@@ -1133,6 +1133,359 @@ final class MultiWebAgentTests: XCTestCase {
         XCTAssertEqual(WebAgentSession(provider: .dots, storageURL: storage, fixture: true).avatar, moved)
     }
 
+    func testOS3ImportsActiveLegacyDraftBeforeColdComparisonSwitch() async throws {
+        let directory = temporaryDirectory(), firstID = UUID(), secondID = UUID()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appendingPathComponent("state.json")
+        var legacy = WebWorkspaceState()
+        legacy.comparisonID = firstID
+        legacy.selected = false
+        legacy.webDrafts = [firstID.uuidString: "Keep my legacy rabbit draft", secondID.uuidString: "An older draft"]
+        try JSONEncoder().encode(legacy).write(to: storage)
+        let session = WebAgentSession(provider: .os3, storageURL: storage, fixture: true)
+        session.updateState { $0.comparisonID = secondID }
+        session.connect()
+        try await waitFor { session.snapshot.ready && session.snapshot.draftAvailable == true }
+        await session.refresh()
+        XCTAssertEqual(session.snapshot.draft, "Keep my legacy rabbit draft")
+        XCTAssertEqual(session.state.webDrafts[firstID.uuidString], legacy.webDrafts[firstID.uuidString], "Retain legacy entries for recovery")
+        XCTAssertEqual(session.state.webDrafts[secondID.uuidString], legacy.webDrafts[secondID.uuidString])
+        XCTAssertTrue(session.snapshot.messages.isEmpty, "Restoring a draft must not submit it")
+        await session.cancelAndWait()
+    }
+
+    func testOS3LegacyDraftsRemainRecoverableWhenTheActiveKeyIsMissing() async throws {
+        for ambiguous in [false, true] {
+            let directory = temporaryDirectory(), firstID = UUID(), missingID = UUID()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let storage = directory.appendingPathComponent("state.json")
+            var legacy = WebWorkspaceState()
+            legacy.comparisonID = missingID
+            legacy.selected = false
+            legacy.webDrafts[firstID.uuidString] = "Keep my recoverable draft"
+            if ambiguous { legacy.webDrafts[UUID().uuidString] = "Another legacy draft" }
+            try JSONEncoder().encode(legacy).write(to: storage)
+            let session = WebAgentSession(provider: .os3, storageURL: storage, fixture: true)
+            session.connect()
+            try await waitFor { session.snapshot.ready && session.snapshot.draftAvailable == true }
+            await session.refresh()
+            if ambiguous {
+                XCTAssertTrue(session.snapshot.draft.isEmpty, "Do not guess between distinct legacy drafts")
+                _ = await session.openComparison(firstID)
+                await session.refresh()
+                XCTAssertEqual(session.draftRecoveryText, "Keep my recoverable draft")
+                XCTAssertEqual(session.state.webDrafts[firstID.uuidString], legacy.webDrafts[firstID.uuidString])
+            } else {
+                XCTAssertEqual(session.snapshot.draft, "Keep my recoverable draft")
+            }
+            XCTAssertTrue(session.snapshot.messages.isEmpty)
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            await session.cancelAndWait()
+        }
+    }
+
+    func testOS3SavedDraftSurvivesColdOpeningAnotherComparison() async throws {
+        let directory = temporaryDirectory(), firstID = UUID(), secondID = UUID()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appendingPathComponent("state.json")
+        let session = WebAgentSession(provider: .os3, storageURL: storage, fixture: true)
+        session.updateState { $0.comparisonID = firstID }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        try await setOS3FixtureDraft("Keep my unsent account draft", in: session)
+        session.updateState { $0.selected = false }
+        await session.cancelAndWait()
+        let reopened = WebAgentSession(provider: .os3, storageURL: storage, fixture: true)
+        XCTAssertFalse(reopened.state.selected)
+        reopened.updateState { $0.comparisonID = secondID }
+        reopened.connect()
+        try await waitFor { reopened.snapshot.ready && reopened.snapshot.draftAvailable == true }
+        await reopened.refresh()
+        XCTAssertEqual(reopened.snapshot.draft, "Keep my unsent account draft")
+        _ = await reopened.openComparison(firstID)
+        XCTAssertEqual(reopened.snapshot.draft, "Keep my unsent account draft")
+        XCTAssertTrue(reopened.snapshot.messages.isEmpty)
+        XCTAssertTrue(reopened.state.attempts.isEmpty)
+        await reopened.cancelAndWait()
+    }
+
+    func testOS3ClearedOrReplacedDraftStaysCurrentAfterRestart() async throws {
+        for replacement in ["", "New account draft"] {
+            let directory = temporaryDirectory(), firstID = UUID(), secondID = UUID()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let storage = directory.appendingPathComponent("state.json")
+            let session = WebAgentSession(provider: .os3, storageURL: storage, fixture: true)
+            session.updateState { $0.comparisonID = firstID }
+            session.connect()
+            try await waitFor { session.snapshot.ready }
+            try await setOS3FixtureDraft("Obsolete draft from A", in: session)
+            session.updateState { $0.comparisonID = secondID }
+            try await setOS3FixtureDraft(replacement, in: session)
+            session.updateState { $0.selected = false }
+            await session.cancelAndWait()
+            let reopened = WebAgentSession(provider: .os3, storageURL: storage, fixture: true)
+            reopened.updateState { $0.comparisonID = firstID }
+            reopened.connect()
+            try await waitFor { reopened.snapshot.ready && reopened.snapshot.draftAvailable == true }
+            await reopened.refresh()
+            XCTAssertEqual(reopened.snapshot.draft, replacement, "Reopening A must not restore its obsolete copy")
+            XCTAssertTrue(reopened.snapshot.messages.isEmpty)
+            XCTAssertTrue(reopened.state.attempts.isEmpty)
+            await reopened.cancelAndWait()
+        }
+    }
+
+    func testOS3DelayedSubmissionStaysOwnedByItsComparison() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let failedID = UUID(), sentID = UUID()
+        _ = try await session.webView.callAsyncJavaScript("send.setAttribute('aria-disabled','true')", arguments: [:], in: nil, contentWorld: .page)
+        let failed = await session.send("Repeated fixture question", comparisonID: failedID)
+        XCTAssertEqual(failed?.status, .notSent)
+        XCTAssertNotNil(failed?.manualContext)
+        _ = try await session.webView.callAsyncJavaScript("input.value='';send.removeAttribute('aria-disabled');input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: [:], in: nil, contentWorld: .page)
+        try await delayNextOS3FixtureEcho(in: session)
+        let sent = await session.send("Repeated fixture question", comparisonID: sentID)
+        XCTAssertEqual(sent?.status, .uncertain)
+        _ = await session.openComparison(failedID)
+        _ = try await session.webView.callAsyncJavaScript("globalThis.releaseOS3Echo()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .notSent, "A must not claim B's delayed submission")
+        XCTAssertNil(session.latestComparisonAttempt?.messageID)
+        XCTAssertFalse(session.canLinkCurrentConversation, "B's matching unconfirmed request reserves the receipt until B is reviewed")
+        _ = await session.openComparison(sentID)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.id, sent?.id)
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .observed)
+        XCTAssertEqual(session.state.attempts.filter { $0.status == .observed }.count, 1)
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.count, 1, "Recovery must not click Send again")
+        await session.cancelAndWait()
+    }
+
+    func testOS3UncertainSubmissionBlocksWhitespaceVariantInAnotherComparison() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        try await delayNextOS3FixtureEcho(in: session)
+        let sentID = UUID(), failedID = UUID()
+        let sent = await session.send("Same question", comparisonID: sentID)
+        XCTAssertEqual(sent?.status, .uncertain)
+        _ = await session.openComparison(failedID)
+        XCTAssertTrue(session.hasUnresolvedSend("Same \n question"), "Shared receipts normalize whitespace, so pending requests must use the same identity")
+        let blocked = await session.send("Same  question", comparisonID: failedID)
+        XCTAssertNil(blocked, "A whitespace variant must not start another submission or prepare a recovery context")
+        _ = try await session.webView.callAsyncJavaScript("input.value='';globalThis.releaseOS3Echo()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertNil(session.latestComparisonAttempt?.messageID)
+        _ = await session.openComparison(sentID)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .observed)
+        XCTAssertEqual(session.state.attempts.count, 1)
+        await session.cancelAndWait()
+    }
+
+    func testOS3ManualRecoveryReservesNormalizedPendingReceipt() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let failedID = UUID(), pendingID = UUID()
+        _ = try await session.webView.callAsyncJavaScript("send.setAttribute('aria-disabled','true')", arguments: [:], in: nil, contentWorld: .page)
+        let failed = await session.send("Same  question", comparisonID: failedID)
+        XCTAssertEqual(failed?.status, .notSent)
+        XCTAssertNotNil(failed?.manualContext)
+        // Simulate a persisted uncertain request from before normalized send guards.
+        var pending = WebSendAttempt(text: "Same question")
+        pending.comparisonID = pendingID
+        pending.status = .uncertain
+        session.updateState { $0.attempts.append(pending) }
+        _ = try await session.webView.callAsyncJavaScript("""
+        input.value='';
+        for (const role of ['user','assistant']) {
+            const message=document.createElement('article');
+            message.className='dial-msg '+(role==='user'?'dial-user':'dial-system');
+            message.dataset.renderId='msg-pending-'+role;
+            message.textContent=role==='user'?'Same question':'Delayed fixture reply';
+            document.querySelector('#transcript').append(message);
+        }
+        """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .notSent, "A's valid manual scope must not claim a normalized receipt reserved by B")
+        XCTAssertNil(session.latestComparisonAttempt?.messageID)
+        XCTAssertFalse(session.canLinkCurrentConversation)
+        XCTAssertEqual(session.state.attempts.first { $0.id == pending.id }?.status, .uncertain)
+        await session.cancelAndWait()
+    }
+
+    func testOS3ExplicitLinkUsesNewUnclaimedMessageWithoutResending() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let earlier = await session.send("Repeated fixture question", comparisonID: UUID())
+        XCTAssertEqual(earlier?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        try await delayNextOS3FixtureEcho(in: session)
+        let currentID = UUID()
+        let current = await session.send("Repeated fixture question", comparisonID: currentID)
+        XCTAssertEqual(current?.status, .uncertain)
+        // A user interaction interrupts automatic attribution. Explicit linking
+        // must recover the newer request without claiming the earlier receipt.
+        _ = try await session.webView.callAsyncJavaScript("globalThis.__msgblastObservation.interrupted=true", arguments: [:], in: nil, contentWorld: .defaultClient)
+        _ = try await session.webView.callAsyncJavaScript("globalThis.releaseOS3Echo()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertTrue(session.canLinkCurrentConversation)
+        let messages = session.snapshot.messages
+        await session.linkCurrentConversation()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .observed)
+        XCTAssertNotEqual(session.latestComparisonAttempt?.messageID, earlier?.messageID)
+        XCTAssertEqual(session.state.conversationURLs[currentID.uuidString], WebProvider.os3.homeURL)
+        XCTAssertEqual(session.snapshot.messages, messages, "Reviewed linking must not submit another request")
+        XCTAssertEqual(session.state.attempts.count, 2)
+        await session.cancelAndWait()
+    }
+
+    func testOS3BusyMarkersBlockSendingAndMetadataIsExcluded() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let sent = await session.send("Clean receipt text", comparisonID: UUID())
+        XCTAssertEqual(sent?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        _ = try await session.webView.callAsyncJavaScript("""
+        for(const className of ['dial-meta','dial-reaction']){
+            const decoration=document.createElement('span');decoration.className=className;
+            decoration.textContent='This is decoration';document.querySelector('.dial-user').append(decoration);
+        }
+        """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.snapshot.messages.first { $0.role == "user" }?.text, "Clean receipt text")
+        for thinking in [false, true] {
+            _ = try await session.webView.callAsyncJavaScript("""
+            const marker=document.createElement('div');marker.id='busy-marker';marker.textContent='Working';
+            if(thinking)marker.dataset.renderId='thinking';else marker.className='dial-msg writing';
+            document.querySelector('#transcript').append(marker);
+            """, arguments: ["thinking": thinking], in: nil, contentWorld: .page)
+            await session.refresh()
+            XCTAssertFalse(session.snapshot.ready)
+            let blocked = await session.send("Wait for the current reply", comparisonID: UUID())
+            XCTAssertEqual(blocked?.status, .notSent)
+            XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.count, 1)
+            _ = try await session.webView.callAsyncJavaScript("document.querySelector('#busy-marker').remove()", arguments: [:], in: nil, contentWorld: .page)
+            await session.refresh()
+            XCTAssertTrue(session.snapshot.ready)
+        }
+        await session.cancelAndWait()
+    }
+
+    func testOS3ComparisonSwitchPreservesLivePageAndDraft() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let firstID = UUID(), secondID = UUID()
+        let first = await session.send("Earlier context", comparisonID: firstID)
+        XCTAssertEqual(first?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        let page = session.webView
+        _ = try await page.callAsyncJavaScript("input.value='Keep my unsent rabbit draft';input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: [:], in: nil, contentWorld: .page)
+        session.updateState { $0.comparisonID = secondID }
+        XCTAssertTrue(session.webView === page, "One account conversation must not become an empty comparison pane")
+        let ready = await session.openComparison(secondID)
+        XCTAssertFalse(ready, "Switching comparisons must not overwrite an existing website draft")
+        XCTAssertEqual(session.snapshot.draft, "Keep my unsent rabbit draft")
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["Earlier context"])
+        XCTAssertEqual(session.state.attempts.count, 1)
+        _ = try await page.callAsyncJavaScript("input.value='';input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: [:], in: nil, contentWorld: .page)
+        let second = await session.send("Earlier context", comparisonID: secondID)
+        XCTAssertEqual(second?.status, .observed)
+        XCTAssertNotEqual(first?.messageID, second?.messageID)
+        let reopened = await session.openComparison(firstID)
+        XCTAssertTrue(reopened)
+        XCTAssertTrue(session.webView === page)
+        XCTAssertEqual(session.latestComparisonAttempt?.id, first?.id)
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["Earlier context", "Earlier context"])
+        session.beginShutdown()
+    }
+
+    func testOS3ReopeningFailedComparisonDoesNotClaimAnotherComparisonsReceipt() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let failedID = UUID(), sentID = UUID()
+        _ = try await session.webView.callAsyncJavaScript("send.setAttribute('aria-disabled','true')", arguments: [:], in: nil, contentWorld: .page)
+        let failed = await session.send("Same question", comparisonID: failedID)
+        XCTAssertEqual(failed?.status, .notSent)
+        XCTAssertNotNil(failed?.manualContext)
+        _ = try await session.webView.callAsyncJavaScript("input.value='';send.removeAttribute('aria-disabled');input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: [:], in: nil, contentWorld: .page)
+        let sent = await session.send("Same question", comparisonID: sentID)
+        XCTAssertEqual(sent?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        _ = await session.openComparison(failedID)
+        await session.refresh()
+        XCTAssertEqual(session.latestComparisonAttempt?.status, .notSent)
+        XCTAssertNil(session.latestComparisonAttempt?.messageID)
+        XCTAssertEqual(session.state.attempts.filter { $0.status == .observed }.count, 1)
+        XCTAssertFalse(session.canLinkCurrentConversation)
+        session.beginShutdown()
+    }
+
+    func testOS3NeverLinksAMessageAnotherComparisonObserved() async throws {
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let earlier = await session.send("Same question", comparisonID: UUID())
+        XCTAssertEqual(earlier?.status, .observed)
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        // The page drops the next submission, leaving only the earlier comparison's copy of this text.
+        _ = try await session.webView.callAsyncJavaScript("""
+        document.addEventListener('click',e=>{if(e.target===send){e.stopImmediatePropagation();input.value='';}},{capture:true,once:true});
+        """, arguments: [:], in: nil, contentWorld: .page)
+        let dropped = await session.send("Same question", comparisonID: UUID())
+        XCTAssertEqual(dropped?.status, .uncertain)
+        await session.refresh()
+        XCTAssertTrue(session.needsConversationLink)
+        XCTAssertTrue(session.snapshot.ready)
+        XCTAssertFalse(session.canLinkCurrentConversation)
+    }
+
+    func testHiddenAndOffScreenDialogsDoNotBlockSending() async throws {
+        for provider in [WebProvider.chatgpt, .claude, .grok, .os3] {
+            let session = WebAgentSession(provider: provider, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+            session.connect()
+            try await waitFor { session.snapshot.ready }
+            _ = try await session.webView.callAsyncJavaScript("""
+            for (const offScreen of [false, true]) {
+                const panel=document.createElement('div');panel.setAttribute('role','dialog');panel.textContent='Closed panel';
+                if (offScreen) panel.style.cssText='position:fixed;top:0;left:100vw'; else panel.setAttribute('aria-hidden','true');
+                document.body.append(panel);
+            }
+            """, arguments: [:], in: nil, contentWorld: .page)
+            await session.refresh()
+            XCTAssertTrue(session.snapshot.ready, provider.name)
+            let attempt = await session.send("Closed panels stay out of the way")
+            XCTAssertEqual(attempt?.status, .observed, provider.name)
+        }
+    }
+
+    func testOS3SendsEveryComparisonIntoItsOneConversation() async throws {
+        let os3 = WebProvider.os3
+        XCTAssertTrue(os3.isSavedConversation(os3.homeURL))
+        XCTAssertTrue(os3.acceptsReceipt(from: os3.homeURL, at: os3.homeURL))
+        XCTAssertFalse(os3.isChatURL(URL(string: "https://os3.rabbit.tech/sign-up?returnTo=%2F")!))
+        let session = WebAgentSession(provider: .os3, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        XCTAssertFalse(session.state.selected, "rabbit OS3 is opt-in")
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let first = await session.send("First comparison", comparisonID: UUID())
+        XCTAssertEqual(first?.status, .observed, first?.detail ?? "")
+        let second = await session.send("Second comparison", comparisonID: UUID())
+        XCTAssertEqual(second?.status, .observed, second?.detail ?? "")
+        XCTAssertEqual(first?.conversationURL, os3.homeURL)
+        XCTAssertEqual(second?.conversationURL, os3.homeURL)
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["First comparison", "Second comparison"])
+    }
+
     func testLegacyMuseSessionSelectionAndPendingReceiptSurviveUpgrade() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1147,7 +1500,7 @@ final class MultiWebAgentTests: XCTestCase {
         XCTAssertEqual(web.availableSessions[0].state.sessionID, id)
         XCTAssertEqual(web.availableSessions[0].state.draft, "Legacy draft")
         XCTAssertEqual(web.comparisonID, comparison)
-        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, 5)
+        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, 6)
         for session in web.availableSessions where session.provider.personalAgentProvider == nil { XCTAssertEqual(session.webView.configuration.websiteDataStore.identifier, session.state.sessionID) }
         web.toggle(web.availableSessions[2])
         let reopened = WebAgents(directory: directory, fixture: false)
@@ -1620,7 +1973,7 @@ final class MultiWebAgentTests: XCTestCase {
     }
 
     func testNewProvidersAttachReceiptsToTheirComparison() async throws {
-        for provider in [WebProvider.chatgpt, .claude, .grok] {
+        for provider in [WebProvider.chatgpt, .claude, .grok, .os3] {
             let session = WebAgentSession(provider: provider, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
             session.connect()
             try await waitFor { session.snapshot.ready }
@@ -1708,6 +2061,32 @@ final class MultiWebAgentTests: XCTestCase {
         }
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         return "data:image/png;base64," + png.base64EncodedString()
+    }
+
+    private func setOS3FixtureDraft(_ text: String, in session: WebAgentSession) async throws {
+        _ = try await session.webView.callAsyncJavaScript("input.value=text;input.dispatchEvent(new Event('input',{bubbles:true}))", arguments: ["text": text], in: nil, contentWorld: .page)
+        await session.refresh()
+        try await session.saveBrowserDrafts()
+    }
+
+    private func delayNextOS3FixtureEcho(in session: WebAgentSession) async throws {
+        _ = try await session.webView.callAsyncJavaScript("""
+        document.addEventListener('click',event=>{
+            if(event.target!==send)return;
+            event.stopImmediatePropagation();
+            const text=input.value;input.value='';send.disabled=true;
+            globalThis.releaseOS3Echo=()=>{
+                for(const role of ['user','assistant']){
+                    const message=document.createElement('article');
+                    message.className='dial-msg '+(role==='user'?'dial-user':'dial-system');
+                    message.dataset.renderId='msg-'+crypto.randomUUID();
+                    message.textContent=role==='user'?text:'Delayed fixture reply: '+text;
+                    document.querySelector('#transcript').append(message);
+                }
+                delete globalThis.releaseOS3Echo;
+            };
+        },{capture:true,once:true});
+        """, arguments: [:], in: nil, contentWorld: .page)
     }
 
     private func temporaryDirectory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("MsgBlast-MultiWeb-\(UUID())") }

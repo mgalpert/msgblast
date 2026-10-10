@@ -42,9 +42,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let old = activePage else { return }
         let key = state.comparisonID?.uuidString ?? "new"
         if old.key == key { return }
-        // Dots has one ongoing account conversation. Preserve its live page so a
-        // fresh blast uses the currently open dot, including changes before polling.
-        if provider == .dots {
+        // Account-wide conversations keep their live page across comparisons,
+        // including unsent drafts and replies that arrive between polls.
+        if provider == .dots || provider.sharesOneConversation {
             pages.removeValue(forKey: old.key)
             old.comparisonID = state.comparisonID
             pages[key] = old
@@ -99,6 +99,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var comparisonGeneration = 0
     private var readinessError: String? { get { activePage?.readinessError } set { currentPage().readinessError = newValue } }
     private var receiptGenerations: [UUID: WebReceiptGeneration] = [:]
+    private var manualRecoveryScopes: [UUID: (comparison: Int, page: WebReceiptGeneration)] = [:]
+    private static let sharedDraftKey = "shared-account"
     public let provider: WebProvider
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
@@ -118,6 +120,17 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do { loaded = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storageURL)).recoveringInFlight() }
         catch CocoaError.fileReadNoSuchFile { }
         catch { failure = "Web session state could not be read. The saved file has been preserved: \(error.localizedDescription)" }
+        // Import the last active draft before WebAgents can select a different
+        // comparison. Retain old entries for recovery; an empty shared value
+        // records an explicit clear and must never revive a legacy draft.
+        if failure == nil, provider.sharesOneConversation, loaded.webDrafts[Self.sharedDraftKey] == nil {
+            if let draft = loaded.webDrafts[loaded.comparisonID?.uuidString ?? "new"] {
+                loaded.webDrafts[Self.sharedDraftKey] = draft
+            } else {
+                let drafts = Set(loaded.webDrafts.values.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                if drafts.count == 1 { loaded.webDrafts[Self.sharedDraftKey] = drafts.first }
+            }
+        }
         super.init()
         state = loaded
         if provider == .dots { avatar = loaded.savedAvatar }
@@ -145,6 +158,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let previousDraft = state.draft
         edit(&state)
         if state.comparisonID != previous {
+            if provider.sharesOneConversation {
+                // Keep failed request context for review, but a later echo may
+                // belong to the next comparison. Automatic recovery requires
+                // continuous ownership of the page in this running session.
+                manualRecoveryScopes.removeAll()
+            }
             browserImportCookieBaseline = nil
             comparisonGeneration += 1
             if !provider.usesNativeConversation { selectPage(previous: previous) }
@@ -290,14 +309,37 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let id = state.comparisonID, state.conversationURLs[id.uuidString] == nil else { return nil }
         // Older versions did not retain preparation context for a rejected send.
         // Link only after the user reviews its existing request and reply.
-        return state.attempts.first { $0.comparisonID == id && $0.status == .notSent && $0.manualContext == nil }
+        return state.attempts.first {
+            $0.comparisonID == id && $0.status == .notSent &&
+            ($0.manualContext == nil || !canAutomaticallyRecoverManual($0, in: activePage))
+        }
+    }
+
+    private func canAutomaticallyRecoverManual(_ attempt: WebSendAttempt, in page: WebConversationPage?) -> Bool {
+        guard provider.sharesOneConversation else { return true }
+        guard !hasCompetingUnresolvedAttempt(for: attempt),
+              let scope = manualRecoveryScopes[attempt.id], let page else { return false }
+        return scope.comparison == comparisonGeneration && scope.page.matches(page)
+    }
+
+    private func hasCompetingUnresolvedAttempt(for attempt: WebSendAttempt) -> Bool {
+        state.attempts.contains {
+            $0.id != attempt.id && $0.status.isUnresolved &&
+            Self.normalized($0.text) == Self.normalized(attempt.text)
+        }
     }
 
     public var draftRecoveryText: String? {
         guard !provider.usesNativeConversation, snapshot.ready, !snapshot.hasDraft,
               activePage?.restoredDraft == false,
-              let draft = state.webDrafts[state.comparisonID?.uuidString ?? "new"], !draft.isEmpty else { return nil }
+              let draft = state.webDrafts[draftKey(for: state.comparisonID)] ??
+                (provider.sharesOneConversation ? state.webDrafts[state.comparisonID?.uuidString ?? "new"] : nil),
+              !draft.isEmpty else { return nil }
         return draft
+    }
+
+    private func draftKey(for comparison: UUID?) -> String {
+        provider.sharesOneConversation ? Self.sharedDraftKey : comparison?.uuidString ?? "new"
     }
 
     public var needsConversationLink: Bool {
@@ -309,12 +351,23 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               let attempt = linkableWebAttempt, let comparison = state.comparisonID, let current = URL(string: snapshot.url),
               let url = provider.canonicalConversationURL(current),
               webView.url.flatMap(provider.canonicalConversationURL) == url,
-              (provider == .dots || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
+              (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
         if let saved = state.conversationURLs[comparison.uuidString], provider.canonicalConversationURL(saved) != url { return false }
         if let candidate = attempt.pinnedConversationURL, candidate != url { return false }
-        let matches = snapshot.messages.indices.filter { snapshot.messages[$0].role == "user" && Self.normalized(snapshot.messages[$0].text) == Self.normalized(attempt.text) }
+        if provider.sharesOneConversation, hasCompetingUnresolvedAttempt(for: attempt) { return false }
+        let matches = linkCandidates(for: attempt)
         guard matches.count == 1 else { return false }
         return snapshot.messages.dropFirst(matches[0] + 1).prefix { $0.role != "user" }.contains { $0.role == "assistant" }
+    }
+
+    // In a shared conversation, a message another attempt already observed belongs to that attempt.
+    private func claimedMessageIDs(excluding attempt: WebSendAttempt) -> Set<String> {
+        provider.sharesOneConversation ? Set(state.attempts.compactMap { $0.id == attempt.id ? nil : $0.messageID }) : []
+    }
+
+    private func linkCandidates(for attempt: WebSendAttempt) -> [Int] {
+        let claimed = claimedMessageIDs(excluding: attempt)
+        return snapshot.messages.indices.filter { snapshot.messages[$0].role == "user" && !claimed.contains(snapshot.messages[$0].id) && Self.normalized(snapshot.messages[$0].text) == Self.normalized(attempt.text) }
     }
 
     // Explicit user linking recovers requests whose automatic attribution could not finish.
@@ -333,10 +386,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               var attempt = linkableWebAttempt, let comparison, let current = URL(string: snapshot.url),
               let url = provider.canonicalConversationURL(current) else { return }
         attempt.status = .observed
-        attempt.messageID = snapshot.messages.first { $0.role == "user" && Self.normalized($0.text) == Self.normalized(attempt.text) }?.id
+        attempt.messageID = linkCandidates(for: attempt).first.map { snapshot.messages[$0].id }
         attempt.conversationURL = url
         attempt.recoveryConversationURL = nil
         attempt.receiptContext = nil
+        attempt.manualContext = nil
+        manualRecoveryScopes.removeValue(forKey: attempt.id)
         receiptGenerations.removeValue(forKey: attempt.id)
         attempt.detail = "Conversation linked after the user reviewed its existing request and reply."
         state.conversationURLs[comparison.uuidString] = url
@@ -365,6 +420,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .grokbot { return fixture ? "Simulated webhook · no Bot contacted" : "Webhook connection" }
         if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
+        if provider.sharesOneConversation { return "\(host) · Shared account conversation" }
         return provider == .dots ? "\(host) · Your dot" : provider == .muse && webView.url.map(provider.isChatURL) == true ? "\(host) · Side chat" : host
     }
 
@@ -453,7 +509,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if !loading, snapshot.url == target.absoluteString, !snapshot.ready {
             throw WebSessionFailure.notReady(snapshot.reason)
         }
-        if target == provider.newChatURL, snapshot.url == target.absoluteString,
+        if !provider.sharesOneConversation, target == provider.newChatURL, snapshot.url == target.absoluteString,
            snapshot.messages.contains(where: { $0.role == "user" }) {
             throw WebSessionFailure.notSent("\(provider.name) has an unfinished conversation submission. Check its page before starting another comparison.")
         }
@@ -589,13 +645,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if page.snapshot.draftAvailable != true || page.snapshot.signedIn == false { page.restoredDraft = false }
             // Restore only an empty editor at its saved destination; restoring never submits.
             if !page.restoredDraft, page.snapshot.ready, page.snapshot.url == comparisonURL(for: page.comparisonID).absoluteString {
-                if !page.snapshot.hasDraft, let draft = state.webDrafts[page.key], !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !page.snapshot.hasDraft, let draft = state.webDrafts[draftKey(for: page.comparisonID)], !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let restored = try await page.view.callAsyncJavaScript(script.prepare, arguments: ["text": draft], in: nil, contentWorld: .defaultClient) as? [String: Any]
                     guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
                     if restored?["ok"] as? Bool == true {
                         page.snapshot.draft = draft
                         page.restoredDraft = true
                     }
+                } else if provider.sharesOneConversation, state.webDrafts[Self.sharedDraftKey] == nil,
+                          state.webDrafts.values.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                    // Ambiguous legacy drafts remain available for explicit
+                    // recovery; an empty editor must not mark them discarded.
+                    page.restoredDraft = false
                 } else { page.restoredDraft = true }
             }
             try recordDraft(in: page, from: page.snapshot)
@@ -623,8 +684,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // An unavailable editor is not an empty draft. Failed restoration retains its saved text.
         guard snapshot.draftAvailable == true, snapshot.signedIn != false,
               page.restoredDraft || snapshot.hasDraft else { return }
-        if state.webDrafts[page.key] != snapshot.draft {
-            state.webDrafts[page.key] = snapshot.draft
+        let key = draftKey(for: page.comparisonID)
+        if state.webDrafts[key] != snapshot.draft {
+            state.webDrafts[key] = snapshot.draft
             try save()
         }
     }
@@ -782,7 +844,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
         guard !isSending else { return nil }
-        guard !state.hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
+        guard !hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
         isSending = true
         defer { isSending = false }
         var attempt = WebSendAttempt(text: text)
@@ -807,6 +869,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 throw WebSessionFailure.notSent(snapshot.reason)
             }
             if let destination = provider.canonicalConversationURL(url), state.conversationURLs[id.uuidString] != destination,
+               !provider.sharesOneConversation,
                !(provider == .dots && state.dotsURL == destination) {
                 throw WebSessionFailure.notSent("This page’s conversation is not linked to this comparison. Review it and continue in the page; nothing was sent from the shared composer.")
             }
@@ -864,6 +927,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         if attempt.status == .notSent {
             attempt.manualContext = attempt.receiptContext
+            if provider.sharesOneConversation, attempt.manualContext != nil, let page = receiptGenerations[attempt.id] {
+                manualRecoveryScopes[attempt.id] = (comparisonGeneration, page)
+            }
             attempt.recoveryConversationURL = nil
             attempt.receiptContext = nil
             receiptGenerations.removeValue(forKey: attempt.id)
@@ -889,7 +955,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // Across reloads/restarts only the already pinned candidate can be recovered.
         let pinned = attempt.pinnedConversationURL
         guard receiptGenerations[attempt.id]?.matches(page) == true || pinned != nil else { return invalidate() }
-        if context.originalURL == provider.newChatURL, current == context.originalURL { return false }
+        if !provider.sharesOneConversation, context.originalURL == provider.newChatURL, current == context.originalURL { return false }
         guard provider.acceptsReceipt(from: context.originalURL, at: current), let url = provider.canonicalConversationURL(current),
               pinned == nil || pinned == url,
               current.path == context.originalURL.path || (!context.existingPaths.contains(current.path) && !state.conversationURLs.values.contains(where: { provider.canonicalConversationURL($0) == url })),
@@ -899,7 +965,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         attempt.receiptContext = context
         let before = Set(context.baseline.map(\.id))
         let text = Self.normalized(attempt.text)
-        let matches = snapshot.messages.filter { !before.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == text }
+        let claimed = claimedMessageIDs(excluding: attempt)
+        let matches = snapshot.messages.filter { !before.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == text }
         guard matches.count <= 1 else { return invalidate() }
         guard let match = matches.first, let comparison = attempt.comparisonID else { return false }
         attempt.status = .observed
@@ -917,6 +984,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private func reconcileManualSubmission(in page: WebConversationPage) {
         guard !isSending, !storageFailed, let comparison = page.comparisonID,
               var attempt = state.attempts.first(where: { $0.comparisonID == comparison && $0.status == .notSent && $0.manualContext != nil }),
+              canAutomaticallyRecoverManual(attempt, in: page),
               let context = attempt.manualContext, let current = page.view.url,
               let url = provider.canonicalConversationURL(current),
               URL(string: page.snapshot.url).flatMap(provider.canonicalConversationURL) == url,
@@ -924,17 +992,19 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               page.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               provider.acceptsReceipt(from: context.originalURL, at: current),
               state.conversationURLs[page.key] == nil || state.conversationURLs[page.key] == url,
-              (provider == .dots || !state.conversationURLs.contains(where: { $0.key != page.key && provider.canonicalConversationURL($0.value) == url })),
+              (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != page.key && provider.canonicalConversationURL($0.value) == url })),
               current.path == context.originalURL.path || !context.existingPaths.contains(current.path),
               page.snapshot.messages.starts(with: context.baseline) else { return }
         let previous = Set(context.baseline.map(\.id))
         let expectedText = Self.normalized(attempt.text)
-        let matches = page.snapshot.messages.filter { !previous.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == expectedText }
+        let claimed = claimedMessageIDs(excluding: attempt)
+        let matches = page.snapshot.messages.filter { !previous.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == expectedText }
         guard matches.count == 1 else { return }
         attempt.status = .observed
         attempt.messageID = matches[0].id
         attempt.conversationURL = url
         attempt.manualContext = nil
+        manualRecoveryScopes.removeValue(forKey: attempt.id)
         attempt.detail = "The request appeared after using the page directly. MsgBlast did not click Send."
         state.conversationURLs[page.key] = url
         do { try store(attempt); page.error = nil; page.readinessError = nil; publish(page) }
@@ -974,6 +1044,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public func hasUnresolvedSend(_ text: String) -> Bool {
+        if provider.sharesOneConversation {
+            return state.attempts.contains { $0.status.isUnresolved && Self.normalized($0.text) == Self.normalized(text) }
+        }
         if !provider.usesNativeConversation { return state.hasUnresolvedSend(text) }
         return hasIncompleteNativeRequest(for: state.comparisonID)
     }

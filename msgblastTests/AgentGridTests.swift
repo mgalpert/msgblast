@@ -12,7 +12,7 @@ final class AgentGridTests: XCTestCase {
         let restored = try JSONDecoder().decode(AppState.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertNil(restored.agentGrid)
         XCTAssertEqual(AgentGridLayout.featured, [
-            .web(.muse), .web(.chatgpt), .web(.claude), .web(.grok), .web(.codexCLI), .web(.dots),
+            .web(.muse), .web(.chatgpt), .web(.claude), .web(.grok), .web(.codexCLI), .web(.dots), .web(.os3),
             .featuredMessages(.instinct), .featuredMessages(.fo), .featuredMessages(.szn)
         ])
         XCTAssertEqual(restored.selection, [contact.id])
@@ -37,7 +37,7 @@ final class AgentGridTests: XCTestCase {
         XCTAssertFalse(savedGrid.visibleIDs.contains(.web(.muse)))
         XCTAssertEqual(savedGrid.visibleIDs.prefix(2), [.runtime(.openclaw), .web(.grokbot)])
         XCTAssertEqual(savedGrid.visibleIDs.filter { $0 == .web(.grokbot) }.count, 1)
-        XCTAssertEqual(savedGrid.visibleIDs[8], .web(.chatgpt))
+        XCTAssertEqual(savedGrid.visibleIDs[9], .web(.chatgpt))
         XCTAssertEqual(restored.agents, [contact])
         XCTAssertEqual(restored.selection, [contact.id])
         XCTAssertEqual(restored.draft, "Keep my unsent message")

@@ -244,6 +244,10 @@ private struct OnboardingProviderView: View {
                 cliSetup(provider)
                 Spacer()
             } else {
+                if session.provider.sharesOneConversation {
+                    Text("rabbit OS3 uses one conversation for your account. Each comparison continues that conversation and can use its earlier context.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 if let notice = setup.browserImportNotice {
                     Text(notice).font(.callout).foregroundStyle(.secondary)
                 }
@@ -339,13 +343,16 @@ private struct OnboardingRuntimeView: View {
                 if personalAgent.detectingLocalAgents {
                     ProgressView("Checking installation…")
                 } else if installed {
-                    Label("Installed on this Mac", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Label("Command-line app found", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     Button("Continue in Terminal") { personalAgent.setUp(runtime) }
                         .buttonStyle(.borderedProminent).disabled(model.demo)
                 } else {
                     Text("\(runtime.name) isn’t installed yet.").font(.headline)
                     Link("Install \(runtime.name)", destination: runtime.documentation)
                 }
+                LocalAgentTerminalInstructions(runtime: runtime)
+                Text("msgblast checks installation here, not provider sign-in or model setup. You’ll still need a website, CLI chat, Grok Bot, or Messages agent to start chatting.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.demo { Label("Demo installation · Terminal setup is disabled", systemImage: "testtube.2").font(.caption).foregroundStyle(.secondary) }
                 if let error = personalAgent.accountError { Text(error).foregroundStyle(.orange) }
             }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
