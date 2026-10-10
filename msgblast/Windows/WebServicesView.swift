@@ -15,22 +15,31 @@ struct AgentsWorkspaceView: View {
     var newBlastRequest: UUID? = nil
     @State private var showingConnectionIntro = false
     @State private var signInProviders: [WebProvider] = []
+    @State private var editingAgents = false
     private var busy: Bool { model.busy || model.webBroadcastBusy || web.sessions.contains { $0.isSending } }
-    private var nativeRecipients: [Agent] { model.state.agents.filter { model.state.selection.contains($0.id) } }
+    private var nativeRecipients: [Agent] {
+        let ids = model.messageGridIDs
+        let shown = Set(model.agentGridLayout.visibleIDs)
+        return model.state.agents.filter { model.state.selection.contains($0.id) &&
+            (showingComparison || shown.contains(ids[$0.id] ?? .messages($0.id))) }
+    }
+    private var selectedWebSessions: [WebAgentSession] {
+        web.selected.filter { showingComparison || model.isVisibleInAgentGrid(.web($0.provider)) }
+    }
     private var attachmentComparisonID: UUID? { showingComparison ? nativeComparison?.id : nil }
     private var attachments: [MessageAttachment] { model.attachmentDraft(comparisonID: attachmentComparisonID) }
     private var sharedSendDisabledReason: String? {
         guard !busy else { return nil }
-        let drafts = web.selected.filter { $0.snapshot.hasDraft }.map { $0.provider.name }
+        let drafts = selectedWebSessions.filter { $0.snapshot.hasDraft }.map { $0.provider.name }
         guard !drafts.isEmpty else { return nil }
         let names = drafts.formatted(.list(type: .and))
         return "Finish or clear the draft in \(names), or deselect \(names) to send to the other agents."
     }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !busy && !showingConnectionIntro && (!web.selected.isEmpty || !nativeRecipients.isEmpty)
-            && (web.selected.isEmpty || (!text.isEmpty && attachments.isEmpty))
-            && web.selected.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text) }
+        return !busy && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
+            && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
+            && selectedWebSessions.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
     }
 
@@ -39,7 +48,11 @@ struct AgentsWorkspaceView: View {
             if showingComparison {
                 comparisonPanes
             } else {
-                agentPicker
+                AgentGridView(model: model, web: web, editing: $editingAgents, busy: busy,
+                    toggleMessages: toggle, openChat: { session in
+                        if web.comparisonID == nil { model.deselectHiddenGridRecipients(); model.persist() }
+                        session.connect(); showingComparison = true
+                    })
             }
             Divider()
             composer
@@ -47,12 +60,21 @@ struct AgentsWorkspaceView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .overlay { if showingConnectionIntro { connectionIntro } }
         .task { web.connectSelected() }
-        .onChange(of: newBlastRequest) { _, _ in showingConnectionIntro = false }
+        .onChange(of: newBlastRequest) { _, _ in showingConnectionIntro = false; editingAgents = false }
+        .onChange(of: showingComparison) { _, value in if value { editingAgents = false } }
         .toolbar {
+            if !showingComparison {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(editingAgents ? "Done" : "Edit") { editingAgents.toggle() }
+                        .accessibilityLabel(editingAgents ? "Done editing agents" : "Edit agents")
+                        .disabled(busy)
+                }
+            }
             ToolbarItem(placement: .navigation) {
                 Button {
                     showingConnectionIntro = false
                     showingComparison = false
+                    editingAgents = false
                     model.selectWorkspace(nil)
                 } label: {
                     Label("New Blast", systemImage: "square.and.pencil")
@@ -89,33 +111,6 @@ struct AgentsWorkspaceView: View {
 
     private var comparisonChatCount: Int { web.displayed.count + (nativeComparison?.members.count ?? 0) }
 
-    private var agentPicker: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 3), spacing: 28) {
-                    ForEach(web.availableSessions, id: \.provider) { session in
-                        PinnedAgentTile(agent: AgentArtwork.agent(for: session), selected: session.state.selected, size: tileSize(geometry)) {
-                            web.toggle(session)
-                        }.disabled(busy).help("\(session.provider.name) · \(session.locationLabel)")
-                            .contextMenu {
-                                Button("Open chat") {
-                                    session.connect(); showingComparison = true
-                                }.disabled(busy || !session.state.selected)
-                            }
-                    }
-                    ForEach(model.state.agents) { agent in
-                        PinnedAgentTile(agent: agent, selected: model.state.selection.contains(agent.id), size: tileSize(geometry)) {
-                            toggle(agent.id)
-                        }.disabled(busy || model.route(agent) == nil)
-                            .help(model.route(agent)?.handle ?? "No matching conversation")
-                    }
-                }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 20)
-            }
-        }
-    }
-
-    private func tileSize(_ geometry: GeometryProxy) -> CGFloat { min(100, max(48, (geometry.size.width - 80) / 3)) }
-
     private var comparisonPanes: some View {
         chatColumns
             .background(ChatWindowFrame(chatCount: comparisonChatCount))
@@ -146,12 +141,12 @@ struct AgentsWorkspaceView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            let signedOut = web.selected.filter { !$0.provider.usesNativeConversation && $0.snapshot.signedIn == false }
+            let signedOut = selectedWebSessions.filter { !$0.provider.usesNativeConversation && $0.snapshot.signedIn == false }
             if !signedOut.isEmpty {
                 Text("Sign in required: \(signedOut.map { $0.provider.name }.formatted(.list(type: .and)))")
                     .font(.caption).foregroundStyle(.orange).accessibilityIdentifier("Website sign-in status")
             }
-            if !web.selected.isEmpty && !attachments.isEmpty {
+            if !selectedWebSessions.isEmpty && !attachments.isEmpty {
                 Text("Web agents support text here. Remove the attachments or deselect them to send.")
                     .font(.caption).foregroundStyle(.orange)
             }
@@ -184,7 +179,7 @@ struct AgentsWorkspaceView: View {
                          attachments: attachments, addAttachments: { await model.addAttachments($0, comparisonID: attachmentComparisonID) },
                          removeAttachment: { id in model.setAttachmentDraft(attachments.filter { $0.id != id }, comparisonID: attachmentComparisonID) },
                          placeholder: "Message", accessibilityName: "Shared prompt", sendLabel: "Send & compare",
-                         disabled: !canSend, attachmentsEnabled: web.selected.isEmpty,
+                         disabled: !canSend, attachmentsEnabled: selectedWebSessions.isEmpty,
                          sendDisabledReason: sharedSendDisabledReason, send: send, focusRequest: newBlastRequest)
         }.padding(20)
     }
@@ -244,16 +239,26 @@ struct AgentsWorkspaceView: View {
 
     private func send() {
         guard canSend else { return }
-        if !showingComparison && web.selected.isEmpty {
-            Task { await model.start() }
+        let sessions = selectedWebSessions
+        let recipients = Set(nativeRecipients.map(\.id))
+        if !showingComparison {
+            let previousSelection = model.state.selection
+            model.state.selection = recipients
+            do { try model.save() }
+            catch { model.state.selection = previousSelection; model.error = error.localizedDescription; return }
+            let included = Set(sessions.map(\.provider))
+            for session in web.sessions where session.state.selected && !included.contains(session.provider) {
+                session.updateState { $0.selected = false }
+            }
+        }
+        if !showingComparison && selectedWebSessions.isEmpty {
+            Task { await model.start(recipientIDs: recipients) }
             return
         }
         let originalDraft = model.state.draft
         let sentAttachments = attachments
         let broadcastCreated = Date()
-        let recipients = Set(nativeRecipients.map(\.id))
         let model = model
-        let sessions = web.selected
         let existingID = showingComparison ? nativeComparison?.id : nil
         model.webBroadcastBusy = true
         showingComparison = true

@@ -189,7 +189,7 @@ private struct DiscoverSearchKey: Hashable {
     let databaseAvailable: Bool
 }
 
-private struct DiscoverAccessView: View {
+struct DiscoverAccessView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var guide: MessagesAccessGuide
     init(model: AppModel) { self.model = model; guide = model.accessGuide }

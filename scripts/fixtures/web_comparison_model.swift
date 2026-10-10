@@ -58,6 +58,53 @@ import msgblastCore
         loaded = try migrationStore.load()
         precondition(loaded.comparisons.allSatisfy { $0.webProviderIdentityVersion == 2 })
         print("PASS: LocalStore loads healthy comparisons despite a referenced corrupt provider, preserves that file, and retries successfully after repair.")
+        let gridModel = AppModel()
+        gridModel.webAgents.setEnabled(true, for: .claudeCode)
+        let savedAgentIDs = gridModel.state.agents.map { AgentGridID.messages($0.id) }
+        precondition(gridModel.state.agentGrid == nil)
+        precondition(gridModel.agentGridLayout.visibleIDs == AgentGridLayout.featured + [.web(.claudeCode)] + savedAgentIDs)
+        print("PASS: first-use grid preserves featured order, enabled optional providers, and every saved Messages agent.")
+        let photoModel = AppModel()
+        let fixtureRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let oldPhoto = try Data(contentsOf: fixtureRoot.appendingPathComponent("instinct-legacy-placeholder.jpg"))
+        let currentPhoto = try photoResource("instinct", in: fixtureRoot)
+        let customPhoto = try photoResource("fo", in: fixtureRoot)
+        var instinct = Agent(contactID: "fixture-photo-instinct", name: "Instinct", handles: ["instinct@example.com"], avatar: oldPhoto)
+        photoModel.state.agents.append(instinct)
+        func displayedInstinctPhoto() -> Data? {
+            let entry = photoModel.agentGridCatalog.first { $0.id == .featuredMessages(.instinct) }!
+            return AgentArtwork.avatar(for: entry.agent, name: entry.name)
+        }
+        precondition(displayedInstinctPhoto() == currentPhoto, "The saved legacy Instinct placeholder must not shadow the updated bundled photo")
+        instinct.avatar = customPhoto
+        photoModel.state.agents[photoModel.state.agents.count - 1] = instinct
+        precondition(displayedInstinctPhoto() == customPhoto, "A genuine contact photo must retain priority")
+        instinct.avatar = nil
+        photoModel.state.agents[photoModel.state.agents.count - 1] = instinct
+        precondition(displayedInstinctPhoto() == currentPhoto, "A saved contact without a photo must use featured artwork")
+        print("PASS: Instinct's legacy cached placeholder upgrades to current artwork; custom contact photos retain priority and absent photos fall back.")
+        let hiddenContact = gridModel.state.agents[0]
+        let draftBeforeGrid = gridModel.state.draft
+        var grid = gridModel.agentGridLayout
+        grid.hide(.web(.muse)); grid.hide(.messages(hiddenContact.id))
+        precondition(gridModel.setAgentGrid(grid))
+        precondition(!gridModel.state.selection.contains(hiddenContact.id))
+        gridModel.state.selection.insert(hiddenContact.id)
+        gridModel.webAgents.restoreSelection(for: [.muse, .chatgpt])
+        gridModel.selectWorkspace(nil)
+        precondition(!gridModel.state.selection.contains(hiddenContact.id))
+        precondition(!gridModel.webAgents.selected.contains { $0.provider == .muse })
+        precondition(gridModel.webAgents.selected.contains { $0.provider == .chatgpt })
+        gridModel.state.selection.insert(hiddenContact.id)
+        gridModel.webAgents.restoreSelection(for: [.muse, .chatgpt])
+        grid.add(.web(.muse)); grid.add(.messages(hiddenContact.id))
+        precondition(gridModel.setAgentGrid(grid))
+        precondition(!gridModel.state.selection.contains(hiddenContact.id))
+        precondition(!gridModel.webAgents.selected.contains { $0.provider == .muse })
+        precondition(gridModel.agentGridLayout.visibleIDs.first == .messages(hiddenContact.id))
+        precondition(gridModel.state.agents.contains { $0.id == hiddenContact.id })
+        precondition(gridModel.state.draft == draftBeforeGrid)
+        print("PASS: actual AppModel hides and restores tiles without deleting contacts/drafts or inheriting archived recipient selections; new tiles take first position.")
         let model = AppModel()
         precondition(model.demo && model.local.url.path.contains("UIFixture"))
         model.coordinator = WindowCoordinator(model: model)
@@ -138,7 +185,7 @@ import msgblastCore
         model.coordinator = nil
         model.state.selection = [recipient.id]
         model.state.draft = "Native privacy original"
-        await model.start()
+        await model.start(recipientIDs: model.state.selection)
         let privacyID = model.state.comparisons[0].id
         let privacyIndex = model.index(privacyID)!
         model.state.comparisons[privacyIndex].privateDrafts[recipient.id.uuidString] = "Native private detail"
@@ -163,7 +210,7 @@ import msgblastCore
         model.webBroadcastBusy = false
         model.state.selection = [recipient.id, newcomer.id]
         model.state.draft = "Chronology original"
-        await model.start()
+        await model.start(recipientIDs: model.state.selection)
         let orderID = model.state.comparisons[0].id
         let orderIndex = model.index(orderID)!
         var earlier = FollowUp(text: "Shared A", memberIDs: [recipient.id, newcomer.id])
@@ -197,7 +244,7 @@ import msgblastCore
         print("PASS: partial-failure receipt fixture -> B sent through AppModel -> A retried through AppModel -> new agent receives Original,A,B once, in original order. No real sends.")
         model.state.selection = [recipient.id]
         model.state.draft = "Delayed broadcast original"
-        await model.start()
+        await model.start(recipientIDs: model.state.selection)
         let raceID = model.state.comparisons[0].id
         let raceIndex = model.index(raceID)!
         model.state.comparisons[raceIndex].webProviders = [.muse]
@@ -259,5 +306,10 @@ import msgblastCore
         precondition(model.transcript(safe, member: safeMember).filter(\.outgoing).map(\.text) == ["Delayed broadcast original", "Delayed shared ask"])
         print("PASS: deterministic delayed web completion preserves the exact broadcast UUID; private send is blocked with draft retained, injected later private ledger remains unmarked, and a new agent receives only Original + Shared. Actual AgentBroadcast + AppModel with simulated transport.")
         print("PASS: actual AppModel + WindowCoordinator restore comparison ID, native recipient, provider selection, saved website URLs including the ongoing Dots thread and separate Codex CLI/Claude Code sessions; disabled archived CLI remains readable without sending. All sends use local fixtures.")
+    }
+
+    private static func photoResource(_ name: String, in fixtureRoot: URL) throws -> Data {
+        let root = fixtureRoot.deletingLastPathComponent().deletingLastPathComponent()
+        return try Data(contentsOf: root.appendingPathComponent("msgblast/Resources/WebAgentIcons/\(name).jpg"))
     }
 }

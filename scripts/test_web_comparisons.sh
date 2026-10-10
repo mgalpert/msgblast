@@ -8,6 +8,7 @@ web_frameworks="$web_build/Build/Products/Debug"
 web_sparkle="$web_build/SourcePackages/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64"
 web_tmp="$(mktemp -d "${TMPDIR:-/tmp}/msgblast-web-checks.XXXXXX")"
 trap 'rm -rf "$web_tmp"' EXIT
+cp -R "$web_root/msgblast/Resources/WebAgentIcons" "$web_tmp/WebAgentIcons"
 web_flags=(-swift-version 6 -D DEBUG -parse-as-library -module-cache-path "$web_tmp/modules"
     -target "$(uname -m)-apple-macos15.0" -F "$web_frameworks" -F "$web_sparkle"
     -framework msgblastCore -framework Sparkle

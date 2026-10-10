@@ -77,7 +77,11 @@ final class AppModel: ObservableObject {
         if state.onboarding?.stage == .choosing, state.onboarding?.completed.isEmpty == true {
             state.selection = []
             webAgents.sessions.forEach { $0.updateState { $0.selected = false } }
-        } else if state.onboarding == nil { state.selection = Set(state.agents.map(\.id)) }
+        } else if state.onboarding == nil && state.agentGrid == nil {
+            let ids = messageGridIDs
+            let shown = Set(agentGridLayout.visibleIDs)
+            state.selection = Set(state.agents.filter { shown.contains(ids[$0.id] ?? .messages($0.id)) }.map(\.id))
+        }
         persist()
         accessGuide.checkHistory = { [weak self] in
             guard let self, !self.busy else { return false }
@@ -301,6 +305,7 @@ final class AppModel: ObservableObject {
                 if route(existing) != nil { state.selection.insert(existing.id) }
             } else {
                 state.agents.append(saved)
+                if state.agentGrid != nil { state.agentGrid?.add(gridID(for: saved)) }
                 if route(saved) != nil { state.selection.insert(saved.id) }
             }
             try save()
@@ -335,7 +340,7 @@ final class AppModel: ObservableObject {
         try RecipientSet.validate(result)
         return result
     }
-    func start() async {
+    func start(recipientIDs: Set<UUID>) async {
         let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = state.attachmentsDraft ?? []
         guard (!text.isEmpty || !attachments.isEmpty), !busy else { return }
@@ -345,7 +350,7 @@ final class AppModel: ObservableObject {
                 defer { busy = false }
                 try await contacts.request()
             }
-            let members = try validateMembers(prompt: text)
+            let members = try validateMembers(prompt: text, selectedIDs: recipientIDs)
             var comparison = Comparison(prompt: text, members: members)
             if !attachments.isEmpty {
                 comparison.attachments = attachments
@@ -365,6 +370,7 @@ final class AppModel: ObservableObject {
         persist()
     }
     func selectWorkspace(_ id: UUID?, promotingDraft: Bool = false) {
+        if id == nil { deselectHiddenGridRecipients(); persist() }
         let previous = webAgents.comparisonID
         guard previous != id else { return }
         var drafts = state.workspaceDrafts ?? [:]
