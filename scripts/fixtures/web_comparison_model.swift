@@ -30,6 +30,7 @@ import msgblastCore
     }
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared
+        try await performanceChecks()
         let migrationStore = LocalStore(demo: true, isolated: true)
         let migrationDirectory = migrationStore.url.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: migrationDirectory) }
@@ -376,6 +377,202 @@ import msgblastCore
         await instanceModel.webAgents.cancelAndWait()
         print("PASS: actual AppModel + LocalStore + WebAgents preserve two ChatGPT identities in one comparison, separate chat URLs/private follow-ups, and exact restored membership. Local website fixtures only.")
         print("PASS: actual AppModel + WindowCoordinator restore comparison ID, native recipient, provider selection, saved website URLs including the ongoing Dots thread and separate Codex CLI/Claude Code sessions; disabled archived CLI remains readable without sending. All sends use local fixtures.")
+    }
+
+    @MainActor private static func performanceChecks() async throws {
+        let model = AppModel()
+        defer { model.webAgents.beginShutdown(); model.timer?.invalidate(); try? FileManager.default.removeItem(at: model.local.url.deletingLastPathComponent()) }
+        precondition(!model.state.performanceTrackingEnabled && model.performance.events.isEmpty)
+        model.webAgents.setEnabled(true, for: .codexCLI)
+        model.webAgents.setEnabled(true, for: .grokbot)
+        let native = model.webAgents.session(for: .codexCLI)!
+        let web = model.webAgents.session(for: .chatgpt)!
+        let bot = model.webAgents.session(for: .grokbot)!
+        let recipient = model.state.agents[0]
+        model.setPerformanceTracking(true)
+        let id = await model.prepareWebComparison("Synthetic recording fixture", recipientIDs: [recipient.id], agents: [web.id, native.id, bot.id])!
+        _ = await model.webAgents.prepareComparison(id, for: [web, native, bot])
+        let initialGroup = PerformanceRequestGroup(id: id.uuidString, targetAgentIDs: [recipient.id.uuidString, web.id.id, native.id.id, bot.id.id])
+        await model.submit(id, retry: false, recordingGroup: initialGroup)
+        let results = await WebAgents.send("Synthetic recording fixture", to: [web, native, bot], comparisonID: id, scope: .shared, requestGroup: initialGroup)
+        precondition(results.count == 3)
+        await bot.refresh()
+        for _ in 0..<30 {
+            await web.refresh()
+            if Set(model.performance.replies.map { $0.agent.connection }).count == 4 { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let replies = model.performance.replies
+        precondition(Set(replies.map { $0.agent.connection }) == Set([.website, .cli, .messages, .grokBot]), "Every actual fixture connector must record its replies")
+        precondition(replies.allSatisfy { $0.scope == .shared }, "Original shared reply scope is preserved")
+        let reply = replies.first { $0.agent.connection == .cli }!
+        precondition(PerformanceMetrics.firstReplyMS(events: model.performance.events, turnID: reply.turnID) != nil)
+        model.performance.feedback(reply, .favorite)
+        precondition(model.performance.replies.first { $0.id == reply.id }?.feedback == .favorite)
+        model.performance.feedback(model.performance.replies.first { $0.id == reply.id }!, .negative)
+        precondition(model.performance.replies.first { $0.id == reply.id }?.feedback == .negative)
+        _ = await native.send("Synthetic private follow-up", comparisonID: id, scope: .private)
+        precondition(model.performance.replies.last { $0.agent.connection == .cli }?.scope == .private)
+        let privateTurn = model.performance.events.last { $0.kind == .turnStarted && $0.agent?.connection == .cli }!
+        precondition(privateTurn.turnPosition == 1)
+        // A normal incoming Messages reply need not be threaded.
+        if let index = model.messages[model.comparison(id)!.members[0].chat.id]?.lastIndex(where: { !$0.outgoing }) {
+            let chat = model.comparison(id)!.members[0].chat.id
+            let firstReply = model.messages[chat]![index]
+            model.messages[chat]![index].replyTo = nil
+            model.messages[chat]![index].text += " Edited visible reply."
+            let captured = model.performance.replies.last { $0.messageID == firstReply.guid }!
+            precondition(captured.turnID != nil, "Unambiguous ordinary incoming replies use the owned outgoing receipt")
+        }
+        let repeated = "Synthetic recording fixture"
+        let sharedActionID = UUID()
+        let sharedGroup = PerformanceRequestGroup(id: sharedActionID.uuidString, targetAgentIDs: initialGroup.targetAgentIDs)
+        _ = await AgentBroadcast.send(draft: repeated, currentDraft: { repeated }, clearDraft: {}, web: { text in
+            await WebAgents.send(text, to: [web, native, bot], comparisonID: id, scope: .shared, requestGroup: sharedGroup)
+        }, messages: { text in
+            model.state.comparisons[model.index(id)!].allDraft = text
+            await model.followUp(id, recipients: [recipient.id], newAttemptID: sharedActionID, recordingScope: .shared, recordingGroup: sharedGroup)
+            return id
+        })
+        await bot.refresh()
+        let sharedTurns = model.performance.events.filter { $0.kind == .turnStarted && $0.requestGroupID == sharedGroup.id }
+        precondition(sharedTurns.count == 4 && sharedTurns.allSatisfy { $0.targetAgentIDs == initialGroup.targetAgentIDs })
+        precondition(Set(sharedTurns.compactMap(\.agent?.id)) == Set(initialGroup.targetAgentIDs))
+        precondition(sharedGroup.id != initialGroup.id && sharedTurns.allSatisfy { $0.text == repeated })
+        let positions = sharedTurns.compactMap { $0.turnPosition }
+        precondition(Set(positions).count > 1, "Private turns must not be used to align shared follow-ups by per-agent position")
+        let subsetActionID = UUID()
+        let subsetGroup = PerformanceRequestGroup(id: subsetActionID.uuidString, targetAgentIDs: [recipient.id.uuidString, web.id.id, native.id.id])
+        _ = await AgentBroadcast.send(draft: repeated, currentDraft: { repeated }, clearDraft: {}, web: { text in
+            await WebAgents.send(text, to: [web, native], comparisonID: id, scope: .private, requestGroup: subsetGroup)
+        }, messages: { text in
+            model.state.comparisons[model.index(id)!].allDraft = text
+            await model.followUp(id, recipients: [recipient.id], newAttemptID: subsetActionID, recordingScope: .private, recordingGroup: subsetGroup)
+            return id
+        })
+        let subsetTurns = model.performance.events.filter { $0.kind == .turnStarted && $0.requestGroupID == subsetGroup.id }
+        precondition(subsetTurns.count == 3 && subsetTurns.allSatisfy { $0.targetAgentIDs == subsetGroup.targetAgentIDs })
+        precondition(!subsetTurns.contains { $0.agent?.id == bot.id.id } && !subsetGroup.targetAgentIDs.contains(bot.id.id))
+        print("PASS: actual broadcast hooks preserve shared action identity after private turns and repeated text; target IDs exclude the Bot from a later subset action without guessing by text or position.")
+        let comparisonIndex = model.index(id)!
+        model.state.comparisons[comparisonIndex].allDraft = "Synthetic actual Messages follow-up"
+        await model.followUp(id, recipients: [recipient.id], recordingScope: .private)
+        try await waitUntil { model.performance.replies.contains { $0.agent.connection == .messages && $0.scope == .private } }
+        let messageFollowUp = model.performance.replies.last { $0.agent.connection == .messages && $0.scope == .private }!
+        precondition(PerformanceMetrics.firstReplyMS(events: model.performance.events, turnID: messageFollowUp.turnID) != nil)
+        let other = model.webAgents.session(for: .claude)!
+        let copy = try model.webAgents.duplicate(web, name: "Renamed helper")
+        model.performance.attach(model.webAgents)
+        _ = await model.webAgents.prepareComparison(id, for: [web, other, copy])
+        _ = await WebAgents.send("Synthetic canonical provider check", to: [web, other, copy], comparisonID: id, scope: .shared)
+        for _ in 0..<15 { await web.refresh(); await other.refresh(); await copy.refresh(); try await Task.sleep(for: .milliseconds(50)) }
+        let identities = model.performance.events.filter { $0.kind == .turnStarted && $0.text == "Synthetic canonical provider check" }.compactMap(\.agent)
+        precondition(Set(identities.compactMap(\.provider)) == Set(["chatgpt", "claude"]))
+        precondition(Set(identities.map(\.id)).count == 3 && identities.allSatisfy { $0.model == nil })
+        let beforeManual = model.performance.events.filter { $0.kind == .turnStarted && $0.agent?.id == web.id.id }.count
+        _ = try await web.webView.callAsyncJavaScript("const input=document.querySelector('textarea');input.value='Synthetic manual follow-up';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#fixture-send').click()", arguments: [:], in: nil, contentWorld: .page)
+        try await Task.sleep(for: .milliseconds(500)); await web.refresh()
+        let manual = model.performance.events.last { $0.kind == .turnStarted && $0.text == "Synthetic manual follow-up" }
+        precondition(manual != nil && manual?.scope == .unknown)
+        precondition(model.performance.events.filter { $0.kind == .turnStarted && $0.agent?.id == web.id.id }.count == beforeManual + 1)
+        precondition(!model.performance.events.contains { $0.kind == .dispatched && $0.turnID == manual?.turnID })
+        _ = try await web.webView.callAsyncJavaScript("const reply=[...document.querySelectorAll('[data-message-author-role=assistant]')].at(-1);const hidden=document.createElement('span');hidden.style.display='none';hidden.textContent='MSGBLAST_PRIVATE_DOM_PAYLOAD';reply.append(hidden);const script=document.createElement('script');script.textContent='/* MSGBLAST_PRIVATE_DOM_PAYLOAD */';reply.append(script);const top=reply.cloneNode(true);top.hidden=true;top.dataset.messageId='hidden-fixture-id';top.textContent='MSGBLAST_PRIVATE_DOM_PAYLOAD';reply.after(top)", arguments: [:], in: nil, contentWorld: .page)
+        await web.refresh()
+        _ = try await web.webView.callAsyncJavaScript("const formatted=document.createElement('article');formatted.dataset.messageAuthorRole='assistant';formatted.dataset.messageId='formatting-fixture';formatted.innerHTML=markup;document.getElementById('transcript').append(formatted)", arguments: ["markup": "<p>First paragraph.<br>Second line.</p><p>Another paragraph.</p><pre><code>def example():\n    value = 1\n    return value\n</code></pre><span style='display:none'>MSGBLAST_PRIVATE_DOM_PAYLOAD</span>"], in: nil, contentWorld: .page)
+        await web.refresh()
+        let formatted = model.performance.replies.last { $0.messageID.hasSuffix(":formatting-fixture") }!
+        precondition(formatted.text.contains("First paragraph.\nSecond line.\n\nAnother paragraph."))
+        precondition(formatted.text == "First paragraph.\nSecond line.\n\nAnother paragraph.\n\ndef example():\n    value = 1\n    return value\n")
+        let diskProjection = try PerformanceRecorder(directory: model.local.url.deletingLastPathComponent(), fixture: true)
+        precondition(diskProjection.replies.last { $0.messageID.hasSuffix(":formatting-fixture") }?.text == formatted.text)
+        let journal = try String(contentsOf: model.local.url.deletingLastPathComponent().appendingPathComponent("Performance/events.jsonl"), encoding: .utf8)
+        precondition(!journal.contains("MSGBLAST_PRIVATE_DOM_PAYLOAD") && !model.performance.replies.contains { $0.text.contains("MSGBLAST_PRIVATE_DOM_PAYLOAD") })
+        print("PASS: actual WebKit capture preserves canonical providers/copy identity and manual follow-up membership; hidden DOM elements, descendants, and scripts never enter the journal.")
+        model.setPerformanceTracking(false)
+        let count = model.performance.events.count
+        _ = await native.send("Synthetic disabled follow-up", comparisonID: id, scope: .private)
+        precondition(model.performance.events.count == count && !web.performanceObservationEnabled)
+        let restored = try PerformanceRecorder(directory: model.local.url.deletingLastPathComponent(), fixture: true)
+        precondition(restored.events.count == count)
+        model.setPerformanceTracking(true)
+        let beforeSleep = model.performance.events.count
+        model.performance.gapAll(reason: "synthetic-sleep")
+        precondition(model.performance.events.count == beforeSleep, "Closed historical comparisons cannot be resurrected by sleep")
+        try messagesReceiptChecks()
+        try await captureFailureChecks()
+        print("PASS: actual AppModel + WebKit website + Messages + CLI + Bot synthetic sends preserve scopes, local timing, feedback revisions, disk restoration, and default/off boundaries. No live requests.")
+    }
+
+    @MainActor private static func messagesReceiptChecks() throws {
+        let model = AppModel(); model.setPerformanceTracking(true)
+        defer { model.timer?.invalidate(); model.webAgents.beginShutdown(); try? FileManager.default.removeItem(at: model.local.url.deletingLastPathComponent()) }
+        let agent = model.state.agents[0], chat = model.chats[0]
+        var member = Member(agentID: agent.id, name: agent.name, chat: chat)
+        member.anchor = Anchor(rowID: 1, guid: "owned-original")
+        var comparison = Comparison(prompt: "Synthetic original", members: [member])
+        model.performance.seedMessages(comparison: comparison, member: member, transcript: [])
+        let originalRequest = UUID()
+        model.performance.beginMessages(comparisonID: comparison.id, member: member, text: comparison.prompt, scope: .shared, requestID: originalRequest)
+        model.performance.messagesStatus(comparisonID: comparison.id, member: member, requestID: originalRequest, kind: .dispatched)
+        let original = Message(id: 1, guid: "owned-original", chatID: chat.id, text: comparison.prompt, outgoing: true)
+        let reply = Message(id: 2, guid: "normal-reply", chatID: chat.id, text: "Ordinary reply without threading", outgoing: false)
+        model.performance.observeMessages(comparison: comparison, member: member, transcript: [original, reply])
+        precondition(model.performance.replies.last?.turnID != nil)
+        precondition(PerformanceMetrics.firstReplyMS(events: model.performance.events, turnID: model.performance.replies.last?.turnID) != nil)
+        let afterReply = model.performance.events.count
+        model.performance.observeMessages(comparison: comparison, member: member, transcript: [original, reply])
+        precondition(model.performance.events.count == afterReply, "Unchanged Messages refresh appends nothing")
+        var follow = FollowUp(text: "Synthetic follow-up", memberIDs: [member.id]); follow.sharedWithAll = false
+        var payload = OutgoingPayload(text: follow.text, attachments: [])
+        payload.parts[0].anchor = Anchor(rowID: 3, guid: "owned-follow-up")
+        follow.payloads = [member.id.uuidString: payload]; comparison.followUps = [follow]
+        model.performance.beginMessages(comparisonID: comparison.id, member: member, text: follow.text, scope: .private, requestID: UUID(), followUpID: follow.id)
+        let outgoing = Message(id: 3, guid: "owned-follow-up", chatID: chat.id, text: follow.text, outgoing: true)
+        let following = Message(id: 4, guid: "normal-follow-up-reply", chatID: chat.id, text: "Ordinary follow-up answer", outgoing: false)
+        model.performance.observeMessages(comparison: comparison, member: member, transcript: [original, reply, outgoing, following])
+        precondition(model.performance.replies.last?.scope == .private && model.performance.replies.last?.turnID != nil)
+        let manual = Message(id: 5, guid: "unowned-send", chatID: chat.id, text: "Manual outside msgblast", outgoing: true)
+        let ambiguous = Message(id: 6, guid: "unassigned-reply", chatID: chat.id, text: "Cannot infer ownership", outgoing: false)
+        model.performance.observeMessages(comparison: comparison, member: member, transcript: [original, reply, outgoing, following, manual, ambiguous])
+        precondition(model.performance.replies.last?.turnID == nil)
+        var plain = FollowUp(text: "Plain-text follow-up", memberIDs: [member.id]); plain.sharedWithAll = false; plain.states[member.id.uuidString] = .submitted
+        comparison.followUps.append(plain)
+        model.performance.beginMessages(comparisonID: comparison.id, member: member, text: plain.text, scope: .private, requestID: UUID(), followUpID: plain.id)
+        let plainOutgoing = Message(id: 7, guid: "plain-owned-follow", chatID: chat.id, text: plain.text, outgoing: true)
+        let plainReply = Message(id: 8, guid: "plain-follow-reply", chatID: chat.id, text: "Unambiguous plain follow-up answer", outgoing: false)
+        model.performance.observeMessages(comparison: comparison, member: member, transcript: [original, reply, outgoing, following, manual, ambiguous, plainOutgoing, plainReply])
+        precondition(model.performance.replies.last?.turnID != nil && model.performance.replies.last?.scope == .private)
+        var pending = comparison; pending.id = UUID()
+        model.performance.seedMessages(comparison: pending, member: member, transcript: [])
+        model.performance.beginMessages(comparisonID: pending.id, member: member, text: "Pending", scope: .shared, requestID: UUID())
+        model.performance.beginMessages(comparisonID: pending.id, member: member, text: "Overlapping", scope: .private, requestID: UUID(), followUpID: follow.id)
+        model.performance.observeMessages(comparison: pending, member: member, transcript: [original, outgoing, following])
+        precondition(model.performance.replies.last?.turnID == nil, "Overlapping pending turns remain unassigned without explicit source membership")
+        precondition(!model.performance.events.contains { $0.agent?.connection == .messages && $0.kind == .completed })
+        print("PASS: Messages controller uses owned original/follow-up payload anchors for nil-replyTo replies, retains unowned/overlap ambiguity, deduplicates refresh, and never infers completion.")
+    }
+
+    @MainActor private static func captureFailureChecks() async throws {
+        let model = AppModel(); model.webAgents.setEnabled(true, for: .codexCLI); model.setPerformanceTracking(true)
+        defer { model.timer?.invalidate(); model.webAgents.beginShutdown(); try? FileManager.default.removeItem(at: model.local.url.deletingLastPathComponent()) }
+        let native = model.webAgents.session(for: .codexCLI)!, comparison = UUID()
+        _ = await native.send("Synthetic healthy recording", comparisonID: comparison, scope: .shared)
+        let journal = model.local.url.deletingLastPathComponent().appendingPathComponent("Performance/events.jsonl")
+        var damaged = try Data(contentsOf: journal); damaged.append(Data("synthetic-torn-append".utf8)); try damaged.write(to: journal)
+        let result = await native.send("Synthetic send while recorder fails", comparisonID: comparison, scope: .private)
+        precondition(result?.status == .observed && model.performance.error != nil && !model.performance.enabled && !native.performanceObservationEnabled)
+        precondition(native.state.attempts.filter { $0.text == "Synthetic send while recorder fails" }.count == 1)
+        let preserved = try Data(contentsOf: journal)
+        precondition(preserved == damaged)
+        model.setPerformanceTracking(false); model.performance.deleteAll(); model.setPerformanceTracking(true)
+        _ = await native.send("Synthetic after explicit recording recovery", comparisonID: comparison, scope: .private)
+        precondition(model.performance.error == nil && model.performance.enabled && !model.performance.events.isEmpty)
+        let canceled = Task { @MainActor in await native.send("Synthetic canceled reply", comparisonID: UUID(), scope: .private) }
+        for _ in 0..<20 { if native.isSending { break }; try await Task.sleep(for: .milliseconds(10)) }
+        native.cancelNativeRequest(); _ = await canceled.value
+        precondition(model.performance.events.contains { $0.kind == .observationState && $0.reason == "cancellation-requested" })
+        precondition(model.performance.events.contains { $0.kind == .outcome && $0.reason == "canceled" })
+        print("PASS: actual native send completes exactly once while failed recording detaches observers and preserves damaged bytes; explicit local deletion recovers recording without resending.")
     }
 
     private static func photoResource(_ name: String, in fixtureRoot: URL) throws -> Data {

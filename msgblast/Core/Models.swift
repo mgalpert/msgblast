@@ -271,6 +271,8 @@ public enum ComparisonWindowStyle: String, Codable, CaseIterable, Sendable {
     case connected, separate
 }
 public struct AppState: Codable, Sendable {
+    public var performanceTracking: Bool?
+    public var performanceTrackingEnabled: Bool { performanceTracking ?? false }
     public var version = 1
     public var agents: [Agent] = []
     public var comparisons: [Comparison] = []

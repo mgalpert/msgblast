@@ -401,6 +401,9 @@ struct TranscriptView: View {
                                 .padding(.top, message.reactions.isEmpty ? 0 : 23)
                                 if !message.outgoing { Spacer(minLength: geometry.size.width * 0.25) }
                             }
+                            if !message.outgoing, model.state.performanceTrackingEnabled {
+                                MessagesPerformanceControl(performance: model.performance, comparisonID: comparison.id.uuidString, agentID: member.id.uuidString, messageID: message.guid)
+                            }
                             if message.outgoing, message.delivery == .failed {
                                 Text("Not Delivered").font(.caption2.weight(.medium)).foregroundStyle(.red)
                                     .frame(maxWidth: .infinity, alignment: .trailing).padding(.bottom, 4)
@@ -645,6 +648,13 @@ struct AppSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updater: AppUpdater
     var body: some View {
+        TabView {
+            general.tabItem { Label("General", systemImage: "gearshape") }
+            MyStatsView(model: model, performance: model.performance).tabItem { Label("My Stats", systemImage: "chart.bar") }
+            BenchmarkSettingsView().tabItem { Label("Benchmarks", systemImage: "person.crop.circle") }
+        }.padding(12).frame(width: 760, height: 650)
+    }
+    private var general: some View {
         Form {
             Section("Permissions") {
                 PermissionsSettingsView(model: model)
@@ -670,6 +680,6 @@ struct AppSettingsView: View {
                     Text(updater.configuration.unavailableReason).foregroundStyle(.secondary)
                 }
             }
-        }.formStyle(.grouped).padding(20).frame(width: 640, height: 650)
+        }.formStyle(.grouped)
     }
 }

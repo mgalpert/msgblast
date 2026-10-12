@@ -155,8 +155,8 @@ public final class WebAgents: ObservableObject {
         for task in tasks { if !(await task.value) { ready = false } }
         return ready
     }
-    public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil) async -> [WebAgentID: WebSendAttempt] {
-        let tasks = sessions.map { session in Task { @MainActor in (session.id, await session.send(text, comparisonID: comparisonID)) } }
+    public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil, scope: PerformanceScope = .unknown, requestGroup: PerformanceRequestGroup? = nil) async -> [WebAgentID: WebSendAttempt] {
+        let tasks = sessions.map { session in Task { @MainActor in (session.id, await session.send(text, comparisonID: comparisonID, scope: scope, requestGroup: requestGroup)) } }
         var results: [WebAgentID: WebSendAttempt] = [:]
         for task in tasks { let (provider, attempt) = await task.value; results[provider] = attempt }
         return results
