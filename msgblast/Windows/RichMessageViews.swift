@@ -123,3 +123,27 @@ struct BusinessChoicesView: View {
         .background(message.outgoing ? Color.blue.opacity(0.15) : MessageAppearance.incomingBubbleColor, in: RoundedRectangle(cornerRadius: 15))
     }
 }
+
+struct BusinessChoicesPreview: View {
+    let card: BusinessMessageCard
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(card.title).font(.body.weight(.medium)).textSelection(.enabled)
+            ForEach(card.options.indices, id: \.self) { index in
+                let option = card.options[index]
+                VStack(alignment: .leading, spacing: 3) {
+                    if let section = option.section { Text(section).font(.caption).foregroundStyle(.secondary) }
+                    HStack {
+                        Text(option.title).foregroundStyle(Color.accentColor)
+                        if option.selected { Image(systemName: "checkmark").accessibilityLabel("Selected") }
+                    }.padding(.vertical, 6)
+                    if let subtitle = option.subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+                }.textSelection(.enabled)
+                if index != card.options.indices.last { Divider() }
+            }
+        }.padding(12).frame(minWidth: 180, maxWidth: 360, alignment: .leading)
+            .background(MessageAppearance.incomingBubbleColor, in: RoundedRectangle(cornerRadius: 15))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Read-only business choices")
+    }
+}

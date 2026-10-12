@@ -5,6 +5,25 @@ import WebKit
 
 @MainActor
 public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
+    public var onPerformanceSignal: ((WebPerformanceSignal) -> Void)?
+    public var performanceObservationEnabled = false {
+        didSet {
+            guard oldValue != performanceObservationEnabled else { return }
+            for page in pages.values {
+                let content = page.view.configuration.userContentController
+                content.removeScriptMessageHandler(forName: "msgblastPerformance", contentWorld: .defaultClient)
+                if performanceObservationEnabled { content.add(performanceObserver, contentWorld: .defaultClient, name: "msgblastPerformance") }
+                Task { @MainActor in
+                    _ = try? await page.view.callAsyncJavaScript(performanceObservationEnabled ? WebPerformanceObserver.install : WebPerformanceObserver.remove, arguments: [:], in: nil, contentWorld: .defaultClient)
+                }
+            }
+        }
+    }
+    private lazy var performanceObserver = WebPerformanceObserver(session: self)
+    func performanceMutation(in view: WKWebView) {
+        guard performanceObservationEnabled, let page = page(for: view) else { return }
+        Task { await refresh(page) }
+    }
     @Published public private(set) var state = WebWorkspaceState()
     @Published public private(set) var snapshot = WebPageSnapshot() { didSet { activePage?.snapshot = snapshot } }
     @Published public private(set) var isSending = false
@@ -25,6 +44,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = websiteDataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        if performanceObservationEnabled { configuration.userContentController.add(performanceObserver, contentWorld: .defaultClient, name: "msgblastPerformance") }
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
@@ -651,6 +671,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                   (provider.canonicalConversationURL(inspectedURL) != nil &&
                    provider.canonicalConversationURL(inspectedURL) == provider.canonicalConversationURL(displayedURL)) else { return }
             page.snapshot = fresh
+            if performanceObservationEnabled {
+                _ = try? await page.view.callAsyncJavaScript(WebPerformanceObserver.install, arguments: [:], in: nil, contentWorld: .defaultClient)
+                guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
+            }
             if provider == .dots, page.snapshot.signedOut == true {
                 clearSavedDot(in: page)
                 publish(page)
@@ -659,6 +683,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             recordCurrentDot(from: page.snapshot, in: page)
             reconcileUnconfirmedReceipt(in: page)
             reconcileManualSubmission(in: page)
+            if performanceObservationEnabled, let comparisonID = page.comparisonID,
+               let result = try await page.view.callAsyncJavaScript(script.performanceInspect, arguments: [:], in: nil, contentWorld: .defaultClient) {
+                guard generation == page.generation, !shuttingDown, !flushingDrafts, performanceObservationEnabled else { return }
+                let capture = try JSONDecoder().decode(WebPageSnapshot.self, from: JSONSerialization.data(withJSONObject: result))
+                guard capture.url == fresh.url else { return }
+                page.performanceSnapshot = capture
+                onPerformanceSignal?(.snapshot(comparisonID: comparisonID, documentID: page.id.uuidString + ":" + String(generation), snapshot: capture))
+            }
             if page.snapshot.draftAvailable != true || page.snapshot.signedIn == false { page.restoredDraft = false }
             // Restore only an empty editor at its saved destination; restoring never submits.
             if !page.restoredDraft, page.snapshot.ready, page.snapshot.url == comparisonURL(for: page.comparisonID).absoluteString {
@@ -854,9 +886,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     @discardableResult
-    public func send(_ text: String, comparisonID: UUID? = nil) async -> WebSendAttempt? {
-        if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID) }
-        if provider.personalAgentProvider != nil { return await sendNative(text, comparisonID: comparisonID) }
+    public func send(_ text: String, comparisonID: UUID? = nil, scope: PerformanceScope = .unknown, requestGroup: PerformanceRequestGroup? = nil) async -> WebSendAttempt? {
+        if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, scope: scope, requestGroup: requestGroup) }
+        if provider.personalAgentProvider != nil { return await sendNative(text, comparisonID: comparisonID, scope: scope, requestGroup: requestGroup) }
         guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
@@ -868,7 +900,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let id = comparisonID ?? state.comparisonID ?? UUID()
         attempt.comparisonID = id
         var submissionWasPossible = false
+        attempt.performanceScope = performanceObservationEnabled ? scope : nil
+        attempt.performanceGroup = performanceObservationEnabled ? requestGroup ?? (scope == .private ? PerformanceRequestGroup(id: UUID().uuidString, targetAgentIDs: [self.id.id]) : nil) : nil
         state.attempts.insert(attempt, at: 0)
+        if performanceObservationEnabled { onPerformanceSignal?(.request(attempt)) }
         do {
             try save()
             guard !state.attempts.contains(where: { $0.comparisonID == id && [.attempting, .uncertain].contains($0.status) }) else {
@@ -1038,6 +1073,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func updateNativeSnapshot() {
         var fresh = snapshot
+        defer {
+            if performanceObservationEnabled, let comparisonID = state.comparisonID {
+                onPerformanceSignal?(.snapshot(comparisonID: comparisonID, documentID: "native", snapshot: fresh))
+            }
+        }
         fresh.messages = state.comparisonID.flatMap { state.localConversations[$0.uuidString] } ?? []
         fresh.draft = state.draft
         if provider == .grokbot {
@@ -1071,7 +1111,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts.contains { $0.comparisonID == id && $0.status.isUnresolved }
     }
 
-    public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
+    public func cancelNativeRequest() {
+        if performanceObservationEnabled, isSending, let attempt = state.attempts.first(where: { $0.comparisonID == state.comparisonID && $0.status.isUnresolved }) {
+            onPerformanceSignal?(.cancellationRequested(attempt))
+        }
+        requestCancelled = true; nativeRequest?.cancel() }
     public func beginShutdown() { shuttingDown = true; poll?.cancel(); cancelNativeRequest(); stopGrokBotConnection() }
     public func cancelAndWait() async {
         if !shuttingDown { try? await saveBrowserDrafts() }
@@ -1083,7 +1127,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         storageURL.deletingLastPathComponent().appendingPathComponent("local-conversations/\(provider.localConversationDirectoryName)/\(id.uuidString)", isDirectory: true)
     }
 
-    private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
+    private func sendNative(_ text: String, comparisonID: UUID?, scope: PerformanceScope, requestGroup: PerformanceRequestGroup?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: id) else {
@@ -1097,7 +1141,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         var attempt = WebSendAttempt(text: text)
         attempt.comparisonID = id
         updateState { $0.comparisonID = id }
+        attempt.performanceScope = performanceObservationEnabled ? scope : nil
+        attempt.performanceGroup = performanceObservationEnabled ? requestGroup ?? (scope == .private ? PerformanceRequestGroup(id: UUID().uuidString, targetAgentIDs: [self.id.id]) : nil) : nil
         state.attempts.insert(attempt, at: 0)
+        if performanceObservationEnabled { onPerformanceSignal?(.request(attempt)) }
         var started = false
         do {
             try save()
@@ -1138,6 +1185,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.detail = error.localizedDescription
             self.error = error.localizedDescription
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
+            if performanceObservationEnabled, error is CancellationError || requestCancelled { onPerformanceSignal?(.canceled(attempt)) }
         }
         updateNativeSnapshot()
         return attempt
@@ -1176,6 +1224,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private func store(_ attempt: WebSendAttempt) throws {
         if let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) { state.attempts[index] = attempt }
         try save()
+        if performanceObservationEnabled {
+            onPerformanceSignal?(.status(attempt))
+            if !provider.usesNativeConversation, attempt.status == .observed, let comparison = attempt.comparisonID,
+               let page = pages[comparison.uuidString] {
+                onPerformanceSignal?(.snapshot(comparisonID: comparison, documentID: page.id.uuidString + ":" + String(page.generation), snapshot: page.performanceSnapshot ?? WebPageSnapshot()))
+            }
+        }
     }
     private func save() throws {
         guard !storageFailed else { throw WebSessionFailure.notSent("Web session storage is unavailable.") }
@@ -1197,7 +1252,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
     public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard let page = page(for: webView) else { return }
-        page.generation += 1; page.loading = true; page.snapshot = WebPageSnapshot()
+        if performanceObservationEnabled, let id = page.comparisonID { onPerformanceSignal?(.gap(comparisonID: id, reason: "navigation")) }
+        page.generation += 1; page.loading = true; page.snapshot = WebPageSnapshot(); page.performanceSnapshot = nil
         if provider != .dots { clearAvatar(in: page) }; page.restoredDraft = false
         publish(page)
     }
@@ -1222,7 +1278,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard let page = page(for: webView) else { return }
-        page.generation += 1; page.loading = false; page.snapshot = WebPageSnapshot()
+        if performanceObservationEnabled, let id = page.comparisonID { onPerformanceSignal?(.gap(comparisonID: id, reason: "web-process-ended")) }
+        page.generation += 1; page.loading = false; page.snapshot = WebPageSnapshot(); page.performanceSnapshot = nil
         if provider != .dots { clearAvatar(in: page) }
         page.error = "\(provider.name)’s web process stopped. Reload its page. Pending submissions will not be resent."
         publish(page)
@@ -1263,6 +1320,7 @@ private final class WebConversationPage {
     var key: String { comparisonID?.uuidString ?? "new" }
     let view: WKWebView
     var snapshot = WebPageSnapshot()
+    var performanceSnapshot: WebPageSnapshot?
     var loading = false
     var refreshing = false
     var generation = 0
@@ -1440,14 +1498,17 @@ extension WebAgentSession {
             throw error
         }
     }
-    private func sendGrokBot(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
+    private func sendGrokBot(_ text: String, comparisonID: UUID?, scope: PerformanceScope, requestGroup: PerformanceRequestGroup?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !configuringGrokBot, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let comparisonID = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: comparisonID) else { error = "Wait for Grok Bot's previous reply or stop waiting before sending another request."; return nil }
         isSending = true
         defer { isSending = false; updateNativeSnapshot() }
         var attempt = WebSendAttempt(text: text); attempt.comparisonID = comparisonID
+        attempt.performanceScope = performanceObservationEnabled ? scope : nil
+        attempt.performanceGroup = performanceObservationEnabled ? requestGroup ?? (scope == .private ? PerformanceRequestGroup(id: UUID().uuidString, targetAgentIDs: [self.id.id]) : nil) : nil
         state.attempts.insert(attempt, at: 0)
+        if performanceObservationEnabled { onPerformanceSignal?(.request(attempt)) }
         var submitted = false
         do {
             try save()

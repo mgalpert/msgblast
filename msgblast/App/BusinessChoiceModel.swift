@@ -41,6 +41,7 @@ extension AppModel {
             state.businessChoiceAttempts?[message.guid]?.status = .submitted
             state.businessChoiceAttempts?[message.guid]?.detail = demo ? "Selected · simulated response" : "Submitted to Messages"
             try save()
+            captureMessages()
             if !demo { busy = false; await refresh() }
         } catch {
             if attempted {

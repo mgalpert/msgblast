@@ -6,7 +6,26 @@ import msgblastCore
 final class AppModel: ObservableObject {
     @Published var state = AppState()
     @Published var chats: [Chat] = []
-    @Published var messages: [String: [Message]] = [:]
+    @Published var messages: [String: [Message]] = [:] { didSet { if performanceReady { captureMessages() } } }
+    private var performanceReady = false
+    lazy var performance = PerformanceController(directory: local.url.deletingLastPathComponent(), fixture: demo)
+    lazy var benchmarks = BenchmarkController(directory: local.url.deletingLastPathComponent(), demo: demo)
+    func setPerformanceTracking(_ enabled: Bool) {
+        let previous = state.performanceTracking
+        state.performanceTracking = enabled
+        do { try save() } catch { state.performanceTracking = previous; self.error = error.localizedDescription; return }
+        performance.configure(enabled: enabled, web: webAgents, inFlight: busy || webBroadcastBusy)
+        for comparison in state.comparisons {
+            performance.recorder?.markPartial(comparison.id.uuidString)
+            for member in comparison.members { performance.seedMessages(comparison: comparison, member: member, transcript: transcript(comparison, member: member)) }
+        }
+    }
+    func captureMessages() {
+        guard state.performanceTrackingEnabled else { return }
+        for comparison in state.comparisons {
+            for member in comparison.members { performance.observeMessages(comparison: comparison, member: member, transcript: transcript(comparison, member: member), businessAttempts: state.businessChoiceAttempts ?? [:]) }
+        }
+    }
     @Published var databaseStatus = "Checking Messages history…"
     @Published var databaseAvailable = false
     @Published var error: String?
@@ -64,6 +83,9 @@ final class AppModel: ObservableObject {
             if directory.path.hasPrefix(temporaryRoot) { fixtureDirectory = directory }
         }
         #endif
+        if let benchmarkDirectory = try? BenchmarkDemoFixture.directory(demo: demo) {
+            fixtureDirectory = benchmarkDirectory.appendingPathComponent("AppStore")
+        }
         local = LocalStore(demo: demo, isolated: ProcessInfo.processInfo.arguments.contains("--isolated-demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true || Bundle.main.object(forInfoDictionaryKey: "msgblastIsolatedDemo") as? Bool == true, fixtureDirectory: fixtureDirectory, supportDirectoryName: Bundle.main.object(forInfoDictionaryKey: "msgblastSupportDirectory") as? String, webPreview: Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool == true)
         let existingStore = FileManager.default.fileExists(atPath: local.url.path)
         do {
@@ -88,6 +110,14 @@ final class AppModel: ObservableObject {
             return self.databaseAvailable
         }
         refresh()
+        performanceReady = true
+        performance.configure(enabled: state.performanceTrackingEnabled, web: webAgents)
+        for comparison in state.comparisons {
+            performance.recorder?.markPartial(comparison.id.uuidString)
+            for member in comparison.members { performance.seedMessages(comparison: comparison, member: member, transcript: transcript(comparison, member: member)) }
+        }
+        performance.beforeDeleteRecords = { [weak self] in try self?.benchmarks.clearLocalUploads() }
+        benchmarks.attach(performance: performance)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshIfChanged() } }
     }
     func save() throws {
@@ -95,6 +125,8 @@ final class AppModel: ObservableObject {
         try local.save(state)
     }
     func saveForTermination() throws {
+        performance.capture { try $0.stop(reason: "app-termination") }
+        benchmarks.shutdown()
         if storageLoadFailed {
             try QuitStateRecovery.preserve(state, originalURL: local.url)
         } else {
@@ -393,6 +425,7 @@ final class AppModel: ObservableObject {
         let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = state.attachmentsDraft ?? []
         guard (!text.isEmpty || !attachments.isEmpty), !busy else { return }
+        performance.markSendAction(agentIDs: recipientIDs.map(\.uuidString))
         do {
             if !demo, contacts.status == .notDetermined {
                 busy = true
@@ -467,7 +500,7 @@ final class AppModel: ObservableObject {
             // Save membership before sending so an interrupted join is never automatically repeated.
             state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])
             try save()
-            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID)
+            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID, scope: .shared, requestGroup: performance.enabled ? PerformanceRequestGroup(id: UUID().uuidString, targetAgentIDs: [session.id.id]) : nil)
             if attempt == nil || attempt?.status == .notSent {
                 state.comparisons[i].setWebAgents(state.comparisons[i].resolvedWebAgentIDs.filter { $0 != session.id })
                 try save()
@@ -526,7 +559,7 @@ final class AppModel: ObservableObject {
         let available = demo ? chats : try database?.chats() ?? []
         guard available.contains(where: { $0.id == chat.id && $0.eligible && ChatResolver.normalize($0.handle) == ChatResolver.normalize(chat.handle) }) else { throw AppFailure.blocked("The saved destination is no longer an eligible one-to-one Messages chat. Nothing was sent.") }
     }
-    func submit(_ id: UUID, retry: Bool, only memberID: UUID? = nil) async {
+    func submit(_ id: UUID, retry: Bool, only memberID: UUID? = nil, recordingGroup: PerformanceRequestGroup? = nil) async {
         guard let i = index(id), !busy else { return }
         do { try RecipientSet.validate(state.comparisons[i].members) } catch { self.error = error.localizedDescription; return }
         busy = true; defer { busy = false; refresh() }
@@ -534,7 +567,17 @@ final class AppModel: ObservableObject {
             let member = state.comparisons[i].members[j]
             guard memberID == nil || member.id == memberID else { continue }
             guard retry ? member.submission.canRetry : member.submission == .ready else { continue }
+            let recordingRequest = UUID()
+            performance.seedMessages(comparison: state.comparisons[i], member: member, transcript: transcript(state.comparisons[i], member: member))
+            performance.beginMessages(comparisonID: id, member: member, text: state.comparisons[i].prompt, scope: .shared, requestID: recordingRequest,
+                requestGroup: recordingGroup ?? PerformanceRequestGroup(id: memberID == nil ? id.uuidString : UUID().uuidString,
+                    targetAgentIDs: memberID == nil ? state.comparisons[i].members.map { $0.id.uuidString } + state.comparisons[i].resolvedWebAgentIDs.map(\.id) : [member.id.uuidString]))
+            defer {
+                let status = state.comparisons[i].members[j].submission
+                performance.messagesStatus(comparisonID: id, member: member, requestID: recordingRequest, kind: status == .submitted ? .submitted : .outcome, reason: status == .failed ? "failed" : status == .uncertain ? "uncertain" : nil)
+            }
             if let payload = member.payload {
+                performance.messagesStatus(comparisonID: id, member: member, requestID: recordingRequest, kind: .dispatched)
                 _ = await deliver(payload, to: member.chat, simulateFailure: demo && demoFailureOnce && j == state.comparisons[i].members.count - 1) { updated in
                     self.state.comparisons[i].members[j].apply(updated)
                     try self.save()
@@ -556,6 +599,7 @@ final class AppModel: ObservableObject {
                 state.comparisons[i].members[j].error = nil
                 try save()
                 attempted = true
+                performance.messagesStatus(comparisonID: id, member: member, requestID: recordingRequest, kind: .dispatched)
                 if demo { appendDemo(state.comparisons[i].prompt, chat: member.chat, outgoing: true) }
                 else { try await MessageSender().send(state.comparisons[i].prompt, to: member.chat) }
                 state.comparisons[i].members[j].submission = .submitted
@@ -622,7 +666,7 @@ final class AppModel: ObservableObject {
         }
         if changed { try save() }
     }
-    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil) async {
+    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil, recordingScope: PerformanceScope? = nil, recordingGroup: PerformanceRequestGroup? = nil) async {
         guard let i = index(id), !busy, memberID == nil || !webBroadcastBusy else { return }
         do { try freezeSharedContext(id) } catch { self.error = error.localizedDescription; return }
         let comparison = state.comparisons[i]
@@ -668,7 +712,15 @@ final class AppModel: ObservableObject {
                 let key = member.id.uuidString
                 let status = state.comparisons[i].followUps[k].states[key]
                 guard status == .ready || status == .failed else { continue }
+                let recordingRequest = UUID()
+                let follow = state.comparisons[i].followUps[k]
+                performance.beginMessages(comparisonID: id, member: member, text: follow.text, scope: recordingScope ?? (follow.sharedWithAll == true ? .shared : .private), requestID: recordingRequest, followUpID: follow.id, requestGroup: recordingGroup ?? PerformanceRequestGroup(id: follow.id.uuidString, targetAgentIDs: follow.memberIDs.map(\.uuidString)))
+                defer {
+                    let status = state.comparisons[i].followUps[k].states[key]
+                    performance.messagesStatus(comparisonID: id, member: member, requestID: recordingRequest, kind: status == .submitted ? .submitted : .outcome, reason: status == .failed ? "failed" : status == .uncertain ? "uncertain" : nil)
+                }
                 if let payload = state.comparisons[i].followUps[k].payloads?[key] {
+                    performance.messagesStatus(comparisonID: id, member: member, requestID: recordingRequest, kind: .dispatched)
                     _ = await deliver(payload, to: member.chat) { updated in
                         self.state.comparisons[i].followUps[k].apply(updated, for: key)
                         try self.save()
@@ -681,6 +733,7 @@ final class AppModel: ObservableObject {
                     try validate(member.chat)
                     state.comparisons[i].followUps[k].states[key] = .sending; try save()
                     attempted = true
+                    performance.messagesStatus(comparisonID: id, member: member, requestID: recordingRequest, kind: .dispatched)
                     let body = state.comparisons[i].followUps[k].text
                     if demo { appendDemo(body, chat: member.chat, outgoing: true) }
                     else { try await MessageSender().send(body, to: member.chat) }
@@ -716,12 +769,12 @@ final class AppModel: ObservableObject {
             if let index = messages[member.chat.id]?.firstIndex(where: { $0.guid == sent.guid }) {
                 messages[member.chat.id]?[index].reactions = [MessageReaction(id: "fixture-recipient", emoji: "✅", outgoing: false)]
                 let answer = sent.linkPreview?.url.absoluteString ?? answers[offset % answers.count]
-                appendDemo(answer, chat: member.chat, outgoing: false, replyTo: anchor.guid)
+                appendDemo(answer, chat: member.chat, outgoing: false, replyTo: sent.guid)
                 if ProcessInfo.processInfo.arguments.contains("--business-choices-preview"), member.chat.businessConversation == true {
                     appendBusinessChoiceFixture(chat: member.chat)
                 }
             } else {
-                appendDemo(answers[offset % answers.count], chat: member.chat, outgoing: false, replyTo: anchor.guid)
+                appendDemo(answers[offset % answers.count], chat: member.chat, outgoing: false, replyTo: sent.guid)
             }
         }
     }

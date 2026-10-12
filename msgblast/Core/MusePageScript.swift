@@ -2,16 +2,23 @@ import Foundation
 
 // DOM contract observed in Muse's shipped frontend. No private RPCs or session tokens.
 enum MusePageScript {
-    static let helpers = #"""
+    static let helpers = WebPerformanceText.script + #"""
     const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
     const unique = selector => { const es = [...document.querySelectorAll(selector)].filter(visible); return es.length === 1 ? es[0] : null; };
     const editor = () => unique('textarea[aria-label="Message"]');
     const buttons = label => [...document.querySelectorAll('button')].filter(e => visible(e) && e.getAttribute('aria-label') === label);
     const normalized = s => s.replace(/\s+/g, ' ').trim();
-    const messages = () => [...document.querySelectorAll('[data-message-item][data-message-id][data-message-role]')].map(e => {
+    const performanceVisible = e => visible(e) && !e.closest('[hidden],[aria-hidden="true"]') && getComputedStyle(e).display !== 'none' && getComputedStyle(e).opacity !== '0';
+    const messages = (visibleOnly=false) => [...document.querySelectorAll('[data-message-item][data-message-id][data-message-role]')].filter(e=>!visibleOnly || performanceVisible(e)).map(e => {
         const copy = e.cloneNode(true);
+        if (visibleOnly) {
+            const original=[...e.querySelectorAll('*')],cloned=[...copy.querySelectorAll('*')];
+            copy.__msgblastPreformatted=/^(pre|pre-wrap|pre-line|break-spaces)$/.test(getComputedStyle(e).whiteSpace);
+                original.forEach((node,i)=>{cloned[i].__msgblastPreformatted=/^(pre|pre-wrap|pre-line|break-spaces)$/.test(getComputedStyle(node).whiteSpace);if(!performanceVisible(node) || node.matches('script,style,template,noscript'))cloned[i]?.remove();});
+        }
         copy.querySelectorAll('button,[role="button"],time').forEach(n => n.remove());
-        return {id:e.getAttribute('data-message-id'),role:e.getAttribute('data-message-role'),text:normalized(copy.textContent || '').replace(/^You:\s*/, '')};
+        const role=e.getAttribute('data-message-role');const text=visibleOnly?performanceText(copy):normalized(copy.textContent||'');
+        return {id:e.getAttribute('data-message-id'),role,text:visibleOnly?(role==='user'?text.replace(/^You: ?/,''):text):text.replace(/^You:\s*/,'')};
     });
     const observation = globalThis.__msgblastMuseObservation ??= {interrupted:false};
     if (!observation.listening) {

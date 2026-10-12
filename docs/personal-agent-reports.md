@@ -131,3 +131,34 @@ bash scripts/test_configured_cli_conversations.sh build/contributor-tests build/
 ```
 
 The harness invokes the real core adapter with a deterministic local executable and temporary fixture configuration. It prints actual inputs/results for new and resumed Codex/Claude conversations, a denied write, a still-restricted comparison summary, and legacy-session retention. The optional second directory receives `requests.jsonl` containing actual fixture arguments, stdin, outputs, and working directories. No installed provider CLI, credential, paid model, live skill, or connector is used. It verifies adapter configuration transport and policy separation, not live provider configuration interpretation or connector access. Claude’s unattended permission behavior follows its [programmatic CLI documentation](https://code.claude.com/docs/en/headless#turn-off-permission-prompts-in-unattended-runs).
+
+## Capture and share a chat
+
+The camera button automatically captures the current chat window, with the
+native macOS window-capture appearance. It does not open a window picker.
+The capture keeps the native window chrome, rounded frame and shadow, and the
+request title with a msgblast label. It hides the conversation sidebar while
+capturing. Your sidebar is restored afterward.
+The preview includes visible drafts and private panes, so inspect it before using
+**Copy image**, **Save image…**, or the macOS **Share image…** picker. Capturing
+and exporting an image does not require recording or a cloud account and does
+not upload it automatically. Embedded websites contribute only their visible
+viewport; the capture does not scroll or send a message.
+
+For content beyond the viewport, choose **Share full chat by URL…**. This uses the
+existing recorded-comparison publication preview and scrollable reader. Recording
+must have been enabled in **My Stats** before the conversation; unrecorded history
+cannot be reconstructed. Review the captured turns, exclusions and redactions,
+then explicitly approve publication. Private sync and benchmark contribution are
+separate choices. Live links require the benchmark service and managed sign-in to
+be configured; local Demo fixtures do not establish a live service. Anyone with a
+published link can read and forward it. Existing publication controls revoke links.
+
+Shared business messages include display-only choice labels and selected
+checkmarks in the owner preview and URL reader. Card titles, options, sections,
+and subtitles use the same automatic and manual redaction as conversation text.
+Native submitted choices update the recording even when its message text is
+unchanged; failed or uncertain attempts are not shown as confirmed selections.
+Existing recordings without captured cards stay text-only. Later choices do not
+modify an already published immutable link; prepare and approve a new share.
+Deploy the matching service contract before publishing cards from a new build.

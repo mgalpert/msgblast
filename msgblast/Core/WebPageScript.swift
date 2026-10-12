@@ -53,7 +53,7 @@ struct WebPageScript {
         }
         let config: [String: String] = ["name":provider.name,"provider":provider.rawValue,"host":provider.homeURL.host!,"editor":selectors.editor,"send":selectors.send,"messages":selectors.messages,"account":selectors.account]
         let json = String(data: try! JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]), encoding: .utf8)!
-        return "const config = \(json);\n" + #"""
+        return "const config = \(json);\n" + WebPerformanceText.script + #"""
         const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
         const all = selector => [...document.querySelectorAll(selector)].filter(visible);
         const unique = selector => { const es=all(selector); return es.length===1 ? es[0] : null; };
@@ -70,7 +70,8 @@ struct WebPageScript {
         }
         const pathAllowed = () => location.protocol==='https:' && location.hostname===config.host &&
             (config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
-        const messages = () => [...document.querySelectorAll(config.messages)].filter(e => !e.parentElement?.closest(config.messages)).map(e => {
+        const performanceVisible = e => visible(e) && !e.closest('[hidden],[aria-hidden="true"]') && getComputedStyle(e).display !== 'none' && getComputedStyle(e).opacity !== '0';
+        const messages = (visibleOnly=false) => [...document.querySelectorAll(config.messages)].filter(e => !e.parentElement?.closest(config.messages) && (!visibleOnly || performanceVisible(e))).map(e => {
             let role=e.getAttribute('data-message-author-role') || e.getAttribute('data-message-role');
             let id=e.getAttribute('data-message-id') || e.closest('[data-message-id]')?.getAttribute('data-message-id');
             if (!role && config.provider==='chatgpt') {
@@ -82,12 +83,19 @@ struct WebPageScript {
             if (!role && config.provider==='claude') role=e.getAttribute('data-testid')==='user-message' ? 'user' : 'assistant';
             if (!role && config.provider==='grok') role=e.classList.contains('items-end') || e.closest('[data-role="user"],.items-end') ? 'user' : 'assistant';
             if (config.provider==='os3') { role=e.classList.contains('dial-user') ? 'user' : 'assistant'; id=e.dataset.renderId; }
-            const copy=(config.provider==='dots' ? e.querySelector('.message-text') || document.createElement('span') : e).cloneNode(true); copy.querySelectorAll('button,[role="button"],time').forEach(n=>n.remove());
+            const source=config.provider==='dots' ? e.querySelector('.message-text') || document.createElement('span') : e;
+            const copy=source.cloneNode(true);
+            if (visibleOnly) {
+                const original=[...source.querySelectorAll('*')],cloned=[...copy.querySelectorAll('*')];
+                copy.__msgblastPreformatted=/^(pre|pre-wrap|pre-line|break-spaces)$/.test(getComputedStyle(source).whiteSpace);
+                original.forEach((node,i)=>{cloned[i].__msgblastPreformatted=/^(pre|pre-wrap|pre-line|break-spaces)$/.test(getComputedStyle(node).whiteSpace);if(!performanceVisible(node) || node.matches('script,style,template,noscript'))cloned[i]?.remove();});
+            }
+            copy.querySelectorAll('button,[role="button"],time').forEach(n=>n.remove());
             if (config.provider==='chatgpt') copy.querySelectorAll('h4[data-conversation-role]').forEach(n=>n.remove());
             if (config.provider==='os3') copy.querySelectorAll('.dial-meta,.dial-reaction').forEach(n=>n.remove());
-            copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
+            if (!visibleOnly) copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
             if (!observation.ids.has(e)) observation.ids.set(e,`node-${++observation.nextID}`);
-            return {id:id||observation.ids.get(e),role:role||'unknown',text:normalized(copy.textContent||'')};
+            return {id:id||observation.ids.get(e),role:role||'unknown',text:visibleOnly?performanceText(copy):normalized(copy.textContent||'')};
         });
         const conversationLocation = () => {
             const url=new URL(location.href),params=[...url.searchParams];
@@ -114,7 +122,7 @@ struct WebPageScript {
             else if (modal) reason=`Finish the open dialog in ${config.name} first.`;
             else if (generating) reason=`Wait for ${config.name} to finish its current reply.`;
             else if (!input || input.disabled || input.readOnly || input.getAttribute('aria-disabled')==='true') reason=`Waiting for ${config.name}’s message field.`;
-            return {url:conversationLocation(),ready:!reason,signedIn,reason:reason||`${config.name} chat ready`,draft:draft(input),draftAvailable:!!input,...(config.provider==='dots'?{signedOut:login && !all(config.account).length}:{})};
+            return {url:conversationLocation(),ready:!reason,signedIn,generating:account && !login && pathAllowed() ? generating : null,reason:reason||`${config.name} chat ready`,draft:draft(input),draftAvailable:!!input,...(config.provider==='dots'?{signedOut:login && !all(config.account).length}:{})};
         };
         const submissionStatus = () => {
             const current=status();
@@ -129,6 +137,10 @@ struct WebPageScript {
     }
     var signInStatus: String { helpers + "\nreturn {...status(),messages:[]};" }
     var inspect: String { provider == .muse ? MusePageScript.inspect : helpers + "\nreturn inspect();" }
+    var performanceInspect: String {
+        if provider == .hark { return helpers + "\nreturn {...status(),messages:[]};" }
+        return helpers + "\nreturn {...status(),messages:pathAllowed()?messages(true):[]};"
+    }
     // Apply the initial pane layout once per document. A user's later choice wins.
     var configureInitialLayout: String {
         guard provider == .chatgpt || provider == .dots else { return "return;" }

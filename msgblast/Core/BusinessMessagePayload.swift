@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 public struct BusinessMessagePayload: Hashable, Sendable {
-    public enum Kind: Hashable, Sendable { case quickReply, listPicker, unsupported }
+    public enum Kind: String, Codable, Hashable, Sendable { case quickReply, listPicker, unsupported }
     public struct Option: Hashable, Sendable, Identifiable {
         public let id: Int
         public let title: String
@@ -88,5 +88,38 @@ public struct BusinessMessagePayload: Hashable, Sendable {
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let range = Range(match.range(at: 1), in: text) else { return nil }
         return Int(text[range])
+    }
+}
+
+/// Display-only snapshot for recording and owner-reviewed sharing.
+/// Archive fingerprints and native action identifiers never enter this format.
+public struct BusinessMessageCard: Codable, Equatable, Sendable {
+    public var kind: BusinessMessagePayload.Kind
+    public var title: String
+    public var options: [Option]
+    public struct Option: Codable, Equatable, Sendable {
+        public var title: String
+        public var selected: Bool
+        public var subtitle: String?
+        public var section: String?
+    }
+    public init(payload: BusinessMessagePayload, selectedOptionID: Int?) {
+        kind = payload.kind
+        title = payload.title
+        options = payload.options.map { option in
+            .init(title: option.title, selected: selectedOptionID.map { $0 == option.id } ?? option.selected,
+                  subtitle: option.subtitle, section: option.section)
+        }
+    }
+    public init(kind: BusinessMessagePayload.Kind, title: String, options: [Option]) {
+        self.kind = kind; self.title = title; self.options = options
+    }
+    public mutating func redactText(_ transform: (String) -> String) {
+        title = transform(title)
+        for i in options.indices {
+            options[i].title = transform(options[i].title)
+            options[i].subtitle = options[i].subtitle.map(transform)
+            options[i].section = options[i].section.map(transform)
+        }
     }
 }

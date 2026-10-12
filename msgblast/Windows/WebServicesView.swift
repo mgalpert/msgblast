@@ -13,6 +13,7 @@ struct AgentsWorkspaceView: View {
     @ObservedObject var web: WebAgents
     @Binding var showingComparison: Bool
     var newBlastRequest: UUID? = nil
+    var captureLayout: ChatCaptureLayout? = nil
     @State private var showingConnectionIntro = false
     @State private var signInProviders: [WebAgentID] = []
     @State private var editingAgents = false
@@ -64,6 +65,9 @@ struct AgentsWorkspaceView: View {
         .onChange(of: newBlastRequest) { _, _ in showingConnectionIntro = false; editingAgents = false }
         .onChange(of: showingComparison) { _, value in if value { editingAgents = false } }
         .toolbar {
+            if showingComparison {
+                ToolbarItem(placement: .primaryAction) { ChatShareButton(model: model, comparisonID: web.comparisonID, captureLayout: captureLayout) }
+            }
             if !showingComparison {
                 ToolbarItem(placement: .primaryAction) {
                     Button(editingAgents ? "Done" : "Edit") { editingAgents.toggle() }
@@ -125,7 +129,7 @@ struct AgentsWorkspaceView: View {
                 HStack(spacing: 0) {
                     ForEach(web.displayed, id: \.id) { session in
                         if session.id != web.displayed.first?.id { Divider() }
-                        WebAgentPane(session: session, account: model.personalAgent, busy: busy, sendNative: { sendDirect($0, to: session) })
+                        WebAgentPane(performance: model.performance, session: session, account: model.personalAgent, busy: busy, sendNative: { sendDirect($0, to: session) })
                             .frame(width: width).id(session.id.id)
                     }
                     if let comparison = nativeComparison {
@@ -210,6 +214,7 @@ struct AgentsWorkspaceView: View {
         }
     }
 
+
     private func toggle(_ id: UUID) {
         if model.state.selection.contains(id) { model.state.selection.remove(id) }
         else { model.state.selection.insert(id) }
@@ -220,6 +225,7 @@ struct AgentsWorkspaceView: View {
         guard canSend else { return }
         let sessions = selectedWebSessions
         let recipients = Set(nativeRecipients.map(\.id))
+        model.performance.markSendAction(agentIDs: sessions.map { $0.id.id } + recipients.map(\.uuidString))
         if !showingComparison {
             let previousSelection = model.state.selection
             model.state.selection = recipients
@@ -271,19 +277,21 @@ struct AgentsWorkspaceView: View {
                 Set(comparison.resolvedWebAgentIDs) == Set(sessions.map(\.id)) && Set(comparison.members.map(\.id)) == recipients
             } ?? false
             let followUpID = UUID()
+            let recordingGroup = model.performance.enabled ? PerformanceRequestGroup(id: existingID == nil ? comparisonID.uuidString : followUpID.uuidString,
+                targetAgentIDs: sessions.map { $0.id.id } + recipients.map(\.uuidString)) : nil
             let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, clearDraft: {
                 model.setSharedDraft("")
             }, web: { text in
-                await WebAgents.send(text, to: sessions, comparisonID: comparisonID)
+                await WebAgents.send(text, to: sessions, comparisonID: comparisonID, scope: allRecipients ? .shared : .private, requestGroup: recordingGroup)
             }, messages: { text in
                 guard !recipients.isEmpty else { return nil }
                 if existingID != nil {
                     guard let i = model.index(comparisonID) else { return nil }
                     model.state.comparisons[i].allDraft = text
-                    await model.followUp(comparisonID, recipients: Array(recipients), newAttemptID: followUpID)
+                    await model.followUp(comparisonID, recipients: Array(recipients), newAttemptID: followUpID, recordingScope: allRecipients ? .shared : .private, recordingGroup: recordingGroup)
                     return model.comparison(comparisonID)?.followUps.contains(where: { $0.id == followUpID }) == true ? comparisonID : nil
                 }
-                await model.submit(comparisonID, retry: false)
+                await model.submit(comparisonID, retry: false, recordingGroup: recordingGroup)
                 return comparisonID
             })
             if existingID != nil, allRecipients,
@@ -303,6 +311,7 @@ struct AgentsWorkspaceView: View {
     private func sendDirect(_ text: String, to session: WebAgentSession) {
         guard !busy, session.isEnabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let existingID = nativeComparison?.id
+        model.performance.markSendAction(agentIDs: [session.id.id])
         model.webBroadcastBusy = true
         Task { @MainActor in
             defer { model.webBroadcastBusy = false }
@@ -319,7 +328,7 @@ struct AgentsWorkspaceView: View {
             }
             do { try model.save() } catch { model.error = error.localizedDescription; return }
             showingComparison = true
-            _ = await session.send(text, comparisonID: id)
+            _ = await session.send(text, comparisonID: id, scope: existingID == nil ? .shared : .private, requestGroup: model.performance.enabled ? PerformanceRequestGroup(id: existingID == nil ? id.uuidString : UUID().uuidString, targetAgentIDs: [session.id.id]) : nil)
             web.setComparison(id)
         }
     }
@@ -515,6 +524,7 @@ private struct LocalAgentSetupView: View {
 }
 
 private struct WebAgentPane: View {
+    @ObservedObject var performance: PerformanceController
     @ObservedObject var session: WebAgentSession
     @ObservedObject var account: PersonalAgentController
     let busy: Bool
@@ -564,6 +574,9 @@ private struct WebAgentPane: View {
                     }
                 }.padding(10)
             }
+            if performance.enabled, !session.provider.usesNativeConversation, let id = session.state.comparisonID {
+                PerformanceReplyStrip(performance: performance, comparisonID: id.uuidString, agentID: session.id.id)
+            }
             if session.provider.usesNativeConversation {
                 nativeConversation(session.provider.personalAgentProvider)
             } else if session.connected {
@@ -582,7 +595,7 @@ private struct WebAgentPane: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(28)
             }
         }
-        .task { if session.provider.personalAgentProvider != nil { await account.discover() } }
+        .task { performance.attachSession(session); if session.provider.personalAgentProvider != nil { await account.discover() } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if session.provider.personalAgentProvider != nil { session.reload() }
         }
@@ -641,6 +654,10 @@ private struct WebAgentPane: View {
                                 Text(message.role == "user" ? "You" : session.name).font(.caption.bold()).foregroundStyle(.secondary)
                                 Text((try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text))
                                     .textSelection(.enabled)
+                                if message.role == "assistant", performance.enabled, let comparison = session.state.comparisonID,
+                                   let reply = performance.replies.last(where: { $0.comparisonID == comparison.uuidString && $0.agent.id == session.id.id && $0.messageID == "native:" + message.id }) {
+                                    PerformanceControlsView(performance: performance, reply: reply)
+                                }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
                                 .id(message.id)

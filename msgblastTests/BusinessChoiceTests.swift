@@ -20,6 +20,18 @@ final class BusinessChoiceTests: XCTestCase {
     private func snapshot(_ buttons: [BusinessChoiceSnapshot.Button], name: String = "Poke", text: String = "Find repair options?") -> BusinessChoiceSnapshot {
         .init(conversationName: name, contexts: [.init(text: text, frame: questionFrame)], buttons: buttons)
     }
+    func testDisplayCardContainsOnlyLabelsAndConfirmedSelection() throws {
+        let (_, source, _) = try fixture()
+        let payload = try XCTUnwrap(source.businessPayload)
+        let original = BusinessMessageCard(payload: payload, selectedOptionID: nil)
+        XCTAssertEqual(original.options.map(\.selected), [false, false])
+        let selected = BusinessMessageCard(payload: payload, selectedOptionID: 1)
+        XCTAssertEqual(selected.options.map(\.selected), [false, true])
+        let json = String(decoding: try JSONEncoder().encode(selected), as: UTF8.self)
+        XCTAssertFalse(json.contains("sourceFingerprint"))
+        XCTAssertFalse(json.contains("identifier"))
+        XCTAssertFalse(json.contains("urn:biz:"))
+    }
     func testMatchingNativeControlAllowsAccessibilityAliasesAtOneLocation() throws {
         let (chat, source, history) = try fixture()
         let request = try BusinessChoiceRequest(chat: chat, message: source, optionID: 1, history: history, chats: [chat], attempt: nil)

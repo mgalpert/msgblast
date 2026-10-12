@@ -63,7 +63,7 @@ for name in products:
     if name == 'msgblastCore':
         settings.update({'DEFINES_MODULE':'YES', 'DYLIB_INSTALL_NAME_BASE':'"@rpath"', 'SKIP_INSTALL':'YES', 'OTHER_LDFLAGS':'"$(inherited) -lsqlite3"'})
     if name == 'msgblast':
-        settings.update({'GENERATE_INFOPLIST_FILE':'NO', 'INFOPLIST_FILE':'msgblast/Info.plist', 'CODE_SIGN_ENTITLEMENTS':'msgblast/msgblast.entitlements', 'MSGBLAST_APP_BUNDLE_IDENTIFIER':'com.msgblast.mac', 'PRODUCT_BUNDLE_IDENTIFIER':'"$(MSGBLAST_APP_BUNDLE_IDENTIFIER)"', 'ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon', 'MARKETING_VERSION':'0.4.3', 'CURRENT_PROJECT_VERSION':'1', 'SPARKLE_FEED_URL':'""', 'SPARKLE_PUBLIC_ED_KEY':'""'})
+        settings.update({'GENERATE_INFOPLIST_FILE':'NO', 'INFOPLIST_FILE':'msgblast/Info.plist', 'CODE_SIGN_ENTITLEMENTS':'msgblast/msgblast.entitlements', 'MSGBLAST_APP_BUNDLE_IDENTIFIER':'com.msgblast.mac', 'PRODUCT_BUNDLE_IDENTIFIER':'"$(MSGBLAST_APP_BUNDLE_IDENTIFIER)"', 'ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon', 'MARKETING_VERSION':'0.4.3', 'CURRENT_PROJECT_VERSION':'1', 'SPARKLE_FEED_URL':'""', 'SPARKLE_PUBLIC_ED_KEY':'""', 'BENCHMARK_SERVICE_URL':'""', 'BENCHMARK_OIDC_ISSUER':'""', 'BENCHMARK_NATIVE_CLIENT_ID':'""', 'BENCHMARK_OIDC_AUDIENCE':'""'})
         icon_build = obj('appIconBuild', '{isa = PBXBuildFile; fileRef = '+icon+';}')
         demo_icon_build = obj('demoAppIconBuild', '{isa = PBXBuildFile; fileRef = '+demo_icon+';}')
         notice_build = obj('thirdPartyNoticeBuild', '{isa = PBXBuildFile; fileRef = '+notice+';}')

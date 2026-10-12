@@ -171,6 +171,7 @@ struct MainView: View {
     @ObservedObject private var web: WebAgents
     private let updater: AppUpdater
     private enum DetailSelection { case agents, discover }
+    @StateObject private var captureLayout = ChatCaptureLayout()
     @State private var selection = DetailSelection.agents
     @State private var showingComparison = false
     @State private var newBlastRequest: UUID? = UUID()
@@ -186,7 +187,7 @@ struct MainView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $captureLayout.sidebarVisibility) {
             List {
                 Section {
                     Button { selection = .agents; showingComparison = false } label: {
@@ -246,7 +247,7 @@ struct MainView: View {
                     }
                 }
                 if model.usesMessages { MessagesAccessBanner(model: model) }
-                AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: newBlastRequest)
+                AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
             }
         }
@@ -408,6 +409,9 @@ struct TranscriptView: View {
                                 .padding(.top, message.reactions.isEmpty ? 0 : 23)
                                 if !message.outgoing { Spacer(minLength: geometry.size.width * 0.25) }
                             }
+                            if !message.outgoing, model.state.performanceTrackingEnabled {
+                                MessagesPerformanceControl(performance: model.performance, comparisonID: comparison.id.uuidString, agentID: member.id.uuidString, messageID: message.guid)
+                            }
                             if message.outgoing, message.delivery == .failed {
                                 Text("Not Delivered").font(.caption2.weight(.medium)).foregroundStyle(.red)
                                     .frame(maxWidth: .infinity, alignment: .trailing).padding(.bottom, 4)
@@ -524,6 +528,7 @@ struct FloatingComposer: View {
         if let comparison = model.comparison(comparisonID) {
             VStack(spacing: 12) {
                 HStack(spacing: 6) {
+                    ComparisonShareButton(model: model, comparisonID: comparisonID)
                     ConversationNavigation(comparison: comparison) { memberID in model.coordinator?.focus(comparisonID, memberID: memberID) }
                     Button { model.coordinator?.tile(comparisonID) } label: { Image(systemName: "rectangle.split.3x1") }
                         .buttonStyle(.bordered).help("Tile conversation windows").accessibilityLabel("Tile windows")
@@ -695,6 +700,13 @@ struct AppSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updater: AppUpdater
     var body: some View {
+        TabView {
+            general.tabItem { Label("General", systemImage: "gearshape") }
+            MyStatsView(model: model, performance: model.performance).tabItem { Label("My Stats", systemImage: "chart.bar") }
+            BenchmarkSettingsView(model: model, controller: model.benchmarks).tabItem { Label("Benchmarks", systemImage: "person.crop.circle") }
+        }.padding(12).frame(width: 760, height: 650)
+    }
+    private var general: some View {
         Form {
             Section("Permissions") {
                 PermissionsSettingsView(model: model)
@@ -720,6 +732,6 @@ struct AppSettingsView: View {
                     Text(updater.configuration.unavailableReason).foregroundStyle(.secondary)
                 }
             }
-        }.formStyle(.grouped).padding(20).frame(width: 640, height: 650)
+        }.formStyle(.grouped)
     }
 }

@@ -61,12 +61,21 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, NSToolbarItem.Identifier("summarize")]
+        [.flexibleSpace, NSToolbarItem.Identifier("captureChat"), NSToolbarItem.Identifier("summarize")]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier.rawValue == "captureChat",
+           let id = UUID(uuidString: String(toolbar.identifier.dropFirst("summarize:".count))) {
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Capture chat"
+            let view = NSHostingView(rootView: ChatShareButton(model: model, comparisonID: id).frame(width: 36, height: 28))
+            view.frame.size = NSSize(width: 36, height: 28)
+            item.view = view
+            return item
+        }
         guard identifier.rawValue == "summarize" else { return nil }
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Summarize"
