@@ -9,9 +9,21 @@ export async function contribute(
   sid: string,
 ) {
   const s = await ownedSession(env, owner, sid);
-  requireValue(s.status === "finalized", "finalization_required", 409);
+
   const b = object((await body(request, 4096)).value);
-  keys(b, ["consent", "revision"]);
+  keys(b, ["consent", "revision", "snapshotID"]);
+  const snapshot = await env.DB.prepare(
+    "SELECT id FROM snapshots WHERE session=? AND " +
+      (b.snapshotID === undefined ? "revision=1" : "id=?"),
+  )
+    .bind(sid, ...(b.snapshotID === undefined ? [] : [String(b.snapshotID)]))
+    .first<{ id: string }>();
+  requireValue(snapshot, "finalization_required", 409);
+  requireValue(
+    b.snapshotID !== undefined || s.current_revision === 1,
+    "snapshot_selection_required",
+    409,
+  );
   requireValue(b.consent === true, "contribution_consent_required");
   requireValue(
     Number.isSafeInteger(b.revision) &&
@@ -19,10 +31,14 @@ export async function contribute(
       Number(b.revision) <= 10000,
   );
   const latest = await env.DB.prepare(
-    "SELECT revision,withdrawn_at FROM contribution_revisions WHERE session=? ORDER BY revision DESC LIMIT 1",
+    "SELECT revision,withdrawn_at,snapshot FROM contribution_revisions WHERE session=? ORDER BY revision DESC LIMIT 1",
   )
     .bind(sid)
-    .first<{ revision: number; withdrawn_at: string | null }>();
+    .first<{
+      revision: number;
+      withdrawn_at: string | null;
+      snapshot: string;
+    }>();
   requireValue(
     !latest || Number(b.revision) >= latest.revision,
     "stale_revision",
@@ -33,15 +49,33 @@ export async function contribute(
     "withdrawn_revision",
     409,
   );
+  requireValue(
+    !latest ||
+      latest.revision !== Number(b.revision) ||
+      latest.snapshot === snapshot.id,
+    "contribution_snapshot_conflict",
+    409,
+  );
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO contribution_revisions(id,session,revision,requested_at) SELECT ?,?,?,? FROM sessions s JOIN accounts a ON a.id=s.owner WHERE s.id=? AND s.deleted_at IS NULL AND a.deleted_at IS NULL",
+    "INSERT OR IGNORE INTO contribution_revisions(id,session,revision,requested_at,snapshot) SELECT ?,?,?,?,? FROM sessions s JOIN accounts a ON a.id=s.owner WHERE s.id=? AND s.deleted_at IS NULL AND a.deleted_at IS NULL",
   )
-    .bind(crypto.randomUUID(), sid, b.revision, now(), sid)
+    .bind(crypto.randomUUID(), sid, b.revision, now(), snapshot.id, sid)
     .run();
+  const registered = await env.DB.prepare(
+    "SELECT c.snapshot FROM contribution_revisions c JOIN sessions s ON s.id=c.session JOIN accounts a ON a.id=s.owner WHERE c.session=? AND c.revision=? AND c.withdrawn_at IS NULL AND s.deleted_at IS NULL AND a.deleted_at IS NULL",
+  )
+    .bind(sid, b.revision)
+    .first<{ snapshot: string }>();
+  requireValue(
+    registered && registered.snapshot === snapshot.id,
+    "contribution_changed_or_deleted",
+    409,
+  );
   return json(
     {
       sessionID: sid,
       revision: b.revision,
+      snapshotID: snapshot.id,
       status: "validation-dependent",
       selection: "voluntary-selected-sample",
     },
@@ -59,7 +93,7 @@ export async function withdraw(env: Env, owner: string, sid: string) {
 }
 export async function history(env: Env, owner: string) {
   const rows = await env.DB.prepare(
-    "SELECT c.session,c.revision,c.requested_at,c.withdrawn_at,v.completeness,v.eligible,v.reasons,v.metrics,v.validated_at,s.fixture FROM contribution_revisions c JOIN sessions s ON s.id=c.session LEFT JOIN validations v ON v.session=s.id WHERE s.owner=? AND s.deleted_at IS NULL AND c.revision=(SELECT max(c2.revision) FROM contribution_revisions c2 WHERE c2.session=c.session) ORDER BY c.requested_at DESC",
+    "SELECT c.session,c.revision,c.snapshot AS snapshotID,j.blocked_reason,c.requested_at,c.withdrawn_at,v.completeness,v.eligible,v.reasons,v.metrics,v.validated_at,s.fixture FROM contribution_revisions c JOIN sessions s ON s.id=c.session LEFT JOIN snapshot_validations v ON v.snapshot=c.snapshot LEFT JOIN outbox j ON j.kind='validate' AND j.target=c.snapshot WHERE s.owner=? AND s.deleted_at IS NULL AND c.revision=(SELECT max(c2.revision) FROM contribution_revisions c2 WHERE c2.session=c.session) ORDER BY c.requested_at DESC",
   )
     .bind(owner)
     .all();
@@ -74,18 +108,20 @@ export async function history(env: Env, owner: string) {
       metrics: r.metrics ? JSON.parse(String(r.metrics)) : null,
       status: r.withdrawn_at
         ? "withdrawn"
-        : r.completeness
-          ? r.eligible
-            ? "accepted"
-            : "ineligible"
-          : "pending",
+        : r.blocked_reason
+          ? "blocked"
+          : r.completeness
+            ? r.eligible
+              ? "accepted"
+              : "ineligible"
+            : "pending",
     })),
     benefits: "No rewards or payouts defined",
   });
 }
 export async function statistics(env: Env) {
   const rows = await env.DB.prepare(
-    "SELECT s.owner,v.metrics,v.validated_at FROM validations v JOIN sessions s ON s.id=v.session JOIN accounts a ON a.id=s.owner JOIN contribution_revisions c ON c.session=s.id WHERE v.eligible=1 AND s.fixture=0 AND s.deleted_at IS NULL AND a.deleted_at IS NULL AND c.withdrawn_at IS NULL AND c.revision=(SELECT max(c2.revision) FROM contribution_revisions c2 WHERE c2.session=c.session)",
+    "SELECT s.owner,v.metrics,v.validated_at FROM contribution_revisions c JOIN snapshot_validations v ON v.snapshot=c.snapshot JOIN sessions s ON s.id=c.session JOIN accounts a ON a.id=s.owner WHERE v.eligible=1 AND s.fixture=0 AND s.deleted_at IS NULL AND a.deleted_at IS NULL AND c.withdrawn_at IS NULL AND c.revision=(SELECT max(c2.revision) FROM contribution_revisions c2 WHERE c2.session=c.session)",
   ).all<{ owner: string; metrics: string; validated_at: string }>();
   type Timing = {
     method: string;

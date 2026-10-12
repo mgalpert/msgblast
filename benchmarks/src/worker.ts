@@ -1,4 +1,5 @@
-import { finalizeManifest } from "./sessions";
+import { requireService } from "./identity";
+import { finalizeManifest, openRevision } from "./sessions";
 import { reviseFeedback } from "./feedback";
 import { authenticate, mutationOrigin } from "./auth";
 import { append, ownedSession, register } from "./ingest";
@@ -24,16 +25,7 @@ async function route(
   const url = new URL(request.url),
     parts = url.pathname.split("/").filter(Boolean),
     method = request.method;
-  requireValue(
-    env.SERVICE_MODE === "fixture",
-    "service_not_configured: live identity management unprovisioned",
-    503,
-  );
-  requireValue(
-    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname),
-    "fixture_mode_requires_loopback",
-    503,
-  );
+  requireService(request, env);
   if (method === "GET" && parts[0] === "s") {
     return publicRead(request, env, parts[1] ?? "", parts.slice(2).join("/"));
   }
@@ -71,11 +63,11 @@ async function route(
     method === "GET"
   ) {
     const deletion = await env.DB.prepare(
-      'SELECT created_at,content_cleaned_at,blocked_reason,completed_at FROM outbox WHERE kind="deleteAccount" AND target=?',
+      'SELECT created_at,content_cleaned_at,blocked_reason,identity_error,completed_at FROM outbox WHERE kind="deleteAccount" AND target=?',
     )
       .bind(owner)
       .first();
-    return json({ deletion });
+    return json({ accountID: owner, deletion });
   }
   if (parts.length === 3 && parts[2] === "account") {
     if (method === "GET")
@@ -109,7 +101,10 @@ async function route(
         {
           status: "tombstoned",
           contentCleanup: "pending",
-          managedIdentityDeletion: "blocked: management adapter unprovisioned",
+          managedIdentityDeletion:
+            env.SERVICE_MODE === "live"
+              ? "pending"
+              : "blocked: management adapter unprovisioned",
         },
         202,
       );
@@ -157,7 +152,7 @@ async function route(
       return json(
         (
           await env.DB.prepare(
-            "SELECT id,local_id,purpose,fixture,context,status,next_sequence,last_hash,bytes,created_at FROM sessions WHERE owner=? AND deleted_at IS NULL ORDER BY created_at DESC",
+            "SELECT id,local_id,purpose,fixture,context,status,current_revision,next_sequence,last_hash,bytes,created_at FROM sessions WHERE owner=? AND deleted_at IS NULL ORDER BY created_at DESC",
           )
             .bind(owner)
             .all()
@@ -177,8 +172,8 @@ async function route(
           'UPDATE sessions SET deleted_at=?,status="deleting" WHERE id=?',
         ).bind(stamp, sid),
         env.DB.prepare(
-          "UPDATE publications SET revoked_at=? WHERE session=? AND revoked_at IS NULL",
-        ).bind(stamp, sid),
+          "UPDATE publications SET revoked_at=? WHERE owner=? AND (session=? OR local_id=?) AND revoked_at IS NULL",
+        ).bind(stamp, owner, sid, s.local_id),
         env.DB.prepare(
           "UPDATE contribution_revisions SET withdrawn_at=? WHERE session=? AND withdrawn_at IS NULL",
         ).bind(stamp, sid),
@@ -186,6 +181,85 @@ async function route(
       ]);
       ctx.waitUntil(dispatchPending(env));
       return json({ status: "tombstoned", cleanup: "pending" }, 202);
+    }
+    if (parts.length === 5 && parts[4] === "revisions" && method === "POST")
+      return openRevision(request, env, owner, sid);
+    if (parts.length === 5 && parts[4] === "snapshots" && method === "GET")
+      return json(
+        (
+          await env.DB.prepare(
+            "SELECT id AS snapshotID,revision,sequence_end AS sequenceEnd,hash,created_at FROM snapshots WHERE session=? ORDER BY revision",
+          )
+            .bind(sid)
+            .all()
+        ).results,
+      );
+    if (
+      parts.length === 7 &&
+      parts[4] === "snapshots" &&
+      parts[6] === "validation" &&
+      method === "GET"
+    ) {
+      const head = await env.DB.prepare(
+        "SELECT id FROM snapshots WHERE id=? AND session=?",
+      )
+        .bind(id(parts[5]), sid)
+        .first();
+      requireValue(head, "not_found", 404);
+      const v = await env.DB.prepare(
+        "SELECT * FROM snapshot_validations WHERE snapshot=?",
+      )
+        .bind(id(parts[5]))
+        .first();
+      const job = await env.DB.prepare(
+        "SELECT blocked_reason FROM outbox WHERE kind='validate' AND target=?",
+      )
+        .bind(id(parts[5]))
+        .first<{ blocked_reason: string | null }>();
+      return json(
+        v
+          ? {
+              ...v,
+              reasons: JSON.parse(String(v.reasons)),
+              metrics: JSON.parse(String(v.metrics)),
+            }
+          : {
+              status: job?.blocked_reason ? "blocked" : "pending",
+              blocked_reason: job?.blocked_reason ?? null,
+            },
+      );
+    }
+    if (parts.length === 7 && parts[4] === "revisions") {
+      const revision = Number(parts[5]);
+      requireValue(
+        Number.isSafeInteger(revision) && revision >= 1 && revision <= 1000,
+        "invalid_revision",
+      );
+      if (parts[6] === "chunks" && method === "POST")
+        return append(request, env, owner, sid, revision);
+      if (parts[6] === "finalize" && method === "POST") {
+        const b = object((await body(request, 4096)).value);
+        keys(b, ["sequenceEnd", "hash"]);
+        const head = await finalizeManifest(
+          env,
+          owner,
+          s,
+          { sequenceEnd: b.sequenceEnd, hash: b.hash },
+          revision,
+        );
+        ctx.waitUntil(dispatchPending(env));
+        return json(
+          {
+            sessionID: sid,
+            revision,
+            snapshotID: head.id,
+            sequenceEnd: head.sequence_end,
+            hash: head.hash,
+            status: "pending-validation",
+          },
+          202,
+        );
+      }
     }
     if (parts.length === 5 && parts[4] === "chunks" && method === "POST")
       return append(request, env, owner, sid);
@@ -201,19 +275,34 @@ async function route(
     if (parts.length === 5 && parts[4] === "finalize" && method === "POST") {
       const b = object((await body(request, 4096)).value);
       keys(b, ["sequenceEnd", "hash"]);
-      await finalizeManifest(env, owner, s, {
+      const head = await finalizeManifest(env, owner, s, {
         sequenceEnd: b.sequenceEnd,
         hash: b.hash,
       });
       ctx.waitUntil(dispatchPending(env));
-      return json({ status: "pending-validation", sessionID: sid }, 202);
+      return json(
+        {
+          status: "pending-validation",
+          sessionID: sid,
+          revision: head.revision,
+          snapshotID: head.id,
+          sequenceEnd: head.sequence_end,
+          hash: head.hash,
+        },
+        202,
+      );
     }
     if (parts.length === 5 && parts[4] === "validation" && method === "GET") {
       const v = await env.DB.prepare(
-        "SELECT * FROM validations WHERE session=?",
+        "SELECT v.*,p.session FROM snapshots p JOIN snapshot_validations v ON v.snapshot=p.id WHERE p.session=? AND p.revision=(SELECT max(revision) FROM snapshots WHERE session=p.session)",
       )
         .bind(sid)
         .first();
+      const job = await env.DB.prepare(
+        "SELECT blocked_reason FROM outbox WHERE kind='validate' AND target=(SELECT id FROM snapshots WHERE session=? ORDER BY revision DESC LIMIT 1)",
+      )
+        .bind(sid)
+        .first<{ blocked_reason: string | null }>();
       return json(
         v
           ? {
@@ -221,7 +310,10 @@ async function route(
               reasons: JSON.parse(String(v.reasons)),
               metrics: JSON.parse(String(v.metrics)),
             }
-          : { status: "pending" },
+          : {
+              status: job?.blocked_reason ? "blocked" : "pending",
+              blocked_reason: job?.blocked_reason ?? null,
+            },
       );
     }
     if (parts.length === 5 && parts[4] === "feedback" && method === "POST")

@@ -1,20 +1,34 @@
+import { requireService } from "./identity";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { hash, HttpError, requireValue } from "./http";
+// Bind caches to a runtime's D1 binding: fixture isolates may share an issuer URL
+// but use independent signing keys. jose retains its normal expiry/rotation rules.
+const resolverCaches = new WeakMap<
+  object,
+  Map<string, ReturnType<typeof createRemoteJWKSet>>
+>();
+function jwksResolver(env: Env, issuer: URL) {
+  let cache = resolverCaches.get(env.DB);
+  if (!cache) {
+    cache = new Map();
+    resolverCaches.set(env.DB, cache);
+  }
+  const url = new URL(".well-known/jwks.json", issuer);
+  const key = env.SERVICE_MODE + "\u0000" + url.href;
+  let resolver = cache.get(key);
+  if (!resolver) {
+    resolver = createRemoteJWKSet(url);
+    if (cache.size >= 8) cache.delete(cache.keys().next().value!);
+    cache.set(key, resolver);
+  }
+  return resolver;
+}
 export async function authenticate(
   request: Request,
   env: Env,
   allowDeleted = false,
 ): Promise<string> {
-  requireValue(
-    env.SERVICE_MODE === "fixture",
-    "service_not_configured: live identity management unprovisioned",
-    503,
-  );
-  requireValue(
-    ["localhost", "127.0.0.1", "[::1]"].includes(new URL(request.url).hostname),
-    "fixture_mode_requires_loopback",
-    503,
-  );
+  requireService(request, env);
   const issuer = new URL(env.OIDC_ISSUER);
   requireValue(
     issuer.protocol === "https:" && issuer.hostname !== "identity.invalid",
@@ -31,7 +45,7 @@ export async function authenticate(
   try {
     const { payload } = await jwtVerify(
       header.slice(7),
-      createRemoteJWKSet(new URL(".well-known/jwks.json", issuer)),
+      jwksResolver(env, issuer),
       {
         issuer: env.OIDC_ISSUER,
         audience: env.OIDC_AUDIENCE,

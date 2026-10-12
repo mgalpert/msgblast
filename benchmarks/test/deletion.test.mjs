@@ -6,6 +6,8 @@ test("every publication artifact checks current access; account tombstone blocks
   try {
     const a = await h.token(),
       b = await h.token("bob");
+    const accountA = await h.request("/api/v1/account", "GET", undefined, a).then(r => r.json());
+    const accountB = await h.request("/api/v1/account", "GET", undefined, b).then(r => r.json());
     const p = structuredClone(projection);
     p.artifacts = [
       {
@@ -42,6 +44,13 @@ test("every publication artifact checks current access; account tombstone blocks
       (await h.request("/api/v1/account", "GET", undefined, a)).status,
       410,
     );
+    const deletionA = await h.request("/api/v1/account/deletion", "GET", undefined, a).then(r => r.json());
+    const deletionB = await h.request("/api/v1/account/deletion", "GET", undefined, b).then(r => r.json());
+    assert.equal(deletionA.accountID, accountA.accountID);
+    assert.equal(deletionB.accountID, accountB.accountID);
+    assert.notEqual(deletionA.accountID, deletionB.accountID);
+    assert.ok(deletionA.deletion);
+    assert.ok(deletionB.deletion);
     const jobs = await h.db
       .prepare('SELECT * FROM outbox WHERE kind="deleteAccount"')
       .all();

@@ -74,3 +74,27 @@ release reservations. Tombstoned content stays charged until physical cleanup.
 Late in-flight puts recheck account/session access; canceled content is erased,
 and cleanup failures restore a durable deletion generation. Account cleanup-stage
 writes are generation-guarded as well as validation results.
+
+Before applying snapshot migration 0002, pause writes and queue consumers and
+retain a verified restorable D1/R2 backup. The migration copies each reply's
+latest legacy feedback selection into an immutable migration baseline at the
+existing native sequence boundary. It discards derived summaries with legacy
+feedback or pending validation and queues recomputation before those snapshots
+can count toward contributed statistics. It then deletes obsolete feedback
+revision history; canonical native chunks are unchanged. Confirm the baseline
+count matches the number of distinct legacy reply keys, finalized snapshot and
+contribution bindings match their original sessions, and all pending migrated
+validation jobs finish or expose a blocked reason before reopening traffic.
+Later canonical feedback beyond that boundary supersedes only the relevant
+reply selection in a newer snapshot; an existing contributed snapshot stays
+pinned. Session/account content deletion also removes migration baselines.
+There is no down migration. Rehearse restoring the pre-migration database and
+matching object backup with consumers stopped; database restoration cannot
+undo a managed provider identity deletion, so do not mix that external action
+into a migration rollback rehearsal.
+
+JWT verification reuses jose's remote JWKS resolver within the D1 runtime and
+service-mode/issuer configuration, with at most eight configuration entries per
+runtime. Its normal cache expiry, cooldown and key-rotation rules remain in
+force; recently cached keys tolerate an outbound outage only within that cache
+window. Independent fixture runtimes with the same issuer URL do not share keys.

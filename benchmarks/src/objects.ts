@@ -5,17 +5,20 @@ export async function immutableWrite(
   key: string,
   bytes: string,
   relatedSession: string | null = null,
+  relatedComparison: string | null = null,
 ) {
   // Renew a durable upload lease before touching R2. Reconciliation claims old leases atomically,
   // so a cleanup cannot race a receipt commit from a retry of the same immutable object.
   const size = new TextEncoder().encode(bytes).length;
   try {
     await env.DB.prepare(
-      'INSERT OR IGNORE INTO object_intents(object_key,owner,session,bytes,state,updated_at) VALUES(?,?,?,?,"uploading",?)',
+      'INSERT OR IGNORE INTO object_intents(object_key,owner,session,local_id,bytes,state,updated_at) VALUES(?,?,?,?,?,"uploading",?)',
     )
-      .bind(key, owner, relatedSession, size, now())
+      .bind(key, owner, relatedSession, relatedComparison, size, now())
       .run();
   } catch (error) {
+    if (error instanceof Error && error.message.includes("object_association_deleted"))
+      throw new HttpError(410, "owner_or_session_deleted");
     if (
       error instanceof Error &&
       error.message.includes("pending_object_quota")
@@ -24,14 +27,14 @@ export async function immutableWrite(
     throw error;
   }
   await env.DB.prepare(
-    'UPDATE object_intents SET updated_at=? WHERE object_key=? AND owner=? AND bytes=? AND state="uploading"',
+    'UPDATE object_intents SET updated_at=? WHERE object_key=? AND owner=? AND bytes=? AND local_id IS ? AND state="uploading"',
   )
-    .bind(now(), key, owner, size)
+    .bind(now(), key, owner, size, relatedComparison)
     .run();
   const intent = await env.DB.prepare(
-    "SELECT state FROM object_intents WHERE object_key=? AND owner=? AND bytes=?",
+    "SELECT state FROM object_intents WHERE object_key=? AND owner=? AND bytes=? AND local_id IS ?",
   )
-    .bind(key, owner, size)
+    .bind(key, owner, size, relatedComparison)
     .first<{ state: string }>();
   requireValue(
     intent?.state === "uploading",
@@ -43,9 +46,9 @@ export async function immutableWrite(
     httpMetadata: { contentType: "application/json" },
   });
   const active = await env.DB.prepare(
-    "SELECT id FROM accounts WHERE id=? AND deleted_at IS NULL AND (? IS NULL OR EXISTS(SELECT 1 FROM sessions WHERE id=? AND owner=? AND deleted_at IS NULL))",
+    "SELECT id FROM accounts WHERE id=? AND deleted_at IS NULL AND (? IS NULL OR EXISTS(SELECT 1 FROM sessions WHERE id=? AND owner=? AND deleted_at IS NULL)) AND NOT EXISTS(SELECT 1 FROM sessions WHERE owner=? AND local_id=? AND deleted_at IS NOT NULL)",
   )
-    .bind(owner, relatedSession, relatedSession, owner)
+    .bind(owner, relatedSession, relatedSession, owner, owner, relatedComparison)
     .first();
   if (!active) {
     try {
@@ -55,14 +58,14 @@ export async function immutableWrite(
         .run();
     } catch {
       await env.DB.prepare(
-        'INSERT INTO object_intents(object_key,owner,session,bytes,state,updated_at) VALUES(?,?,?,?,"deleting",?) ON CONFLICT(object_key) DO UPDATE SET state="deleting",updated_at=excluded.updated_at',
+        'INSERT INTO object_intents(object_key,owner,session,local_id,bytes,state,updated_at) VALUES(?,?,?,?,?,"deleting",?) ON CONFLICT(object_key) DO UPDATE SET state="deleting",updated_at=excluded.updated_at',
       )
-        .bind(key, owner, relatedSession, size, now())
+        .bind(key, owner, relatedSession, relatedComparison, size, now())
         .run();
       await env.DB.prepare(
-        'UPDATE outbox SET completed_at=NULL,content_cleaned_at=NULL,blocked_reason=NULL,generation=generation+1 WHERE (kind="deleteAccount" AND target=?) OR (kind="deleteSession" AND target=?)',
+        'UPDATE outbox SET completed_at=NULL,content_cleaned_at=NULL,blocked_reason=NULL,generation=generation+1 WHERE (kind="deleteAccount" AND target=?) OR (kind="deleteSession" AND (target=? OR target IN(SELECT id FROM sessions WHERE owner=? AND local_id=?)))',
       )
-        .bind(owner, relatedSession)
+        .bind(owner, relatedSession, owner, relatedComparison)
         .run();
     }
     throw new HttpError(410, "owner_or_session_deleted");

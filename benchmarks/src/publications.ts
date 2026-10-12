@@ -25,6 +25,7 @@ export interface PublishedMessage {
   outcome: string;
   timingLabel: string;
   feedback?: string;
+  revisions?: { text: string; timingLabel: string }[];
 }
 export interface Reply {
   agentID: string;
@@ -49,6 +50,7 @@ export interface Projection {
   omissions: string[];
   limitations: string[];
   includesPrivate: boolean;
+  includesUnknown?: boolean;
   includesEarlierHistory: boolean;
   artifacts: Artifact[];
 }
@@ -63,6 +65,7 @@ export function validateProjection(value: unknown): Projection {
     "omissions",
     "limitations",
     "includesPrivate",
+    "includesUnknown",
     "includesEarlierHistory",
     "artifacts",
   ]);
@@ -71,6 +74,9 @@ export function validateProjection(value: unknown): Projection {
       typeof p.fixture === "boolean" &&
       typeof p.includesPrivate === "boolean" &&
       typeof p.includesEarlierHistory === "boolean",
+  );
+  requireValue(
+    p.includesUnknown === undefined || typeof p.includesUnknown === "boolean",
   );
   text(p.title, 200);
   requireValue(
@@ -129,7 +135,10 @@ export function validateProjection(value: unknown): Projection {
     requireValue(["initial", "followUp", "unknown"].includes(String(t.kind)));
     requireValue(
       t.scope === "shared" ||
-        (t.scope === "private" && p.includesPrivate === true),
+        (t.scope === "private" && p.includesPrivate === true) ||
+        (t.scope === "unknown" &&
+          p.includesUnknown === true &&
+          t.kind === "unknown"),
       "scope_not_previewed",
     );
     requireValue(Array.isArray(t.replies) && t.replies.length <= 12);
@@ -145,13 +154,29 @@ export function validateProjection(value: unknown): Projection {
       const messageIDs = new Set<string>();
       for (const value of r.messages) {
         const m = object(value);
-        keys(m, ["messageID", "text", "outcome", "timingLabel", "feedback"]);
+        keys(m, [
+          "messageID",
+          "text",
+          "outcome",
+          "timingLabel",
+          "feedback",
+          "revisions",
+        ]);
         const mid = text(m.messageID, 256);
         requireValue(mid.length > 0 && !messageIDs.has(mid));
         messageIDs.add(mid);
         text(m.text, 100000);
         text(m.timingLabel, 1000);
         requireValue(validOutcome(m.outcome));
+        if (m.revisions !== undefined) {
+          requireValue(Array.isArray(m.revisions) && m.revisions.length <= 200);
+          for (const value of m.revisions) {
+            const r = object(value);
+            keys(r, ["text", "timingLabel"]);
+            text(r.text, 100000);
+            text(r.timingLabel, 1000);
+          }
+        }
         if (m.feedback !== undefined)
           requireValue(
             ["favorite", "negative", "unmarked"].includes(String(m.feedback)),
@@ -219,14 +244,30 @@ function artifactBytes(a: Artifact) {
 }
 export async function publish(request: Request, env: Env, owner: string) {
   const b = object((await body(request)).value);
-  keys(b, ["consent", "projection", "previewHash", "sessionID"]);
+  keys(b, ["consent", "projection", "previewHash", "sessionID", "localID"]);
   requireValue(b.consent === true, "publication_consent_required");
   const p = validateProjection(b.projection),
     raw = canonical(p),
     digest = await hash(raw);
   requireValue(b.previewHash === digest, "preview_hash_mismatch");
-  if (b.sessionID !== undefined)
-    await ownedSession(env, owner, id(b.sessionID));
+  const session =
+    b.sessionID === undefined
+      ? undefined
+      : await ownedSession(env, owner, id(b.sessionID));
+  const localID = b.localID === undefined ? session?.local_id : id(b.localID);
+  requireValue(
+    !session || localID === session.local_id,
+    "publication_association_mismatch",
+    409,
+  );
+  if (localID !== undefined) {
+    const tombstone = await env.DB.prepare(
+      "SELECT id FROM sessions WHERE owner=? AND local_id=? AND deleted_at IS NOT NULL",
+    )
+      .bind(owner, localID)
+      .first();
+    requireValue(!tombstone, "session_deleted", 410);
+  }
   const count = await env.DB.prepare(
     "SELECT count(*) AS n FROM publications WHERE owner=?",
   )
@@ -244,9 +285,10 @@ export async function publish(request: Request, env: Env, owner: string) {
     key,
     raw,
     b.sessionID === undefined ? null : id(b.sessionID),
+    localID ?? null,
   );
   await env.DB.prepare(
-    "INSERT INTO publications(id,owner,token_hash,object_key,projection_hash,bytes,session,created_at) VALUES(?,?,?,?,?,?,?,?)",
+    "INSERT INTO publications(id,owner,token_hash,object_key,projection_hash,bytes,session,local_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
   )
     .bind(
       pid,
@@ -256,6 +298,7 @@ export async function publish(request: Request, env: Env, owner: string) {
       digest,
       new TextEncoder().encode(raw).length,
       b.sessionID ?? null,
+      localID ?? null,
       now(),
     )
     .run();
@@ -286,7 +329,7 @@ export async function publicRead(
   requireValue(/^[0-9a-f]{48}$/.test(token), "not_found", 404);
   // Direct D1 queries always use the primary (no replica session). Every artifact goes through this gate.
   const p = await env.DB.prepare(
-    "SELECT p.* FROM publications p JOIN accounts a ON a.id=p.owner LEFT JOIN sessions s ON s.id=p.session WHERE p.token_hash=? AND p.revoked_at IS NULL AND a.deleted_at IS NULL AND (p.session IS NULL OR s.deleted_at IS NULL)",
+    "SELECT p.* FROM publications p JOIN accounts a ON a.id=p.owner LEFT JOIN sessions s ON s.id=p.session WHERE p.token_hash=? AND p.revoked_at IS NULL AND a.deleted_at IS NULL AND (p.session IS NULL OR s.deleted_at IS NULL) AND NOT EXISTS(SELECT 1 FROM sessions tombstone WHERE tombstone.owner=p.owner AND tombstone.local_id=p.local_id AND tombstone.deleted_at IS NOT NULL)",
   )
     .bind(await hash(token))
     .first<{ object_key: string }>();
@@ -348,7 +391,7 @@ const connectionLabels: Record<string, string> = {
   grokBot: "Grok Bot",
 };
 function renderMessage(m: PublishedMessage, index: number) {
-  return `<section class="message" data-message="${escape(m.messageID)}"><h4>Reply ${index + 1}</h4><p class="outcome">${escape(outcomeLabels[m.outcome] ?? "Outcome unknown")} · ${escape(m.timingLabel)}</p><div class="reply">${escape(m.text)}</div>${m.feedback ? `<p>Owner preference: ${escape(m.feedback)} (not task accuracy)</p>` : ""}</section>`;
+  return `<section class="message" data-message="${escape(m.messageID)}"><h4>Reply ${index + 1}</h4><p class="outcome">${escape(outcomeLabels[m.outcome] ?? "Outcome unknown")} · ${escape(m.timingLabel)}</p><div class="reply">${escape(m.text)}</div>${m.revisions?.length ? `<details><summary>${m.revisions.length} earlier observed streaming revisions</summary>${m.revisions.map((r) => `<p>${escape(r.timingLabel)}</p><div class="reply">${escape(r.text)}</div>`).join("")}</details>` : ""}${m.feedback ? `<p>Owner preference: ${escape(m.feedback)} (not task accuracy)</p>` : ""}</section>`;
 }
 function renderAgent(
   a: Projection["participants"][number],
@@ -363,7 +406,7 @@ function renderAgent(
   return `<article data-agent="${escape(a.id)}" class="agent ${index === 0 ? "selected" : ""}"><h3>${escape(a.label)}</h3><p class="connection">${escape(connectionLabels[a.connectionType] ?? "Connection unknown")}</p><p class="outcome">Turn outcome: ${escape(outcomeLabels[reply?.outcome ?? "unobserved"] ?? "Outcome unknown")}</p>${reply?.messages.length ? reply.messages.map(renderMessage).join("") : '<p class="reply">No reply captured. This missing response is retained.</p>'}</article>`;
 }
 function renderTurn(p: Projection, t: Turn, index: number) {
-  return `<section class="turn"><h2>Turn ${index + 1} · ${t.kind === "initial" ? "Initial request" : t.kind === "followUp" ? "Follow-up" : "Recorded request (position unknown)"} · ${escape(t.scope)}</h2>${t.alignmentLabel ? `<p>${escape(t.alignmentLabel)}</p>` : ""}<div class="prompt">${escape(t.prompt)}</div><div class="agents">${p.participants
+  return `<section class="turn"><h2>Turn ${index + 1} · ${t.kind === "initial" ? "Initial request" : t.kind === "followUp" ? "Follow-up" : "Recorded request (position unknown)"} · ${escape(t.scope === "unknown" ? "Scope unknown" : t.scope === "private" ? "Private" : "Shared")}</h2>${t.alignmentLabel ? `<p>${escape(t.alignmentLabel)}</p>` : ""}<div class="prompt">${escape(t.prompt)}</div><div class="agents">${p.participants
     .map((a, j) =>
       renderAgent(
         a,

@@ -54,11 +54,12 @@ function elapsed(
 export async function validateSession(
   env: Env,
   s: Session,
+  frozen = false,
 ): Promise<Validation> {
   const rows = await env.DB.prepare(
-    "SELECT * FROM chunks WHERE session=? ORDER BY start_sequence",
+    "SELECT * FROM chunks WHERE session=? AND end_sequence<=? ORDER BY start_sequence",
   )
-    .bind(s.id)
+    .bind(s.id, s.next_sequence)
     .all<{
       start_sequence: number;
       end_sequence: number;
@@ -92,6 +93,11 @@ export async function validateSession(
     prev = row.hash;
     eventHash = await hash(canonical(events.at(-1)));
   }
+  requireValue(
+    seq - 1 === s.next_sequence && prev === s.last_hash,
+    "snapshot_head_mismatch",
+    409,
+  );
   const gaps = new Map<string, { sequence: number; agent: string | null }[]>();
   const reasons: string[] = [];
   const segments = new Map<string, { started: boolean; ended: boolean }>();
@@ -128,6 +134,7 @@ export async function validateSession(
     reasons.push("open-or-missing-segment");
   const attempts = new Map<string, Event[]>();
   const replies = new Map<string, string>();
+  const feedbackSequences = new Map<string, number>();
   for (const e of events) {
     const agent = e.agent ? object(e.agent) : undefined;
     if (e.kind === "replyObserved" && agent && e.messageID) {
@@ -136,7 +143,10 @@ export async function validateSession(
     }
     if (e.kind === "feedback" && agent && e.messageID && e.selection) {
       const k = `${e.segmentID}:${agent.id}:${e.messageID}`;
-      if (replies.has(k)) replies.set(k, String(e.selection));
+      if (replies.has(k)) {
+        replies.set(k, String(e.selection));
+        feedbackSequences.set(k, Number(e.sequence));
+      }
     }
     if (e.turnID) {
       const key = `${e.segmentID}:${agent?.id ?? "unknown"}:${e.turnID}`;
@@ -215,10 +225,26 @@ export async function validateSession(
   if (s.fixture) reasons.push("fixture-excluded");
   if (s.context !== "fresh") reasons.push("not-controlled-fresh-context");
   if (!samples.length) reasons.push("no-attempts");
+  const baseline = await env.DB.prepare(
+    "SELECT * FROM legacy_feedback_baselines WHERE session=?",
+  )
+    .bind(s.id)
+    .all<{
+      segment_id: string;
+      agent_id: string;
+      message_id: string;
+      sequence_end: number;
+      selection: string;
+    }>();
+  for (const f of baseline.results) {
+    const key = `${f.segment_id}:${f.agent_id}:${f.message_id}`;
+    if (replies.has(key) && (feedbackSequences.get(key) ?? 0) <= f.sequence_end)
+      replies.set(key, f.selection);
+  }
   const feedback = await env.DB.prepare(
     "SELECT f.* FROM feedback_revisions f WHERE f.session=? AND f.revision=(SELECT max(f2.revision) FROM feedback_revisions f2 WHERE f2.session=f.session AND f2.segment_id=f.segment_id AND f2.agent_id=f.agent_id AND f2.message_id=f.message_id)",
   )
-    .bind(s.id)
+    .bind(frozen ? "" : s.id)
     .all<{
       segment_id: string;
       agent_id: string;

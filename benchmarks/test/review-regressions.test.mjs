@@ -88,7 +88,7 @@ test("old validation completing last cannot overwrite newer actual Queue result"
       x = await cohort(h, a);
     const job = await h.db
       .prepare(
-        'SELECT id,generation FROM outbox WHERE kind="validate" AND target=?',
+        'SELECT id,generation FROM outbox WHERE kind="validate" AND target IN(SELECT id FROM snapshots WHERE session=?)',
       )
       .bind(x.s.id)
       .first();
@@ -119,7 +119,7 @@ test("old validation completing last cannot overwrite newer actual Queue result"
         if (key === "prepare")
           return (sql) => {
             const stmt = target.prepare(sql);
-            return sql.startsWith("INSERT INTO validations")
+            return sql.startsWith("INSERT OR IGNORE INTO snapshot_validations")
               ? wrap(stmt)
               : stmt;
           };
@@ -129,38 +129,18 @@ test("old validation completing last cannot overwrite newer actual Queue result"
     });
     const old = processJob({ ...bindings, DB: pausedDB }, job.id);
     await entered;
-    assert.equal(
-      (
-        await h.request(
-          `/api/v1/sessions/${x.s.id}/feedback`,
-          "POST",
-          {
-            consent: true,
-            segmentID: "synthetic-segment",
-            agentID: "synthetic-chatgpt-copy-1",
-            messageID: "document-1:reply-1",
-            revision: 1,
-            selection: "negative",
-          },
-          a,
-        )
-      ).status,
-      202,
-    );
-    await waitFor(async () => {
-      const j = await h.db
-        .prepare("SELECT generation,completed_at FROM outbox WHERE id=?")
-        .bind(job.id)
-        .first();
-      return j.generation > job.generation && j.completed_at;
-    });
+    await h.db
+      .prepare("UPDATE outbox SET generation=generation+1 WHERE id=?")
+      .bind(job.id)
+      .run();
+    await processJob(bindings, job.id);
     release();
     await old;
     const v = await h
       .request(`/api/v1/sessions/${x.s.id}/validation`, "GET", undefined, a)
       .then((r) => r.json());
-    assert.equal(v.metrics.preferences.negative, 1);
-    assert.equal(v.metrics.preferences.favorite, 0);
+    assert.equal(v.metrics.preferences.negative, 0);
+    assert.equal(v.metrics.preferences.favorite, 1);
   } finally {
     release?.();
     await h.close();

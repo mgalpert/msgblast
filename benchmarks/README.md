@@ -6,11 +6,10 @@ contribution validation. It does not change the landing, feedback or updater
 services. Native account/sync/publication UI is a separate dependent integration.
 My Stats remains local; Benchmarks owns optional contributions/account history.
 
-**Live launch is blocked.** The committed mode is disabled. Fixture mode accepts
-only loopback request hosts and verifies real signed fixture JWTs against a local
-JWKS responder. It cannot be used on a public hostname. Managed Auth0 is a
-proposal, not configured access. The production identity deletion adapter is not
-implemented, so no mode enables live actions in this revision.
+**Live launch requires provisioning.** The committed mode is disabled. Fixture
+mode accepts only loopback request hosts and verifies signed fixture JWTs against
+a local JWKS responder. Configured live mode uses the managed Auth0 adapter; this
+checkout contains no live identity configuration, credentials or resource IDs.
 
 ## Local checks
 
@@ -47,7 +46,13 @@ Its source is Stream A `docs/performance/sample-upload-v1.json` and
 
 Private sync, publication and contribution are three independent actions. A
 publication uploads only the hash-confirmed redacted projection and can have no
-private session at all. Local originals are never fetched by the reader. Tokens
+private session at all. Optional `localID` is owner-private association metadata
+outside the projection; an optional `sessionID` must belong to that owner and
+match the comparison. Legacy session-linked publications derive that association.
+Deleting the comparison's cloud record revokes and cleans its associated pages,
+including pages published before private upload, and prevents republishing that
+tombstoned comparison. An older standalone page without either association
+cannot be inferred retroactively and must be revoked separately. Local originals are never fetched by the reader. Tokens
 are random 192-bit capabilities, stored as hashes, and returned only at creation.
 Recipients may copy or forward a page; revocation cannot erase those copies.
 
@@ -79,3 +84,19 @@ preview-hash-checked publish with zero private sessions/contributions, anonymous
 read, authenticated revoke and immediate unavailable page/JSON. This viewer is
 not a native account/preview screen or a production owner UI. Tokens are hidden;
 inputs and scripted pauses are synthetic. Its JSON log is fixture-only.
+
+### Configured identity and snapshot continuation
+
+The real Auth0 management deletion adapter is implemented. Live mode remains off
+until the owner provisions the dedicated identity tenant/application, server-only
+management secret, D1/R2/Queue resources, domain, and approved cost/retention policy.
+See [the API contract](contract-v1.md#managed-identity-provisioning) for configuration.
+Local tests supply synthetic tokens and external provider responses; no real
+identity accounts are created or deleted.
+
+Finalization produces an immutable snapshot ID. Resuming private sync requires
+an explicit cloud revision anchored to the prior head. Contributions bind a
+chosen snapshot; local feedback and later uploads never silently move that choice.
+The mutable feedback overlay endpoint is retired in favor of canonical native
+feedback events. Old initial upload/finalize and single-snapshot contribution
+requests remain supported. See [revision routes](contract-v1.md#immutable-cloud-revisions).

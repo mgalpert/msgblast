@@ -92,7 +92,7 @@ test("complete records with unsupported timing retain outcome denominator but no
   }
 });
 
-test("feedback revisions recompute preference counts without increasing rated/session credit", async () => {
+test("frozen snapshots reject mutable feedback overlays and retain selected preference", async () => {
   const h = await harness();
   try {
     const a = await h.token(),
@@ -103,71 +103,22 @@ test("feedback revisions recompute preference counts without increasing rated/se
       { consent: true, revision: 1 },
       a,
     );
-    const b = {
-      consent: true,
-      segmentID: "synthetic-segment",
-      agentID: "synthetic-chatgpt-copy-1",
-      messageID: "document-1:reply-1",
-      revision: 1,
-      selection: "negative",
-    };
-    assert.equal(
-      (await h.request(`/api/v1/sessions/${x.s.id}/feedback`, "POST", b, a))
-        .status,
-      202,
-    );
-    assert.equal(
-      (await h.request(`/api/v1/sessions/${x.s.id}/feedback`, "POST", b, a))
-        .status,
-      200,
-    );
     assert.equal(
       (
         await h.request(
           `/api/v1/sessions/${x.s.id}/feedback`,
           "POST",
-          { ...b, selection: "favorite" },
+          { consent: true, selection: "negative" },
           a,
         )
       ).status,
       409,
     );
-    for (let i = 0; i < 100; i++) {
-      const r = await h
-        .request("/api/v1/statistics", "GET", undefined, a)
-        .then((r) => r.json());
-      if (r.preferences.negative === 1) {
-        assert.equal(r.preferences.favorite, 0);
-        assert.equal(r.preferences.rated, 1);
-        assert.equal(r.sessions, 1);
-        break;
-      }
-      if (i === 99) throw Error("Feedback revalidation missing");
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    assert.equal(
-      (
-        await h.request(
-          `/api/v1/sessions/${x.s.id}/feedback`,
-          "POST",
-          { ...b, revision: 2, selection: "unmarked" },
-          a,
-        )
-      ).status,
-      202,
-    );
-    for (let i = 0; i < 100; i++) {
-      const r = await h
-        .request("/api/v1/statistics", "GET", undefined, a)
-        .then((r) => r.json());
-      if (r.preferences.unmarked === 1) {
-        assert.equal(r.preferences.rated, 0);
-        assert.equal(r.sessions, 1);
-        break;
-      }
-      if (i === 99) throw Error("Feedback clear missing");
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    const stats = await h
+      .request("/api/v1/statistics", "GET", undefined, a)
+      .then((r) => r.json());
+    assert.equal(stats.preferences.favorite, 1);
+    assert.equal(stats.preferences.negative, 0);
   } finally {
     await h.close();
   }

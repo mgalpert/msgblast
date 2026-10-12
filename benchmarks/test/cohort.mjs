@@ -15,6 +15,7 @@ export async function cohort(
     provider,
     transform,
     driveJobs = false,
+    expectValidationBlocked = false,
   } = {},
 ) {
   const c = structuredClone(original);
@@ -92,7 +93,9 @@ export async function cohort(
   if (driveJobs) {
     const { processJob } = await import("../dist/support/jobs.mjs");
     const j = await h.db
-      .prepare('SELECT id FROM outbox WHERE kind="validate" AND target=?')
+      .prepare(
+        'SELECT id FROM outbox WHERE kind="validate" AND target IN(SELECT id FROM snapshots WHERE session=?)',
+      )
       .bind(s.id)
       .first();
     await processJob(await h.mf.getBindings("benchmarks-fixture"), j.id);
@@ -106,7 +109,8 @@ export async function cohort(
       a,
     );
     const v = await r.json();
-    if (v.completeness) return { s, v };
+    if (v.completeness || (expectValidationBlocked && v.status === "blocked"))
+      return { s, v };
     await new Promise((r) => setTimeout(r, 50));
   }
   throw Error("Local queue did not validate");

@@ -25,6 +25,7 @@ export interface Session {
   last_hash: string;
   bytes: number;
   deleted_at: string | null;
+  current_revision: number;
 }
 export async function ownedSession(
   env: Env,
@@ -194,6 +195,7 @@ export async function validateChunk(
             "generating",
             "idle",
             "unsupported-generation",
+            "cancellation-requested",
           ].includes(String(e.reason)),
         "observation_state",
       );
@@ -270,6 +272,7 @@ export async function append(
   env: Env,
   owner: string,
   sid: string,
+  revision = 1,
 ) {
   const s = await ownedSession(env, owner, sid);
   const { value, raw } = await body(request);
@@ -283,9 +286,16 @@ export async function append(
     .bind(sid, cid)
     .first();
   if (existing) {
+    requireValue(
+      existing.cloud_revision === revision,
+      "cloud_revision_mismatch",
+      409,
+    );
     requireValue(existing.hash === digest, "immutable_chunk_conflict", 409);
+    await ownedSession(env, owner, sid);
     return json(existing);
   }
+  requireValue(s.current_revision === revision, "cloud_revision_mismatch", 409);
   requireValue(s.status === "open", "session_closed", 409);
   requireValue(
     chunk.sequenceStart === s.next_sequence + 1 &&
@@ -319,7 +329,7 @@ export async function append(
   await immutableWrite(env, owner, key, raw, sid);
   try {
     await env.DB.prepare(
-      "INSERT INTO chunks(session,id,start_sequence,end_sequence,hash,previous_hash,object_key,bytes,received_at) VALUES(?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO chunks(session,id,start_sequence,end_sequence,hash,previous_hash,object_key,bytes,received_at,cloud_revision) VALUES(?,?,?,?,?,?,?,?,?,?)",
     )
       .bind(
         sid,
@@ -331,6 +341,7 @@ export async function append(
         key,
         bytes,
         now(),
+        revision,
       )
       .run();
   } catch (error) {
@@ -339,7 +350,7 @@ export async function append(
     )
       .bind(sid, cid)
       .first();
-    if (concurrent?.hash === digest) {
+    if (concurrent?.hash === digest && concurrent.cloud_revision === revision) {
       await env.DB.prepare("DELETE FROM object_intents WHERE object_key=?")
         .bind(key)
         .run();
