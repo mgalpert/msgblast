@@ -1,3 +1,4 @@
+import { validateBusinessChoices } from "./businessChoices";
 import { providers } from "./providers";
 import { immutableWrite } from "./objects";
 import {
@@ -111,6 +112,7 @@ const eventKeys = [
   "selection",
   "requestGroupID",
   "targetAgentIDs",
+  "businessChoices",
 ];
 export async function validateChunk(
   value: unknown,
@@ -247,6 +249,10 @@ export async function validateChunk(
         );
     }
     if (e.turnID !== undefined) id(e.turnID);
+    if (e.businessChoices !== undefined) {
+      requireValue(e.kind === "replyObserved", "business_choices_only_on_reply");
+      validateBusinessChoices(e.businessChoices);
+    }
     if (e.messageID !== undefined) text(e.messageID, 256);
     if (e.turnPosition !== undefined)
       requireValue(

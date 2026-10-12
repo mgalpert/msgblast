@@ -137,6 +137,12 @@ final class AppModel: ObservableObject {
             state.selection = Set(state.agents.map(\.id))
             state.draft = "What is the clearest way to compare three approaches to the same problem?"
         }
+        if ProcessInfo.processInfo.arguments.contains("--business-choices-preview") {
+            let address = "urn:biz:00000000-0000-0000-0000-000000000001"
+            chats[0] = Chat(id: "iMessage;-;" + address, handle: address, lastActivity: 0, displayName: "Poke", businessConversation: true)
+            state.agents[0].name = "Poke 🌴"
+            state.agents[0].destination = MessagesDestination(chat: chats[0])
+        }
         // Synthetic transcripts are reconstructed from app-owned prompts, never copied into the local store.
         if onboardingPreview {
             state.draft = ""
@@ -446,6 +452,30 @@ final class AppModel: ObservableObject {
             return comparison.id
         } catch { self.error = error.localizedDescription; return nil }
     }
+    func joinWebAgent(_ session: WebAgentSession, comparisonID: UUID) async -> Bool {
+        guard !busy, session.isEnabled, session.provider.supportsSharedSubmissions else { return false }
+        if comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) == true { return true }
+        do {
+            try freezeSharedContext(comparisonID)
+            guard let saved = comparison(comparisonID), let i = index(comparisonID) else { return false }
+            guard saved.joiningContext().allSatisfy({ $0.attachments.isEmpty }) else {
+                error = "This conversation contains attachments. Add a Messages agent to share the full context."
+                session.updateState { $0.selected = false }
+                return false
+            }
+            guard await session.openComparison(comparisonID) else { return false }
+            // Save membership before sending so an interrupted join is never automatically repeated.
+            state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])
+            try save()
+            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID)
+            if attempt == nil || attempt?.status == .notSent {
+                state.comparisons[i].setWebAgents(state.comparisons[i].resolvedWebAgentIDs.filter { $0 != session.id })
+                try save()
+            }
+            return attempt?.status == .observed
+        } catch { self.error = error.localizedDescription; return false }
+    }
+
     func freezeSharedContext(_ id: UUID) throws {
         guard let i = index(id) else { return }
         let verified = Array(state.comparisons[i].joiningContext().dropFirst())
@@ -675,6 +705,7 @@ final class AppModel: ObservableObject {
         messages[chat.id, default: []].append(Message(id: demoRow, guid: "fixture-\(demoRow)", chatID: chat.id, text: text, outgoing: outgoing, replyTo: replyTo, attachments: attachments))
     }
     func scheduleDemoReply(_ id: UUID, memberID: UUID) {
+        if demo && ProcessInfo.processInfo.arguments.contains("--no-demo-replies") { return }
         guard let comparison = comparison(id), let member = comparison.members.first(where: { $0.id == memberID }), let anchor = member.anchor,
               let sent = messages[member.chat.id]?.last(where: { $0.outgoing }) else { return }
         let offset = comparison.members.firstIndex { $0.id == memberID } ?? 0
@@ -686,6 +717,9 @@ final class AppModel: ObservableObject {
                 messages[member.chat.id]?[index].reactions = [MessageReaction(id: "fixture-recipient", emoji: "✅", outgoing: false)]
                 let answer = sent.linkPreview?.url.absoluteString ?? answers[offset % answers.count]
                 appendDemo(answer, chat: member.chat, outgoing: false, replyTo: anchor.guid)
+                if ProcessInfo.processInfo.arguments.contains("--business-choices-preview"), member.chat.businessConversation == true {
+                    appendBusinessChoiceFixture(chat: member.chat)
+                }
             } else {
                 appendDemo(answers[offset % answers.count], chat: member.chat, outgoing: false, replyTo: anchor.guid)
             }

@@ -74,3 +74,52 @@ struct ReactionBadge: View {
         }
     }
 }
+
+struct BusinessChoicesView: View {
+    @ObservedObject var model: AppModel
+    let message: Message
+    let member: Member
+    let payload: BusinessMessagePayload
+    var body: some View {
+        let available = model.canChooseBusinessOption(message, member: member, optionID: payload.options.first?.id ?? -1)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(payload.title).font(.body.weight(.medium)).textSelection(.enabled)
+            ForEach(payload.options) { option in
+                if payload.kind == .quickReply && !message.outgoing {
+                    let selected = model.businessChoiceAttempt(message).map { $0.status == .submitted && $0.optionID == option.id } ?? false
+                    Button {
+                        Task { await model.chooseBusinessOption(message, member: member, optionID: option.id) }
+                    } label: {
+                        HStack {
+                            Text(option.title)
+                            if selected { Image(systemName: "checkmark").accessibilityHidden(true) }
+                        }
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                    .padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("Choose \(option.title)")
+                    .accessibilityValue(selected ? "Selected" : "Not selected")
+                    .disabled(!available)
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let section = option.section { Text(section).font(.caption).foregroundStyle(.secondary) }
+                        HStack { Text(option.title); if option.selected { Image(systemName: "checkmark").accessibilityLabel("Selected") } }
+                        if let subtitle = option.subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
+                if option.id != payload.options.last?.id { Divider() }
+            }
+            if let attempt = model.businessChoiceAttempt(message) {
+                Text(attempt.detail ?? "Selecting…").font(.caption).foregroundStyle(.secondary)
+                if attempt.status == .uncertain {
+                    Button("Check in Messages") { model.openMessages(member) }.buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                }
+            }
+            if payload.kind != .quickReply {
+                Button("Open in Messages") { model.openMessages(member) }.buttonStyle(.plain).foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(12).frame(minWidth: 180, maxWidth: 360, alignment: .leading)
+        .background(message.outgoing ? Color.blue.opacity(0.15) : MessageAppearance.incomingBubbleColor, in: RoundedRectangle(cornerRadius: 15))
+    }
+}

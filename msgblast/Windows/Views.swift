@@ -365,11 +365,16 @@ struct TranscriptView: View {
     @ObservedObject var model: AppModel
     let comparison: Comparison
     let member: Member
+    @State private var followingBottom = true
+    @State private var atBottom = true
+    @State private var userIsScrolling = false
+    private var bottomID: String { "transcript-bottom-" + comparison.id.uuidString + member.id.uuidString }
     var body: some View {
         let transcript = model.transcript(comparison, member: member)
         GeometryReader { geometry in
         ScrollViewReader { proxy in
             ScrollView {
+                VStack(spacing: 0) {
                 LazyVStack(alignment: .leading, spacing: 3) {
                     if transcript.isEmpty {
                         Text(member.anchor == nil ? "Waiting for Messages…" : "History unavailable").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30)
@@ -384,7 +389,9 @@ struct TranscriptView: View {
                                 if message.outgoing { Spacer(minLength: geometry.size.width * 0.25) }
                                 VStack(alignment: .leading, spacing: 6) {
                                     ForEach(message.attachments) { file in AttachmentView(attachment: file) }
-                                    if let preview = message.linkPreview {
+                                    if let payload = message.businessPayload {
+                                        BusinessChoicesView(model: model, message: message, member: member, payload: payload)
+                                    } else if let preview = message.linkPreview {
                                         if !preview.remainingText.isEmpty {
                                             textBubble(message, text: preview.remainingText, tail: false)
                                         }
@@ -411,11 +418,33 @@ struct TranscriptView: View {
                         }.padding(.top, offset > 0 && transcript[offset - 1].outgoing != message.outgoing ? 6 : 0).id(message.id)
                     }
                 }.padding(.horizontal, 20).padding(.bottom, 10)
+                Color.clear.frame(height: 1).id(bottomID)
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in
+                    if followingBottom { proxy.scrollTo(bottomID, anchor: .bottom) }
+                }
             }
-            .onChange(of: transcript.last?.id) { _, id in
-                if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+            .onScrollGeometryChange(for: Bool.self) { info in
+                info.contentOffset.y + info.containerSize.height >= info.contentSize.height - 2
+            } action: { _, value in
+                atBottom = value
+                if userIsScrolling { followingBottom = value }
             }
-            .onAppear { if let id = transcript.last?.id { proxy.scrollTo(id, anchor: .bottom) } }
+            .onScrollPhaseChange { _, phase in
+                userIsScrolling = phase == .interacting || phase == .decelerating
+                if userIsScrolling { followingBottom = atBottom }
+            }
+            .onChange(of: transcript.last?.id) { _, _ in
+                followingBottom = true
+                Task { @MainActor in
+                    await Task.yield()
+                    if followingBottom { proxy.scrollTo(bottomID, anchor: .bottom) }
+                }
+            }
+            .onChange(of: geometry.size.height) { _, _ in
+                if followingBottom { proxy.scrollTo(bottomID, anchor: .bottom) }
+            }
+            .onAppear { proxy.scrollTo(bottomID, anchor: .bottom) }
         }
         }
     }
@@ -589,6 +618,7 @@ struct ComparisonWorkspace: View {
                         VStack(spacing: 12) {
                             RecipientPills(model: model, comparison: comparison)
                             SharedComposer(model: model, comparisonID: comparisonID, recipientIDs: recipients)
+                                .disabled(model.webBroadcastBusy)
                         }.padding(16).frame(maxWidth: .infinity).background(.bar)
                     }
                     .onChange(of: selection.selectedConversation) { _, memberID in
@@ -623,9 +653,29 @@ struct RecipientPills: View {
                         .accessibilityLabel("Recipient \(member.name)")
                         .accessibilityValue(included ? "Selected" : "Not selected")
                         .help(included ? "Exclude \(member.name) from this message" : "Include \(member.name) in this message")
-                        .disabled(model.busy)
+                        .disabled(model.busy || model.webBroadcastBusy)
                 }
-                ForEach(model.state.agents.filter { agent in !comparison.members.contains(where: { $0.id == agent.id }) }) { agent in
+                ForEach(model.recipientWebSessions(for: comparison), id: \.id) { session in
+                    let joined = comparison.resolvedWebAgentIDs.contains(session.id)
+                    Button {
+                        model.openWebComparison(comparison.id)
+                        if joined { return }
+                        model.webBroadcastBusy = true
+                        session.updateState { $0.selected = true }
+                        session.connect()
+                        Task { @MainActor in
+                            _ = await model.joinWebAgent(session, comparisonID: comparison.id)
+                            model.webBroadcastBusy = false
+                        }
+                    } label: {
+                        Label(session.name, systemImage: joined ? "bubble.left" : "plus.circle").font(.system(size: 13, weight: .medium))
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                    }.buttonStyle(.plain)
+                        .accessibilityLabel(joined ? "Open \(session.name) conversation" : "Add \(session.name) to conversation")
+                        .help(joined ? "Open this conversation" : "Add \(session.name) with the original ask and shared follow-ups")
+                        .disabled(model.busy || model.webBroadcastBusy || !session.isEnabled)
+                }
+                ForEach(model.showcaseMessageAgents.filter { agent in !comparison.members.contains(where: { $0.id == agent.id }) }) { agent in
                     Button {
                         Task { await model.addAgent(agent, to: comparison.id); model.coordinator?.open(comparison.id) }
                     } label: {
@@ -634,7 +684,7 @@ struct RecipientPills: View {
                     }.buttonStyle(.plain)
                         .accessibilityLabel("Add \(agent.name) to conversation")
                         .help("Add \(agent.name) with the original ask and shared follow-ups")
-                        .disabled(model.busy || model.route(agent) == nil)
+                        .disabled(model.busy || model.webBroadcastBusy || model.route(agent) == nil)
                 }
             }
         }.scrollIndicators(.hidden).frame(height: 36)

@@ -100,3 +100,17 @@ chosen snapshot; local feedback and later uploads never silently move that choic
 The mutable feedback overlay endpoint is retired in favor of canonical native
 feedback events. Old initial upload/finalize and single-snapshot contribution
 requests remain supported. See [revision routes](contract-v1.md#immutable-cloud-revisions).
+
+## Shared conversation reader
+
+Shared links show an app-style window with a request title and complete agent
+conversations in blue request and gray reply bubbles. Each column scrolls
+independently; mobile readers switch between conversations using agent tabs.
+A default “Shared comparison” title uses the initial request. Custom publication
+titles stay intact. Timing, preferences, connection types and benchmark metadata
+are not displayed in the reader. The approved publication JSON and its access,
+revocation and inclusion rules are unchanged.
+
+Business choice messages render as read-only cards matching the native app, with
+blue option labels, dividers, and selected checkmarks. List-picker section and
+subtitle labels are retained. The shared page cannot submit Messages actions.

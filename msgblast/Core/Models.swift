@@ -100,6 +100,7 @@ public struct Message: Identifiable, Hashable, Sendable {
     public var reactions: [MessageReaction]
     public var attachments: [MessageAttachment]
     public var delivery: MessageDelivery
+    public var businessPayload: BusinessMessagePayload?
     public var linkPreview: (url: URL, remainingText: String)? {
         guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
         guard let match = detector.matches(in: text, range: NSRange(text.startIndex..., in: text))
@@ -109,10 +110,11 @@ public struct Message: Identifiable, Hashable, Sendable {
         body.removeSubrange(range)
         return (url, body.trimmingCharacters(in: .whitespacesAndNewlines))
     }
-    public init(id: Int64, guid: String, chatID: String, text: String, outgoing: Bool, replyTo: String? = nil, date: Date = Date(), reactions: [MessageReaction] = [], attachments: [MessageAttachment] = [], delivery: MessageDelivery = .unknown) {
+    public init(id: Int64, guid: String, chatID: String, text: String, outgoing: Bool, replyTo: String? = nil, date: Date = Date(), reactions: [MessageReaction] = [], attachments: [MessageAttachment] = [], delivery: MessageDelivery = .unknown, businessPayload: BusinessMessagePayload? = nil) {
         self.id = id; self.guid = guid; self.chatID = chatID; self.text = text; self.outgoing = outgoing; self.replyTo = replyTo; self.date = date; self.reactions = reactions
         self.attachments = attachments
         self.delivery = delivery
+        self.businessPayload = businessPayload
     }
 }
 public enum Submission: String, Codable, Sendable {
@@ -276,6 +278,7 @@ public struct AppState: Codable, Sendable {
     public var comparisons: [Comparison] = []
     public var draft: String = ""
     public var workspaceDrafts: [String: String]?
+    public var businessChoiceAttempts: [String: BusinessChoiceAttempt]?
     public var attachmentsDraft: [MessageAttachment]?
     public var selection: Set<UUID> = []
     public var frames: [String: SavedFrame] = [:]
@@ -305,6 +308,10 @@ public struct AppState: Codable, Sendable {
     }
     public func recoveringInFlight() -> AppState {
         var result = self
+        for (guid, attempt) in result.businessChoiceAttempts ?? [:] where attempt.status == .attempting {
+            result.businessChoiceAttempts?[guid]?.status = .uncertain
+            result.businessChoiceAttempts?[guid]?.detail = "The app stopped during selection. Check Messages before taking another action."
+        }
         for i in result.comparisons.indices {
             for j in result.comparisons[i].members.indices {
                 if let payload = result.comparisons[i].members[j].payload {

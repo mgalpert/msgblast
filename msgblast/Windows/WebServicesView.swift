@@ -154,11 +154,11 @@ struct AgentsWorkspaceView: View {
             if showingComparison { ScrollView(.horizontal) {
                 HStack(spacing: 8) {
                     Text("Send to").font(.caption).foregroundStyle(.secondary)
-                    ForEach(web.sessions.filter { session in session.provider.supportsSharedSubmissions && (session.isEnabled || web.displayed.contains(where: { $0.id == session.id })) }, id: \.id) { session in
+                    ForEach(model.recipientWebSessions(for: nativeComparison), id: \.id) { session in
                         recipient(session.name, selected: session.isEnabled && session.state.selected) { selectRecipient(session) }
                             .disabled(!session.isEnabled)
                     }
-                    ForEach(model.state.agents) { agent in
+                    ForEach(model.recipientMessageAgents(for: nativeComparison)) { agent in
                         recipient(agent.name, selected: model.state.selection.contains(agent.id)) {
                             if let comparison = nativeComparison, !comparison.members.contains(where: { $0.id == agent.id }) {
                                 model.webBroadcastBusy = true
@@ -206,30 +206,8 @@ struct AgentsWorkspaceView: View {
         session.connect()
         Task { @MainActor in
             defer { model.webBroadcastBusy = false }
-            _ = await join(session, comparisonID: comparison.id)
+            _ = await model.joinWebAgent(session, comparisonID: comparison.id)
         }
-    }
-
-    private func join(_ session: WebAgentSession, comparisonID: UUID) async -> Bool {
-        do {
-            try model.freezeSharedContext(comparisonID)
-            guard let saved = model.comparison(comparisonID), let i = model.index(comparisonID) else { return false }
-            guard saved.joiningContext().allSatisfy({ $0.attachments.isEmpty }) else {
-                model.error = "This conversation contains attachments. Add a Messages agent to share the full context."
-                session.updateState { $0.selected = false }
-                return false
-            }
-            guard await session.openComparison(comparisonID) else { return false }
-            // Save membership before sending so an interrupted join is never automatically repeated.
-            model.state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])
-            try model.save()
-            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID)
-            if attempt == nil || attempt?.status == .notSent {
-                model.state.comparisons[i].setWebAgents(model.state.comparisons[i].resolvedWebAgentIDs.filter { $0 != session.id })
-                try model.save()
-            }
-            return attempt?.status == .observed
-        } catch { model.error = error.localizedDescription; return false }
     }
 
     private func toggle(_ id: UUID) {
@@ -280,7 +258,7 @@ struct AgentsWorkspaceView: View {
             }
             if existingID != nil {
                 for session in sessions where model.comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) != true {
-                    guard await join(session, comparisonID: comparisonID) else { return }
+                    guard await model.joinWebAgent(session, comparisonID: comparisonID) else { return }
                 }
             }
             if let i = model.index(comparisonID) {

@@ -242,7 +242,7 @@ test("unknown publication scope and streamed revisions require exact preview opt
     assert.equal(created.status, 201);
     const link = await created.json();
     const html = await h.request(link.path).then((r) => r.text());
-    assert.match(html, /earlier observed streaming revisions/);
+    assert.match(html, /Earlier versions/);
     assert.match(html, /&lt;script&gt;attack/);
     assert.ok(!html.includes("<script>attack"));
     p.turns[0].kind = "initial";

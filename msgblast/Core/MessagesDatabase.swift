@@ -86,13 +86,18 @@ public final class MessagesDatabase {
         """
         let records = try rows(sql, values: [chatID, String(after)])
         let files = try attachments(chatID: chatID, after: after)
+        let business = try businessPayloads(chatID: chatID, after: after)
         var messages = records.compactMap { row -> Message? in
             let type = Int(row["reaction_type"] ?? "0") ?? 0
             guard !(2000...3999).contains(type) else { return nil }
             guard let id = Int64(row["rowid"] ?? ""), let guid = row["guid"] else { return nil }
             let reply = row["reply"].flatMap { $0.isEmpty ? nil : $0 }
             let attachments = files[id] ?? []
-            let text = row["text"]?.replacingOccurrences(of: "\u{FFFC}", with: "") ?? (attachments.isEmpty ? "[Message body unavailable · view in Messages]" : "")
+            let body = row["text"]?.replacingOccurrences(of: "\u{FFFC}", with: "")
+            let payload = business[id]
+            let text: String
+            if let payload, body == nil || body?.isEmpty == true { text = payload.title }
+            else { text = body ?? (attachments.isEmpty ? "[Message body unavailable · view in Messages]" : "") }
             let outgoing = row["is_from_me"] == "1"
             let delivery: MessageDelivery
             if outgoing, let error = row["delivery_error"].flatMap(Int64.init), error != 0 {
@@ -102,7 +107,7 @@ public final class MessagesDatabase {
             } else {
                 delivery = .unknown
             }
-            return Message(id: id, guid: guid, chatID: chatID, text: text, outgoing: outgoing, replyTo: reply, date: messageDate(row["date"]), attachments: attachments, delivery: delivery)
+            return Message(id: id, guid: guid, chatID: chatID, text: text, outgoing: outgoing, replyTo: reply, date: messageDate(row["date"]), attachments: attachments, delivery: delivery, businessPayload: payload)
         }
         let indices = Dictionary(messages.enumerated().map { ($0.element.guid, $0.offset) }, uniquingKeysWith: { first, _ in first })
         let standard = ["❤️", "👍", "👎", "😂", "‼️", "❓"]
@@ -141,6 +146,41 @@ public final class MessagesDatabase {
         }
         return messages
     }
+    private func businessPayloads(chatID: String, after: Int64) throws -> [Int64: BusinessMessagePayload] {
+        guard columns.contains("payload_data"), columns.contains("balloon_bundle_id") else { return [:] }
+        let sql = """
+        SELECT m.ROWID,m.balloon_bundle_id,m.payload_data
+        FROM message m JOIN chat_message_join cm ON cm.message_id=m.ROWID JOIN chat c ON c.ROWID=cm.chat_id
+        WHERE c.guid=? AND m.ROWID>=? AND m.payload_data IS NOT NULL
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw AppFailure.blocked("Interactive Messages history query failed.")
+        }
+        defer { sqlite3_finalize(statement) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, chatID, -1, transient)
+        sqlite3_bind_int64(statement, 2, after)
+        var result: [Int64: BusinessMessagePayload] = [:]
+        while true {
+            let code = sqlite3_step(statement)
+            if code == SQLITE_DONE { return result }
+            guard code == SQLITE_ROW else { throw AppFailure.blocked("Interactive Messages history is unavailable. Refresh to try again.") }
+            guard let bundleText = sqlite3_column_text(statement, 1) else { continue }
+            let bundle = String(cString: bundleText)
+            let businessID = "com.apple.icloud.apps.messages.business.extension"
+            guard bundle == businessID || bundle.hasSuffix(":" + businessID) else { continue }
+            let count = Int(sqlite3_column_bytes(statement, 2))
+            let fallback = BusinessMessagePayload(kind: .unsupported, title: "Interactive business message", options: [], sourceFingerprint: Data())
+            let id = sqlite3_column_int64(statement, 0)
+            guard count > 0, count <= 1_048_576, let bytes = sqlite3_column_blob(statement, 2) else {
+                result[id] = fallback
+                continue
+            }
+            result[id] = BusinessMessagePayload.decode(Data(bytes: bytes, count: count), bundleID: bundle) ?? fallback
+        }
+    }
+
     private func attachments(chatID: String, after: Int64) throws -> [Int64: [MessageAttachment]] {
         guard hasAttachmentJoin, attachmentColumns.contains("filename") else { return [:] }
         func column(_ name: String) -> String { attachmentColumns.contains(name) ? "a.\(name)" : "NULL" }

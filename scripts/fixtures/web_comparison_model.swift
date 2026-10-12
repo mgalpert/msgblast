@@ -16,6 +16,11 @@ import msgblastCore
         for child in view.subviews { if let editor = privateEditor(in: child) { return editor } }
         return nil
     }
+    @MainActor static func transcriptText(_ text: String, in view: NSView) -> NSTextView? {
+        if let value = view as? NSTextView, !(value is AttachmentTextView), value.string == text { return value }
+        for child in view.subviews { if let value = transcriptText(text, in: child) { return value } }
+        return nil
+    }
     @MainActor static func main() {
         let application = NSApplication.shared
         application.setActivationPolicy(.regular)
@@ -30,6 +35,42 @@ import msgblastCore
     }
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared
+        let scrollModel = AppModel()
+        let scrollAgent = scrollModel.state.agents[0]
+        let scrollID = await scrollModel.prepareWebComparison("Scroll fixture original", recipientIDs: Set(scrollModel.state.agents.prefix(3).map(\.id)), agents: [])!
+        await scrollModel.submit(scrollID, retry: false)
+        let scrollMember = scrollModel.comparison(scrollID)!.members.first { $0.id == scrollAgent.id }!
+        try await waitUntil { (scrollModel.messages[scrollMember.chat.id]?.count ?? 0) >= 2 }
+        for index in 0..<25 {
+            scrollModel.appendDemo("History \(index): " + String(repeating: "Earlier context fills the transcript. ", count: 8), chat: scrollMember.chat, outgoing: false)
+        }
+        let scrollWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 960, height: 430), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        scrollWindow.title = "Private send scroll fixture"
+        scrollWindow.contentView = NSHostingView(rootView: ComparisonWorkspace(model: scrollModel, comparisonID: scrollID))
+        scrollWindow.orderBack(nil)
+        defer { scrollWindow.orderOut(nil); scrollWindow.contentView = nil }
+        try await waitUntil { scrollWindow.contentView.flatMap { privateEditor(in: $0) } != nil }
+        scrollWindow.contentView?.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
+        let sentText = (1...40).map { "Private reply line \($0): sample wrapped content." }.joined(separator: "\n") + "\nEND OF PRIVATE MESSAGE"
+        scrollModel.state.comparisons[scrollModel.index(scrollID)!].privateDrafts[scrollAgent.id.uuidString] = sentText
+        try await Task.sleep(for: .milliseconds(300))
+        let scrollEditor = privateEditor(in: scrollWindow.contentView!)!
+        scrollWindow.makeFirstResponder(scrollEditor)
+        let previousFollowUps = scrollModel.comparison(scrollID)!.followUps.count
+        scrollEditor.sendMessage?()
+        try await waitUntil { scrollModel.comparison(scrollID)!.followUps.count > previousFollowUps }
+        try await Task.sleep(for: .milliseconds(500))
+        scrollWindow.contentView?.layoutSubtreeIfNeeded()
+        let sentIndex = scrollModel.messages[scrollMember.chat.id]!.firstIndex(where: { $0.outgoing && $0.text == sentText })!
+        scrollModel.messages[scrollMember.chat.id]![sentIndex].reactions = [.init(id: "late-fixture-tapback", emoji: "✅", outgoing: false)]
+        try await Task.sleep(for: .milliseconds(300))
+        scrollWindow.contentView?.layoutSubtreeIfNeeded()
+        let sentView = scrollWindow.contentView.flatMap { transcriptText(sentText, in: $0) }
+        precondition(sentView != nil && sentView!.visibleRect.height >= min(17, sentView!.bounds.height) && sentView!.visibleRect.maxY >= sentView!.bounds.maxY - 1, "Private send is offscreen after submission; the user must not have to scroll")
+        print("PASS: actual joined ComparisonWorkspace displays the bottom of a private send after a late tapback changes its height, without manual scrolling or waiting for a reply.")
+        scrollModel.webAgents.beginShutdown()
+        await scrollModel.webAgents.cancelAndWait()
         let migrationStore = LocalStore(demo: true, isolated: true)
         let migrationDirectory = migrationStore.url.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: migrationDirectory) }
@@ -64,6 +105,33 @@ import msgblastCore
         precondition(gridModel.state.agentGrid == nil)
         precondition(gridModel.agentGridLayout.visibleIDs == AgentGridLayout.featured + [.web(.claudeCode), .web(.hark)] + savedAgentIDs)
         print("PASS: first-use grid preserves featured order, enabled optional providers, and every saved Messages agent.")
+        let showcase = AppModel()
+        let shown = showcase.state.agents[0]
+        let hidden = showcase.state.agents[1]
+        let original = showcase.webAgents.session(for: WebAgentID.chatgpt)!
+        let copy = try showcase.webAgents.duplicate(original, name: "Hidden website copy")
+        showcase.state.agentGrid = AgentGridLayout(visibleIDs: [.web(.muse), showcase.gridID(for: shown)])
+        var showcaseComparison = Comparison(prompt: "Showcase recipients", members: [Member(agentID: shown.id, name: shown.name, chat: showcase.chats[0])])
+        precondition(showcase.recipientMessageAgents(for: showcaseComparison).map(\.id) == [shown.id], "Connected hidden Messages agents must not appear in Send to")
+        precondition(showcase.recipientWebSessions(for: showcaseComparison).map(\.id) == [.muse], "Unselected visible Muse must appear; connected hidden websites and copies must not")
+        showcaseComparison.members.append(Member(agentID: hidden.id, name: hidden.name, chat: showcase.chats[1]))
+        showcaseComparison.setWebAgents([copy.id])
+        precondition(Set(showcase.recipientMessageAgents(for: showcaseComparison).map(\.id)) == Set([shown.id, hidden.id]), "Existing hidden members remain available")
+        precondition(Set(showcase.recipientWebSessions(for: showcaseComparison).map(\.id)) == Set([.muse, copy.id]))
+        showcase.state.comparisons.insert(showcaseComparison, at: 0)
+        let showcaseMuse = showcase.webAgents.session(for: WebAgentID.muse)!
+        showcaseMuse.updateState { $0.selected = true }; showcaseMuse.connect()
+        try await waitUntil { showcaseMuse.snapshot.ready }
+        let museJoined = await showcase.joinWebAgent(showcaseMuse, comparisonID: showcaseComparison.id)
+        precondition(museJoined)
+        let joinedAttemptCount = showcaseMuse.state.attempts.count
+        let alreadyJoined = await showcase.joinWebAgent(showcaseMuse, comparisonID: showcaseComparison.id)
+        precondition(alreadyJoined && showcaseMuse.state.attempts.count == joinedAttemptCount, "Opening an existing website member must not resend shared context")
+        precondition(showcase.comparison(showcaseComparison.id)!.resolvedWebAgentIDs.contains(.muse))
+        precondition(!showcase.comparison(showcaseComparison.id)!.members.contains { $0.id == showcase.state.agents[2].id })
+        print("PASS: Send to offers only showcase agents plus saved members; unselected Muse can join a Messages comparison with simulated shared context, without adding hidden contacts.")
+        showcase.webAgents.beginShutdown()
+        await showcase.webAgents.cancelAndWait()
         let onboardingModel = AppModel()
         let connectedContact = Agent(contactID: "fixture-connected-fo", name: "Fo", handles: ["fo@example.com"])
         onboardingModel.state.selection = []
@@ -375,6 +443,24 @@ import msgblastCore
         instanceModel.webAgents.beginShutdown()
         await instanceModel.webAgents.cancelAndWait()
         print("PASS: actual AppModel + LocalStore + WebAgents preserve two ChatGPT identities in one comparison, separate chat URLs/private follow-ups, and exact restored membership. Local website fixtures only.")
+        let choiceModel = AppModel()
+        let businessAddress = "urn:biz:00000000-0000-0000-0000-000000000001"
+        let businessChat = Chat(id: "iMessage;-;" + businessAddress, handle: businessAddress, lastActivity: 0, displayName: "Fixture Poke", businessConversation: true)
+        choiceModel.chats = [businessChat]
+        choiceModel.appendBusinessChoiceFixture(chat: businessChat)
+        let sourceChoice = choiceModel.messages[businessChat.id]!.last!
+        let choiceMember = Member(agentID: UUID(), name: "Fixture Poke", chat: businessChat)
+        precondition(choiceModel.canChooseBusinessOption(sourceChoice, member: choiceMember, optionID: 0))
+        await choiceModel.chooseBusinessOption(sourceChoice, member: choiceMember, optionID: 0)
+        precondition(choiceModel.messages[businessChat.id]!.filter(\.outgoing).map(\.text) == ["Find Plumbers"])
+        precondition(choiceModel.businessChoiceAttempt(sourceChoice)?.status == .submitted)
+        let choiceState = try choiceModel.local.load()
+        precondition(choiceState.businessChoiceAttempts?[sourceChoice.guid]?.status == .submitted)
+        await choiceModel.chooseBusinessOption(sourceChoice, member: choiceMember, optionID: 1)
+        precondition(choiceModel.messages[businessChat.id]!.filter(\.outgoing).count == 1)
+        choiceModel.webAgents.beginShutdown()
+        await choiceModel.webAgents.cancelAndWait()
+        print("PASS: Business choice controller submits one simulated choice, durably records the attempt and blocks a repeated action. No native Messages button was pressed.")
         print("PASS: actual AppModel + WindowCoordinator restore comparison ID, native recipient, provider selection, saved website URLs including the ongoing Dots thread and separate Codex CLI/Claude Code sessions; disabled archived CLI remains readable without sending. All sends use local fixtures.")
     }
 

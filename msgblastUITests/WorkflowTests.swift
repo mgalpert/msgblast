@@ -357,9 +357,10 @@ final class WorkflowTests: XCTestCase {
         XCTAssertFalse(workspace.buttons["Recipient pending@example.com"].exists)
     }
     @MainActor
-    func launchFixture(threeAgentsOnly: Bool = true, separateWindows: Bool = true) -> XCUIApplication {
+    func launchFixture(threeAgentsOnly: Bool = true, separateWindows: Bool = true, automaticReplies: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]
+        if !automaticReplies { app.launchArguments.append("--no-demo-replies") }
         app.launch()
         // A fresh isolated store must use the joined layout by default.
         if separateWindows {
@@ -373,7 +374,7 @@ final class WorkflowTests: XCTestCase {
         let reset = app.buttons["Reset sample data"]
         XCTAssertTrue(reset.waitForExistence(timeout: 10))
         reset.click()
-        for name in ["Muse", "ChatGPT", "Claude", "Grok"] { app.buttons[name].click() }
+        for name in ["Muse", "ChatGPT", "Claude", "Grok"] where app.buttons[name].value as? String == "Selected" { app.buttons[name].click() }
         if threeAgentsOnly {
             for name in ["Maple", "Echo", "Flint"] { app.buttons[name].click() }
         }
@@ -515,6 +516,29 @@ final class WorkflowTests: XCTestCase {
             XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value CONTAINS %@", text)).firstMatch.waitForExistence(timeout: 5))
             XCTAssertEqual(app.state, .runningForeground)
         }
+    }
+
+    @MainActor
+    func testPrivateComposerRevealsEndOfLongMessageWithoutManualScrolling() {
+        let app = launchFixture(separateWindows: false, automaticReplies: false)
+        let prompt = app.textViews["Shared prompt"]
+        prompt.click(); prompt.typeKey("a", modifierFlags: .command); prompt.typeText("Private scroll regression")
+        app.buttons["Send & compare"].click()
+        let window = app.windows["Private scroll regression [Demo]"]
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        let input = window.textViews["Private reply to Cedar"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        let text = String(repeating: "Private sample content wraps across the pane. ", count: 30) + "END OF PRIVATE REPLY"
+        input.click(); input.typeText(text); input.typeKey(.return, modifierFlags: [])
+        let sent = window.textViews.matching(NSPredicate(format: "value == %@", text)).firstMatch
+        let visible = NSPredicate { _, _ in
+            guard input.value as? String == "", sent.exists else { return false }
+            return sent.isHittable && sent.frame.maxY <= input.frame.minY && sent.frame.maxY > window.frame.minY
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: visible, object: nil)], timeout: 5)
+        XCTAssertEqual(result, .completed, "The submitted message's end must be visible above the individual composer without scrolling")
+        let image = XCTAttachment(screenshot: window.screenshot())
+        image.name = "Private reply visible without scrolling"; image.lifetime = .keepAlways; add(image)
     }
 
     @MainActor

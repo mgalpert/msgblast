@@ -183,3 +183,16 @@ it records a deleting lease and reopens the corresponding tracked cleanup genera
 Migration 0003 backfills committed session-linked publications and preserves legacy
 session-bound pending leases without changing their retry identity. Standalone legacy
 publications have no recoverable comparison association and are not guessed.
+
+## Read-only business choices
+
+An optional `businessChoices` on `replyObserved` events and publication messages
+(or their explicitly included revisions) carries `{kind,title,options}`.
+`kind` is `quickReply`, `listPicker`, or `unsupported`; each option contains
+`title`, boolean `selected`, and optional `subtitle`/`section`. Labels are bounded
+at 4,096 characters and cards at 500 options. Only display text and selection
+are included: no source archive, fingerprint, Messages identifiers, or action URL.
+Old text-only records remain valid. The owner previews and redacts card labels
+before approval; the shared reader renders disabled controls with a selected
+checkmark. An existing immutable link is unchanged by later native selections;
+create a new reviewed share to include them.

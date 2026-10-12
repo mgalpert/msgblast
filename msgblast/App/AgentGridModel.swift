@@ -103,6 +103,27 @@ extension AppModel {
 
     func isVisibleInAgentGrid(_ id: AgentGridID) -> Bool { agentGridLayout.visibleIDs.contains(id) }
 
+    // Showcase membership controls new recipient options, independently of connection state.
+    var showcaseMessageAgents: [Agent] {
+        recipientMessageAgents(for: nil)
+    }
+
+    func recipientWebSessions(for comparison: Comparison?) -> [WebAgentSession] {
+        let members = Set(comparison?.resolvedWebAgentIDs ?? [])
+        let shown = Set(agentGridLayout.visibleIDs)
+        return webAgents.sessions.filter {
+            $0.provider.supportsSharedSubmissions &&
+                (shown.contains($0.id.gridID) || members.contains($0.id))
+        }
+    }
+
+    func recipientMessageAgents(for comparison: Comparison?) -> [Agent] {
+        let members = Set(comparison?.members.map(\.id) ?? [])
+        let ids = messageGridIDs
+        let shown = Set(agentGridLayout.visibleIDs)
+        return state.agents.filter { shown.contains(ids[$0.id] ?? .messages($0.id)) || members.contains($0.id) }
+    }
+
     func deselectHiddenGridRecipients() {
         let shown = Set(agentGridLayout.visibleIDs)
         let ids = messageGridIDs

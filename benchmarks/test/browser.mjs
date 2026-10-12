@@ -8,7 +8,30 @@ const h = await harness();
 let browser;
 try {
   const auth = await h.token();
-  const result = await publication(h, auth);
+  const longChat = structuredClone(projection);
+  longChat.participants.push({ ...longChat.participants[1], id: "agent-c", label: "Agent C" });
+  longChat.turns[0].replies[0].messages[0].businessChoices = {
+    kind: "quickReply", title: "Would you like me to find a plumber?",
+    options: [{ title: "Find Plumbers", selected: true }, { title: "Not Now", selected: false }],
+  };
+  longChat.turns[0].replies[0].messages[2].businessChoices = {
+    kind: "listPicker", title: "Choose a visit time",
+    options: [
+      { section: "Today", title: "Afternoon", subtitle: "Between 1 and 4 PM", selected: false },
+      { section: "Tomorrow", title: "Morning", subtitle: "Between 9 AM and noon", selected: true },
+    ],
+  };
+  const followUp = structuredClone(longChat.turns[0]);
+  followUp.id = "fixture-follow-up";
+  followUp.kind = "followUp";
+  followUp.prompt = "How would you explain this to a beginner?";
+  for (const reply of followUp.replies) for (const message of reply.messages) {
+    delete message.businessChoices;
+    message.messageID += "-follow-up";
+    message.text = (message.text + "\n\n").repeat(12) + "End of complete conversation.";
+  }
+  longChat.turns.push(followUp);
+  const result = await publication(h, auth, longChat);
   assert.equal(result.status, 201);
   const link = await result.json();
   const base = (await h.mf.ready).origin;
@@ -24,7 +47,7 @@ try {
     .waitFor();
   await page.waitForTimeout(800);
   assert.equal(await page.evaluate(() => window.compromised), undefined);
-  assert.equal(await page.locator(".agent").count(), 2);
+  assert.equal(await page.locator(".agent").count(), 3);
   assert.equal(await page.locator(".agent").nth(1).isVisible(), true);
   assert.equal(
     await page.evaluate(
@@ -32,9 +55,36 @@ try {
     ),
     true,
   );
-  assert.equal(await page.locator(".message").count(), 3);
+  assert.equal(await page.locator(".message").count(), 6);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), true);
+  assert.equal(await page.getByText("Included context and limits").count(), 0);
+  assert.equal(await page.getByText(/Dispatch to observed reply/).count(), 0);
+  assert.equal(await page.locator(".transcript").first().evaluate((el) => el.scrollHeight > el.clientHeight), true);
+  const choices = page.locator(".business-choice");
+  assert.equal(await choices.count(), 4);
+  assert.equal(await page.getByText("Between 9 AM and noon", { exact: true }).isVisible(), true);
+  assert.equal(await page.getByText("Tomorrow", { exact: true }).isVisible(), true);
+  assert.equal(await choices.first().isDisabled(), true);
+  assert.equal(await choices.first().getByText("Selected", { exact: true }).count(), 1);
+  assert.equal(await choices.nth(1).getByText("Selected", { exact: true }).count(), 0);
+  // Real pointer input over the displayed choice must not navigate or send a request.
+  let requests = 0;
+  page.on("request", () => requests++);
+  const choiceBox = await choices.first().boundingBox();
+  await page.mouse.click(choiceBox.x + 20, choiceBox.y + 10);
+  await page.waitForTimeout(500);
+  assert.equal(requests, 0);
+  assert.equal(page.url(), base + link.path);
   await page.screenshot({ path: dir + "/reader-desktop.png", fullPage: true });
-  await page.locator('[data-message="extra-1"]').scrollIntoViewIfNeeded();
+  await page.setViewportSize({ width: 740, height: 900 });
+  const transcriptBox = await page.locator(".transcript").first().boundingBox();
+  await page.mouse.move(transcriptBox.x + 80, transcriptBox.y + 80);
+  await page.mouse.wheel(400, 0);
+  await page.waitForTimeout(400);
+  assert.equal(await page.locator(".agents").evaluate((el) => el.scrollLeft > 0), true);
+  await page.screenshot({ path: dir + "/reader-horizontal.png" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator('[data-message="extra-1-follow-up"]').scrollIntoViewIfNeeded();
   await page.waitForTimeout(800);
   const mobile = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -44,13 +94,19 @@ try {
   });
   const phone = await mobile.newPage();
   await phone.goto(base + link.path);
+  assert.equal(await phone.locator(".business-choice").first().isDisabled(), true);
+  assert.equal(await phone.locator(".business-choice").nth(3).getByText("Selected", { exact: true }).count(), 1);
   await phone.screenshot({
     path: dir + "/reader-mobile-messages.png",
     fullPage: true,
   });
-  assert.equal(await phone.locator('[data-message="extra-1"]').count(), 1);
-  await phone.locator('[data-message="extra-1"]').scrollIntoViewIfNeeded();
+  assert.equal(await phone.locator('[data-message="extra-1-follow-up"]').count(), 1);
+  await phone.locator('[data-message="extra-1-follow-up"]').scrollIntoViewIfNeeded();
   await phone.waitForTimeout(700);
+  await phone.mouse.move(195, 420);
+  await phone.mouse.wheel(0, 100000);
+  await phone.waitForTimeout(400);
+  assert.equal(await phone.locator(".transcript").first().evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 2), true);
   await phone.getByRole("button", { name: "Agent B", exact: true }).click();
   await phone.waitForTimeout(700);
   assert.equal(

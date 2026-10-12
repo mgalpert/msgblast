@@ -87,6 +87,70 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertTrue(messages[2].attachments.isEmpty)
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
+    func testEmptyOrdinaryMessageDoesNotBecomeAnUnavailableBusinessCard() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "UPDATE message SET text='' WHERE guid='anchor'", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        let message = try XCTUnwrap(MessagesDatabase(path: url.path).messages(chatID: "A").first)
+        XCTAssertEqual(message.text, "")
+        XCTAssertNil(message.businessPayload)
+    }
+
+    func testBusinessQuickReplyBlobDisplaysPromptAndOrderedChoicesWithoutChangingDatabase() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        let payload = try businessArchive(["quick-reply": ["summaryText": "Find repair options?", "items": [["identifier": "opaque-yes", "title": "Yes, please"], ["identifier": "opaque-no", "title": "Not now"]]]])
+        try installBusinessPayload(payload, in: url)
+        let before = try Data(contentsOf: url)
+        let message = try XCTUnwrap(MessagesDatabase(path: url.path).messages(chatID: "A").first)
+        let business = try XCTUnwrap(message.businessPayload)
+        XCTAssertEqual(business.kind, .quickReply)
+        XCTAssertEqual(business.title, "Find repair options?")
+        XCTAssertEqual(business.options.map(\.title), ["Yes, please", "Not now"])
+        XCTAssertEqual(message.text, "Find repair options?")
+        XCTAssertTrue(business.options.allSatisfy { !$0.selected })
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    func testBusinessListPickerRetainsSectionsSubtitlesAndReplySelection() throws {
+        let payload = try businessArchive(["receivedMessage": ["title": "Choose a repair"], "replyMessage": ["title": "Your selection"], "listPicker": ["sections": [["title": "Selected", "items": [["title": "Appliance repair", "subtitle": "Dishwasher specialist"]]], ["title": "Other options", "items": [["title": "Plumber"]]]]]])
+        let business = try XCTUnwrap(BusinessMessagePayload.decode(payload, bundleID: "com.apple.icloud.apps.messages.business.extension"))
+        XCTAssertEqual(business.kind, .listPicker)
+        XCTAssertEqual(business.title, "Choose a repair")
+        XCTAssertEqual(business.options.map(\.title), ["Appliance repair", "Plumber"])
+        XCTAssertEqual(business.options.map(\.section), ["Selected", "Other options"])
+        XCTAssertEqual(business.options.first?.subtitle, "Dishwasher specialist")
+        XCTAssertEqual(business.options.map(\.selected), [true, false])
+    }
+
+    func testBusinessPayloadRejectsMalformedArchivesAndUnrelatedExtensions() throws {
+        let payload = try businessArchive(["quick-reply": ["summaryText": "Choose", "items": [["title": "Yes"]], "selectedIndex": 0]])
+        XCTAssertNil(BusinessMessagePayload.decode(payload, bundleID: "unrelated.extension"))
+        XCTAssertNil(BusinessMessagePayload.decode(Data("not a plist".utf8), bundleID: "com.apple.icloud.apps.messages.business.extension"))
+        XCTAssertNil(BusinessMessagePayload.decode(Data(repeating: 0, count: 1_048_577), bundleID: "com.apple.icloud.apps.messages.business.extension"))
+        let selected = try XCTUnwrap(BusinessMessagePayload.decode(payload, bundleID: "com.apple.icloud.apps.messages.business.extension"))
+        XCTAssertEqual(selected.options.map(\.selected), [true])
+    }
+
+    private func businessArchive(_ json: [String: Any]) throws -> Data {
+        let bytes = try JSONSerialization.data(withJSONObject: json)
+        return try NSKeyedArchiver.archivedData(withRootObject: ["data": bytes, "ldtext": "Business choices"] as NSDictionary, requiringSecureCoding: true)
+    }
+
+    private func installBusinessPayload(_ payload: Data, in url: URL) throws {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        XCTAssertEqual(sqlite3_exec(db, "ALTER TABLE message ADD COLUMN payload_data BLOB; ALTER TABLE message ADD COLUMN balloon_bundle_id TEXT;", nil, nil, nil), SQLITE_OK)
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "UPDATE message SET text=NULL,is_from_me=0,payload_data=?,balloon_bundle_id='com.apple.messages.MSMessageExtensionBalloonPlugin:fixture:com.apple.icloud.apps.messages.business.extension' WHERE guid='anchor'", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        XCTAssertEqual(payload.withUnsafeBytes { sqlite3_bind_blob(statement, 1, $0.baseAddress, Int32(payload.count), transient) }, SQLITE_OK)
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
+    }
+
     func fixture() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-\(UUID()).db")
         var db: OpaquePointer?

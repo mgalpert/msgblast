@@ -193,3 +193,31 @@ test("actual Swift recorder observationState bytes are accepted unchanged and du
     await h.close();
   }
 });
+
+test("business display snapshots survive exact private upload without accepting action targets", async () => {
+  const h = await harness();
+  try {
+    const auth = await h.token(), session = await register(h, auth);
+    const chunk = structuredClone(fixture);
+    const reply = chunk.events.find(e => e.kind === "replyObserved");
+    reply.businessChoices = {kind: "quickReply", title: "Choose", options: [{title: "Find Plumbers", selected: true}]};
+    function bytes() {
+      for (let i = 1; i < chunk.events.length; i++) chunk.events[i].previousHash = digest(canonical(chunk.events[i-1]));
+      return canonical(chunk);
+    }
+    reply.businessChoices.actionURL = "https://example.com";
+    assert.equal((await upload(h, auth, session.id, bytes())).status, 400);
+    delete reply.businessChoices.actionURL;
+    const card = reply.businessChoices;
+    delete reply.businessChoices;
+    const start = chunk.events.find(e => e.kind === "turnStarted");
+    start.businessChoices = card;
+    assert.equal((await upload(h, auth, session.id, bytes())).status, 400);
+    delete start.businessChoices;
+    reply.businessChoices = card;
+    const raw = bytes(), accepted = await upload(h, auth, session.id, raw);
+    assert.equal(accepted.status, 201, await accepted.clone().text());
+    assert.equal((await accepted.json()).hash, digest(raw));
+    assert.equal((await upload(h, auth, session.id, raw)).status, 200);
+  } finally { await h.close(); }
+});

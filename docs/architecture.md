@@ -94,6 +94,8 @@ configured tool access of optional CLI conversations. Keep those policies separa
 when changing adapters. See [conversations and reports](personal-agent-reports.md)
 for supported providers and limitations.
 
+Messages for Business quick replies are decoded from the archived payload and shown as native buttons. Choosing one uses Apple's actual Messages control through Accessibility, rather than sending its label or opaque identifier as text. This optional operation requires Accessibility permission and a bound, uniquely named Business conversation. It verifies the source payload, current question and native choice group before one action. Stale or ambiguous cards are blocked; uncertain attempts are persisted and never repeated automatically. List pickers show their sections/options and open in Messages for completion.
+
 Messages submissions have explicit per-recipient attempts and reconciliation.
 An accepted automation command is not proof of delivery. Failed or ambiguous
 submissions must preserve drafts and avoid automatic duplicate sends. Website
