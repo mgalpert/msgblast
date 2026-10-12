@@ -1,0 +1,42 @@
+name: Benchmark service fixtures
+on:
+  pull_request:
+    paths:
+      - "benchmarks/**"
+      - ".github/workflows/benchmarks-validate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "benchmarks/**"
+      - ".github/workflows/benchmarks-validate.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: benchmarks/package-lock.json
+      - run: npm ci --prefix benchmarks
+      - run: npm run check --prefix benchmarks
+      - run: npm test --prefix benchmarks
+      - run: npx playwright install --with-deps chromium
+        working-directory: benchmarks
+      - run: npm run test:browser --prefix benchmarks
+        env:
+          EVIDENCE_DIR: ../build/benchmark-browser-fixtures
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: benchmark-reader-synthetic-fixtures
+          path: build/benchmark-browser-fixtures
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,159 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  color: #e8eef0;
+  background: #10181b;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 1400px;
+  margin: auto;
+  padding: 48px 36px;
+}
+.brand {
+  color: #81d4af;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+h1 {
+  font-size: clamp(30px, 4vw, 48px);
+  letter-spacing: -0.04em;
+  margin: 12px 0;
+}
+header p,
+footer {
+  color: #afc2c9;
+  line-height: 1.5;
+}
+.fixture {
+  color: #b1e9d0;
+}
+aside {
+  border: 1px solid #385057;
+  border-radius: 16px;
+  padding: 18px 24px;
+  margin: 28px 0;
+  background: #17252a;
+}
+aside h2 {
+  font-size: 18px;
+  margin-top: 0;
+}
+li {
+  line-height: 1.55;
+  color: #c2d0d5;
+}
+.turn {
+  margin: 28px 0;
+}
+.turn > h2 {
+  font-size: 17px;
+  color: #9ab7bf;
+}
+.prompt {
+  padding: 20px;
+  background: #25383f;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agents {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  overflow: auto;
+  padding-top: 16px;
+}
+.agent {
+  padding: 22px;
+  background: #18272c;
+  border: 1px solid #36515b;
+  border-radius: 12px;
+}
+h3 {
+  margin: 0;
+  font-size: 20px;
+}
+.connection,
+.outcome {
+  font-size: 13px;
+  color: #a7c5cc;
+}
+.reply {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.agent-picker {
+  display: none;
+}
+button {
+  background: #29443e;
+  color: #e1f6eb;
+  border: 1px solid #78b49d;
+  border-radius: 9px;
+  padding: 10px 16px;
+  font: inherit;
+  cursor: pointer;
+}
+button[aria-pressed="true"] {
+  background: #82d1ac;
+  color: #10221a;
+}
+a {
+  color: #8de0ba;
+}
+footer {
+  border-top: 1px solid #385057;
+  margin-top: 36px;
+  padding-top: 20px;
+  font-size: 13px;
+}
+@media (max-width: 700px) {
+  main {
+    padding: 24px 16px;
+  }
+  .agent-picker {
+    display: flex;
+    gap: 10px;
+    overflow: auto;
+    position: sticky;
+    top: 0;
+    background: #10181b;
+    padding: 12px 0;
+  }
+  .agents {
+    display: block;
+  }
+  .agent {
+    display: none;
+  }
+  .agent.selected {
+    display: block;
+  }
+  aside {
+    padding: 16px;
+  }
+  h1 {
+    font-size: 32px;
+  }
+}
+
+.message + .message {
+  border-top: 1px solid #385057;
+  margin-top: 20px;
+  padding-top: 12px;
+}
+.message h4 {
+  font-size: 14px;
+  color: #bfd6dc;
+  margin: 14px 0 8px;
+}

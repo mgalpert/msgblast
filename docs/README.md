@@ -64,3 +64,12 @@ persistent state, or workflows change. Keep runnable commands in the build/testi
 guides and link to them elsewhere. Checked-in scripts, workflows, and current
 source establish what a command does. Record live observations with their dates
 and revisions rather than making permanent claims about the latest version.
+
+## Benchmark service preview
+
+[Benchmark service](../benchmarks/README.md) documents the separate fixture-only
+Worker, immutable uploads, redacted unlisted reader, optional contributions and
+local checks. [Operations prerequisites](../benchmarks/operations.md) distinguish
+implemented local behavior from pending native integration and live identity,
+resource, retention and deployment work. This preview does not activate cloud
+services or distribute an app update.

@@ -217,3 +217,19 @@ The app relaunches only after termination is approved and resumes the checklist.
 Completed agent setup is retained across launch; the final readiness check still
 runs before entering the workspace. Existing saved onboarding states without the
 optional checklist field resume their previous step.
+
+## Benchmark service boundary
+
+`benchmarks/` is a separate Worker with Static Assets, D1 ownership/receipts,
+private R2 content and Queue jobs backed by a durable outbox. Upload registration,
+redacted publication and contribution require separate explicit consent; publishing
+works without a private session upload. Public reader/artifact requests check
+current primary D1 access, and revocation/deletion disables access before cleanup.
+It does not share resources/routes with the landing, feedback or updater services.
+
+The current backend is a loopback-only fixture preview, disabled by default. Native
+account/sync/share controls and immutable finalized-snapshot continuation are
+separate dependent work; no native cloud workflow or live sign-in is established
+by this service alone. Local My Stats remains independent of cloud participation.
+See [service contract](../benchmarks/contract-v1.md) and
+[launch prerequisites](../benchmarks/operations.md).

@@ -200,3 +200,32 @@ no live routine, provider request, or tunnel is started.
 checks the actual Duplicate/Rename sheets and independently selected tiles in
 an isolated Demo session. Change reasoning in the embedded website manually;
 this feature does not automate or verify provider model settings.
+
+## Benchmark service fixtures
+
+The separate service uses pinned Node 22 dependencies and actual local workerd
+D1/R2/Queues/Static Assets; it does not connect production resources:
+
+```sh
+npm ci --prefix benchmarks
+npm run check --prefix benchmarks
+npm test --prefix benchmarks
+npm run test:browser --prefix benchmarks
+```
+
+Install pinned Playwright Chromium first (`cd benchmarks`, then
+`npx playwright install chromium`). `check` regenerates types, typechecks and runs
+a Wrangler dry-run, without deployment. The browser workflow publishes synthetic
+redacted data, checks desktop/mobile multiple replies, escaping and agent selection,
+then revokes and verifies unavailable content. Queue lifecycle tests run real local
+bindings. Deterministic concurrency and one-time R2 failure tests additionally
+invoke unchanged production job/manifest functions with real local bindings and
+injected barriers/errors; these are not remote outage measurements.
+
+`benchmarks-validate.yml` runs these checks on service changes with read-only
+repository permissions, retaining synthetic browser captures for 14 days. It
+contains no deployment/release command or production credentials. Fixture access
+tokens/JWKS are generated locally; some synthetic cohorts intentionally declare
+fixture=false to exercise eligibility, never to populate real benchmarks. Native
+canonical fixtures preserve exact produced bytes. These checks do not prove live
+OIDC, native Keychain/consent controls, real provider capture or cloud routing.
