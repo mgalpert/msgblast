@@ -9,6 +9,7 @@ final class AppModel: ObservableObject {
     @Published var messages: [String: [Message]] = [:] { didSet { if performanceReady { captureMessages() } } }
     private var performanceReady = false
     lazy var performance = PerformanceController(directory: local.url.deletingLastPathComponent(), fixture: demo)
+    lazy var benchmarks = BenchmarkController(directory: local.url.deletingLastPathComponent(), demo: demo)
     func setPerformanceTracking(_ enabled: Bool) {
         let previous = state.performanceTracking
         state.performanceTracking = enabled
@@ -82,6 +83,9 @@ final class AppModel: ObservableObject {
             if directory.path.hasPrefix(temporaryRoot) { fixtureDirectory = directory }
         }
         #endif
+        if let benchmarkDirectory = try? BenchmarkDemoFixture.directory(demo: demo) {
+            fixtureDirectory = benchmarkDirectory.appendingPathComponent("AppStore")
+        }
         local = LocalStore(demo: demo, isolated: ProcessInfo.processInfo.arguments.contains("--isolated-demo") || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true || Bundle.main.object(forInfoDictionaryKey: "msgblastIsolatedDemo") as? Bool == true, fixtureDirectory: fixtureDirectory, supportDirectoryName: Bundle.main.object(forInfoDictionaryKey: "msgblastSupportDirectory") as? String, webPreview: Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool == true)
         let existingStore = FileManager.default.fileExists(atPath: local.url.path)
         do {
@@ -112,6 +116,8 @@ final class AppModel: ObservableObject {
             performance.recorder?.markPartial(comparison.id.uuidString)
             for member in comparison.members { performance.seedMessages(comparison: comparison, member: member, transcript: transcript(comparison, member: member)) }
         }
+        performance.beforeDeleteRecords = { [weak self] in try self?.benchmarks.clearLocalUploads() }
+        benchmarks.attach(performance: performance)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshIfChanged() } }
     }
     func save() throws {
@@ -120,6 +126,7 @@ final class AppModel: ObservableObject {
     }
     func saveForTermination() throws {
         performance.capture { try $0.stop(reason: "app-termination") }
+        benchmarks.shutdown()
         if storageLoadFailed {
             try QuitStateRecovery.preserve(state, originalURL: local.url)
         } else {

@@ -498,6 +498,7 @@ struct FloatingComposer: View {
         if let comparison = model.comparison(comparisonID) {
             VStack(spacing: 12) {
                 HStack(spacing: 6) {
+                    ComparisonShareButton(model: model, comparisonID: comparisonID)
                     ConversationNavigation(comparison: comparison) { memberID in model.coordinator?.focus(comparisonID, memberID: memberID) }
                     Button { model.coordinator?.tile(comparisonID) } label: { Image(systemName: "rectangle.split.3x1") }
                         .buttonStyle(.bordered).help("Tile conversation windows").accessibilityLabel("Tile windows")
@@ -651,7 +652,7 @@ struct AppSettingsView: View {
         TabView {
             general.tabItem { Label("General", systemImage: "gearshape") }
             MyStatsView(model: model, performance: model.performance).tabItem { Label("My Stats", systemImage: "chart.bar") }
-            BenchmarkSettingsView().tabItem { Label("Benchmarks", systemImage: "person.crop.circle") }
+            BenchmarkSettingsView(model: model, controller: model.benchmarks).tabItem { Label("Benchmarks", systemImage: "person.crop.circle") }
         }.padding(12).frame(width: 760, height: 650)
     }
     private var general: some View {

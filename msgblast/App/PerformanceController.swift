@@ -4,6 +4,7 @@ import msgblastCore
 
 @MainActor
 final class PerformanceController: ObservableObject {
+    var beforeDeleteRecords: (() throws -> Void)?
     @Published private(set) var revision = 0
     @Published private(set) var error: String?
     private(set) var recorder: PerformanceRecorder?
@@ -266,6 +267,7 @@ final class PerformanceController: ObservableObject {
     }
     func deleteAll() {
         do {
+            try beforeDeleteRecords?()
             if let recorder { try recorder.deleteAll() }
             else { try FileManager.default.removeItem(at: directory.appendingPathComponent("Performance/events.jsonl")); recorder = try PerformanceRecorder(directory: directory, fixture: fixture) }
             error = nil; revision += 1

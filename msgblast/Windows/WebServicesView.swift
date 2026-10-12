@@ -64,6 +64,9 @@ struct AgentsWorkspaceView: View {
         .onChange(of: newBlastRequest) { _, _ in showingConnectionIntro = false; editingAgents = false }
         .onChange(of: showingComparison) { _, value in if value { editingAgents = false } }
         .toolbar {
+            if showingComparison, let id = web.comparisonID {
+                ToolbarItem(placement: .primaryAction) { ComparisonShareButton(model: model, comparisonID: id) }
+            }
             if !showingComparison {
                 ToolbarItem(placement: .primaryAction) {
                     Button(editingAgents ? "Done" : "Edit") { editingAgents.toggle() }

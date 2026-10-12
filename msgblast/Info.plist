@@ -22,6 +22,13 @@
 	<string>Find agent contacts and save accounts you add manually to Contacts for use with their existing Messages chats.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Submit separate messages to your selected existing Messages conversations.</string>
+	<key>CFBundleURLTypes</key>
+	<array><dict><key>CFBundleURLName</key><string>Benchmark account callback</string><key>CFBundleURLSchemes</key><array><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string></array></dict></array>
+	<key>BenchmarkServiceURL</key><string>$(BENCHMARK_SERVICE_URL)</string>
+	<key>BenchmarkIssuer</key><string>$(BENCHMARK_OIDC_ISSUER)</string>
+	<key>BenchmarkClientID</key><string>$(BENCHMARK_NATIVE_CLIENT_ID)</string>
+	<key>BenchmarkAudience</key><string>$(BENCHMARK_OIDC_AUDIENCE)</string>
+	<key>BenchmarkCallbackURL</key><string>$(PRODUCT_BUNDLE_IDENTIFIER):/benchmark</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SUFeedURL</key>
