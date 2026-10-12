@@ -406,9 +406,6 @@ Evidence-SHA: {sha}
         self.assertIn("--sequesterRsrc", source)
         self.assertIn("sample_icns", source)
         self.assertNotIn("sample_icon_color.swift", source)
-        self.assertIn("app.rglob", source)
-        self.assertIn("debug.dylib", source)
-        self.assertIn("signing_order", source)
         self.assertNotIn("automate_release", source)
         self.assertNotIn("MSGBLAST_SPARKLE_PRIVATE_KEY", source)
         self.assertNotIn("latest.zip", source)
@@ -446,3 +443,74 @@ Evidence-SHA: {sha}
             info.parent.mkdir(parents=True)
             info.write_bytes(__import__("plistlib").dumps({"CFBundleExecutable": "msgblast"}))
             self.assertEqual(build.bundle_executable(bundle), bundle / "Contents/MacOS/msgblast")
+
+
+class PreviewSigningTests(unittest.TestCase):
+    def test_actual_signer_seals_nested_code_before_app_and_verifies_strictly(self):
+        import plistlib
+        import subprocess
+        import sys
+        sys.path.insert(0, str(ROOT / "scripts"))
+        build = load("build_preview_apps")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "msgblast Demo.app"
+            executable = app / "Contents/MacOS/msgblast"
+            debug_dylib = app / "Contents/MacOS/msgblast.debug.dylib"
+            preview_dylib = app / "Contents/MacOS/__preview.dylib"
+            framework = app / "Contents/Frameworks/Sparkle.framework"
+            framework_binary = framework / "Versions/B/Sparkle"
+            helper = framework / "Versions/B/Autoupdate"
+            xpc = framework / "Versions/B/XPCServices/Downloader.xpc"
+            xpc_binary = xpc / "Contents/MacOS/Downloader"
+            binaries = [executable, debug_dylib, preview_dylib, framework_binary, helper, xpc_binary]
+            # Only real Mach-O magic is interpreted; no compiler or codesign is invoked.
+            for binary in binaries:
+                binary.parent.mkdir(parents=True, exist_ok=True)
+                binary.write_bytes(bytes.fromhex("cffaedfe") + b"synthetic binary")
+            info = app / "Contents/Info.plist"
+            info.write_bytes(plistlib.dumps({"CFBundleExecutable": "msgblast"}))
+            resource = app / "Contents/Resources/fixture.txt"
+            resource.parent.mkdir(parents=True)
+            resource.write_text("ordinary resource")
+            (framework / "Sparkle").symlink_to(framework_binary)
+            entitlements = root / "debug.entitlements"
+            entitlement_bytes = plistlib.dumps({"com.apple.security.get-task-allow": True})
+            entitlements.write_bytes(entitlement_bytes)
+            already_signed = {framework_binary, helper, xpc_binary, xpc, framework}
+            calls = []
+
+            def codesign(command, **kwargs):
+                calls.append((command, kwargs))
+                self.assertEqual(command[0], "codesign")
+                if command[1] == "-dv":
+                    return subprocess.CompletedProcess(command, 0 if Path(command[-1]) in already_signed else 1)
+                self.assertEqual(kwargs["cwd"], app.parent)
+                return subprocess.CompletedProcess(command, 0, stdout="")
+
+            with mock.patch.object(build.subprocess, "run", side_effect=codesign):
+                build.adhoc_sign(app, entitlements)
+
+            signatures = [command for command, _ in calls if "--sign" in command]
+            targets = [Path(command[-1]) for command in signatures]
+            # Checking the orchestration catches a no-op signer that an ordering-unit
+            # test alone cannot detect. The executable is sealed by the outer app.
+            expected_nested = {debug_dylib, preview_dylib, framework_binary, helper, xpc_binary, xpc, framework}
+            self.assertEqual(set(targets), expected_nested | {app})
+            self.assertEqual(len(targets), len(expected_nested) + 1)
+            self.assertNotIn(executable, targets)
+            self.assertNotIn(resource, targets)
+            self.assertNotIn(framework / "Sparkle", targets)
+            self.assertEqual(targets[-1], app)
+            for binary in (debug_dylib, preview_dylib):
+                self.assertLess(targets.index(binary), targets.index(framework))
+            self.assertLess(targets.index(xpc_binary), targets.index(xpc))
+            self.assertLess(targets.index(xpc), targets.index(framework))
+            self.assertLess(targets.index(helper), targets.index(framework))
+            for command in signatures[:-1]:
+                self.assertEqual(command[1:6], ["--force", "--sign", "-", "--options", "runtime"])
+                self.assertEqual("--preserve-metadata=entitlements" in command, Path(command[-1]) in already_signed)
+            self.assertEqual(signatures[-1], ["codesign", "--force", "--sign", "-", "--options", "runtime",
+                                             "--entitlements", str(entitlements), str(app)])
+            self.assertEqual(entitlements.read_bytes(), entitlement_bytes)
+            self.assertEqual(calls[-1][0], ["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])

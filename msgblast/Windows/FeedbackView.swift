@@ -5,6 +5,7 @@ import msgblastCore
 
 @MainActor
 final class FeedbackSession: ObservableObject {
+    typealias Submit = @MainActor (DiagnosticRequest, UUID, URL, Bool) async throws -> FeedbackReceipt
     @Published var note = ""
     @Published var contact = ""
     @Published var includeDiagnostics = true
@@ -14,6 +15,7 @@ final class FeedbackSession: ObservableObject {
     @Published private var sentRequest: DiagnosticRequest?
     private var lastAttempt: (request: DiagnosticRequest, id: UUID)?
     private var sendTask: Task<Void, Never>?
+    private let submit: Submit
 
     private var request: DiagnosticRequest {
         DiagnosticRequest(kind: .feedback, note: note, contact: contact, includeDiagnostics: includeDiagnostics, facts: facts)
@@ -22,7 +24,12 @@ final class FeedbackSession: ObservableObject {
     var canSend: Bool { canExport && !isSending && sentRequest != request }
     var sendTitle: String { isSending ? "Sending…" : sentRequest == request ? "Feedback sent" : "Send feedback" }
 
-    init(facts: DiagnosticFacts) { self.facts = facts }
+    init(facts: DiagnosticFacts, submit: @escaping Submit = { request, id, endpoint, fixture in
+        try await FeedbackSubmission.send(request, id: id, endpoint: endpoint, isLocalFixture: fixture)
+    }) {
+        self.facts = facts
+        self.submit = submit
+    }
 
     var canExport: Bool {
         !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && contactIsAcceptable
@@ -71,7 +78,7 @@ final class FeedbackSession: ObservableObject {
         sendTask = Task { @MainActor in
             defer { isSending = false; sendTask = nil }
             do {
-                let receipt = try await FeedbackSubmission.send(snapshot, id: id, endpoint: endpoint, isLocalFixture: fixture)
+                let receipt = try await submit(snapshot, id, endpoint, fixture)
                 sentRequest = snapshot
                 message = "Sent to msgblast. Report ID: \(receipt.id.uuidString.lowercased())"
             } catch {

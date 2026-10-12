@@ -57,51 +57,24 @@ extension AppModel {
         return claimed
     }
     func deliver(_ original: OutgoingPayload, to chat: Chat, simulateFailure: Bool = false, update: (OutgoingPayload) throws -> Void) async -> OutgoingPayload {
-        var payload = original
-        do {
-            payload.reconcile(in: try latest(chat), excluding: claimedAnchors(chatID: chat.id, except: payload))
-            try update(payload)
-        } catch { self.error = error.localizedDescription; return payload }
-        guard payload.submission != .uncertain else { return payload }
-        for p in payload.pendingIndices {
-            // An accepted send is never repeated. Wait for its receipt before sending the next part.
-            guard payload.parts[..<p].allSatisfy({ $0.state == .submitted && $0.anchor != nil }) else { break }
-            var attempted = false
-            do {
-                try validate(chat)
-                if simulateFailure && payload.parts[p].attachment != nil {
-                    demoFailureOnce = false
+        await OutgoingDelivery.deliver(original,
+            history: { try self.latest(chat) },
+            claimedAnchors: { self.claimedAnchors(chatID: chat.id, except: $0) },
+            validate: { part in
+                try self.validate(chat)
+                if simulateFailure && part.attachment != nil {
+                    self.demoFailureOnce = false
                     throw SendFailure.notSubmitted("Simulated failure before submission. Only unsent parts will be retried.")
                 }
-                payload.parts[p].baseline = try latest(chat).map(\.id).max() ?? 0
-                payload.parts[p].attemptedAt = Date()
-                payload.parts[p].state = .sending; payload.parts[p].error = nil
-                try update(payload)
-                attempted = true
-                let part = payload.parts[p]
-                if demo {
-                    appendDemo(part.text ?? "", chat: chat, outgoing: true, attachments: part.attachment.map { [$0] } ?? [])
+            },
+            persist: update,
+            submit: { part in
+                if self.demo {
+                    self.appendDemo(part.text ?? "", chat: chat, outgoing: true, attachments: part.attachment.map { [$0] } ?? [])
                 } else if let file = part.attachment { try await MessageSender().send(file, to: chat) }
                 else if let text = part.text { try await MessageSender().send(text, to: chat) }
-                payload.parts[p].state = .submitted
-                payload.parts[p].error = "Submitted, awaiting a history receipt. Refresh to reconcile."
-                try update(payload)
-                for _ in 0..<6 {
-                    let fresh = try latest(chat)
-                    payload.reconcile(in: fresh, excluding: claimedAnchors(chatID: chat.id, except: payload))
-                    messages[chat.id] = fresh
-                    if payload.parts[p].anchor != nil { break }
-                    try await Task.sleep(for: .milliseconds(500))
-                }
-                try update(payload)
-                if payload.parts[p].anchor == nil { break }
-            } catch {
-                payload.parts[p].state = Submission.failure(afterAttempt: attempted, error: error)
-                payload.parts[p].error = error.localizedDescription
-                do { try update(payload) } catch { self.error = error.localizedDescription }
-                break
-            }
-        }
-        return payload
+            },
+            didReadHistory: { self.messages[chat.id] = $0 },
+            reportError: { self.error = $0.localizedDescription })
     }
 }

@@ -1,5 +1,6 @@
 """The validation workflow must stay unable to publish a release."""
 from pathlib import Path
+import re
 import unittest
 
 
@@ -12,6 +13,19 @@ CHECKOUT = "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
 
 
 class ValidateWorkflowTests(unittest.TestCase):
+    def test_ui_checks_have_a_fresh_explicit_desktop_job(self):
+        text = WORKFLOW.read_text()
+        match = re.search(r"^  ui:\n(.*?)(?=^  \w+:|\Z)", text, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, "UI checks must not inherit the updater fixture's desktop dialogs")
+        ui = match.group(1)
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.run_ui", ui)
+        self.assertIn("runs-on: xcode-27", ui)
+        self.assertIn("-only-testing:msgblastUITests", ui)
+        self.assertIn("ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo", ui)
+        self.assertNotIn("test_updates.py", ui)
+        native = re.search(r"^  native:\n(.*?)(?=^  \w+:|\Z)", text, re.MULTILINE | re.DOTALL).group(1)
+        self.assertNotIn("-only-testing:msgblastUITests", native)
+
     def test_validation_workflow_does_not_publish(self):
         text = WORKFLOW.read_text()
         release = RELEASE.read_text()
@@ -30,7 +44,7 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertIn("automate_release.py", release)
         self.assertIn("tags: ['v*']", release)
         self.assertIn("python3 scripts/build_preview_apps.py", text)
-        self.assertEqual(text.count("ref: ${{ env.REVIEW_SHA }}"), 2)
+        self.assertEqual(text.count("ref: ${{ env.REVIEW_SHA }}"), 3)
         self.assertIn("github.event.pull_request.head.sha", text)
         self.assertIn('-resultBundlePath "$PWD/build/native-tests.xcresult"', text)
         self.assertIn("build/native-tests.log", text)

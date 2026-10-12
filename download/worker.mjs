@@ -61,23 +61,29 @@ async function readFeed(response) {
   return bytes;
 }
 
-export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    if (url.pathname !== '/latest.zip') return new Response('Not found', { status: 404, headers: NO_STORE });
-    if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method not allowed', { status: 405, headers: { ...NO_STORE, Allow: 'GET, HEAD' } });
-    try {
-      const feed = await fetch(FEED_URL, {
-        redirect: 'manual', signal: AbortSignal.timeout(8000),
-        headers: { 'User-Agent': 'msgblast-release-verifier', 'Cache-Control': 'no-cache' },
-        cf: { cacheTtl: 0, cacheEverything: false }
-      });
-      const latest = await latestRelease(await readFeed(feed));
-      if (request.method === 'GET') console.log(JSON.stringify({ event: 'download_redirect', version: latest.version, build: latest.build }));
-      return new Response(null, { status: 302, headers: { ...NO_STORE, Location: latest.url } });
-    } catch (error) {
-      console.error(JSON.stringify({ event: 'download_unavailable', reason: error.message }));
-      return new Response(request.method === 'HEAD' ? null : 'Download temporarily unavailable. Please try again.', { status: 503, headers: { ...NO_STORE, 'Retry-After': '60' } });
+// Dependencies are fixed for the deployed entry point; local fixtures can supply
+// their own transport, signing key, and timeout without network or release keys.
+export function createDownloadWorker({ fetchFeed = (...args) => fetch(...args), publicKey = PUBLIC_KEY, timeoutSignal = AbortSignal.timeout } = {}) {
+  return {
+    async fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname !== '/latest.zip') return new Response('Not found', { status: 404, headers: NO_STORE });
+      if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method not allowed', { status: 405, headers: { ...NO_STORE, Allow: 'GET, HEAD' } });
+      try {
+        const feed = await fetchFeed(FEED_URL, {
+          redirect: 'manual', signal: timeoutSignal(8000),
+          headers: { 'User-Agent': 'msgblast-release-verifier', 'Cache-Control': 'no-cache' },
+          cf: { cacheTtl: 0, cacheEverything: false }
+        });
+        const latest = await latestRelease(await readFeed(feed), publicKey);
+        if (request.method === 'GET') console.log(JSON.stringify({ event: 'download_redirect', version: latest.version, build: latest.build }));
+        return new Response(null, { status: 302, headers: { ...NO_STORE, Location: latest.url } });
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'download_unavailable', reason: error.message }));
+        return new Response(request.method === 'HEAD' ? null : 'Download temporarily unavailable. Please try again.', { status: 503, headers: { ...NO_STORE, 'Retry-After': '60' } });
+      }
     }
-  }
-};
+  };
+}
+
+export default createDownloadWorker();

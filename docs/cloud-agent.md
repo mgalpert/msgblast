@@ -80,7 +80,21 @@ The native job checks out the same branch head the preview ZIPs record. On a pul
 
 Checkout uses the same pinned `actions/checkout` commit as `.github/workflows/release-adhoc.yml`. The demo icon is intentional for this fixture build. Production release builds keep `AppIcon` and `scripts/release.py` rejects development artwork.
 
-UI regressions live in `msgblastUITests/WorkflowTests.swift`. Select the fixture tests that cover a UI change and capture the interaction on an authorized Mac. The personal-agent fixture command is in [personal-agent-reports.md](personal-agent-reports.md). This validation workflow does not run UI tests, because screenshot evidence has to come from that Mac rather than from an unattended assertion alone.
+UI regressions live in `msgblastUITests`. Ordinary PR validation excludes UI.
+Manually dispatch the reviewed branch with `run_ui=true` to run the full isolated
+Demo UI target on a separate, fresh Xcode 27 worker. Replace `YOUR_BRANCH` below:
+
+```sh
+gh workflow run validate.yml -R mgalpert/msgblast --ref YOUR_BRANCH -f run_ui=true
+```
+
+The job rejects empty, skipped, or failing UI runs and retains logs, a summary,
+and the `.xcresult` for 14 days. Successful test recordings are retained too;
+export and inspect the screenshots and MP4 attachments before using them as
+PR interaction evidence. A green assertion summary alone is not a video.
+Hosted results do not prove that a personal SSH/Fleet Mac is enrolled or ready.
+For that separate path, use [remote-mac-testing.md](remote-mac-testing.md).
+The personal-agent fixture command is in [personal-agent-reports.md](personal-agent-reports.md).
 
 Watch the run for the proposed revision before merge:
 

@@ -68,6 +68,12 @@ them as current setup instructions or proof that today's branch passes.
 
 ### Verify and share
 
+- Run native checks in GitHub Actions or on a dedicated remote Mac over
+  Tailscale/SSH using `scripts/run_mac_checks.py`; see
+  `docs/remote-mac-testing.md`. Do not run native/UI suites on the user's active
+  desktop unless they explicitly request that local run. A remote failure must
+  not fall back to the active Mac. Lightweight noninteractive tooling checks
+  can run locally.
 - Use the testing guide to select native unit/UI tests, controller fixtures,
   Python tooling, Worker/feedback checks, or updater verification. Use meaningful
   existing tests; documentation-only changes need instruction/link verification.

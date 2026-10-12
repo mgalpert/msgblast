@@ -137,6 +137,7 @@ struct AgentsWorkspaceView: View {
                     }
                 }.frame(height: geometry.size.height)
             }.scrollIndicators(.visible)
+                .accessibilityIdentifier("Comparison chat columns")
         }
     }
 

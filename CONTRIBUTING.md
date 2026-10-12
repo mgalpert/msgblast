@@ -157,8 +157,9 @@ can affect fork PR CI. Record local results while checks are pending; Linux
 tests do not establish a native app build.
 
 Respond to review and refresh the description/evidence when changes affect the
-result. `validate.yml` does not run UI tests; manual native evidence remains
-required. See [Testing](docs/testing.md) and [cloud agents](docs/cloud-agent.md)
+result. Ordinary PR validation does not run UI tests. Manual dispatch with
+`run_ui=true` uses a separate fresh Mac desktop for isolated UI fixtures; manual
+changed-feature evidence remains required. See [Testing](docs/testing.md) and [cloud agents](docs/cloud-agent.md)
 for commands and limits.
 
 ## License and credits

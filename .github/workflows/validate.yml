@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_ui:
+        description: Run isolated native UI tests on the GitHub Mac desktop
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,6 +41,9 @@ jobs:
           npm test
           npm run check
 
+      - name: Test private feedback handler with local fixtures
+        run: node --test feedback/worker.test.mjs
+
   native:
     runs-on: xcode-27
     timeout-minutes: 60
@@ -63,6 +71,7 @@ jobs:
             -derivedDataPath build/updater-validation \
             -destination 'platform=macOS,arch=arm64' \
             -resultBundlePath "$PWD/build/native-tests.xcresult" \
+            MSGBLAST_APP_BUNDLE_IDENTIFIER=com.msgblast.validation-tests \
             ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
             -only-testing:msgblastTests test 2>&1 | tee build/native-tests.log
 
@@ -93,6 +102,86 @@ jobs:
 
       - name: Verify Settings permission checks and consent boundaries
         run: bash scripts/test_app_permissions.sh
+
+      - name: Exercise app controllers with isolated local fixtures
+        run: |
+          set -o pipefail
+          bash scripts/test_web_comparisons.sh build/updater-validation 2>&1 | tee build/web-controller-tests.log
+          bash scripts/test_configured_cli_conversations.sh build/updater-validation 2>&1 | tee build/configured-cli-tests.log
+          bash scripts/test_personal_agent_shutdown.sh build/updater-validation 2>&1 | tee build/report-controller-tests.log
+
+      - name: Upload controller fixture results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msgblast-controller-tests-${{ env.REVIEW_SHA }}
+          path: |
+            build/web-controller-tests.log
+            build/configured-cli-tests.log
+            build/report-controller-tests.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  ui:
+    # Updater fixtures can leave a Python local-network consent dialog behind.
+    # UI interactions need a fresh desktop, not the native job's prior processes.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ui
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      REVIEW_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out the reviewed branch head
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+
+      - name: Prepare the dedicated UI desktop
+        run: |
+          set -o pipefail
+          mkdir -p build
+          swift scripts/prepare_ui_desktop.swift 2>&1 | tee build/ui-desktop.log
+          swift scripts/prepare_ui_desktop.swift --check-only 2>&1 | tee -a build/ui-desktop.log
+
+      - name: Exercise isolated native UI workflows on request
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild -project msgblast.xcodeproj -scheme msgblast \
+            -configuration Debug -derivedDataPath build/ui-validation \
+            -destination 'platform=macOS,arch=arm64' \
+            -resultBundlePath build/ui-tests.xcresult \
+            MSGBLAST_APP_BUNDLE_IDENTIFIER=com.msgblast.ui-validation-tests \
+            ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
+            -only-testing:msgblastUITests test 2>&1 | tee build/ui-tests.log
+
+      - name: Write UI assertion details
+        if: always()
+        run: |
+          set +e
+          if [ -d build/ui-tests.xcresult ]; then
+            xcrun xcresulttool get test-results tests --path build/ui-tests.xcresult > build/ui-test-results.json
+            xcrun xcresulttool get test-results summary --path build/ui-tests.xcresult > build/ui-test-summary.json
+          fi
+
+      - name: Upload requested UI results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msgblast-ui-tests-${{ env.REVIEW_SHA }}
+          path: |
+            build/ui-tests.xcresult
+            build/ui-tests.log
+            build/ui-desktop.log
+            build/ui-test-results.json
+            build/ui-test-summary.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Require executed UI tests without failures or skips
+        run: python3 scripts/check_ui_results.py build/ui-test-summary.json
 
   preview:
     if: >-

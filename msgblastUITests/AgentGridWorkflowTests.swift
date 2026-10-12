@@ -38,7 +38,7 @@ final class AgentGridWorkflowTests: XCTestCase {
         let origin = window.coordinate(withNormalizedOffset: .zero)
         let source = origin.withOffset(CGVector(dx: first.frame.midX - window.frame.minX, dy: first.frame.midY - window.frame.minY))
         let destination = origin.withOffset(CGVector(dx: second.frame.midX - window.frame.minX, dy: second.frame.midY - window.frame.minY))
-        source.press(forDuration: 0.1, thenDragTo: destination, withVelocity: .slow, thenHoldForDuration: 0.1)
+        source.click(forDuration: 0.1, thenDragTo: destination, withVelocity: .slow, thenHoldForDuration: 0.1)
         let moved = NSPredicate { _, _ in
             let lhs = app.descendants(matching: .any).matching(identifier: "Agent Claude").firstMatch.frame
             let rhs = app.descendants(matching: .any).matching(identifier: "Agent ChatGPT").firstMatch.frame

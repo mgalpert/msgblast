@@ -1,0 +1,41 @@
+{
+  "source_revision": "1a5634ef1bef3aaedb664aaf1b0b2a62a30fabda",
+  "base_revision": "1d8d2ac158dfc5aed529d187e334d6d48a7e0786",
+  "run_url": "https://github.com/mgalpert/msgblast/actions/runs/38298390935",
+  "bundle_identifier": "com.msgblast.ui-validation-tests",
+  "fixture_arguments": [
+    "--demo",
+    "--isolated-demo"
+  ],
+  "core_passed": 357,
+  "ui": {
+    "result": "Passed",
+    "totalTestCount": 35,
+    "passedTests": 35,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "expectedFailures": 0
+  },
+  "retained_recordings": 35,
+  "video_segments": [
+    {
+      "test": "AgentGridWorkflowTests/testEditGridHidesAddsReordersAndKeepsDraft()",
+      "attachment": "E8926EEB-0E60-40F2-96D6-AB9A8EFCE175.mp4",
+      "start_seconds": 0,
+      "end_seconds": 30.983333
+    },
+    {
+      "test": "WebServiceWorkflowTests/testSevenChatsResizeWindowAndRemainReachable()",
+      "attachment": "E189C3EB-8A08-413F-A6E5-A6218A9787A7.mp4",
+      "start_seconds": 68,
+      "end_seconds": 110.233333
+    }
+  ],
+  "draft_frame_seconds": 98,
+  "limits": "Actual XCTest recordings/screenshots from hosted Mac, isolated synthetic Demo inputs. Clips trimmed and concatenated at normal speed, encoded at30fps. No live Messages/model submissions or physical Fleet runner proof.",
+  "sha256": {
+    "native-grid.png": "f77fc07ad70beff3970187ae0e04bb26d755f00954b301f27e2454c779898f96",
+    "native-drafts.png": "e12c1c0962b0290ce139e10dcb9621ccde0a641f0169301e7c05dc0a63197a1c",
+    "native-workflows.mp4": "750a6f128677a6a3b4656e85f08ac95e24fc5d7170911601d09885dfb39f50ce"
+  }
+}

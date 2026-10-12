@@ -23,7 +23,8 @@ def run(command, cwd):
 
 def is_mach_o(path):
     try:
-        magic = path.open("rb").read(4)
+        with path.open("rb") as binary:
+            magic = binary.read(4)
     except OSError:
         return False
     return magic in {bytes.fromhex(value) for value in (

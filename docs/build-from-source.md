@@ -13,7 +13,6 @@ your change, follow [Contributing](../CONTRIBUTING.md).
 | Apple Silicon Mac | Dev/Demo packaging and CI currently target `arm64` |
 | Git | Cloning, branches, and PR revisions; optional for a source ZIP compile |
 | Python 3.11 or later | Build helper, preview packaging, project generation, and tooling checks |
-| `rg` (ripgrep) | Some optional controller fixture scripts locate Swift sources with it |
 | Node.js 22 and npm | Download Worker or feedback checks; unnecessary for native builds |
 
 Install full Xcode and finish its first-launch setup. Command Line Tools alone

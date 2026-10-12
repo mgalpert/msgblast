@@ -35,6 +35,7 @@ import msgblastCore
     }
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared
+        try await StorageFeedbackChecks.run()
         let scrollModel = AppModel()
         let scrollAgent = scrollModel.state.agents[0]
         let scrollID = await scrollModel.prepareWebComparison("Scroll fixture original", recipientIDs: Set(scrollModel.state.agents.prefix(3).map(\.id)), agents: [])!
