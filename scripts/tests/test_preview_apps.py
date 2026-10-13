@@ -230,6 +230,23 @@ def icns_file(chunks):
 
 
 class EvidenceGateTests(unittest.TestCase):
+    def test_stable_signing_requires_apple_identity_and_team_not_a_code_hash(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "scripts"))
+        build = load("build_preview_apps")
+        identity = "Developer ID Application: Test Company (ABCDEFGHIJ)"
+        metadata = "Identifier=com.msgblast.development\nAuthority=" + identity + "\nTeamIdentifier=ABCDEFGHIJ\nflags=0x10000(runtime)\n"
+        requirement = 'identifier "com.msgblast.development" and anchor apple generic and certificate leaf[subject.OU] = "ABCDEFGHIJ"'
+        build.verify_stable_signature_text(metadata, requirement, identity, "ABCDEFGHIJ", "com.msgblast.development")
+        for bad_metadata, bad_requirement in [
+            (metadata.replace("ABCDEFGHIJ", "WRONGTEAM1"), requirement),
+            (metadata.replace("(runtime)", "(adhoc)"), requirement),
+            (metadata.replace("com.msgblast.development", "com.msgblast.mac"), requirement),
+            (metadata, 'cdhash H"12345678"'),
+        ]:
+            with self.assertRaises(RuntimeError):
+                build.verify_stable_signature_text(bad_metadata, bad_requirement, identity, "ABCDEFGHIJ", "com.msgblast.development")
+
     def body(self, sha):
         return f"""## Screenshots
 

@@ -47,7 +47,7 @@ After that verification succeeds, set `MSGBLAST_SIGNING_MODE=developer-id`. This
 
 ## What CI does
 
-`ci_signing.py` installs the certificate into an owner-only temporary runner keychain, verifies the expected identity, validates and stores the notarization profile there, and removes the raw credential import files. It refuses credential installation outside GitHub Actions. Only the release workflow receives these secrets; PR validation and fixture builds remain separate.
+`ci_signing.py` installs the certificate into an owner-only temporary runner keychain, verifies the expected identity, validates and stores the notarization profile there, and removes the raw credential import files. It refuses credential installation outside GitHub Actions. The release workflow, manual credential-verification workflow, and manual default-branch stable Dev workflow receive these secrets; PR validation and fixture builds remain separate. See [Studio permission testing](studio-permission-testing.md) for the nonpublishing Dev path.
 
 `release.py` exports with Developer ID, verifies the signing team and hardened runtime, requires Apple notarization acceptance, staples and validates the app ticket, and checks Gatekeeper before creating the final updater ZIP. The explicit notarization keychain argument keeps CI credentials out of the login keychain. The installer contains that same signed and notarized app; its container keeps the existing Sparkle signature.
 
