@@ -111,7 +111,7 @@ def notarize_preview(app, options, bundle_id):
     requirement = run(["codesign", "-dr", "-", str(app)], app.parent).split("designated =>", 1)[-1].strip()
     verify_stable_signature_text(metadata, requirement, options.signing_identity, options.team_id, bundle_id)
     rule = f'identifier "{bundle_id}" and anchor apple generic and certificate leaf[subject.OU] = "{options.team_id}"'
-    run(["codesign", "--verify", "--strict", "-R", rule, str(app)], app.parent)
+    run(["codesign", "--verify", "--strict", "-R", "=" + rule, str(app)], app.parent)
     with tempfile.TemporaryDirectory(prefix="msgblast-preview-notary-") as temporary:
         archive = Path(temporary) / "notarization.zip"
         run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive)], app.parent)
