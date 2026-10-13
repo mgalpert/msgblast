@@ -48,7 +48,7 @@ exact running executable path and a single Dev process after launch.
 
 With explicit permission-setup authorization, use the native OS controls in
 this guest to grant Contacts and Messages Automation, plus Full Disk Access
-where needed. Complete onboarding through the actual app. Keep Messages running
+where needed. Use the actual onboarding permission checklist. A permission-only guest needs no connected agent to run the checker: it uses the onboarding contact picker until onboarding is completed. Keep Messages running
 for the nonrequesting Automation check. No Apple account, provider login, real
 message send, or Contacts write is required. A permission prompt blocked by the
 computer-use tool is a concrete setup blocker; do not edit TCC databases or
@@ -73,7 +73,10 @@ and running Dev identity/source/signature, and checks all three native Settings
 rows. Messages access is a fresh read of the protected history file; Automation
 uses the app's nonrequesting native status check. A harmless Contacts search
 must return an empty success result through the real Contacts API. The query is
-restored afterward. No messages are sent and no Contacts are written.
+restored afterward. Before onboarding is complete, the checker opens the native
+Messages setup review and contact picker, then cancels the picker without adding
+an agent. It does not bypass the requirement to connect an agent before finishing
+onboarding. No messages are sent and no Contacts are written.
 
 Build a second signed preview, quit Dev, replace only its binary at the same
 path, and rerun with the prior receipt:

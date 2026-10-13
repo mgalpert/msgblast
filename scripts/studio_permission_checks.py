@@ -82,15 +82,16 @@ class SpaceClient:
     def window(self, pid, title=None):
         for _ in range(20):
             candidates = [w for w in self.driver("list_windows")["windows"]
-                          if w["pid"] == pid and (w["title"] in ("", "msgblast Dev") if title is None else w["title"] == title)]
+                          if w["pid"] == pid and (w["title"] in ("", "msgblast Dev") and w["bounds"]["width"] >= 740
+                                                  if title is None else w["title"] == title)]
             if len(candidates) == 1:
                 return candidates[0]["window_id"]
             time.sleep(0.25)
         raise RuntimeError("Studio window is missing or ambiguous")
 
     def snapshot(self, pid, window, **options):
-        return self.driver("get_window_state", pid=pid, window_id=window,
-                           include_screenshot=False, **options)
+        options.setdefault("include_screenshot", False)
+        return self.driver("get_window_state", pid=pid, window_id=window, **options)
 
     def close(self):
         self.process.terminate()
@@ -121,44 +122,85 @@ def verify_rebuild(previous, metadata):
         raise RuntimeError("Rebuild retention requires two apps with different code hashes")
 
 
-def discover_field(state):
-    fields = [e for e in state["elements"] if e.get("role") == "AXTextField" and e.get("label") == "Search Discover"]
+def contact_field(state):
+    fields = [e for e in state["elements"] if e.get("role") == "AXTextField" and e.get("label") in ("Search Discover", "Find onboarding contact")]
     if len(fields) != 1:
-        raise RuntimeError("Complete onboarding before running the Contacts integration check")
+        raise RuntimeError("Native Contacts search field is missing or ambiguous")
     return fields[0]
 
 
-def set_discover_query(client, pid, window, query):
-    field = discover_field(client.snapshot(pid, window))
-    client.driver("press_key", pid=pid, window_id=window, element_token=field["element_token"], key="a", modifiers=["cmd"])
-    client.driver("type_text", pid=pid, window_id=window, element_token=field["element_token"], text=query)
+def contact_query(state):
+    field = contact_field(state)
+    value = field.get("value", "")
+    # SwiftUI exposes its placeholder as AXValue when the field is empty.
+    placeholder = {"Search Discover": "Search agents, contacts, phone or email",
+                   "Find onboarding contact": "Search contacts, phone or email"}[field["label"]]
+    if value == placeholder:
+        if field["label"] == "Find onboarding contact" or not any(
+                e.get("label") == "Clear Discover search" for e in state["elements"]):
+            return ""
+    return value
+
+
+def click_button(client, pid, window, label):
+    for _ in range(20):
+        state = client.snapshot(pid, window)
+        buttons = [e for e in state["elements"] if e.get("role") == "AXButton"
+                   and e.get("label") == label and e.get("enabled", True)]
+        if len(buttons) == 1:
+            client.driver("click", pid=pid, window_id=window, element_token=buttons[0]["element_token"])
+            return
+        time.sleep(0.25)
+    raise RuntimeError("Native button is missing or ambiguous: " + label)
+
+
+def open_contact_surface(client, pid, window):
+    state = client.snapshot(pid, window)
+    if 'AXStaticText = "Current step"' not in state["tree_markdown"]:
+        client.driver("invoke_menu", pid=pid, window_id=window, path=["View", "Show Discover"])
+        return "Discover"
+    # A permission-only VM has no agent accounts to finish onboarding with.
+    client.driver("invoke_menu", pid=pid, window_id=window, path=["File", "Review Messages Setup…"])
+    for _ in range(20):
+        state = client.snapshot(pid, window)
+        complete = {e.get("label") for e in state["elements"] if e.get("role") == "AXButton" and e.get("value") == "Complete"}
+        if {"Messages access", "Contacts", "Sending Messages"}.issubset(complete):
+            break
+        time.sleep(0.25)
+    else:
+        raise RuntimeError("Onboarding permission checklist is not complete")
+    click_button(client, pid, window, "Continue setup")
+    click_button(client, pid, window, "Search for more agents in Messages")
+    return "onboarding contact picker"
+
+
+def set_contact_query(client, pid, window, query):
+    field = contact_field(client.snapshot(pid, window))
+    client.driver("set_value", pid=pid, window_id=window, element_token=field["element_token"], value=query)
 
 
 def wait_for_contact_result(client, pid, window, query, empty_result):
     for _ in range(20):
         state = client.snapshot(pid, window)
-        field = discover_field(state)
-        if field.get("value", "") == query and (EMPTY_CONTACT_RESULT in state["tree_markdown"]) == empty_result:
+        if contact_query(state) == query and (EMPTY_CONTACT_RESULT in state["tree_markdown"]) == empty_result:
             return
         time.sleep(0.5)
     raise RuntimeError("Native Contacts search did not return a fresh expected result")
 
 
 def probe_contacts(client, pid, window):
-    original_query = discover_field(client.snapshot(pid, window)).get("value", "")
+    original_query = contact_query(client.snapshot(pid, window))
     query = "msgblastpermissionprobe" + "".join(chr(ord("a") + int(c, 16)) for c in uuid.uuid4().hex)
     try:
         # Clear and observe the old result before starting a distinct lookup.
-        set_discover_query(client, pid, window, "")
+        set_contact_query(client, pid, window, "")
         wait_for_contact_result(client, pid, window, "", False)
-        set_discover_query(client, pid, window, query)
+        set_contact_query(client, pid, window, query)
         wait_for_contact_result(client, pid, window, query, True)
     finally:
-        field = discover_field(client.snapshot(pid, window))
-        if field.get("value", "") != original_query:
-            set_discover_query(client, pid, window, original_query)
-        restored = discover_field(client.snapshot(pid, window))
-        if restored.get("value", "") != original_query:
+        if contact_query(client.snapshot(pid, window)) != original_query:
+            set_contact_query(client, pid, window, original_query)
+        if contact_query(client.snapshot(pid, window)) != original_query:
             raise RuntimeError("Contacts query restoration could not be verified")
 
 
@@ -182,7 +224,8 @@ subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=T
 signature = subprocess.run(['codesign', '-dv', '--verbose=4', str(app)], capture_output=True, text=True, check=True).stderr
 assert 'TeamIdentifier=' + ''' + repr(options.team_id) + ''' in signature, 'Dev must be signed by the trusted Apple team'
 assert 'Authority=Developer ID Application:' in signature and '(runtime)' in signature, 'Dev requires Developer ID signing and hardened runtime'
-requirement = subprocess.run(['codesign', '-dr', '-', str(app)], capture_output=True, text=True, check=True).stderr.split('designated =>', 1)[1].strip()
+requirement_report = subprocess.run(['codesign', '-dr', '-', str(app)], capture_output=True, text=True, check=True)
+requirement = (requirement_report.stderr + '\\n' + requirement_report.stdout).split('designated =>', 1)[1].strip()
 assert 'anchor apple generic' in requirement and 'cdhash' not in requirement
 code_hash = next(line.split('=', 1)[1] for line in signature.splitlines() if line.startswith('CDHash='))
 print(json.dumps({'source_revision': info['msgblastSourceRevision'], 'bundle_id': info['CFBundleIdentifier'], 'team_id': ''' + repr(options.team_id) + ''', 'designated_requirement': requirement, 'code_hash': code_hash, 'app_path': str(app)}))
@@ -219,14 +262,18 @@ print(json.dumps({'exact_running_app': True}))
         if any(value != "Allowed" for value in states.values()):
             raise RuntimeError("Real permissions are not provisioned: " + json.dumps(states))
         screenshot = "~/Downloads/msgblast-permissions-" + uuid.uuid4().hex + ".png"
-        client.snapshot(pid, settings, screenshot_out_file=screenshot)
-        client.driver("press_key", pid=pid, window_id=settings, key="w", modifiers=["cmd"])
+        client.snapshot(pid, settings, include_screenshot=True, max_image_dimension=0, screenshot_out_file=screenshot)
+        client.driver("press_key", pid=pid, window_id=settings, key="w", modifiers=["cmd"], delivery_mode="foreground")
         client.snapshot(pid, main)
-        client.driver("invoke_menu", pid=pid, window_id=main, path=["View", "Show Discover"])
-        probe_contacts(client, pid, main)
+        surface = open_contact_surface(client, pid, main)
+        try:
+            probe_contacts(client, pid, main)
+        finally:
+            if surface == "onboarding contact picker":
+                click_button(client, pid, main, "Cancel")
         receipt = {"space": options.space, "metadata": metadata, "permissions": states,
-                   "contacts_api_search": "empty success", "rebuild_retention": bool(options.previous_receipt),
-                   "screenshot": screenshot, "limits": "No sends or Contacts writes; no clean-machine prompt coverage"}
+                   "contacts_api_search": "empty success", "contacts_surface": surface, "rebuild_retention": bool(options.previous_receipt),
+                   "screenshot": screenshot, "limits": "No sends, Contacts writes, or account login; permission-only onboarding is not completed; no clean-machine prompt coverage"}
         options.output.write_text(json.dumps(receipt, indent=2) + "\n")
         print(json.dumps(receipt, indent=2))
     finally:

@@ -44,6 +44,29 @@ class PermissionReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "trusted application identity"):
             studio.verify_rebuild(previous, dict(current, designated_requirement='cdhash H"1234"'))
 
+    def test_placeholder_is_empty_but_actual_discover_text_is_preserved(self):
+        state = {"elements": [{"role": "AXTextField", "label": "Search Discover", "value": "Search agents, contacts, phone or email"}]}
+        self.assertEqual(studio.contact_query(state), "")
+        state["elements"].append({"role": "AXButton", "label": "Clear Discover search"})
+        self.assertEqual(studio.contact_query(state), "Search agents, contacts, phone or email")
+        state = {"elements": [{"role": "AXTextField", "label": "Find onboarding contact", "value": "Search contacts, phone or email"}]}
+        self.assertEqual(studio.contact_query(state), "")
+
+    def test_onboarding_missing_grant_cannot_click_permission_or_continue(self):
+        class MissingGrant:
+            def __init__(self): self.actions = []
+            def snapshot(self, *args):
+                return {"tree_markdown": 'AXStaticText = "Current step"', "elements": [
+                    {"role": "AXButton", "label": "Messages access", "value": "Complete"},
+                    {"role": "AXButton", "label": "Contacts", "value": "Incomplete"},
+                    {"role": "AXButton", "label": "Sending Messages", "value": "Complete"}]}
+            def driver(self, name, **args): self.actions.append((name, args))
+        client = MissingGrant()
+        with mock.patch.object(studio.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "checklist is not complete"):
+                studio.open_contact_surface(client, 1, 2)
+        self.assertEqual([name for name, _ in client.actions], ["invoke_menu"])
+
     def test_denied_contacts_cannot_borrow_allowed_status_from_messages(self):
         tree = '''- AXStaticText = "Messages access, Find the agents you already text."
   - AXStaticText = "Allowed"
@@ -76,8 +99,8 @@ class DiscoverFixture:
                                                             "value": self.query, "element_token": "s00000001:1"}]}
 
     def driver(self, name, **arguments):
-        if name == "type_text":
-            self.query = arguments["text"]
+        if name == "set_value":
+            self.query = arguments["value"]
             if not self.query:
                 self.clear_wait = 3
             elif self.query.startswith("msgblastpermissionprobe") and self.complete_new_search:
