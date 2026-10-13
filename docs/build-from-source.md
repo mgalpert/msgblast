@@ -64,7 +64,8 @@ artwork there, builds both apps, ad-hoc signs them, verifies signatures and
 compiled icons, and creates ZIPs plus `preview-manifest.json`. It does not publish,
 use Apple credentials, read release secrets, or change the committed green icon.
 The first run needs network access for pinned Sparkle and cloudflared assets.
-It builds both variants even if you only need Demo.
+It builds both variants by default; `--variant development` or `--variant demo`
+builds just one.
 
 | App | Icon / bundle ID | Behavior | Saved app state |
 | --- | --- | --- | --- |
@@ -103,6 +104,12 @@ Ad-hoc previews are not Apple-notarized. A quarantined download may show macOS
 first-launch approval or an install gate; follow the app's instructions for that
 distinct Dev/Demo file. Neither preview replaces production or uses its Sparkle
 feed. See the README for the OS's **Open Anyway** procedure if needed.
+
+Maintainers can use the separate manual **Build stable signed Dev** workflow for
+Developer ID signed and notarized previews whose identity remains stable across
+rebuilds. Contributor previews still need no Apple credentials. See
+[Studio permission testing](studio-permission-testing.md) for signed artifacts,
+persistent test-machine setup, and unattended real permission checks.
 
 ## Compile or debug in Xcode
 

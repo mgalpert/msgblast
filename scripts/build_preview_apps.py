@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build two ad-hoc macOS preview ZIPs. Does not publish or use release secrets."""
+"""Build isolated preview ZIPs. Ad-hoc by default; never publishes an app."""
 import argparse
 from pathlib import Path
 import json
@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 
 import preview_apps as preview
+import release
 
 
 def run(command, cwd):
@@ -19,6 +20,7 @@ def run(command, cwd):
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n", flush=True)
     if result.returncode:
         raise SystemExit(f"Command failed ({result.returncode}): {' '.join(command)}")
+    return result.stdout
 
 
 def is_mach_o(path):
@@ -62,7 +64,7 @@ def bundle_executable(app):
     return Path(app) / "Contents/MacOS" / name
 
 
-def adhoc_sign(app, entitlements):
+def sign_bundle(app, entitlements, identity="-", keychain=None):
     """Sign nested Debug binaries and frameworks before the outer bundle.
 
     Debug builds leave Contents/MacOS/*.debug.dylib unsigned when Xcode signing
@@ -78,18 +80,51 @@ def adhoc_sign(app, entitlements):
         elif path.is_file() and is_mach_o(path):
             nested.append(path)
     executable = bundle_executable(app)
+    base_command = ["codesign", "--force", "--sign", identity, "--options", "runtime"]
+    if identity != "-":
+        base_command.append("--timestamp")
+    if keychain:
+        base_command.extend(["--keychain", str(keychain)])
     for path in signing_order(nested):
         if path == executable:
             continue
         signed = subprocess.run(["codesign", "-dv", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-        command = ["codesign", "--force", "--sign", "-", "--options", "runtime"]
+        command = base_command.copy()
         if signed:
             command.append("--preserve-metadata=entitlements")
         command.append(str(path))
         run(command, app.parent)
-    run(["codesign", "--force", "--sign", "-", "--options", "runtime",
-         "--entitlements", str(entitlements), str(app)], app.parent)
+    run([*base_command, "--entitlements", str(entitlements), str(app)], app.parent)
     run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)], app.parent)
+
+
+def verify_stable_signature_text(metadata, requirement, identity, team, bundle_id):
+    required = {"Identifier=" + bundle_id, "Authority=" + identity, "TeamIdentifier=" + team}
+    if not required.issubset(set(metadata.splitlines())) or "(runtime)" not in metadata:
+        raise RuntimeError("Preview signature does not match its identity, team, bundle, or hardened runtime")
+    if "cdhash" in requirement or "anchor apple generic" not in requirement:
+        raise RuntimeError("Preview designated requirement must use stable Apple certificate identity, not a code hash")
+
+
+def notarize_preview(app, options, bundle_id):
+    metadata = run(["codesign", "-dv", "--verbose=4", str(app)], app.parent)
+    requirement = run(["codesign", "-dr", "-", str(app)], app.parent).split("designated =>", 1)[-1].strip()
+    verify_stable_signature_text(metadata, requirement, options.signing_identity, options.team_id, bundle_id)
+    rule = f'identifier "{bundle_id}" and anchor apple generic and certificate leaf[subject.OU] = "{options.team_id}"'
+    run(["codesign", "--verify", "--strict", "-R", rule, str(app)], app.parent)
+    with tempfile.TemporaryDirectory(prefix="msgblast-preview-notary-") as temporary:
+        archive = Path(temporary) / "notarization.zip"
+        run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive)], app.parent)
+        result = json.loads(run(["xcrun", "notarytool", "submit", str(archive), "--keychain-profile",
+                                 options.notary_profile, "--keychain", str(options.keychain), "--wait",
+                                 "--output-format", "json"], app.parent))
+        if result.get("status") != "Accepted":
+            raise RuntimeError("Preview notarization was not Accepted")
+    run(["xcrun", "stapler", "staple", str(app)], app.parent)
+    run(["xcrun", "stapler", "validate", str(app)], app.parent)
+    run(["spctl", "--assess", "--type", "execute", "--verbose=2", str(app)], app.parent)
+    return {"mode": "developer-id", "identity": options.signing_identity, "team_id": options.team_id,
+            "designated_requirement": requirement, "notarization": result}
 
 
 def retain_icon_diagnostic(output, variant, icns):
@@ -100,7 +135,7 @@ def retain_icon_diagnostic(output, variant, icns):
     return destination
 
 
-def package_variant(workspace, variant, source_revision, output, enable_dev_telemetry=False):
+def package_variant(workspace, variant, source_revision, output, enable_dev_telemetry=False, signing=None):
     derived = workspace / "derived" / variant["id"]
     if derived.exists():
         shutil.rmtree(derived)
@@ -151,7 +186,9 @@ def package_variant(workspace, variant, source_revision, output, enable_dev_tele
             f"{variant['id']} compiled icon {icns.name} representation {representation} "
             f"RGB {red:.1f} {green:.1f} {blue:.1f} looks {kind}, expected {expected}"
         )
-    adhoc_sign(app, workspace / "msgblast/msgblastDebug.entitlements")
+    sign_bundle(app, workspace / "msgblast/msgblastDebug.entitlements",
+                signing.signing_identity if signing else "-", signing.keychain if signing else None)
+    signing_record = notarize_preview(app, signing, variant["bundle_id"]) if signing else {"mode": "ad-hoc"}
     short = source_revision[:12]
     zip_name = f"{variant['artifact_prefix']}-{short}.zip"
     zip_path = output / zip_name
@@ -177,23 +214,28 @@ def package_variant(workspace, variant, source_revision, output, enable_dev_tele
         "compiled_icon_rgb": [round(red, 1), round(green, 1), round(blue, 1)],
         "icon_fill_sha256": preview.sha256_file(variant["icon_source"] / "icon.json"),
         "updates": "disabled",
-        "instructions": instructions(variant),
+        "signing": signing_record,
+        "instructions": instructions(variant, stable=bool(signing)),
     }
 
 
-def instructions(variant):
+def instructions(variant, stable=False):
+    signing_note = ("This preview has verified Developer ID signing and Apple notarization. " if stable else
+                    "Ad-hoc builds may need System Settings → Privacy & Security → Open Anyway. ")
     shared = (" A quarantined download may App Translocate and show an install gate. Drag this app file to Applications "
-              "and leave /Applications/msgblast.app in place. Ad-hoc builds may need System Settings → Privacy & Security → Open Anyway. "
+              "and leave /Applications/msgblast.app in place. " + signing_note +
               "There is no Sparkle feed, so this app will not download or relaunch over the installed production app.")
     if variant["fixture"]:
         return ("Unzip msgblast Demo.app. Fixture mode is explicit (msgblastDemo): it uses simulated Cedar, Lumen, and Orbit "
                 "data and does not read Messages. A blue icon alone is not what turns fixture mode on. "
                 "Preferences follow the bundle ID com.msgblast.demo. Saved state is in ~/Library/Application Support/msgblast-Demo, "
                 "which other local demo builds also use, and is separate from production and from msgblast Dev." + shared)
+    permission_note = ("Keep this signing identity and installed path for subsequent builds; verify permission retention after updates. "
+                       if stable else "Permissions may need to be granted again after a rebuild because the ad-hoc code hash changes. ")
     return ("Unzip msgblast Dev.app and use it to exercise this branch with live data. Do not pass --demo or --isolated-demo; "
             "use the blue msgblast Demo.app for fixtures and simulated demonstrations. It is not a fixture and can read real Messages. "
             "Grant this bundle Full Disk Access, Contacts, and Messages Automation. Those permissions belong to com.msgblast.development, "
-            "do not transfer from com.msgblast.mac, and may need to be granted again after a rebuild because the ad-hoc code hash changes. "
+            "and do not transfer from com.msgblast.mac. " + permission_note +
             "Preferences are the standard defaults for that bundle ID. Grok Bot remembers its connection using hardware-encrypted storage when a Secure Enclave is available. Settings labels session-only storage if no secure backend is available. "
             "Saved state is in ~/Library/Application Support/msgblast-Dev." + shared)
 
@@ -204,7 +246,21 @@ def main():
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--enable-dev-telemetry", action="store_true", help="Enable consent-controlled real Dev statistics through Cloudflare; Demo remains disabled")
+    parser.add_argument("--variant", choices=("all", "development", "demo"), default="all")
+    parser.add_argument("--signing-identity", help="Maintainer Developer ID Application identity; never falls back to ad-hoc")
+    parser.add_argument("--team-id")
+    parser.add_argument("--keychain", type=Path)
+    parser.add_argument("--notary-profile")
     args = parser.parse_args()
+    signing = None
+    if args.signing_identity:
+        if not args.team_id or not release.developer_id_identity_matches(args.signing_identity, args.team_id):
+            parser.error("Stable signing requires a Developer ID Application identity matching --team-id")
+        if not args.keychain or not args.notary_profile:
+            parser.error("Stable signing requires --keychain and --notary-profile")
+        signing = args
+    elif any((args.team_id, args.keychain, args.notary_profile)):
+        parser.error("Signing options require --signing-identity")
     if len(args.sha) < 12 or any(character not in "0123456789abcdef" for character in args.sha):
         parser.error("SHA must be a hex commit id")
     for tool in ("xcodebuild", "codesign", "ditto"):
@@ -217,7 +273,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="msgblast-preview-") as temporary:
         workspace = preview.copy_workspace(Path(temporary) / "src")
         for variant in preview.VARIANTS.values():
-            records.append(package_variant(workspace, variant, args.sha, output, args.enable_dev_telemetry))
+            if args.variant == "all" or args.variant == variant["id"]:
+                records.append(package_variant(workspace, variant, args.sha, output, args.enable_dev_telemetry, signing))
     if len({record["compiled_icon_sha256"] for record in records}) != len(records):
         raise SystemExit("Compiled preview icons are identical, so artwork selection did not change the app")
     if len({record["compiled_icon"] for record in records}) != len(records):

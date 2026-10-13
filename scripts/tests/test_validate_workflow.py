@@ -74,6 +74,20 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertIn("always() && env.MSGBLAST_SIGNING_MODE == 'developer-id'", text)
         self.assertIn("env.MSGBLAST_SIGNING_MODE == 'developer-id'", text)
 
+    def test_stable_dev_credentials_are_manual_main_only_and_never_publish(self):
+        text = (ROOT / ".github/workflows/stable-dev.yml").read_text()
+        self.assertIn("workflow_dispatch:", text)
+        for forbidden in ("pull_request:", "pull_request_target:", "tags:", "MSGBLAST_R2_ACCESS_KEY_ID", "MSGBLAST_SPARKLE_PRIVATE_KEY", "automate_release.py"):
+            self.assertNotIn(forbidden, text)
+        self.assertLess(text.index('test "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH"'), text.index("ci_signing.py setup"))
+        self.assertLess(text.index("ci_signing.py setup"), text.index("build_preview_apps.py"))
+        self.assertIn("--variant development", text)
+        self.assertIn("--signing-identity", text)
+        self.assertIn("--notary-profile", text)
+        self.assertIn("if: always()", text)
+        self.assertIn("ci_signing.py cleanup", text)
+        self.assertNotIn("--enable-dev-telemetry", text)
+
     def test_linux_install_pins_a_virtualenv_and_does_not_build(self):
         text = INSTALL.read_text()
         self.assertIn("import ensurepip", text)
