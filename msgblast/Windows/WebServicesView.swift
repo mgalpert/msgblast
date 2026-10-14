@@ -402,7 +402,7 @@ struct LocalAgentSettingsView: View {
                 let installed = agent.installed.contains { $0.provider == provider }
                 let connected = agent.accounts[provider]?.isConnected == true
                 accountRow(name: webProvider.name,
-                           icon: provider == .codex ? "chatgpt" : provider == .claude ? "claude" : "dsh",
+                           icon: webProvider.artworkName,
                            status: installed ? (agent.accounts[provider]?.label ?? "Checking sign-in…") : "Not installed") {
                     if provider == .dsh {
                         // DSH keeps its provider account inside the DSH app. msgblast
