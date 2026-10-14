@@ -43,7 +43,7 @@ PostHog's required distinct ID.
 | `operation_timing` | `performance` | `operation`: send/setup/storage; `duration`: under_1s/1_to_5s/5_to_30s/over_30s |
 
 Provider keys: `chatgpt`, `claude`, `grok`, `muse`, `dots`, `os3`, `hark`,
-`grokbot`, `codexCLI`, `claudeCode`, `openclaw`, `hermes`, `instinct`, `fo`, `szn`,
+`grokbot`, `codexCLI`, `claudeCode`, `dshCLI`, `openclaw`, `hermes`, `instinct`, `fo`, `szn`,
 `poke`, `otherMessages`. Custom names and contact identities are never accepted.
 
 Optional common properties: `buildChannel` (`development` or `production`), `appVersion` (32-character safe version token),

@@ -12,7 +12,7 @@ const request = body => new Request('https://msgblast.app/api/telemetry', { meth
 const batch = e => ({ schema: 1, events: [e] });
 
 test('real handler forwards only allowed fields, preserving linked and unlinked UUIDs', async () => {
-  const events = [event({ distinctID: installation, properties: { cohortDay: 7, cohortStartedAt: '2026-10-05T12:00:00Z', appVersion: '0.2.0', osMajor: 26 } }), event({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'agent_inventory', category: 'agentUsage', properties: { counts: { claude: 2, codexCLI: 1 } } })];
+  const events = [event({ distinctID: installation, properties: { cohortDay: 7, cohortStartedAt: '2026-10-05T12:00:00Z', appVersion: '0.2.0', osMajor: 26 } }), event({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'agent_inventory', category: 'agentUsage', properties: { counts: { claude: 2, codexCLI: 1, dshCLI: 1 } } })];
   let captured;
   const response = await handleTelemetry(request({ schema: 1, events }), env(), async (url, options) => {
     captured = { url, options, body: JSON.parse(options.body) };
