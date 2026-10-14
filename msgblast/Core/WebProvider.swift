@@ -1,7 +1,9 @@
 import Foundation
 
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dshCLI, dots, grokbot, os3, hark
+    // Order is user-visible: AgentArtwork derives an agent's color index from
+    // `allCases.firstIndex`. Append new providers so existing colors stay stable.
+    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, dshCLI
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
     public static let optionalProviders: [Self] = [.codexCLI, .claudeCode, .dshCLI]
     public var id: String { rawValue }
@@ -31,6 +33,24 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     // associates resumed sessions with their working directory; do not rename them.
     var localConversationDirectoryName: String {
         switch self { case .codexCLI: "chatgpt"; case .claudeCode: "claude"; default: rawValue }
+    }
+    // Bundled artwork in Resources/WebAgentIcons. Most providers are named by
+    // their raw value; a CLI identity may reuse its website's artwork or a short
+    // name, so lookups never assume rawValue.
+    public var artworkName: String {
+        switch self {
+        case .codexCLI: "chatgpt"
+        case .claudeCode: "claude"
+        case .dshCLI: "dsh"
+        default: rawValue
+        }
+    }
+    public var artworkExtension: String {
+        switch self {
+        case .dots: "pdf"
+        case .grok, .os3, .hark, .dshCLI: "png"
+        default: "jpg"
+        }
     }
     // rabbit OS3 keeps one conversation per account, so every comparison uses it.
     public var sharesOneConversation: Bool { self == .os3 }

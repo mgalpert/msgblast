@@ -66,9 +66,7 @@ enum AgentArtwork {
         .flatMap { try? Data(contentsOf: $0) }
     private static let webDefaultAvatars: [WebProvider: Data] = Dictionary(uniqueKeysWithValues:
         [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dshCLI, .dots, .os3, .hark].compactMap { provider in
-            let resource = provider == .codexCLI ? "chatgpt" : provider == .claudeCode ? "claude" : provider.rawValue
-            let fileExtension = provider == .dots ? "pdf" : [.grok, .os3, .hark, .dshCLI].contains(provider) ? "png" : "jpg"
-            guard let url = bundle.url(forResource: resource, withExtension: fileExtension, subdirectory: "WebAgentIcons"),
+            guard let url = bundle.url(forResource: provider.artworkName, withExtension: provider.artworkExtension, subdirectory: "WebAgentIcons"),
                   let data = try? Data(contentsOf: url) else { return nil }
             if provider == .hark, let source = NSImage(data: data) {
                 // Hark publishes a black transparent mark; white backing keeps
