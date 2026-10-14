@@ -1,7 +1,7 @@
 import Foundation
 
 public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Sendable, Hashable {
-    case chatgpt, claude, grokbot, muse, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
+    case chatgpt, claude, grokbot, muse, instinct, fo, szn, grok, codexCLI, claudeCode, dsh, openclaw, dots, hermes, os3, hark, poke, otherMessages
 
     public var id: String { rawValue }
     public var name: String {
@@ -25,12 +25,16 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
         case .muse: .muse
         case .codexCLI: .codexCLI
         case .claudeCode: .claudeCode
+        case .dsh: .dshCLI
         case .dots: .dots
         case .os3: .os3
         case .hark: .hark
         case .instinct, .fo, .szn, .poke, .otherMessages, .openclaw, .hermes: nil
         }
     }
+    // A local CLI is installed and signed in by the user, so it is offered with the
+    // other CLIs rather than with the website agents.
+    public var isLocalCLI: Bool { [.codexCLI, .claudeCode, .dsh].contains(self) }
     public var runtime: LocalAgentRuntime? {
         switch self { case .openclaw: .openclaw; case .hermes: .hermes; default: nil }
     }
@@ -54,8 +58,8 @@ public enum OnboardingConnector: String, CaseIterable, Codable, Sendable {
     public func includes(_ choice: OnboardingChoice) -> Bool {
         switch self {
         case .messages: choice.isMessages
-        case .apps: !choice.isMessages && choice.runtime == nil && choice != .codexCLI && choice != .claudeCode
-        case .clis: choice.runtime != nil || choice == .codexCLI || choice == .claudeCode
+        case .apps: !choice.isMessages && choice.runtime == nil && !choice.isLocalCLI
+        case .clis: choice.runtime != nil || choice.isLocalCLI
         }
     }
 }

@@ -162,9 +162,11 @@ Info.plist, entitlements, frameworks, resources, and helper.
 ## Accounts, permissions, and state
 
 Muse, ChatGPT, Claude, Grok, Dots, and rabbit OS3 use embedded websites. Sign in
-inside the app for live web use. Codex CLI and Claude Code are separate optional
+inside the app for live web use. Codex CLI, Claude Code, and DSH are separate optional
 agents enabled in Settings; they use their installed CLI's authentication and
-configuration. Neither a CLI nor a provider account is needed to build or use Demo.
+configuration. DSH ships its `dsh` command inside the DeepSeek Harness app, so add
+that command to a PATH directory before enabling it; its provider account stays in
+the DSH app. Neither a CLI nor a provider account is needed to build or use Demo.
 rabbit OS3 is available in onboarding and the featured grid. It continues the
 account's single conversation across comparisons, including earlier context.
 See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbot.md).

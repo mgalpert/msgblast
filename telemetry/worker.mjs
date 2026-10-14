@@ -1,7 +1,7 @@
 // Explicit telemetry contract: never accept arbitrary client properties.
 const MAX_BYTES = 32 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PROVIDERS = new Set(['chatgpt', 'claude', 'grok', 'muse', 'dots', 'os3', 'hark', 'grokbot', 'codexCLI', 'claudeCode', 'openclaw', 'hermes', 'instinct', 'fo', 'szn', 'poke', 'otherMessages']);
+const PROVIDERS = new Set(['chatgpt', 'claude', 'grok', 'muse', 'dots', 'os3', 'hark', 'grokbot', 'codexCLI', 'claudeCode', 'dshCLI', 'openclaw', 'hermes', 'instinct', 'fo', 'szn', 'poke', 'otherMessages']);
 const SCREENS = ['connectors', 'permissions', 'messages', 'agents', 'browserImport', 'providerConnection', 'runtimeSetup', 'feedback'];
 const CONTRACT = {
   onboarding_completed: ['activity', []],
