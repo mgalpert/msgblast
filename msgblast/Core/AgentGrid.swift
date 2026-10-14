@@ -25,7 +25,7 @@ public extension WebAgentID {
 // Membership here controls the picker, not account configuration or chat history.
 public struct AgentGridLayout: Codable, Equatable, Sendable {
     public static let featured: [AgentGridID] = [
-        .web(.muse), .web(.chatgpt), .web(.claude), .web(.grok), .web(.codexCLI), .web(.dots), .web(.os3),
+        .web(.muse), .web(.chatgpt), .web(.claude), .web(.grok), .web(.codexCLI), .web(.dshCLI), .web(.dots), .web(.os3),
         .featuredMessages(.instinct), .featuredMessages(.fo), .featuredMessages(.szn)
     ]
     public private(set) var visibleIDs: [AgentGridID]

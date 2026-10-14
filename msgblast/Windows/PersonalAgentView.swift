@@ -10,6 +10,13 @@ struct ComparisonReportView: View {
     @State private var showingOptions = false
 
     private var selected: PersonalAgentProvider? { agent.selectedProvider(model: model) }
+    // Report agents only: a provider can support a conversation pane without a
+    // report adapter that verifiably denies tools.
+    private var reportAgents: [InstalledPersonalAgent] { agent.installed.filter { $0.provider.reportUnavailabilityReason == nil } }
+    private func isReportReady(_ provider: PersonalAgentProvider?) -> Bool {
+        guard let provider, provider.unavailabilityReason == nil, provider.reportUnavailabilityReason == nil else { return false }
+        return agent.installed.contains { $0.provider == provider }
+    }
     private func refreshSnapshot() { snapshot = try? agent.input(for: comparisonID, model: model) }
 
     var body: some View {
@@ -37,7 +44,7 @@ struct ComparisonReportView: View {
                     Button(summary?.report == nil ? "Generate report" : "Update report") {
                         if let selected { agent.summarize(comparisonID, provider: selected, model: model) }
                     }.buttonStyle(.borderedProminent)
-                        .disabled(agent.discovering || (snapshot?.responseCount ?? 0) == 0 || !model.databaseAvailable || !agent.installed.contains(where: { $0.provider == selected }))
+                        .disabled(agent.discovering || (snapshot?.responseCount ?? 0) == 0 || !model.databaseAvailable || !isReportReady(selected))
                 }
                 Menu {
                     Button("Copy report") {
@@ -58,10 +65,10 @@ struct ComparisonReportView: View {
                     reportOptions(running: running)
                 }
             }
-            if !agent.discovering && agent.installed.isEmpty {
+            if !agent.discovering && reportAgents.isEmpty {
                 Text("No supported agent CLI found. Open Report options to set one up.")
                     .font(.callout).foregroundStyle(.secondary)
-            } else if let selected, let reason = selected.unavailabilityReason {
+            } else if let selected, let reason = selected.unavailabilityReason ?? selected.reportUnavailabilityReason {
                 Text(reason).font(.callout).foregroundStyle(.orange)
             }
             Divider()
@@ -122,17 +129,18 @@ struct ComparisonReportView: View {
             Picker("Personal agent", selection: Binding(get: { selected?.rawValue ?? "" }, set: {
                 model.state.personalAgentProvider = $0; model.persist()
             })) {
-                if let selected, !agent.installed.contains(where: { $0.provider == selected }) {
-                    Text("\(selected.name) · unavailable").tag(selected.rawValue)
+                if let selected, !isReportReady(selected) {
+                    Text(selected.reportUnavailabilityReason != nil ? "\(selected.name) · reports unavailable" : "\(selected.name) · unavailable")
+                        .tag(selected.rawValue)
                 }
-                ForEach(agent.installed) { installed in
+                ForEach(reportAgents) { installed in
                     Text(agent.demo ? "Demo analyst (simulated)" : installed.provider.name).tag(installed.id)
                 }
-            }.disabled(running || agent.discovering || agent.installed.isEmpty)
+            }.disabled(running || agent.discovering || reportAgents.isEmpty)
             Text(agent.demo ? "Demo uses synthetic replies and a simulated report. No provider request is made." : "Report updates send this comparison’s text to the selected provider using its existing sign-in and plan. Attachment contents are not included. Changing agents does not request a report until you click Update report.")
                 .font(.caption).foregroundStyle(.secondary)
             if !agent.demo {
-                Text(selected?.unavailabilityReason ?? selected.map { "Sign in or troubleshoot in Terminal: \($0.setup)" } ?? "Install and sign in to Codex, Claude Code, Gemini CLI, Pi, or Hermes in Terminal, then refresh.")
+                Text(selected?.unavailabilityReason ?? selected?.reportUnavailabilityReason ?? selected.map { "Sign in or troubleshoot in Terminal: \($0.setup)" } ?? "Install and sign in to Codex, Claude Code, Gemini CLI, Pi, or Hermes in Terminal, then refresh.")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
             Button(agent.discovering ? "Finding agents…" : "Refresh agents") {

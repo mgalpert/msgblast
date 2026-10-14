@@ -1,18 +1,18 @@
 import Foundation
 
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark
+    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dshCLI, dots, grokbot, os3, hark
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
-    public static let optionalProviders: [Self] = [.codexCLI, .claudeCode]
+    public static let optionalProviders: [Self] = [.codexCLI, .claudeCode, .dshCLI]
     public var id: String { rawValue }
     public var supportsSharedSubmissions: Bool { self != .hark }
     public var usesNativeConversation: Bool { personalAgentProvider != nil || self == .grokbot }
     public var supportsCopies: Bool { [.muse, .chatgpt, .claude, .grok].contains(self) }
     public var personalAgentProvider: PersonalAgentProvider? {
-        switch self { case .codexCLI: .codex; case .claudeCode: .claude; default: nil }
+        switch self { case .codexCLI: .codex; case .claudeCode: .claude; case .dshCLI: .dsh; default: nil }
     }
     public var name: String {
-        switch self { case .muse: "Muse"; case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .grok: "Grok"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3"; case .hark: "Hark" }
+        switch self { case .muse: "Muse"; case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .grok: "Grok"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dshCLI: "DSH"; case .dots: "Dots"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3"; case .hark: "Hark" }
     }
     public var homeURL: URL {
         switch self {
@@ -20,6 +20,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .dots: URL(string: "https://chatgpt.com/dots")!
         case .chatgpt, .codexCLI: URL(string: "https://chatgpt.com/")!
         case .claude, .claudeCode: URL(string: "https://claude.ai/new")!
+        case .dshCLI: URL(string: "https://harness.deepseek.com/")!
         case .grok: URL(string: "https://grok.com/")!
         case .grokbot: URL(string: "https://x.ai/bot")!
         case .hark: URL(string: "https://hark.com/chat")!
@@ -55,7 +56,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
               url.port == nil || url.port == 443 else { return false }
         let path = url.path
         switch self {
-        case .codexCLI, .claudeCode, .grokbot: return false
+        case .codexCLI, .claudeCode, .dshCLI, .grokbot: return false
         case .muse:
             return url.query == nil && url.fragment == nil && (path == "/thread/new" ||
                 path.range(of: #"^/thread/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"#, options: .regularExpression) != nil)
@@ -92,6 +93,7 @@ public struct WebAgentID: Codable, Hashable, Sendable, Identifiable {
     public static let grok = Self(provider: .grok)
     public static let codexCLI = Self(provider: .codexCLI)
     public static let claudeCode = Self(provider: .claudeCode)
+    public static let dshCLI = Self(provider: .dshCLI)
     public static let dots = Self(provider: .dots)
     public static let grokbot = Self(provider: .grokbot)
     public static let os3 = Self(provider: .os3)

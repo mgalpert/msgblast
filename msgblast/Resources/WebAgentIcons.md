@@ -42,12 +42,13 @@ rabbit OS3 has no App Store listing. Its icon is an adaptation of the website fa
 
 ## Local account icons
 
-The local accounts panel in Settings reuses the unmodified ChatGPT and Claude App Store artwork above. OpenClaw and Hermes use unmodified PNGs from their official project repositories, retrieved October 6, 2026 and pinned to the source revisions below. The projects retain ownership of their artwork and trademarks.
+The local accounts panel in Settings reuses the unmodified ChatGPT and Claude App Store artwork above. OpenClaw and Hermes use unmodified PNGs from their official project repositories, retrieved October 6, 2026 and pinned to the source revisions below. DSH uses the icon exported from the locally installed DeepSeek Harness app (`com.deepseek.dsh`), converted from its `icon.icns` to a 256 × 256 PNG with `sips`, retrieved October 13, 2026. The projects retain ownership of their artwork and trademarks.
 
 | Resource | Official source | SHA-256 |
 | --- | --- | --- |
 | `WebAgentIcons/openclaw.png` | [OpenClaw iOS app icon](https://github.com/openclaw/openclaw/blob/bff90d69144ceec82e75f92d59c3a29ec7876351/apps/ios/Sources/Assets.xcassets/AppIcon.appiconset/1024.png) | `8ce11071e6cc34f3086b1947bb5f4b7f43f237a7a023bd8e0aa0ac529173ceb8` |
 | `WebAgentIcons/hermes.png` | [Hermes desktop app icon](https://github.com/NousResearch/hermes-agent/blob/85db7c3a6886762773827598793b0b51ef4e3325/apps/desktop/assets/icon.png) | `2e69dd9a8a1d3f9e3f627efc37102aed416f703e22f599e31c5d86b212a4d6de` |
+| `WebAgentIcons/dsh.png` | `DeepSeek Harness.app/Contents/Resources/icon.icns` in the installed app | `223be2e3c1f0b605046c03b9c943e96a13e8687f9e387ba734e465412ec8d027` |
 
 ## Dots avatar
 

@@ -400,16 +400,19 @@ struct LocalAgentSettingsView: View {
                 )).toggleStyle(.switch).accessibilityIdentifier("Enable \(webProvider.name)")
                     .disabled(isBusy).padding(.top, 8)
                 let installed = agent.installed.contains { $0.provider == provider }
-                let connected = [.subscription, .apiKey, .other].contains(agent.accounts[provider] ?? PersonalAgentAccountStatus.unknown)
+                let connected = agent.accounts[provider]?.isConnected == true
                 accountRow(name: webProvider.name,
-                           icon: provider == .codex ? "chatgpt" : "claude",
+                           icon: provider == .codex ? "chatgpt" : provider == .claude ? "claude" : "dsh",
                            status: installed ? (agent.accounts[provider]?.label ?? "Checking sign-in…") : "Not installed") {
-                    if installed {
+                    if provider == .dsh {
+                        // DSH keeps its provider account inside the DSH app. msgblast
+                        // never reads or changes it, so there is no sign-in step here.
+                        if !installed, let url = provider.installURL { Link("Get DSH", destination: url) }
+                    } else if installed {
                         Button(connected ? "Switch account" : provider == .codex ? "Sign in with ChatGPT" : "Sign in with Claude") { agent.signIn(provider) }
                             .disabled(agent.demo || isBusy || agent.checkingAccounts)
-                    } else {
-                        Link("Install \(provider.name)", destination: URL(string: provider == .codex
-                             ? "https://developers.openai.com/codex/cli" : "https://code.claude.com/docs/en/setup")!)
+                    } else if let url = provider.installURL {
+                        Link("Install \(provider.name)", destination: url)
                     }
                 }
                 Divider()
@@ -661,7 +664,7 @@ private struct WebAgentPane: View {
 
     private func nativeConversation(_ provider: PersonalAgentProvider?) -> some View {
         VStack(spacing: 12) {
-            let connected = session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
+            let connected = session.provider == .grokbot ? session.grokBotIsConfigured : session.accountStatus.isConnected
             if !session.isEnabled {
                 Text("Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -679,12 +682,16 @@ private struct WebAgentPane: View {
                           systemImage: "person.crop.circle")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    if account.installed.contains(where: { $0.provider == provider }) {
+                    if provider == .dsh {
+                        // The DSH app owns this account; msgblast only runs its CLI.
+                        if !account.installed.contains(where: { $0.provider == provider }), let url = provider.installURL {
+                            Link("Get DSH", destination: url)
+                        }
+                    } else if account.installed.contains(where: { $0.provider == provider }) {
                         Button(provider == .codex ? "Sign in with ChatGPT" : "Sign in with Claude") { account.signIn(provider) }
                             .disabled(session.fixture || busy)
-                    } else {
-                        Link("Install \(provider.name)", destination: URL(string: provider == .codex
-                             ? "https://developers.openai.com/codex/cli" : "https://code.claude.com/docs/en/setup")!)
+                    } else if let url = provider.installURL {
+                        Link("Install \(provider.name)", destination: url)
                     }
                 }
                 if let error = account.accountError { Text(error).font(.caption).foregroundStyle(.orange) }
@@ -732,7 +739,7 @@ private struct WebAgentPane: View {
 }
 
 private let localAccountIcons: [String: NSImage] = Dictionary(uniqueKeysWithValues:
-    ["chatgpt.jpg", "claude.jpg", "openclaw.png", "hermes.png"].compactMap { filename in
+    ["chatgpt.jpg", "claude.jpg", "openclaw.png", "hermes.png", "dsh.png"].compactMap { filename in
         guard let url = Bundle.main.url(forResource: filename, withExtension: nil, subdirectory: "WebAgentIcons"),
               let image = NSImage(contentsOf: url) else { return nil }
         return (url.deletingPathExtension().lastPathComponent, image)

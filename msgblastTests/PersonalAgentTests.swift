@@ -809,7 +809,7 @@ final class PersonalAgentTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let comparison = Comparison(prompt: "Quotes ' \" and $(touch SHOULD_NOT_EXIST) are data", members: [])
         let input = try ComparisonSummaryInput(comparison: comparison, comparisons: [comparison], messages: [:])
-        for provider in PersonalAgentProvider.allCases where provider.unavailabilityReason == nil {
+        for provider in PersonalAgentProvider.allCases where provider.unavailabilityReason == nil && provider.reportUnavailabilityReason == nil {
             // This executable fixture exercises the actual process/adapter boundary without contacting a provider.
             let output: String
             switch provider {
@@ -845,7 +845,7 @@ final class PersonalAgentTests: XCTestCase {
             .pi: [("--no-tools", nil), ("--no-extensions", nil), ("--no-skills", nil), ("--no-session", nil)],
             .hermes: [("--toolsets", "none"), ("--safe-mode", nil), ("--query-file", "-"), ("--quiet", nil)]
         ]
-        for provider in PersonalAgentProvider.allCases where provider.unavailabilityReason == nil {
+        for provider in PersonalAgentProvider.allCases where provider.unavailabilityReason == nil && provider.reportUnavailabilityReason == nil {
             let arguments = try provider.arguments(in: directory)
             for (flag, value) in try XCTUnwrap(required[provider]) {
                 let index = try XCTUnwrap(arguments.firstIndex(of: flag), "\(provider): \(flag)")
@@ -910,6 +910,74 @@ final class PersonalAgentTests: XCTestCase {
         XCTAssertEqual(input.fingerprint, updated.fingerprint)
         let decoded = try JSONDecoder().decode(Comparison.self, from: JSONEncoder().encode(comparison))
         XCTAssertEqual(decoded.summary, comparison.summary)
+    }
+
+    @MainActor
+    func testDSHConversationUsesHeadlessEventsAndResumesItsPersistedSession() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionID = "session-00000000-0000-0000-0000-000000000001"
+        try executable("dsh", script: """
+        printf '%s\\n' "$@" > received-arguments.txt
+        printf '%s' "${DSH_PERMISSION_MODE:-unset}" > received-sandbox-mode.txt
+        /bin/pwd > received-directory.txt
+        /bin/cat > received-prompt.txt
+        printf '%s\\n' '{"type":"session","sessionId":"\(sessionID)","cwd":"/private/tmp"}' '{"type":"thinking","text":""}' '{"type":"text","text":"partial"}' '{"type":"final","text":"A conversational reply"}'
+        """, in: directory)
+        let agent = InstalledPersonalAgent(provider: .dsh, executableURL: directory.appendingPathComponent("dsh"), path: "/usr/bin:/bin")
+        let workingDirectory = directory.appendingPathComponent("dsh workspace", isDirectory: true)
+        let first = try await LocalPersonalAgent.reply(to: [WebPageMessage(role: "user", text: "Follow-up")], using: agent, workingDirectory: workingDirectory)
+        XCTAssertEqual(first.text, "A conversational reply", "Only the final event is a completed reply")
+        XCTAssertEqual(first.sessionID, sessionID)
+        let firstArguments = try String(contentsOf: directory.appendingPathComponent("received-arguments.txt"), encoding: .utf8)
+            .split(separator: "\n").map(String.init)
+        XCTAssertEqual(firstArguments, ["--profile", "headless", "--json", "-"])
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("received-sandbox-mode.txt"), encoding: .utf8), "workspace-write")
+        let firstDirectory = try String(contentsOf: directory.appendingPathComponent("received-directory.txt"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(URL(fileURLWithPath: firstDirectory).resolvingSymlinksInPath().path, workingDirectory.resolvingSymlinksInPath().path)
+        let resumed = try await LocalPersonalAgent.reply(to: [WebPageMessage(role: "user", text: "Continue the same thread")], using: agent, sessionID: sessionID, workingDirectory: workingDirectory)
+        XCTAssertEqual(resumed.sessionID, sessionID)
+        let resumedArguments = try String(contentsOf: directory.appendingPathComponent("received-arguments.txt"), encoding: .utf8)
+            .split(separator: "\n").map(String.init)
+        XCTAssertEqual(resumedArguments, ["--profile", "headless", "--json", "--session-id", sessionID, "-"])
+    }
+
+    func testDSHReportRunsStayBlockedAndSessionValidationIsProviderSpecific() throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        XCTAssertNil(PersonalAgentProvider.dsh.unavailabilityReason, "DSH keeps its conversation pane")
+        XCTAssertNotNil(PersonalAgentProvider.dsh.reportUnavailabilityReason, "Unverified tool denial must block report runs")
+        XCTAssertThrowsError(try PersonalAgentProvider.dsh.arguments(in: directory), "A report run must fail closed even when requested directly")
+        XCTAssertNil(PersonalAgentProvider.codex.reportUnavailabilityReason)
+        XCTAssertTrue(PersonalAgentProvider.dsh.acceptsSessionID("session-00000000-0000-0000-0000-000000000001"))
+        XCTAssertFalse(PersonalAgentProvider.dsh.acceptsSessionID("00000000-0000-0000-0000-000000000001"))
+        XCTAssertFalse(PersonalAgentProvider.dsh.acceptsSessionID("session-not-a-uuid"))
+        XCTAssertTrue(PersonalAgentProvider.claude.acceptsSessionID("00000000-0000-0000-0000-000000000001"))
+        XCTAssertFalse(PersonalAgentProvider.claude.acceptsSessionID("session-00000000-0000-0000-0000-000000000001"))
+        XCTAssertEqual(try PersonalAgentProvider.dsh.arguments(in: directory, persistentConversation: true, sessionID: "session-00000000-0000-0000-0000-000000000001"),
+                       ["--profile", "headless", "--json", "--session-id", "session-00000000-0000-0000-0000-000000000001", "-"])
+    }
+
+    func testDSHErrorAndPartialEventsAreNeverReplies() throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        XCTAssertThrowsError(try PersonalAgentProvider.dsh.answer(stdout: "{\"type\":\"error\",\"message\":\"no agent factory registered\"}", directory: directory))
+        XCTAssertThrowsError(try PersonalAgentProvider.dsh.answer(stdout: "{\"type\":\"text\",\"text\":\"partial\"}", directory: directory))
+        XCTAssertThrowsError(try PersonalAgentProvider.dsh.answer(stdout: "not an event", directory: directory))
+        XCTAssertEqual(try PersonalAgentProvider.dsh.answer(stdout: "{\"type\":\"text\",\"text\":\"draft\"}\n{\"type\":\"final\",\"text\":\"Answer\"}", directory: directory), "Answer")
+    }
+
+    func testDSHAccountStatusOnlyChecksThatTheCLIRuns() async throws {
+        let directory = try fixtureDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try executable("dsh", script: "printf '0.2.0'", in: directory)
+        let installed = InstalledPersonalAgent(provider: .dsh, executableURL: directory.appendingPathComponent("dsh"), path: "/usr/bin:/bin")
+        let connected = await LocalPersonalAgent.accountStatus(using: installed)
+        XCTAssertEqual(connected, .cliConfigured)
+        XCTAssertTrue(connected.isConnected)
+        let failing = await LocalPersonalAgent.accountStatus(using: InstalledPersonalAgent(provider: .dsh,
+            executableURL: URL(fileURLWithPath: "/usr/bin/false"), path: "/usr/bin:/bin"))
+        XCTAssertEqual(failing, .unknown)
     }
 
     private func fixtureDirectory() throws -> URL {

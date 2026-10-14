@@ -39,7 +39,7 @@ final class PersonalAgentController: ObservableObject {
         defer { checkingAccounts = false }
         await discover()
         accounts = await withTaskGroup(of: (PersonalAgentProvider, PersonalAgentAccountStatus).self) { group in
-            for agent in installed where agent.provider == .codex || agent.provider == .claude {
+            for agent in installed where agent.provider.hasAccountStatusCheck {
                 group.addTask { (agent.provider, await msgblastCore.LocalPersonalAgent.accountStatus(using: agent)) }
             }
             var refreshed: [PersonalAgentProvider: PersonalAgentAccountStatus] = [:]
@@ -49,7 +49,10 @@ final class PersonalAgentController: ObservableObject {
     }
 
     func signIn(_ provider: PersonalAgentProvider) {
-        guard !demo, !shuttingDown, let agent = installed.first(where: { $0.provider == provider }) else { return }
+        // Sign-in runs the CLI's own interactive command. DSH has none: its account
+        // lives in the DSH app and msgblast never reads or changes it.
+        guard !demo, !shuttingDown, provider == .codex || provider == .claude,
+              let agent = installed.first(where: { $0.provider == provider }) else { return }
         do { openTerminal(script: try LocalPersonalAgent.loginScript(using: agent), purpose: "sign-in") }
         catch { accountError = "Could not open sign-in. Run \(provider.setup) in Terminal." }
     }
@@ -99,8 +102,8 @@ final class PersonalAgentController: ObservableObject {
     }
 
     func selectedProvider(model: AppModel) -> PersonalAgentProvider? {
-        if let saved = model.state.personalAgentProvider { return PersonalAgentProvider(rawValue: saved) }
-        return installed.first?.provider
+        if let saved = model.state.personalAgentProvider, let provider = PersonalAgentProvider(rawValue: saved) { return provider }
+        return installed.first { $0.provider.reportUnavailabilityReason == nil }?.provider
     }
 
     func requestReport(_ id: UUID, model: AppModel) async {
@@ -121,7 +124,7 @@ final class PersonalAgentController: ObservableObject {
             guard model.databaseAvailable else { throw AppFailure.blocked("Refresh Messages history before summarizing this comparison.") }
             let snapshot = try input(for: id, model: model)
             guard snapshot.responseCount > 0 else { throw AppFailure.blocked("Waiting for the first response. You can summarize as soon as a participant replies.") }
-            guard provider.unavailabilityReason == nil else { throw PersonalAgentError.unsupportedProvider(provider) }
+            guard provider.unavailabilityReason == nil, provider.reportUnavailabilityReason == nil else { throw PersonalAgentError.unsupportedProvider(provider) }
             guard let agent = installed.first(where: { $0.provider == provider }) else { throw PersonalAgentError.unavailable(provider.name) }
             // Check storage before starting a provider request that may consume the user's plan.
             try model.save()
