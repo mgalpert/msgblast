@@ -35,7 +35,7 @@ final class PersonalAgentTests: XCTestCase {
         let native = web.selected.filter { $0.provider.personalAgentProvider != nil }
         _ = await web.prepareComparison(id, for: native)
         let sent = await WebAgents.send("Saved local conversation", to: native, comparisonID: id)
-        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(sent.count, WebProvider.optionalProviders.count)
         XCTAssertTrue(sent.values.allSatisfy { $0.status == .observed })
         let reopened = WebAgents(directory: directory, fixture: true)
         XCTAssertEqual(reopened.selected.map(\.provider), WebProvider.optionalProviders)
@@ -917,11 +917,13 @@ final class PersonalAgentTests: XCTestCase {
         let directory = try fixtureDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let sessionID = "session-00000000-0000-0000-0000-000000000001"
+        // The CLI runs inside the conversation working directory, so the fixture
+        // writes its evidence to absolute paths beside the fixture itself.
         try executable("dsh", script: """
-        printf '%s\\n' "$@" > received-arguments.txt
-        printf '%s' "${DSH_PERMISSION_MODE:-unset}" > received-sandbox-mode.txt
-        /bin/pwd > received-directory.txt
-        /bin/cat > received-prompt.txt
+        printf '%s\\n' "$@" > \(directory.path)/received-arguments.txt
+        printf '%s' "${DSH_PERMISSION_MODE:-unset}" > \(directory.path)/received-sandbox-mode.txt
+        /bin/pwd > \(directory.path)/received-directory.txt
+        /bin/cat > \(directory.path)/received-prompt.txt
         printf '%s\\n' '{"type":"session","sessionId":"\(sessionID)","cwd":"/private/tmp"}' '{"type":"thinking","text":""}' '{"type":"text","text":"partial"}' '{"type":"final","text":"A conversational reply"}'
         """, in: directory)
         let agent = InstalledPersonalAgent(provider: .dsh, executableURL: directory.appendingPathComponent("dsh"), path: "/usr/bin:/bin")
