@@ -98,3 +98,21 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertNotIn("xcodebuild", text)
         self.assertNotIn("automate_release", text)
         self.assertNotIn("pip install --user", text)
+
+    def test_testing_publisher_separates_feature_code_credentials_and_write_token(self):
+        text = (ROOT / ".github/workflows/test-build.yml").read_text()
+        build = text.split("\n  build:\n", 1)[1].split("\n  sign:\n", 1)[0]
+        signing = text.split("\n  sign:\n", 1)[1].split("\n  publish:\n", 1)[0]
+        publishing = text.split("\n  publish:\n", 1)[1]
+        self.assertNotIn("secrets.", build)
+        self.assertNotIn("contents: write", build + signing)
+        self.assertIn("environment: test-build-signing", signing)
+        self.assertIn("ref: ${{ github.sha }}", signing)
+        self.assertNotIn("ref: ${{ env.REVIEW_SHA }}", signing)
+        self.assertIn("if: always()", signing)
+        self.assertIn("ci_signing.py cleanup", signing)
+        self.assertIn("contents: write", publishing)
+        self.assertNotIn("secrets.", publishing)
+        for forbidden in ("pull_request:", "pull_request_target:", "tags:",
+                          "MSGBLAST_SPARKLE_PRIVATE_KEY", "MSGBLAST_R2_ACCESS_KEY_ID", "automate_release.py"):
+            self.assertNotIn(forbidden, text)

@@ -197,6 +197,10 @@ publish to the production update feed.
 
 ## Optional local installer preview
 
+To share a reviewed feature with outside testers, use the maintainer
+[testing-build publisher](testing-builds.md). It provides signed, notarized Dev
+downloads alongside production, including unmerged feature revisions.
+
 The selected Remotion onboarding source lives in `prototypes/remotion-onboarding`.
 Its MP4 is a standalone preview; standard Finder DMGs display a static PNG.
 The existing packager accepts the matching layout explicitly, without changing
