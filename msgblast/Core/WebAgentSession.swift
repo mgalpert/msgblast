@@ -93,6 +93,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
+    private let museApp: MuseAppConversation
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
     private var grokBotReceiver: GrokBotCallbackReceiver?
@@ -129,7 +130,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true
     }
 
-    public init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
+    public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
+        self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
+    }
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation) {
+        self.museApp = museApp
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
         self.storageURL = storageURL
@@ -290,7 +295,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             return
         }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil {
-            Task { await refresh() }
+            if automaticallyRefresh { Task { await refresh() } }
             return
         }
         loadComparisonChat()
@@ -450,7 +455,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public var locationLabel: String {
-        if provider.desktopApp != nil { return fixture ? "Simulated desktop app · no app contacted" : "Desktop app · Shared conversation" }
+        if provider.desktopApp != nil { return fixture ? "Simulated desktop app · no app contacted" : provider == .museApp ? "Muse app · Side chat" : "Desktop app · Shared conversation" }
         if provider == .grokbot { return fixture ? "Simulated webhook · no Bot contacted" : "Webhook connection" }
         if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
@@ -462,7 +467,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func openComparison(_ id: UUID?) async -> Bool {
         guard !isSending else { return false }
         if state.comparisonID != id { updateState { $0.comparisonID = id } }
-        connect()
+        connect(automaticallyRefresh: !provider.usesNativeConversation)
         if provider.usesNativeConversation {
             await refresh()
             return snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
@@ -1061,7 +1066,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         loading = true
         defer { loading = false }
         do {
-            let binding = fixture ? DesktopConversationBinding(name: app == .grokBot ? "Demo Bot" : app.name) : try await DesktopAppConversation.shared.inspect(app)
+            let binding: DesktopConversationBinding
+            if app == .muse {
+                if !fixture { try await museApp.checkAvailable() }
+                binding = DesktopConversationBinding(name: "Muse")
+            } else { binding = fixture ? DesktopConversationBinding(name: app == .grokBot ? "Demo Bot" : app.name) : try await DesktopAppConversation.shared.inspect(app) }
             state.desktopConversation = binding
             try save()
             connected = true
@@ -1079,6 +1088,31 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         desktopReady = false
         if let binding = state.desktopConversation {
             do {
+                if app == .muse {
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete Muse request before navigating to another side chat.") }
+                    let comparison = state.comparisonID
+                    if let comparison {
+                        let saved = try state.museAppBinding(for: comparison)
+                        guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else {
+                            throw WebSessionFailure.notReady("This comparison has Muse history without a tracked side chat. Its history was preserved; no replacement chat was created.")
+                        }
+                        let pending = state.attempts.first { $0.comparisonID == comparison && $0.recoveryConversationURL != nil }
+                        let prepared: MuseSideChatBinding
+                        if fixture { prepared = saved ?? MuseSideChatBinding(comparisonID: comparison, threadID: nil, title: "Simulated side chat") }
+                        else if saved?.threadID == nil, let pending, let candidate = pending.recoveryConversationURL {
+                            prepared = try await museApp.recover(comparisonID: comparison, candidateURL: candidate, prompt: pending.text, requestID: pending.id)
+                        } else { prepared = try await museApp.prepare(comparisonID: comparison, binding: saved) }
+                        guard state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                        try state.recordMuseAppBinding(prepared)
+                        if prepared.threadID != nil, saved?.threadID == nil, let pending {
+                            try recordMuseAppSubmission(prepared, attemptID: pending.id)
+                        } else { try save() }
+                    } else if !fixture { try await museApp.checkAvailable() }
+                    desktopReady = true
+                    desktopStatus = comparison == nil ? "Connected to Muse · each comparison gets its own side chat" : "Muse side chat ready · background input"
+                    updateNativeSnapshot()
+                    return
+                }
                 let current = fixture ? binding : try await DesktopAppConversation.shared.inspect(app)
                 guard current == binding else { throw WebSessionFailure.notReady("Open \(binding.name) in \(app.name), or reconnect to the intended conversation.") }
                 desktopReady = true
@@ -1093,6 +1127,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         fresh.messages = state.comparisonID.flatMap { state.localConversations[$0.uuidString] } ?? []
         fresh.draft = state.draft
         if provider.desktopApp != nil {
+            if provider == .museApp { fresh.url = state.comparisonID.flatMap { state.museAppConversations[$0.uuidString]?.url?.absoluteString } ?? "" }
             fresh.ready = isEnabled && !storageFailed && desktopReady && !hasIncompleteNativeRequest(for: state.comparisonID)
             fresh.reason = !isEnabled ? "Enable \(provider.name) to send." : hasIncompleteNativeRequest(for: state.comparisonID) ? "Review the previous incomplete request before continuing." : desktopStatus
             if fresh != snapshot { snapshot = fresh }
@@ -1175,10 +1210,27 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let savedSessionID = state.resumableLocalSessionID(for: id)
             let workingDirectory = conversationWorkingDirectory(id)
             let binding = state.desktopConversation
-            let request = Task { [fixture, provider, installedAgent] in
+            let museBinding = provider == .museApp ? try state.museAppBinding(for: id) : nil
+            let request = Task { [fixture, provider, installedAgent, museApp] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
+                    if provider == .museApp {
+                        let simulated = MuseSideChatBinding(comparisonID: id, threadID: museBinding?.threadID ?? UUID(), title: "Simulated side chat")
+                        try self.recordMuseAppSubmission(simulated, attemptID: attempt.id)
+                    }
                     return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
+                }
+                if provider == .museApp {
+                    guard let museBinding else { throw WebSessionFailure.notSent("Prepare this comparison's Muse side chat first.") }
+                    let attemptID = attempt.id
+                    let answer = try await museApp.reply(text, binding: museBinding, requestID: attemptID, onCandidate: { [weak self] url in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordMuseAppCandidate(url, comparisonID: id, attemptID: attemptID)
+                    }, onBinding: { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordMuseAppSubmission(discovered, attemptID: attemptID)
+                    })
+                    return PersonalAgentReply(text: answer, sessionID: "Muse side chat")
                 }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
@@ -1194,10 +1246,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider.desktopApp == nil { state.recordLocalSession(answer.sessionID, for: id) }
             if state.draft == text { state.draft = "" }
             state.localDrafts[id.uuidString] = state.draft
+            if provider == .museApp {
+                attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
+                attempt.recoveryConversationURL = state.attempts.first { $0.id == attempt.id }?.recoveryConversationURL
+            }
             attempt.status = .observed; attempt.messageID = user.id
             attempt.detail = fixture ? "Simulated reply. No app, local CLI or provider was contacted." : provider.desktopApp != nil ? "Reply text observed in the background and stable for three seconds. The app may continue working." : "Completed reply from the local CLI."
             try store(attempt)
         } catch {
+            if provider == .museApp {
+                attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
+                attempt.recoveryConversationURL = state.attempts.first { $0.id == attempt.id }?.recoveryConversationURL
+            }
             attempt.status = started ? .uncertain : .notSent
             attempt.detail = error.localizedDescription
             self.error = error.localizedDescription
@@ -1205,6 +1265,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         updateNativeSnapshot()
         return attempt
+    }
+
+    private func recordMuseAppCandidate(_ url: URL, comparisonID: UUID, attemptID: UUID) throws {
+        guard !storageFailed, MuseSideChatBinding.threadID(in: url) != nil,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].comparisonID == comparisonID,
+              state.attempts[index].recoveryConversationURL == nil || state.attempts[index].recoveryConversationURL == url else {
+            throw WebSessionFailure.notSent("Muse's pending side-chat address could not be saved. Review Muse before continuing.")
+        }
+        state.attempts[index].recoveryConversationURL = url
+        try save()
+    }
+
+    private func recordMuseAppSubmission(_ binding: MuseSideChatBinding, attemptID: UUID) throws {
+        guard !storageFailed, let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].comparisonID == binding.comparisonID else {
+            throw WebSessionFailure.notSent("Muse's side-chat receipt could not be saved. Review Muse before continuing.")
+        }
+        try state.recordMuseAppBinding(binding)
+        state.attempts[index].conversationURL = binding.url
+        state.attempts[index].recoveryConversationURL = nil
+        try save()
     }
 
     private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int) async throws {

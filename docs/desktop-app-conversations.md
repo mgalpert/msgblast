@@ -2,146 +2,150 @@
 
 Muse App, Grok Bot App, and Wabi are optional agents with msgblast's native
 conversation pane. They use an independently installed `cua-driver` command.
-The existing Muse website, Grok Bot webhook, and CLI agents retain their own
-accounts, state files, histories, and execution paths.
+The Muse website, Grok Bot webhook, and CLI agents retain their own accounts,
+state files, histories, and execution paths.
 
 ## Setup
 
-1. Install cua-driver using its official instructions and grant its required
-   macOS Accessibility permission. msgblast does not install it or change grants.
-2. Open the target desktop app, sign in, and select the intended conversation.
-   Wabi supports only the Wabi AI conversation, not human or group chats.
-3. In msgblast, add the desktop app from **More agents**, enable it, and choose
-   **Connect open conversation**. Dismiss dialogs and leave one main app window.
+1. Install cua-driver using its official instructions and grant its macOS
+   Accessibility permission. msgblast does not install it or change grants.
+2. Open the desktop app, sign in, dismiss dialogs, and keep one main window on
+   the current desktop. Wabi supports only its AI conversation.
+3. Add the desktop app from **More agents** and enable it. For Muse, grant
+   **msgblast** Accessibility permission and choose **Connect Muse**. Resuming
+   chats also requires the driver's window-capture access. For Grok
+   Bot or Wabi, select the intended app conversation and choose
+   **Connect open conversation**.
 4. Select the agent and use the private or shared msgblast message box.
 
-The adapter locates cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
-`/usr/local/bin`, or the app's inherited PATH. It uses the public `call` JSON
-interface. It neither copies provider authentication nor uses the webhook.
+The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
+`/usr/local/bin`, or its inherited PATH and uses its public `call` JSON interface.
+Full Disk Access does not grant Accessibility permission. This prototype neither
+bundles the driver nor copies provider authentication into msgblast.
 
-## Conversation and send behavior
+## Muse side chats
 
-A connection records the conversation's displayed name. Keep that conversation
-selected while a request runs; refresh or reconnect after changing app state.
-Names are accessibility observations, not provider-issued conversation IDs.
-Each comparison keeps its own local transcript, but the desktop app conversation
-is shared across comparisons and can use its earlier context. This does not
-create a fresh provider chat for each comparison.
+Each comparison creates a separate Muse side chat. The first outgoing message
+assigns a `/thread/{UUID}` address; msgblast saves that UUID and its comparison
+owner after observing the exact outgoing message, before waiting for the reply to
+finish. The first message includes `[msgblast request <UUID>]` followed by the
+original prompt. This reference uses the already-saved attempt ID and prevents an
+old chat with identical prompt text from claiming the new submission. It does not
+add a second request; msgblast's local transcript keeps the original prompt.
+Follow-up messages in a confirmed chat use the original prompt alone. The title is a navigation hint,
+not the identity. Reopening a comparison checks the saved UUID, including after
+Muse renames the chat or msgblast restarts. Duplicate titles cannot authorize
+sending to another side chat.
 
-Before sending, the adapter checks the exact process/window, conversation name,
-and empty composer. It inserts text using a fresh element token, reads back the
-prepared draft, and clicks the enabled Send control once. Every mutation uses
-`delivery_mode: background`. A refusal never triggers foreground input or replay.
-Existing drafts remain intact. The adapter does not launch or quit provider apps.
+Creation uses a fresh accessibility button. Muse's side-chat rows advertise
+AXPress but that action does not select them. Resuming uses a background pointer
+click derived from the row's current accessibility bounds and a fresh, validated
+window capture. The saved UUID must match after selection. When needed, the empty
+composer is focused through the same capture-based route before native focus is
+verified. Captures are kept in owner-only temporary directories and removed after
+the action. Missing captures, wrong window IDs, off-window frames, or image-size
+mismatches prevent the click. If the saved chat is absent from
+the exposed side-chat list, open it in Muse and try again. The adapter never
+creates a replacement for a missing saved chat or adopts the main chat. Old local
+Muse history without a tracked side-chat binding stays preserved and blocked.
+An unsubmitted blank chat is reserved only in the running adapter; after restart,
+a new empty side chat is prepared rather than adopting an arbitrary blank view.
 
-Only reply text after a newly observed outgoing prompt is returned. Known progress
-controls defer return; otherwise text must remain stable for three seconds.
-This is observed reply text, not a delivery receipt or proof that all provider
-work has finished. In particular, providers may issue a later follow-up.
-Cancellation stops waiting locally; it does not cancel work inside the app.
+Muse exposes its composer as a compound button, whose AXValue stays empty and
+whose AX press opens a file picker. The dedicated reader uses read-only native
+accessibility queries to obtain the web area's URL, verify the focused composer,
+and independently read the actual draft. It distinguishes the empty placeholder
+from a literal `Message` draft. It supports WebKit's visible-character ranges
+and preserves Unicode. A private macOS window-number lookup correlates the AX
+window with the driver's exact window ID; absence fails closed.
+
+Typing targets the exact background window without pressing that compound
+button. Small chunks require independent draft readback. Line breaks use
+Shift-Return, because plain newline character events submit Muse's composer.
+WebKit's extra terminal line break is tolerated only between chunks; the whole
+final draft must equal the requested prompt before one final Return. Unsupported
+control characters and unverifiable drafts stop input and preserve the text.
+Typing and Send use no pixel coordinates. Navigation/focus coordinates come
+from each fresh capture rather than a saved layout. No OCR, DOM injection,
+foreground fallback, or automatic replay is used. A transient failed native read is retried once without repeating
+an input action.
+
+## Grok Bot and Wabi
+
+These connections record the conversation's displayed name. Comparisons keep
+separate local transcripts but share the app conversation and its earlier
+context. Names are accessibility observations, not provider-issued IDs. Keep
+that conversation selected while a request runs.
+
+The adapter checks the exact process/window, conversation name, and empty
+composer. It types with a fresh element token, independently reads the prepared
+draft, and clicks the enabled Send control once. Every mutation specifies
+`delivery_mode: background`; a refusal never triggers foreground input or replay.
+
+## Replies, recovery, and limits
+
+Reply attribution requires a newly observed outgoing message after the captured
+baseline. Muse additionally checks the UUID, speaker boundaries, and unchanged
+history; another outgoing request invalidates attribution. Known generation
+controls defer completion. Otherwise reply text must stay stable for three
+seconds. This is an observation, not proof that all provider work has finished;
+providers can issue later follow-ups. Cancellation stops local waiting, not work
+inside the provider app.
 
 An incomplete request blocks further desktop sends across comparisons until the
-user reviews and acknowledges it in the original comparison. No automatic resend
-occurs. Saved drafts, attempts, and app conversation bindings survive reopening;
-desktop bindings are never written as CLI session IDs.
+user reviews and acknowledges it in its originating comparison. There is no
+automatic resend. Saved drafts, attempts, transcripts, and side-chat UUIDs survive
+restart. Desktop bindings never become CLI session IDs. A new UUID seen before
+its outgoing message is saved separately as an unconfirmed recovery address.
+After acknowledgement, recovery reopens that address and requires the matching
+request reference before binding it. A missing or mismatched reference blocks
+further input without creating a replacement or resending. If interrupted before
+any new UUID is observed, the attempt stays uncertain without inventing an identity.
 
-## Verified capabilities and limits
+Live checks on October 19, 2026 used Muse 8.0 and cua-driver 0.22.1. Minimal
+background prompts and exact replies were observed in all three apps. The Muse
+adapter created two distinct side chats and verified a multiline Unicode draft
+through its native reader. Fresh adapter instances then reopened both saved UUIDs;
+a follow-up in the first chat returned the expected reply. A further new-chat
+check verified the request reference, pending-address callback before ownership,
+exact reply, and saved-UUID resume. Codex was frontmost before and after the earlier
+resume run; other user apps were frontmost at the start and end of the reference
+check. These checks do not establish continuous focus preservation,
+off-Space, hidden, or minimized operation. A Muse window on another Space was
+previously unresolved and background input was refused. App updates, virtualized
+history, or user navigation can stop the adapter safely.
 
-On October 19, 2026, cua-driver 0.22.1 sent minimal prompts and read their exact
-replies from Grok Bot and Wabi using background delivery. ChatGPT remained the
-frontmost app after these tests. These were live account requests; they did not
-exercise tools, attachments, new-chat creation, or long-running jobs.
-
-Muse's main-chat composer was exposed as one compound button rather than an
-editable field. Pressing that button opened an attachment picker. With explicit
-foreground authorization, targeted Escape dismissed the picker. An initial
-main-chat probe required foreground typing; a subsequent background pixel click
-submitted it, and a background snapshot read `MUSE-OK-1019`.
-
-A later **side-chat** investigation demonstrated a fully background path on the
-same Muse 8.0 / cua-driver 0.22.1 installation:
-
-1. Press the fresh `New side chat` accessibility button. A fresh snapshot showed
-   an empty `New side chat` with `Back to main chat`.
-2. Type a short test draft using screenshot-grounded background pixel focus.
-   The screenshot showed the draft although the driver returned
-   `effect: unverifiable` with `escalation.reason: delivery_failed`.
-3. Append the minimal reply instruction through window-targeted background
-   typing, verify the full draft in the screenshot, and click Send by pixels.
-   The outgoing prompt and exact `MUSE-SIDE-OK-1019` reply appeared in both the
-   screenshot and accessibility snapshot.
-4. Send a second minimal prompt in that side chat using window-targeted
-   background typing followed by Return. No pixel click was needed. A fresh
-   snapshot read `MUSE-SIDE-SECOND-1019`. Typing had reported a zero-character
-   partial result, which the screenshot disproved; the action was not replayed.
-
-ChatGPT was frontmost before typing, after the first draft, after the first
-reply, and after the second reply. These are discrete observations, not a
-continuous focus/cursor/z-order oracle. No foreground delivery was used for
-side-chat creation, either prompt, or reply reading. This supersedes the earlier
-conclusion that Muse background typing was unavailable.
-
-Automatic Muse sending is explicitly gated until side-chat identity and draft
-verification are implemented. A generic `Muse` heading cannot distinguish the
-main chat from different side chats, even if a future app version exposes a
-standard editable composer. The tested Muse accessibility tree exposes one
-compound button. Raw read-only AX inspection also found an
-empty child list for that compound button; increasing the driver's tree depth
-and element limits did not expose its inner controls. A read-only typed browser
-bind refused Muse as an unrecognized browser process. The main-chat parser and
-single displayed-name binding are also insufficient for separate side chats:
-recent messages use `You:` plus plain text and reply controls, and the side chat
-receives a generated title after its first prompt.
-
-The integration needs to create and track the intended side chat per comparison
-and independently verify its prepared draft before submission. This must not
-reuse the main chat or assume a successful type result. No fixed pixel layout,
-foreground fallback, OCR, or model-driven UI planning is enabled in the adapter.
-
-A further observation found Muse on another Space with zero AX windows. Its
-window capture still showed the two completed probes, but the driver marked the
-AX surface unresolved and refused every background input route. No further input
-was attempted in that state. Off-Space/hidden/minimized operation is not proven by
-the successful visible-window side-chat tests.
-
-The CLI's `elements_complete` flag was false even for full walks in this driver
-version. The adapter instead checks returned/total counts and requires the app's
-heading/composer sentinels; it cannot read history the app has not exposed.
-User changes, duplicate conversation names, UI updates, virtualized transcripts,
-and delayed replies can prevent reliable attribution. Review the app before
-explicitly allowing another request. The shipped adapter uses no OCR, pixel
-coordinates, or model-driven UI planning.
-
-Demo runs simulate app replies and never start cua-driver or contact these apps.
-Live probe captures contain private account history and are not public PR media.
+The driver's `elements_complete` flag was false even for full walks in 0.22.1.
+The adapter checks returned/total counts and app-specific sentinels instead.
+Demo simulates replies without starting the driver or contacting any app. Live
+probe captures include private account information and are not public PR media.
 
 ## Automated regression coverage
 
-`DesktopAppConversationTests` checks parser attribution, separation of desktop
-accounts from web/CLI accounts, saved transcripts and drafts, and interrupted
-request ownership across restart. Only the originating comparison can acknowledge
-an incomplete request; another comparison cannot clear that guard.
+`DesktopAppConversationTests` covers parser attribution, provider/account
+separation, saved transcripts/drafts, and interrupted request ownership.
+`MuseAppConversationTests` covers strict URL identity, immutable comparison
+ownership, persistence, text ranges, placeholder versus literal drafts, and
+speaker/baseline attribution.
 
-`DesktopAppDriverTests` invokes the actual adapter through a temporary executable
-that follows an independently specified sequence of JSON responses and records
-its input arguments. It never invokes the installed driver or a provider app.
-The tests cover:
+`DesktopAppDriverTests` runs the actual adapters and WebAgentSession against
+independently specified native observations and a temporary driver executable
+that records every call. It never contacts installed apps. Coverage includes:
 
-- Grok Bot and Wabi submission with fresh composer/Send tokens and exact targets.
-- False-negative/unverified typing: independent exact-draft evidence permits one
-  Send, while partial, changed, or absent drafts prevent submission and replay.
-- External drafts, changed chats before/after submission, ambiguous windows,
-  missing/disabled/duplicate Send controls, refusals, and degraded/truncated AX.
-- Repeated prompts and old answers, generation controls, composer clearing,
-  bounded waits, cancellation, process cleanup, and per-app concurrent requests.
-- No automatic foreground fallback, no automatic resend, and lifecycle cleanup.
-- Muse main chats, untracked side chats, compound composers, and unresolved
-  off-Space snapshots remain read-only until reliable tracking is implemented.
+- Muse creation, early durable UUID capture, pending-address recovery after
+  timeout and acknowledgement, old same-prompt chat rejection, duplicate/generated
+  titles, reopening comparisons after restart, and missing-chat refusal without replacement.
+- Exact draft verification, Unicode and multiline input, false-negative typing,
+  partial drafts, focus loss, external drafts, and changed chats.
+- Stable-reply waits, generation controls, old echoed prompts, and foreign replies.
+- Incomplete sends across restart, explicit acknowledgement by the original
+  comparison, cancellation, bounded process waits, and driver-process cleanup.
+- Exact background targets, one submission, no foreground fallback, and no replay.
+- Resized capture geometry, background composer focus without AXPress, invalid
+  or missing capture refusal, and removal of private temporary screenshots.
+- Grok Bot/Wabi token-based sends and degraded, truncated, ambiguous, or refused
+  driver results. The generic Muse name-based route remains disabled.
 
-The fixture's shortened timeouts do not change production defaults. These tests
-cannot establish real macOS focus preservation or current provider UI behavior.
-They also do not claim to test automated Muse side-chat creation/resumption: that
-feature remains unimplemented and gated. Before enabling it, add end-to-end
-coverage for creation, generated-title changes, duplicate titles, exact identity
-across comparisons/restart, and independent prepared-draft verification. The live
-side-chat probes above are investigation evidence, not a substitute for that gate.
+Fixture timeouts are shortened without changing production defaults. These tests
+prove adapter/controller behavior, not real macOS TCC grants or current provider
+UI compatibility. Native UI suites need their separately authorized environment.

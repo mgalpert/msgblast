@@ -468,6 +468,473 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testMuseCreatesSideChatVerifiesDraftAndPersistsUUIDBeforeReply() async throws {
+        let owner = UUID(), thread = UUID()
+        let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
+        defer { fixture.remove() }
+        let stateURL = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
+        try JSONEncoder().encode(saved).write(to: stateURL)
+        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, transientWindowFailure: true))
+        let sending = Task { await session.send(prompt, comparisonID: owner) }
+        try await waitForCall("press_key", in: fixture)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while session.state.museAppConversations[owner.uuidString]?.threadID == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let waiting = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: stateURL))
+        XCTAssertEqual(waiting.museAppConversations[owner.uuidString]?.threadID, thread)
+        XCTAssertEqual(waiting.attempts.first?.conversationURL, waiting.museAppConversations[owner.uuidString]?.url)
+        XCTAssertTrue(session.isSending, "Identity must be durable while the response is still pending")
+        let requestID = try XCTUnwrap(waiting.attempts.first?.id)
+        let wire = "[msgblast request \(requestID.uuidString.lowercased())]\n\n" + prompt
+        try setNative(museObservation(thread: thread, messages: [.init(role: .user, text: wire), .init(role: .assistant, text: "Muse answer")], title: "Renamed by Muse"), in: fixture)
+        let sent = await sending.value
+        let attempt = try XCTUnwrap(sent)
+        XCTAssertEqual(attempt.status, .observed)
+        XCTAssertEqual(attempt.conversationURL, waiting.museAppConversations[owner.uuidString]?.url)
+        XCTAssertEqual(session.state.localConversations[owner.uuidString]?.map(\.text), [prompt, "Muse answer"])
+        XCTAssertEqual(session.state.museAppConversations[owner.uuidString]?.title, "Renamed by Muse")
+        XCTAssertTrue(session.state.localSessionIDs.isEmpty)
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.compactMap { $0.arguments["text"] as? String }, ["[msgblast request \(requestID.uuidString.lowercased())]", prompt])
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+        XCTAssertTrue(calls.filter { $0.tool == "type_text" }.allSatisfy { $0.arguments["element_token"] == nil && $0.arguments["x"] == nil })
+        assertMuseBackground(calls)
+        session.beginShutdown()
+    }
+
+    func testMuseResumeUsesUUIDWhenTitlesDuplicateAndNeverCreatesReplacement() async throws {
+        let owner = UUID(), intended = UUID(), other = UUID()
+        var first = windows(); first["native"] = try object(museObservation(thread: other))
+        let navigation: [String: Any] = ["elements": [
+            element("AXHeading", "Side chats"), element("AXButton", "New side chat", token: "s00000001:new"),
+            element("AXButton", "Same generated title", token: "s00000001:wrong"),
+            element("AXButton", "Same generated title", token: "s00000001:right"), element("AXSplitter", "Resize panel")
+        ]]
+        let fixture = try driver([
+            apps(.muse), first, snapshot(navigation),
+            capturedNavigation(navigation), try museStep("click", observation: museObservation(thread: other)),
+            snapshot(navigation), capturedNavigation(navigation), try museStep("click", observation: museObservation(thread: intended, title: "Changed title"))
+        ])
+        defer { fixture.remove() }
+        let result = try await museAdapter(fixture).prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: intended, title: "Same generated title"))
+        XCTAssertEqual(result.threadID, intended)
+        XCTAssertEqual(result.title, "Changed title")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.compactMap { $0.arguments["y"] as? Int }, [105, 165])
+        XCTAssertTrue(calls.filter { $0.tool == "click" }.allSatisfy { $0.arguments["element_token"] == nil })
+        assertMuseBackground(calls)
+    }
+
+    func testMusePartialDraftFocusLossAndChatSwitchPreventReturnWithoutReplay() async throws {
+        let owner = UUID(), thread = UUID()
+        for fault in ["partial", "focus", "chat"] {
+            var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+            var typed = museObservation(thread: fault == "chat" ? UUID() : thread, draft: fault == "partial" ? "Partial" : prompt)
+            typed.composerFocused = fault != "focus"
+            let fixture = try driver([apps(.muse), initial, try museStep("type_text", observation: typed)])
+            defer { fixture.remove() }
+            _ = await failure { try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Title")) { _ in XCTFail("Must not record an unsubmitted draft") } }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+            XCTAssertFalse(calls.contains { $0.tool == "press_key" })
+            assertMuseBackground(calls)
+        }
+    }
+
+    func testMuseRejectsExternalDraftAndUntrackedNewChatAfterRestart() async throws {
+        for draft in ["", "External unsent draft"] {
+            var initial = windows(); initial["native"] = try object(museObservation(draft: draft))
+            let fixture = try driver([apps(.muse), initial])
+            defer { fixture.remove() }
+            _ = await failure { try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: UUID(), threadID: nil, title: "New side chat")) { _ in XCTFail("No submission") } }
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+
+    func testMuseTimeoutRetainsUUIDAndBlocksOtherComparisonsAcrossRestart() async throws {
+        let owner = UUID(), thread = UUID(), other = UUID()
+        let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
+        defer { fixture.remove() }
+        let stateURL = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
+        try JSONEncoder().encode(saved).write(to: stateURL)
+        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)))
+        let result = await session.send(prompt, comparisonID: owner)
+        XCTAssertEqual(result?.status, .uncertain)
+        XCTAssertEqual(session.state.museAppConversations[owner.uuidString]?.threadID, thread)
+        session.beginShutdown()
+        let reopened = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture))
+        reopened.updateState { $0.comparisonID = other }
+        let blocked = await reopened.send("Other comparison", comparisonID: other)
+        XCTAssertNil(blocked)
+        reopened.acknowledgeIncompleteRequest()
+        XCTAssertTrue(reopened.hasUnresolvedSend(prompt))
+        reopened.updateState { $0.comparisonID = owner }
+        reopened.acknowledgeIncompleteRequest()
+        XCTAssertFalse(reopened.hasUnresolvedSend(prompt))
+        XCTAssertEqual(reopened.state.draft, prompt)
+        XCTAssertEqual(reopened.state.museAppConversations[owner.uuidString]?.threadID, thread)
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+        assertMuseBackground(calls)
+        reopened.beginShutdown()
+    }
+
+    func testMuseURLBeforeOutgoingSurvivesTimeoutAcknowledgementAndVerifiedRecovery() async throws {
+        let owner = UUID(), thread = UUID()
+        var plan = try museCreationSteps(owner: owner, thread: thread, answer: nil)
+        plan[plan.count - 1]["native"] = try object(museObservation(thread: thread))
+        let fixture = try driver(plan)
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
+        try JSONEncoder().encode(saved).write(to: file)
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)))
+        let sent = await session.send(prompt, comparisonID: owner)
+        let result = try XCTUnwrap(sent)
+        XCTAssertEqual(result.status, .uncertain)
+        let candidate = URL(string: "https://muse.ai/thread/\(thread.uuidString)")!
+        XCTAssertEqual(result.recoveryConversationURL, candidate)
+        XCTAssertNil(result.conversationURL)
+        XCTAssertNil(session.state.museAppConversations[owner.uuidString]?.threadID)
+        session.beginShutdown()
+        let reopened = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture))
+        reopened.acknowledgeIncompleteRequest()
+        reopened.connect(automaticallyRefresh: false)
+        try fixture.replacePlan([apps(.muse), windows()])
+        await reopened.refresh()
+        XCTAssertFalse(reopened.snapshot.ready, "An address alone cannot establish ownership")
+        XCTAssertNil(reopened.state.museAppConversations[owner.uuidString]?.threadID)
+        let wire = "[msgblast request \(result.id.uuidString.lowercased())]\n\n" + prompt
+        try setNative(museObservation(thread: thread, messages: [.init(role: .user, text: wire), .init(role: .assistant, text: "Late answer")]), in: fixture)
+        try fixture.replacePlan([apps(.muse), windows()])
+        await reopened.refresh()
+        XCTAssertTrue(reopened.snapshot.ready)
+        let disk = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: file))
+        XCTAssertEqual(disk.museAppConversations[owner.uuidString]?.threadID, thread)
+        XCTAssertEqual(disk.attempts.first?.conversationURL, URL(string: "https://muse.ai/thread/\(thread.uuidString.lowercased())"))
+        XCTAssertNil(disk.attempts.first?.recoveryConversationURL)
+        XCTAssertEqual(disk.attempts.first?.status, .dismissed, "Recovery must not invent a completed reply")
+        let calls = try await finishedCalls(fixture, cleanupCount: 4)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Recovery cannot create a replacement")
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1, "Recovery cannot resend")
+        assertMuseBackground(calls)
+        reopened.beginShutdown()
+    }
+
+    func testMuseOldChatWithSamePromptCannotClaimFirstSubmissionOrRecoverWithoutReference() async throws {
+        let owner = UUID(), foreign = UUID()
+        var plan = try museCreationSteps(owner: owner, thread: foreign, answer: nil)
+        plan[plan.count - 1]["native"] = try object(museObservation(thread: foreign, messages: [
+            .init(role: .user, text: prompt), .init(role: .assistant, text: "Old answer")]))
+        let fixture = try driver(plan)
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
+        try JSONEncoder().encode(saved).write(to: file)
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture))
+        let sent = await session.send(prompt, comparisonID: owner)
+        let result = try XCTUnwrap(sent)
+        XCTAssertEqual(result.status, .uncertain)
+        XCTAssertNotNil(result.recoveryConversationURL, "Keep the observed locator even when attribution fails")
+        XCTAssertNil(result.conversationURL)
+        XCTAssertNil(session.state.museAppConversations[owner.uuidString]?.threadID)
+        XCTAssertTrue(session.state.localConversations.isEmpty)
+        session.acknowledgeIncompleteRequest()
+        try fixture.replacePlan([apps(.muse), windows()])
+        await session.refresh()
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertNil(session.state.museAppConversations[owner.uuidString]?.threadID)
+        let calls = try await finishedCalls(fixture, cleanupCount: 3)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+        assertMuseBackground(calls)
+        session.beginShutdown()
+    }
+
+    func testMuseCancellationStopsInputAndReleasesActorWithoutSendingReturn() async throws {
+        let owner = UUID(), thread = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        var blocked = try museStep("type_text", observation: museObservation(thread: thread, draft: prompt))
+        blocked["wait_for_release"] = true
+        let fixture = try driver([apps(.muse), initial, blocked])
+        defer { fixture.remove() }
+        let adapter = museAdapter(fixture)
+        let sending = Task { try await adapter.reply(prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Saved")) { _ in XCTFail("No submission") } }
+        try await waitForCall("type_text", in: fixture)
+        let collision = await failure { try await adapter.prepare(comparisonID: owner, binding: nil) }
+        XCTAssertTrue(collision.contains("already handling"))
+        sending.cancel()
+        do { _ = try await sending.value; XCTFail("Expected cancellation") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { $0.tool == "press_key" })
+        let call = try XCTUnwrap(calls.first { $0.tool == "type_text" })
+        XCTAssertEqual(kill(Int32(call.pid), 0), -1)
+        try setNative(museObservation(thread: thread), in: fixture)
+        try fixture.replacePlan([apps(.muse), windows()])
+        let reopened = try await adapter.prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: thread, title: "Saved"))
+        XCTAssertEqual(reopened.threadID, thread)
+        _ = try await finishedCalls(fixture, cleanupCount: 2)
+    }
+
+    func testMuseMissingSavedChatCannotCreateReplacement() async throws {
+        let owner = UUID(), other = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: other))
+        let list = snapshot(["elements": [element("AXButton", "New side chat", token: "s00000001:new"), element("AXButton", "Another chat", token: "s00000001:other"), element("AXSplitter", "Resize panel")]])
+        let capture = capturedNavigation(list["result"] as! [String: Any])
+        let click = try museStep("click", observation: museObservation(thread: other))
+        let fixture = try driver([apps(.muse), initial, list, capture, click, list, capture, list, capture, click, list, capture])
+        defer { fixture.remove() }
+        let message = await failure { try await self.museAdapter(fixture).prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: UUID(), title: "Missing")) }
+        XCTAssertTrue(message.contains("not found"), message)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" || $0.tool == "press_key" || $0.arguments["element_token"] as? String == "s00000001:new" })
+        assertMuseBackground(calls)
+    }
+
+    func testMuseChangedChatWhileWaitingCannotReturnForeignAnswer() async throws {
+        let owner = UUID(), thread = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        let fixture = try driver([apps(.muse), initial,
+            try museStep("type_text", observation: museObservation(thread: thread, draft: prompt)),
+            try museStep("press_key", observation: museObservation(thread: UUID(), messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Foreign reply")]))])
+        defer { fixture.remove() }
+        let error = await failure { try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Saved")) { _ in XCTFail("Foreign UUID cannot replace a saved binding") } }
+        XCTAssertTrue(error.contains("switched side chats"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, 1)
+    }
+
+    func testMuseMultilineDraftUsesShiftReturnAndSubmitsOnlyAfterExactFinalReadback() async throws {
+        let owner = UUID(), thread = UUID()
+        let multiline = "First line 😀\n\nReply only: MULTILINE"
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        let fixture = try driver([
+            apps(.muse), initial,
+            try museStep("type_text", observation: museObservation(thread: thread, draft: "First line 😀")),
+            try museStep("press_key", observation: museObservation(thread: thread, draft: "First line 😀\n\n")),
+            try museStep("press_key", observation: museObservation(thread: thread, draft: "First line 😀\n\n\n")),
+            try museStep("type_text", observation: museObservation(thread: thread, draft: multiline)),
+            try museStep("press_key", observation: museObservation(thread: thread, messages: [.init(role: .user, text: multiline), .init(role: .assistant, text: "MULTILINE")]))
+        ])
+        defer { fixture.remove() }
+        let answer = try await museAdapter(fixture).reply(multiline, binding: .init(comparisonID: owner, threadID: thread, title: "Saved")) { _ in }
+        XCTAssertEqual(answer, "MULTILINE")
+        let calls = try await finishedCalls(fixture)
+        let keys = calls.filter { $0.tool == "press_key" }
+        XCTAssertEqual(keys.count, 3)
+        XCTAssertEqual(keys[0].arguments["modifiers"] as? [String], ["shift"])
+        XCTAssertEqual(keys[1].arguments["modifiers"] as? [String], ["shift"])
+        XCTAssertNil(keys[2].arguments["modifiers"])
+        XCTAssertTrue(calls.filter { $0.tool == "type_text" }.allSatisfy { !($0.arguments["text"] as? String ?? "").contains("\n") })
+        assertMuseBackground(calls)
+    }
+
+    func testMuseFixtureComparisonsKeepIndependentSideChatsAndResumeSavedID() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-muse-demo-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("state.json"), a = UUID(), b = UUID()
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: true)
+        session.setEnabled(true)
+        await session.connectDesktopConversation()
+        let first = await session.send("First comparison", comparisonID: a)
+        let second = await session.send("Second comparison", comparisonID: b)
+        let aid = try XCTUnwrap(session.state.museAppConversations[a.uuidString]?.threadID)
+        let bid = try XCTUnwrap(session.state.museAppConversations[b.uuidString]?.threadID)
+        XCTAssertNotEqual(aid, bid)
+        XCTAssertNotEqual(first?.conversationURL, second?.conversationURL)
+        session.beginShutdown()
+        let reopened = WebAgentSession(provider: .museApp, storageURL: file, fixture: true)
+        let ready = await reopened.openComparison(a)
+        XCTAssertTrue(ready)
+        let resumed = await reopened.send("Continue first", comparisonID: a)
+        XCTAssertEqual(resumed?.conversationURL, first?.conversationURL)
+        XCTAssertEqual(reopened.state.museAppConversations[a.uuidString]?.threadID, aid)
+        XCTAssertEqual(reopened.state.localConversations[a.uuidString]?.count, 4)
+        XCTAssertEqual(reopened.state.localConversations[b.uuidString]?.count, 2)
+        XCTAssertTrue(reopened.state.localSessionIDs.isEmpty)
+        XCTAssertFalse(WebProvider.museApp.sharesOneConversation)
+        reopened.beginShutdown()
+    }
+
+    func testMuseRejectsCarriageReturnBeforeAnyDriverInputCanSubmitEarly() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let error = await failure { try await self.museAdapter(fixture).reply("First\rSecond", binding: .init(comparisonID: UUID(), threadID: UUID(), title: "Saved")) { _ in XCTFail("No submission") } }
+        XCTAssertTrue(error.contains("control characters"), error)
+        XCTAssertTrue(try fixture.calls().isEmpty)
+    }
+
+    func testMusePreservesEmojiJoinersAndCombiningMarksInPreparedText() async throws {
+        let owner = UUID(), thread = UUID(), text = "Emoji 👩‍💻 and e\u{301}"
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        var typing = try museStep("type_text", observation: museObservation(thread: thread, draft: text))
+        typing["arguments"] = ["text": text]
+        let fixture = try driver([apps(.muse), initial, typing,
+            try museStep("press_key", observation: museObservation(thread: thread, messages: [.init(role: .user, text: text), .init(role: .assistant, text: "Unicode preserved")]))])
+        defer { fixture.remove() }
+        let answer = try await museAdapter(fixture).reply(text, binding: .init(comparisonID: owner, threadID: thread, title: "Saved")) { _ in }
+        XCTAssertEqual(answer, "Unicode preserved")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, 1)
+        assertMuseBackground(calls)
+    }
+
+    func testMuseResumeFocusesCompoundComposerByFreshGeometryWithoutAXPress() async throws {
+        let owner = UUID(), thread = UUID()
+        var initial = windows(), unfocused = museObservation(thread: thread)
+        unfocused.composerFocused = false
+        initial["native"] = try object(unfocused)
+        var composer = element("AXButton", "Message Attach file Dictate a message Send", token: "s00000001:composer")
+        composer["frame"] = ["x": 300, "y": 600, "w": 600, "h": 50]
+        let fixture = try driver([apps(.muse), initial, capturedNavigation(["elements": [composer]]),
+                                  try museStep("click", observation: museObservation(thread: thread))])
+        defer { fixture.remove() }
+        let binding = try await museAdapter(fixture).prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: thread, title: "Saved"))
+        XCTAssertEqual(binding.threadID, thread)
+        let calls = try await finishedCalls(fixture)
+        let click = try XCTUnwrap(calls.first { $0.tool == "click" })
+        XCTAssertEqual(click.arguments["x"] as? Int, 600)
+        XCTAssertEqual(click.arguments["y"] as? Int, 788)
+        XCTAssertNil(click.arguments["element_token"], "AXPress on this composer opens its file picker")
+        let path = try XCTUnwrap(calls.first { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Private captures must be removed after use")
+        assertMuseBackground(calls)
+    }
+
+    func testMuseInvalidMissingOrMismatchedCaptureCannotClickSavedChat() async throws {
+        let thread = UUID(), owner = UUID()
+        let list: [String: Any] = ["elements": [element("AXButton", "New side chat"), element("AXButton", "Saved"), element("AXSplitter", "Resize panel")]]
+        for fault in ["invalid", "missing", "wrong_window", "wrong_dimensions", "wrong_path", "outside", "window_moved", "overflow"] {
+            let other = UUID()
+            var initial = windows(); initial["native"] = try object(museObservation(thread: other))
+            var capture = capturedNavigation(list)
+            var result = capture["result"] as! [String: Any]
+            if fault == "invalid" { result["screenshot_frame_valid"] = false }
+            if fault == "wrong_window" { result["window_id"] = 999 }
+            if fault == "wrong_dimensions" { result["screenshot_width"] = 1500 }
+            if fault == "outside" {
+                var elements = result["elements"] as! [[String: Any]]
+                elements[1]["frame"] = ["x": 0, "y": 0, "w": 20, "h": 20]
+                result["elements"] = elements
+            }
+            if fault == "overflow" {
+                result["window_bounds"] = ["x": 1e308, "y": 0.0, "width": 1e308, "height": 600.0]
+                var elements = result["elements"] as! [[String: Any]]
+                elements[1]["frame"] = ["x": 1e308, "y": 10.0, "w": 1e308, "h": 40.0]
+                result["elements"] = elements
+            }
+            capture["result"] = result
+            if fault == "missing" { capture["capture"] = "missing" }
+            if fault == "wrong_path" { capture["capture"] = "wrong_path" }
+            if fault == "window_moved" {
+                var moved = museObservation(thread: other); moved.windowBounds = .init(x: 300, y: 100, width: 800, height: 600)
+                capture["native"] = try object(moved)
+            }
+            let fixture = try driver([apps(.muse), initial, snapshot(list), capture])
+            defer { fixture.remove() }
+            let error = await failure { try await self.museAdapter(fixture).prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: thread, title: "Saved")) }
+            XCTAssertTrue(error.contains("geometry"), "\(fault): \(error)")
+            let calls = try await finishedCalls(fixture)
+            XCTAssertFalse(calls.contains { ["click", "type_text", "press_key"].contains($0.tool) })
+            let path = try XCTUnwrap(calls.last { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        }
+    }
+
+    private func capturedNavigation(_ state: [String: Any]) -> [String: Any] {
+        var result = state
+        var index = 0
+        result["elements"] = (state["elements"] as! [[String: Any]]).map { element in
+            var element = element
+            if element["role"] as? String == "AXButton", element["label"] as? String != "New side chat", element["frame"] == nil {
+                element["frame"] = ["x": 240, "y": 150 + index * 40, "w": 200, "h": 40]
+                index += 1
+            }
+            return element
+        }
+        result["pid"] = 4242; result["window_id"] = 101
+        result["window_bounds"] = ["x": 200, "y": 100, "width": 800, "height": 600]
+        result["screenshot_frame_valid"] = true
+        result["screenshot_width"] = 1200; result["screenshot_height"] = 900
+        result["screenshot_scale"] = 2 // The returned PNG was resized; do not multiply by this.
+        var step = snapshot(result)
+        step["capture"] = "valid"
+        return step
+    }
+
+    private func museObservation(thread: UUID? = nil, draft: String = "", messages: [MuseAppMessage] = [], title: String = "Muse side chat") -> MuseAppObservation {
+        .init(url: thread.map { URL(string: "https://muse.ai/thread/\($0.uuidString)")! } ?? MuseSideChatBinding.newURL,
+              draft: draft, composerFocused: true, messages: messages, windowBounds: .init(x: 200, y: 100, width: 800, height: 600), title: title)
+    }
+    private func object(_ observation: MuseAppObservation) throws -> [String: Any] {
+        try JSONSerialization.jsonObject(with: JSONEncoder().encode(observation)) as! [String: Any]
+    }
+    private func setNative(_ observation: MuseAppObservation, in fixture: DriverFixture) throws {
+        try JSONEncoder().encode(observation).write(to: fixture.directory.appendingPathComponent("native.json"), options: .atomic)
+    }
+    private func museStep(_ tool: String, observation: MuseAppObservation, token: String? = nil) throws -> [String: Any] {
+        var result = step(tool, ["effect": "unverifiable", "delivered_chars": 0], arguments: token.map { ["element_token": $0] } ?? [:])
+        result["native"] = try object(observation)
+        return result
+    }
+    private func museCreationSteps(owner: UUID, thread: UUID, answer: String?) throws -> [[String: Any]] {
+        var initial = windows()
+        var main = museObservation(); main.url = URL(string: "https://muse.ai/")!; main.composerFocused = false
+        initial["native"] = try object(main)
+        let reference = "[msgblast request <attempt-id>]"
+        let wire = reference + "\n\n" + prompt
+        var messages = [MuseAppMessage(role: .user, text: wire)]
+        if let answer { messages.append(.init(role: .assistant, text: answer)) }
+        func input(_ tool: String, draft: String, arguments: [String: Any]) throws -> [String: Any] {
+            var step = try museStep(tool, observation: museObservation(draft: draft))
+            step["arguments"] = arguments
+            return step
+        }
+        return [apps(.muse), initial,
+                snapshot(["elements": [element("AXButton", "New side chat", token: "s00000001:new")]]),
+                try museStep("click", observation: museObservation(), token: "s00000001:new"),
+                apps(.muse), windows(),
+                try input("type_text", draft: reference, arguments: ["text": reference]),
+                try input("press_key", draft: reference + "\n\n", arguments: ["key": "return", "modifiers": ["shift"]]),
+                try input("press_key", draft: reference + "\n\n\n", arguments: ["key": "return", "modifiers": ["shift"]]),
+                try input("type_text", draft: wire, arguments: ["text": prompt]),
+                try museStep("press_key", observation: museObservation(thread: thread, messages: messages))]
+    }
+    private final class MuseReadFault: @unchecked Sendable {
+        private let lock = NSLock()
+        private var failed = false
+        func shouldFail() -> Bool { lock.withLock { if failed { return false }; failed = true; return true } }
+    }
+    private func museAdapter(_ fixture: DriverFixture, timeout: Duration = .seconds(3), transientWindowFailure: Bool = false) -> MuseAppConversation {
+        let fault = MuseReadFault()
+        let url = fixture.directory.appendingPathComponent("native.json")
+        return MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: timeout, callTimeout: 3)) { target in
+            guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
+            let observation = try JSONDecoder().decode(MuseAppObservation.self, from: Data(contentsOf: url))
+            if transientWindowFailure, observation.url == MuseSideChatBinding.newURL, fault.shouldFail() {
+                throw DesktopAppError.unavailable("Muse's exact window is temporarily unavailable")
+            }
+            return observation
+        }
+    }
+    private func assertMuseBackground(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {
+        for call in calls where ["click", "type_text", "press_key"].contains(call.tool) {
+            XCTAssertEqual(call.arguments["delivery_mode"] as? String, "background", file: file, line: line)
+            XCTAssertEqual(call.arguments["pid"] as? Int, 4242, file: file, line: line)
+            XCTAssertEqual(call.arguments["window_id"] as? Int, 101, file: file, line: line)
+        }
+    }
+
     private func adapter(_ fixture: DriverFixture, replyTimeout: Duration = .seconds(3), callTimeout: TimeInterval = 3) -> DesktopAppConversation {
         DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout))
     }
@@ -581,7 +1048,7 @@ final class DesktopAppDriverTests: XCTestCase {
     }
     private static let driverScript = #"""
     #!/usr/bin/env python3
-    import fcntl, json, os, pathlib, sys, time
+    import fcntl, json, os, pathlib, struct, sys, time, zlib
     root = pathlib.Path(__file__).parent
     if len(sys.argv) != 4 or sys.argv[1] != "call":
         raise SystemExit(90)
@@ -596,15 +1063,33 @@ final class DesktopAppDriverTests: XCTestCase {
         index = int((root / "index").read_text())
         plan = json.loads((root / "plan.json").read_text())
         expected = plan[index] if index < len(plan) else {}
+        if "<attempt-id>" in json.dumps(expected):
+            # The real session durably creates the request ID before driver input.
+            request_id = json.loads((root / "state.json").read_text())["attempts"][0]["id"].lower()
+            expected = json.loads(json.dumps(expected).replace("<attempt-id>", request_id))
         if expected.get("tool") != tool or any(arguments.get(k) != v for k, v in expected.get("arguments", {}).items()):
             print(json.dumps({"isError": True, "message": "Unexpected fake-driver call"}))
             raise SystemExit(91)
+        if "native" in expected:
+            (root / "native.json").write_text(json.dumps(expected["native"]))
         if not expected.get("repeat"):
             (root / "index").write_text(str(index + 1))
     if expected.get("wait_for_release"):
         deadline = time.monotonic() + 30
         while not (root / "release").exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-    print(json.dumps(expected["result"]))
+    result = expected["result"]
+    if "capture" in expected:
+        capture_path = pathlib.Path(arguments["screenshot_out_file"])
+        result["screenshot_file_path"] = str(capture_path.resolve() if expected["capture"] != "wrong_path" else capture_path.parent / "other.png")
+        if expected["capture"] != "missing":
+            width, height = 1200, 900
+            def chunk(kind, data):
+                body = kind + data
+                return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
+            pixels = (b"\x00" + b"\xff\xff\xff" * width) * height
+            png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b"")
+            capture_path.write_bytes(png)
+    print(json.dumps(result))
     """#
 }

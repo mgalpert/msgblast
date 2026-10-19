@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 
 public enum DesktopAppProvider: String, Codable, Sendable {
     case muse, grokBot, wabi
@@ -18,12 +19,14 @@ enum DesktopAppError: LocalizedError {
 
 struct DesktopAppSnapshot: Decodable, Sendable {
     struct Element: Decodable, Sendable {
+        struct Frame: Decodable, Sendable { let x: Double; let y: Double; let w: Double; let h: Double }
         let role: String
         var label: String?
         var value: String?
         var element_token: String?
         var in_web_content: Bool?
         var enabled: Bool?
+        var frame: Frame?
         var text: String { value ?? label ?? "" }
     }
     let elements: [Element]
@@ -31,6 +34,41 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     var element_count: Int?
     var returned_element_count: Int?
     var total_element_count: Int?
+    struct Bounds: Codable, Equatable, Sendable { let x: Double; let y: Double; let width: Double; let height: Double }
+    var window_bounds: Bounds?
+    var pid: Int?
+    var window_id: Int?
+    var screenshot_frame_valid: Bool?
+    var screenshot_width: Int?
+    var screenshot_height: Int?
+    var screenshot_file_path: String?
+
+    func pixelCenter(of element: Element, target: DesktopAppConversation.Target, imageURL: URL) throws -> (x: Int, y: Int) {
+        try checkReadable()
+        guard pid == target.pid, window_id == target.window, screenshot_frame_valid == true,
+              screenshot_file_path.map({ URL(fileURLWithPath: $0).resolvingSymlinksInPath() }) == imageURL.resolvingSymlinksInPath(), let width = screenshot_width, let height = screenshot_height,
+              width > 0, height > 0, width <= 16_384, height <= 16_384,
+              let bounds = window_bounds, let frame = element.frame, element.enabled != false,
+              element.element_token != nil, body.contains(where: { $0.element_token == element.element_token }),
+              [bounds.x, bounds.y, bounds.width, bounds.height, frame.x, frame.y, frame.w, frame.h].allSatisfy(\.isFinite),
+              bounds.width > 0, bounds.height > 0, frame.w > 0, frame.h > 0,
+              frame.x >= bounds.x, frame.y >= bounds.y,
+              frame.x + frame.w <= bounds.x + bounds.width, frame.y + frame.h <= bounds.y + bounds.height,
+              let source = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              properties[kCGImagePropertyPixelWidth] as? Int == width,
+              properties[kCGImagePropertyPixelHeight] as? Int == height else {
+            throw DesktopAppError.unavailable("Muse's current screenshot and control geometry could not be verified. Nothing was clicked.")
+        }
+        // Account for window origin and the driver's resized capture. Its scale
+        // field alone does not describe the returned PNG's dimensions.
+        let x = ((frame.x + frame.w / 2 - bounds.x) * Double(width) / bounds.width).rounded()
+        let y = ((frame.y + frame.h / 2 - bounds.y) * Double(height) / bounds.height).rounded()
+        guard x.isFinite, y.isFinite, x >= 0, x < Double(width), y >= 0, y < Double(height) else {
+            throw DesktopAppError.unavailable("Muse's control geometry is outside the current capture.")
+        }
+        return (Int(x), Int(y))
+    }
 
     var body: ArraySlice<Element> { elements.prefix { $0.role != "AXMenuBar" } }
     func checkReadable() throws {
@@ -53,7 +91,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             return headings[0]
         case .muse:
             // The Muse heading is shared by its main chat and every side chat.
-            throw DesktopAppError.unavailable("Muse side-chat tracking and draft verification are not available yet. Automatic sends remain disabled.")
+            throw DesktopAppError.unavailable("Muse requires a tracked side-chat binding. Connect Muse through its dedicated side-chat adapter.")
         }
     }
     func composer(app: DesktopAppProvider) throws -> (element: Element, draft: String) {
@@ -155,17 +193,18 @@ actor DesktopAppConversation {
                      "/opt/homebrew/bin", "/usr/local/bin"] + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
         return paths.map { URL(fileURLWithPath: $0).appendingPathComponent("cua-driver") }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
-    private struct Target: Sendable { let pid: Int; let window: Int }
+    struct Target: Sendable, Equatable { let pid: Int; let window: Int }
     private struct AppList: Decodable, Sendable { struct App: Decodable, Sendable { let bundle_id: String; let pid: Int; let running: Bool }; let apps: [App] }
     private struct WindowList: Decodable, Sendable {
         struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; let bounds: Bounds }
         let windows: [Window]
     }
-    private func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], as type: Response.Type) async throws -> Response {
+    func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
         guard let executable else { throw DesktopAppError.unavailable("Install cua-driver and grant its Accessibility permission before connecting desktop apps.") }
         var object: [String: Any] = arguments
         for (key, value) in numbers { object[key] = value }
         for (key, value) in booleans { object[key] = value }
+        for (key, value) in arrays { object[key] = value }
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
         let cancellation = AgentCancellation()
         let callTimeout = timing.callTimeout
@@ -184,8 +223,8 @@ actor DesktopAppConversation {
         }
         return try JSONDecoder().decode(type, from: data)
     }
-    private struct Action: Decodable, Sendable { var effect: String? }
-    private func target(_ app: DesktopAppProvider) async throws -> Target {
+    struct Action: Decodable, Sendable { var effect: String? }
+    func target(_ app: DesktopAppProvider) async throws -> Target {
         let apps = try await call("list_apps", [:], as: AppList.self)
         guard let live = apps.apps.first(where: { $0.bundle_id == app.bundleID && $0.running }) else {
             throw DesktopAppError.unavailable("Open \(app.name), sign in, and select its conversation first.")
@@ -197,8 +236,10 @@ actor DesktopAppConversation {
         }
         return Target(pid: live.pid, window: window.window_id)
     }
-    private func snapshot(_ target: Target, session: String) async throws -> DesktopAppSnapshot {
-        try await call("get_window_state", ["session": session], numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": false], as: DesktopAppSnapshot.self)
+    func snapshot(_ target: Target, session: String, screenshotURL: URL? = nil) async throws -> DesktopAppSnapshot {
+        var arguments = ["session": session]
+        if let screenshotURL { arguments["screenshot_out_file"] = screenshotURL.path }
+        return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
     func inspect(_ app: DesktopAppProvider) async throws -> DesktopConversationBinding {
         guard !occupied.contains(app) else { throw DesktopAppError.unavailable("\(app.name) is already handling a request.") }
@@ -245,7 +286,7 @@ actor DesktopAppConversation {
         }
         throw DesktopAppError.unavailable("No stable reply was observed. The app may still be working. Check the conversation before explicitly allowing another request.")
     }
-    private func endSession(_ session: String) async {
+    func endSession(_ session: String) async {
         _ = try? await call("end_session", ["session": session], as: Action.self)
     }
     private func validate(_ state: DesktopAppSnapshot, app: DesktopAppProvider, binding: DesktopConversationBinding) throws {

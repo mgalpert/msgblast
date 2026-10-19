@@ -171,11 +171,13 @@ See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbo
 
 Optional **Muse App**, **Grok Bot App**, and **Wabi** entries appear under More
 agents. They use native msgblast conversation panes and an installed `cua-driver`
-command, while authentication stays in the desktop app. Open the app conversation,
-enable the agent, and choose **Connect open conversation**. These entries keep
-separate state from the existing Muse website and Grok Bot webhook.
-See [desktop app conversations](desktop-app-conversations.md) for capabilities
-and the current Muse limitation.
+command, while authentication stays in the desktop app. Muse creates a side chat
+per comparison and also needs msgblast Accessibility permission and driver window
+capture. Enable the agent and choose **Connect Muse**. For Grok Bot or Wabi,
+select the intended conversation and choose **Connect open conversation**.
+These entries keep separate state from the existing Muse website and Grok Bot
+webhook. See [desktop app conversations](desktop-app-conversations.md) for
+capabilities and limits.
 
 Dev needs its own Full Disk Access for Messages history, Contacts permission for
 contact lookup/writes, and Automation permission to send through Messages. Web

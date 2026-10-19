@@ -36,7 +36,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     var localConversationDirectoryName: String {
         switch self { case .codexCLI: "chatgpt"; case .claudeCode: "claude"; default: rawValue }
     }
-    public var sharesOneConversation: Bool { self == .os3 || desktopApp != nil }
+    public var sharesOneConversation: Bool { self == .os3 || (desktopApp != nil && self != .museApp) }
     public var newChatURL: URL { self == .muse ? URL(string: "https://muse.ai/thread/new")! : homeURL }
     public func isSavedConversation(_ url: URL) -> Bool {
         guard isChatURL(url), url.query == nil, url.fragment == nil else { return false }

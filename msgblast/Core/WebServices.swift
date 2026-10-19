@@ -59,6 +59,7 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var savedAvatar: Data?
     public var grokBotRememberedConnection: Bool?
     public var desktopConversation: DesktopConversationBinding?
+    public var museAppConversations: [String: MuseSideChatBinding] = [:]
     var legacyLocalStatePresent = false
     public var sessionID = UUID()
     public var displayName: String?
@@ -78,12 +79,13 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case museAppConversations, desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
         desktopConversation = try c.decodeIfPresent(DesktopConversationBinding.self, forKey: .desktopConversation)
+        museAppConversations = try c.decodeIfPresent([String: MuseSideChatBinding].self, forKey: .museAppConversations) ?? [:]
         dotsURL = try c.decodeIfPresent(URL.self, forKey: .dotsURL)
         savedAvatar = try c.decodeIfPresent(Data.self, forKey: .savedAvatar)
         grokBotRememberedConnection = try c.decodeIfPresent(Bool.self, forKey: .grokBotRememberedConnection)
@@ -110,6 +112,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(providerIdentityVersion, forKey: .providerIdentityVersion)
         try c.encodeIfPresent(enabled, forKey: .enabled)
         try c.encodeIfPresent(desktopConversation, forKey: .desktopConversation)
+        try c.encode(museAppConversations, forKey: .museAppConversations)
         try c.encodeIfPresent(dotsURL, forKey: .dotsURL)
         try c.encodeIfPresent(savedAvatar, forKey: .savedAvatar)
         try c.encodeIfPresent(grokBotRememberedConnection, forKey: .grokBotRememberedConnection)
@@ -128,6 +131,24 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(localSessionPolicyVersions, forKey: .localSessionPolicyVersions)
         try c.encode(localConfiguredSessionIDs, forKey: .localConfiguredSessionIDs)
         try c.encode(localPreviousSessionIDs, forKey: .localPreviousSessionIDs)
+    }
+    public func museAppBinding(for comparison: UUID) throws -> MuseSideChatBinding? {
+        var owners: Set<UUID> = []
+        for (key, binding) in museAppConversations {
+            guard key == binding.comparisonID.uuidString,
+                  binding.threadID.map({ owners.insert($0).inserted }) ?? true else {
+                throw DesktopAppError.unavailable("Saved Muse side-chat ownership is inconsistent. The saved state was preserved.")
+            }
+        }
+        return museAppConversations[comparison.uuidString]
+    }
+    public mutating func recordMuseAppBinding(_ binding: MuseSideChatBinding) throws {
+        let previous = try museAppBinding(for: binding.comparisonID)
+        guard previous?.threadID == nil || previous?.threadID == binding.threadID,
+              !museAppConversations.values.contains(where: { $0.comparisonID != binding.comparisonID && $0.threadID != nil && $0.threadID == binding.threadID }) else {
+            throw DesktopAppError.unavailable("Muse's side-chat identity changed or belongs to another comparison. The original binding was preserved.")
+        }
+        museAppConversations[binding.comparisonID.uuidString] = binding
     }
     public func resumableLocalSessionID(for comparison: UUID) -> String? {
         let key = comparison.uuidString
