@@ -689,10 +689,12 @@ private struct WebAgentPane: View {
 
     private func nativeConversation(_ provider: PersonalAgentProvider?) -> some View {
         VStack(spacing: 12) {
-            let connected = session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
+            let connected = session.provider.desktopApp != nil ? session.desktopReady : session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
             if !session.isEnabled {
                 Text("Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
                     .font(.caption).foregroundStyle(.secondary)
+            } else if session.provider.desktopApp != nil {
+                DesktopAppSetupView(session: session, busy: busy)
             } else if session.provider == .grokbot {
                 if session.fixture {
                     Text("Simulated webhook and callback · no Bot contacted")
@@ -739,7 +741,7 @@ private struct WebAgentPane: View {
                     if let id { proxy.scrollTo(id, anchor: .bottom) }
                 }
             }
-            if session.isSending, provider != nil { Button("Cancel \(session.name) reply") { session.cancelNativeRequest() } }
+            if session.isSending, provider != nil || session.provider.desktopApp != nil { Button("Cancel \(session.name) reply") { session.cancelNativeRequest() } }
             if session.latestComparisonAttempt?.status == .uncertain {
                 Text("The last request was incomplete. Continuing may consume provider usage again.").font(.caption).foregroundStyle(.orange)
                 Button("Acknowledge incomplete request") { session.acknowledgeIncompleteRequest() }.disabled(busy)

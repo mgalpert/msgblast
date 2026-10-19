@@ -110,7 +110,9 @@ struct AgentGridView: View {
                         .accessibilityLabel("Done setting up \(catalog.first { $0.id == id }?.name ?? "agent")")
                 }
                 ScrollView {
-                    if let session = session(for: id), session.provider == .grokbot {
+                    if let session = session(for: id), session.provider.desktopApp != nil {
+                        DesktopAppSetupView(session: session, busy: busy)
+                    } else if let session = session(for: id), session.provider == .grokbot {
                         if session.grokBotIsConfigured && !session.isEnabled {
                             Button("Enable \(session.name)") {
                                 session.updateState { $0.enabled = true; $0.selected = false }

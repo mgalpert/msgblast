@@ -169,6 +169,14 @@ rabbit OS3 is available in onboarding and the featured grid. It continues the
 account's single conversation across comparisons, including earlier context.
 See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbot.md).
 
+Optional **Muse App**, **Grok Bot App**, and **Wabi** entries appear under More
+agents. They use native msgblast conversation panes and an installed `cua-driver`
+command, while authentication stays in the desktop app. Open the app conversation,
+enable the agent, and choose **Connect open conversation**. These entries keep
+separate state from the existing Muse website and Grok Bot webhook.
+See [desktop app conversations](desktop-app-conversations.md) for capabilities
+and the current Muse limitation.
+
 Dev needs its own Full Disk Access for Messages history, Contacts permission for
 contact lookup/writes, and Automation permission to send through Messages. Web
 and CLI chats do not need Messages access. Grants do not transfer from production,

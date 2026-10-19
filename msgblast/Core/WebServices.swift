@@ -58,6 +58,7 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var dotsURL: URL?
     public var savedAvatar: Data?
     public var grokBotRememberedConnection: Bool?
+    public var desktopConversation: DesktopConversationBinding?
     var legacyLocalStatePresent = false
     public var sessionID = UUID()
     public var displayName: String?
@@ -77,11 +78,12 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        desktopConversation = try c.decodeIfPresent(DesktopConversationBinding.self, forKey: .desktopConversation)
         dotsURL = try c.decodeIfPresent(URL.self, forKey: .dotsURL)
         savedAvatar = try c.decodeIfPresent(Data.self, forKey: .savedAvatar)
         grokBotRememberedConnection = try c.decodeIfPresent(Bool.self, forKey: .grokBotRememberedConnection)
@@ -107,6 +109,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(providerIdentityVersion, forKey: .providerIdentityVersion)
         try c.encodeIfPresent(enabled, forKey: .enabled)
+        try c.encodeIfPresent(desktopConversation, forKey: .desktopConversation)
         try c.encodeIfPresent(dotsURL, forKey: .dotsURL)
         try c.encodeIfPresent(savedAvatar, forKey: .savedAvatar)
         try c.encodeIfPresent(grokBotRememberedConnection, forKey: .grokBotRememberedConnection)

@@ -88,6 +88,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if !storageFailed && error != page.error { error = page.error }
         if avatar != page.avatar { avatar = page.avatar }
     }
+    @Published public private(set) var desktopReady = false
+    @Published public private(set) var desktopStatus = "Connect an open app conversation."
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
@@ -287,7 +289,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             return
         }
-        if provider.personalAgentProvider != nil {
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil {
             Task { await refresh() }
             return
         }
@@ -448,6 +450,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public var locationLabel: String {
+        if provider.desktopApp != nil { return fixture ? "Simulated desktop app · no app contacted" : "Desktop app · Shared conversation" }
         if provider == .grokbot { return fixture ? "Simulated webhook · no Bot contacted" : "Webhook connection" }
         if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
@@ -609,6 +612,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func refresh() async {
         guard connected else { return }
+        if provider.desktopApp != nil {
+            await refreshDesktop(); return
+        }
         if provider == .grokbot {
             guard !loading, !refreshing else { return }
             await refreshGrokBot(); return
@@ -870,7 +876,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @discardableResult
     public func send(_ text: String, comparisonID: UUID? = nil) async -> WebSendAttempt? {
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID) }
-        if provider.personalAgentProvider != nil { return await sendNative(text, comparisonID: comparisonID) }
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID) }
         guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
@@ -1050,10 +1056,48 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { self.error = "Could not save the recovered conversation. Repair storage before sending." }
     }
 
+    public func connectDesktopConversation() async {
+        guard let app = provider.desktopApp, !isSending, !storageFailed, !loading, !shuttingDown else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let binding = fixture ? DesktopConversationBinding(name: app == .grokBot ? "Demo Bot" : app.name) : try await DesktopAppConversation.shared.inspect(app)
+            state.desktopConversation = binding
+            try save()
+            connected = true
+            desktopReady = true
+            desktopStatus = "Connected to \(binding.name) · background input"
+            error = nil
+        } catch { desktopReady = false; desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
+        updateNativeSnapshot()
+    }
+
+    private func refreshDesktop() async {
+        guard let app = provider.desktopApp, !loading, !refreshing, !shuttingDown else { return }
+        refreshing = true
+        defer { refreshing = false }
+        desktopReady = false
+        if let binding = state.desktopConversation {
+            do {
+                let current = fixture ? binding : try await DesktopAppConversation.shared.inspect(app)
+                guard current == binding else { throw WebSessionFailure.notReady("Open \(binding.name) in \(app.name), or reconnect to the intended conversation.") }
+                desktopReady = true
+                desktopStatus = "Connected to \(binding.name) · background input"
+            } catch { desktopStatus = error.localizedDescription }
+        } else { desktopStatus = "Open the intended conversation in \(app.name), then connect it here." }
+        updateNativeSnapshot()
+    }
+
     private func updateNativeSnapshot() {
         var fresh = snapshot
         fresh.messages = state.comparisonID.flatMap { state.localConversations[$0.uuidString] } ?? []
         fresh.draft = state.draft
+        if provider.desktopApp != nil {
+            fresh.ready = isEnabled && !storageFailed && desktopReady && !hasIncompleteNativeRequest(for: state.comparisonID)
+            fresh.reason = !isEnabled ? "Enable \(provider.name) to send." : hasIncompleteNativeRequest(for: state.comparisonID) ? "Review the previous incomplete request before continuing." : desktopStatus
+            if fresh != snapshot { snapshot = fresh }
+            return
+        }
         if provider == .grokbot {
             fresh.ready = isEnabled && !storageFailed && !configuringGrokBot && (fixture || (grokBotConnectionReady == true && grokBotCredentials != nil)) && !hasIncompleteNativeRequest(for: state.comparisonID)
             fresh.reason = !isEnabled ? "Enable Grok Bot in Settings to send." : hasIncompleteNativeRequest(for: state.comparisonID) ? "Waiting for the previous request. No automatic resend." : grokBotConnectionActivity?.title ?? (fresh.ready ? "Grok Bot ready" : "Connect Grok Bot's webhook in Settings.")
@@ -1075,6 +1119,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public func hasUnresolvedSend(_ text: String) -> Bool {
+        if provider.desktopApp != nil { return hasIncompleteNativeRequest(for: state.comparisonID) }
         if provider.sharesOneConversation {
             return state.attempts.contains { $0.status.isUnresolved && Self.normalized($0.text) == Self.normalized(text) }
         }
@@ -1082,7 +1127,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return hasIncompleteNativeRequest(for: state.comparisonID)
     }
     private func hasIncompleteNativeRequest(for id: UUID?) -> Bool {
-        state.attempts.contains { $0.comparisonID == id && $0.status.isUnresolved }
+        state.attempts.contains { (provider.desktopApp != nil || $0.comparisonID == id) && $0.status.isUnresolved }
     }
 
     public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
@@ -1129,10 +1174,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             started = true
             let savedSessionID = state.resumableLocalSessionID(for: id)
             let workingDirectory = conversationWorkingDirectory(id)
+            let binding = state.desktopConversation
             let request = Task { [fixture, provider, installedAgent] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
                     return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
+                }
+                if let app = provider.desktopApp {
+                    guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
+                    return PersonalAgentReply(text: try await DesktopAppConversation.shared.reply(text, app: app, binding: binding), sessionID: binding.name)
                 }
                 guard let installedAgent else { throw PersonalAgentError.unavailable(provider.name) }
                 return try await LocalPersonalAgent.reply(to: history, using: installedAgent, sessionID: savedSessionID, workingDirectory: workingDirectory)
@@ -1141,11 +1191,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let answer = try await withTaskCancellationHandler { try await request.value } onCancel: { request.cancel() }
             try Task.checkCancellation()
             state.localConversations[id.uuidString] = history + [WebPageMessage(role: "assistant", text: answer.text)]
-            state.recordLocalSession(answer.sessionID, for: id)
+            if provider.desktopApp == nil { state.recordLocalSession(answer.sessionID, for: id) }
             if state.draft == text { state.draft = "" }
             state.localDrafts[id.uuidString] = state.draft
             attempt.status = .observed; attempt.messageID = user.id
-            attempt.detail = fixture ? "Simulated reply. No local CLI or provider was contacted." : "Completed reply from the local CLI."
+            attempt.detail = fixture ? "Simulated reply. No app, local CLI or provider was contacted." : provider.desktopApp != nil ? "Reply text observed in the background and stable for three seconds. The app may continue working." : "Completed reply from the local CLI."
             try store(attempt)
         } catch {
             attempt.status = started ? .uncertain : .notSent
