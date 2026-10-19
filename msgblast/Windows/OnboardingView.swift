@@ -394,6 +394,10 @@ private struct OnboardingProviderView: View {
                 cliSetup(provider)
                 Spacer()
             } else {
+                if session.provider == .gemini {
+                    Text("Sign in to Gemini to save and reopen separate chats for each comparison.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 if session.provider == .hark {
                     Text("Sign in to Hark here. Use its own composer to chat; shared sending is not supported yet.")
                         .font(.callout).foregroundStyle(.secondary)

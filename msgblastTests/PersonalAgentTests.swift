@@ -19,7 +19,7 @@ final class PersonalAgentTests: XCTestCase {
         let directory = try fixtureDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let web = WebAgents(directory: directory, fixture: true)
-        XCTAssertEqual(web.availableSessions.map(\.provider), WebProvider.webDefaults + [.dots, .os3, .hark])
+        XCTAssertEqual(web.availableSessions.map(\.provider), WebProvider.webDefaults + [.dots, .os3, .hark, .gemini])
         XCTAssertTrue(web.selected.isEmpty)
         for provider in WebProvider.optionalProviders {
             let session = try XCTUnwrap(web.sessions.first { $0.provider == provider })

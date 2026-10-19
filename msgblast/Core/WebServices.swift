@@ -52,6 +52,12 @@ struct WebReceiptContext: Codable, Equatable, Sendable {
     var candidateURL: URL?
 }
 
+public struct GeminiModelChoice: Codable, Equatable, Hashable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public init(id: String, name: String) { self.id = id; self.name = name }
+}
+
 public struct WebWorkspaceState: Codable, Sendable {
     public var providerIdentityVersion = 2
     public var enabled: Bool?
@@ -61,6 +67,7 @@ public struct WebWorkspaceState: Codable, Sendable {
     var legacyLocalStatePresent = false
     public var sessionID = UUID()
     public var displayName: String?
+    public var geminiModel: GeminiModelChoice?
     public var draft = ""
     public var selected = true
     public var messageRecipients: Set<UUID> = []
@@ -77,7 +84,7 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, geminiModel, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
@@ -88,6 +95,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         legacyLocalStatePresent = c.contains(.localConversations) || c.contains(.localSessionIDs) || c.contains(.localDrafts)
         sessionID = try c.decode(UUID.self, forKey: .sessionID)
         displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        geminiModel = try c.decodeIfPresent(GeminiModelChoice.self, forKey: .geminiModel)
         draft = try c.decodeIfPresent(String.self, forKey: .draft) ?? ""
         selected = try c.decodeIfPresent(Bool.self, forKey: .selected) ?? c.decodeIfPresent(Bool.self, forKey: .includeMuse) ?? true
         messageRecipients = try c.decodeIfPresent(Set<UUID>.self, forKey: .messageRecipients) ?? []
@@ -112,6 +120,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encodeIfPresent(grokBotRememberedConnection, forKey: .grokBotRememberedConnection)
         try c.encode(sessionID, forKey: .sessionID)
         try c.encodeIfPresent(displayName, forKey: .displayName)
+        try c.encodeIfPresent(geminiModel, forKey: .geminiModel)
         try c.encode(draft, forKey: .draft)
         try c.encode(selected, forKey: .selected)
         try c.encode(messageRecipients, forKey: .messageRecipients)

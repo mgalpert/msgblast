@@ -153,6 +153,7 @@ struct AgentGridView: View {
         let tile = AgentGridTile(entry: entry, size: size, avatars: avatars, editing: editing,
             available: available, selected: selected(entry.id), arrived: arrived == entry.id || dragging == entry.id,
             subtitle: available || editing ? nil : subtitle(entry.id),
+            modelName: available || editing ? nil : session(for: entry.id)?.state.geminiModel?.name,
             action: { if available { add(entry.id, scroll: scroll) } else if !editing { activate(entry.id) } },
             hide: { hide(entry.id) })
             .disabled(busy)
@@ -198,6 +199,9 @@ struct AgentGridView: View {
                 }
                 if session.provider.supportsCopies || session.provider == .grokbot {
                     Button("Rename…") { configuration = .rename(session.id) }.disabled(busy)
+                }
+                if session.provider == .gemini {
+                    Button("Model settings…") { configuration = .model(session.id) }.disabled(busy || session.isSending)
                 }
                 if session.provider == .grokbot {
                     Button("Add another Bot…") { configuration = .addBot }.disabled(busy)
@@ -299,6 +303,7 @@ private struct AgentGridTile: View {
     let selected: Bool
     let arrived: Bool
     let subtitle: String?
+    let modelName: String?
     let action: () -> Void
     let hide: () -> Void
 
@@ -311,7 +316,7 @@ private struct AgentGridTile: View {
                 } else {
                     Button(action: action) { avatar }.buttonStyle(.plain)
                         .accessibilityLabel(available ? "Add \(entry.name)" : entry.name)
-                        .accessibilityValue(available ? "Available to add" : subtitle ?? (selected ? "Selected" : "Not selected"))
+                        .accessibilityValue(available ? "Available to add" : subtitle ?? ([selected ? "Selected" : "Not selected", modelName].compactMap { $0 }.joined(separator: ", ")))
                 }
             }
                 .overlay(alignment: .topLeading) {
@@ -323,7 +328,7 @@ private struct AgentGridTile: View {
                     }
                 }
             Text(entry.name).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
-            if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+            if let subtitle = subtitle ?? modelName { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
         }.frame(maxWidth: .infinity).contentShape(Rectangle())
     }
 
@@ -439,11 +444,12 @@ struct FeaturedMessagesGridSetup: View {
 }
 
 enum AgentConfigurationAction: Identifiable {
-    case duplicate(WebAgentID), rename(WebAgentID), addBot
+    case duplicate(WebAgentID), rename(WebAgentID), model(WebAgentID), addBot
     var id: String {
         switch self {
         case .duplicate(let id): "duplicate:" + id.id
         case .rename(let id): "rename:" + id.id
+        case .model(let id): "model:" + id.id
         case .addBot: "add-bot"
         }
     }
@@ -457,36 +463,56 @@ struct AgentConfigurationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var separateAccount = false
+    @State private var models: [GeminiModelChoice] = []
+    @State private var modelID = ""
+    @State private var loadingModels = false
     @State private var error: String?
 
     private var source: WebAgentSession? {
         switch action {
-        case .duplicate(let id), .rename(let id): web.session(for: id)
+        case .duplicate(let id), .rename(let id), .model(let id): web.session(for: id)
         case .addBot: nil
         }
+    }
+    private var showsModels: Bool {
+        guard source?.provider == .gemini else { return false }
+        switch action { case .duplicate, .model: return true; default: return false }
     }
     private var title: String {
         switch action {
         case .duplicate: "Duplicate \(source?.name ?? "agent")"
         case .rename: "Rename agent"
+        case .model: "Gemini model"
         case .addBot: "Add Grok Bot"
         }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(title).font(.title2.bold())
-            TextField("Agent name", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Agent name")
+            if case .model = action {} else {
+                TextField("Agent name", text: $name).textFieldStyle(.roundedBorder).accessibilityLabel("Agent name")
+            }
             switch action {
             case .duplicate:
                 Toggle("Use another account", isOn: $separateAccount)
                 Text(separateAccount ? "Sign in separately in the new agent’s chat." : "Reuse this agent’s sign-in. Signing out affects copies that share this account.")
                     .font(.callout).foregroundStyle(.secondary)
-                Text("The copy starts a fresh conversation. Choose its model and reasoning level in the website’s controls; the name is your label, not a verified setting.")
+                Text(source?.provider == .gemini ? "The copy starts a separate chat. Save a different Gemini model below to compare both models with one prompt." : "The copy starts a fresh conversation. Choose its model and reasoning level in the website’s controls; the name is your label, not a verified setting.")
                     .font(.callout).foregroundStyle(.secondary)
             case .addBot:
                 Text("Connect this bot’s own routine after adding it. Its key and conversation history are kept separately from your other bots.")
                     .font(.callout).foregroundStyle(.secondary)
-            case .rename: EmptyView()
+            case .rename, .model: EmptyView()
+            }
+            if showsModels {
+                Picker("Saved model", selection: $modelID) {
+                    Text("Use website setting").tag("")
+                    ForEach(models) { model in Text(model.name).tag(model.id) }
+                }.accessibilityLabel("Saved Gemini model")
+                Text("Applied and checked before every shared prompt. If this model is unavailable, this agent won’t send.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button(loadingModels ? "Loading models…" : "Reload available models") { Task { await loadModels() } }
+                    .disabled(loadingModels || busy)
             }
             if let error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
             HStack {
@@ -494,7 +520,7 @@ struct AgentConfigurationSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
                     .accessibilityLabel("Save agent")
-                    .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80)
+                    .disabled(busy || loadingModels || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80)
             }
         }.padding(24).frame(width: 440)
         .onAppear {
@@ -504,20 +530,40 @@ struct AgentConfigurationSheet: View {
                 name = base
                 var suffix = 2
                 while web.sessions.contains(where: { $0.name == name }) { name = "\(base) \(suffix)"; suffix += 1 }
-            case .rename: name = source?.name ?? ""
+            case .rename, .model: name = source?.name ?? ""
             case .addBot: name = "Grok Bot \(web.sessions.filter { $0.provider == .grokbot }.count + 1)"
             }
+            if let model = source?.state.geminiModel { models = [model]; modelID = model.id }
         }
+        .task { if showsModels { await loadModels() } }
+    }
+    private func loadModels() async {
+        guard let source else { return }
+        loadingModels = true
+        defer { loadingModels = false }
+        do {
+            let available = try await source.availableGeminiModels()
+            models = available
+            if let saved = source.state.geminiModel, !models.contains(where: { $0.id == saved.id }) { models.append(saved) }
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
     private func save() {
         do {
+            let selectedModel = models.first { $0.id == modelID }
+            if showsModels, !modelID.isEmpty, selectedModel == nil {
+                throw WebAgentConfigurationError.unavailableModel
+            }
             switch action {
             case .duplicate:
                 guard let source else { throw WebAgentConfigurationError.unavailable }
-                try onCreated(web.duplicate(source, name: name, separateAccount: separateAccount))
+                try onCreated(web.duplicate(source, name: name, separateAccount: separateAccount, geminiModel: selectedModel))
             case .rename:
                 guard let source else { throw WebAgentConfigurationError.unavailable }
                 try source.rename(name)
+            case .model:
+                guard let source else { throw WebAgentConfigurationError.unavailable }
+                try source.setGeminiModel(selectedModel)
             case .addBot:
                 try onCreated(web.addGrokBot(name: name))
             }

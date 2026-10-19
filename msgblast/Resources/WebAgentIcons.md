@@ -68,3 +68,13 @@ The Dots demo uses synthetic SVG and CSS artwork and local conversation replies.
 `WebAgentIcons/instinct.jpg` is the updated contact photo shared by Instinct, exported from the user's Contacts at their request on October 9, 2026. The JPEG is preserved unchanged (SHA-256: `c8b5cc54b618246582c37003b52d649e139200963ffb4c241d30965a7e25a1e4`). Only the artwork is bundled; the local contact export, addresses, and identifiers are excluded.
 
 `fo.jpg` and `szn.jpg` remain unchanged copies of the user's saved contact artwork retained in `docs/images/readme/agent-icons/`. Bundled artwork identifies choices before Contacts access. During Messages setup, a selected contact's own picture takes precedence, with bundled artwork as the fallback.
+
+## Gemini
+
+`WebAgentIcons/gemini.jpg` is the unmodified 512 × 512 artwork from Google's
+[Google Gemini App Store listing](https://apps.apple.com/us/app/google-gemini/id6477489729),
+retrieved October 18, 2026 through Apple's Lookup API (ID `6477489729`).
+[Source artwork](https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/86/69/2c/86692cd5-8c2d-c25f-8aaf-9cd1c7478d4a/AppIcon-0-0-1x_U007epad-0-0-0-1-0-0-0-0-85-220.png/512x512bb.jpg)
+SHA-256: `f9434a56f5e85e0d996c73bfc0590f5e13749b3044799f7d3253efc0829e272a`.
+Google retains ownership of its artwork and trademarks. The app uses its existing
+circular avatar treatment for onboarding and chat headers.
