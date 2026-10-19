@@ -81,9 +81,11 @@ continuous focus/cursor/z-order oracle. No foreground delivery was used for
 side-chat creation, either prompt, or reply reading. This supersedes the earlier
 conclusion that Muse background typing was unavailable.
 
-Automatic Muse sending is still gated in the native adapter: it requires a
-unique editable composer and Send control, while the tested Muse accessibility
-tree exposes one compound button. Raw read-only AX inspection also found an
+Automatic Muse sending is explicitly gated until side-chat identity and draft
+verification are implemented. A generic `Muse` heading cannot distinguish the
+main chat from different side chats, even if a future app version exposes a
+standard editable composer. The tested Muse accessibility tree exposes one
+compound button. Raw read-only AX inspection also found an
 empty child list for that compound button; increasing the driver's tree depth
 and element limits did not expose its inner controls. A read-only typed browser
 bind refused Muse as an unrecognized browser process. The main-chat parser and
@@ -112,3 +114,34 @@ coordinates, or model-driven UI planning.
 
 Demo runs simulate app replies and never start cua-driver or contact these apps.
 Live probe captures contain private account history and are not public PR media.
+
+## Automated regression coverage
+
+`DesktopAppConversationTests` checks parser attribution, separation of desktop
+accounts from web/CLI accounts, saved transcripts and drafts, and interrupted
+request ownership across restart. Only the originating comparison can acknowledge
+an incomplete request; another comparison cannot clear that guard.
+
+`DesktopAppDriverTests` invokes the actual adapter through a temporary executable
+that follows an independently specified sequence of JSON responses and records
+its input arguments. It never invokes the installed driver or a provider app.
+The tests cover:
+
+- Grok Bot and Wabi submission with fresh composer/Send tokens and exact targets.
+- False-negative/unverified typing: independent exact-draft evidence permits one
+  Send, while partial, changed, or absent drafts prevent submission and replay.
+- External drafts, changed chats before/after submission, ambiguous windows,
+  missing/disabled/duplicate Send controls, refusals, and degraded/truncated AX.
+- Repeated prompts and old answers, generation controls, composer clearing,
+  bounded waits, cancellation, process cleanup, and per-app concurrent requests.
+- No automatic foreground fallback, no automatic resend, and lifecycle cleanup.
+- Muse main chats, untracked side chats, compound composers, and unresolved
+  off-Space snapshots remain read-only until reliable tracking is implemented.
+
+The fixture's shortened timeouts do not change production defaults. These tests
+cannot establish real macOS focus preservation or current provider UI behavior.
+They also do not claim to test automated Muse side-chat creation/resumption: that
+feature remains unimplemented and gated. Before enabling it, add end-to-end
+coverage for creation, generated-title changes, duplicate titles, exact identity
+across comparisons/restart, and independent prepared-draft verification. The live
+side-chat probes above are investigation evidence, not a substitute for that gate.

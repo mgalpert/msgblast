@@ -52,10 +52,8 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             guard headings.count == 1 else { throw DesktopAppError.unavailable("Open one Grok Bot conversation before connecting.") }
             return headings[0]
         case .muse:
-            guard body.contains(where: { $0.role == "AXButton" && $0.label == "Muse" }) else {
-                throw DesktopAppError.unavailable("Open the main Muse conversation before connecting.")
-            }
-            return "Muse"
+            // The Muse heading is shared by its main chat and every side chat.
+            throw DesktopAppError.unavailable("Muse side-chat tracking and draft verification are not available yet. Automatic sends remain disabled.")
         }
     }
     func composer(app: DesktopAppProvider) throws -> (element: Element, draft: String) {
@@ -140,9 +138,17 @@ struct DesktopAppSnapshot: Decodable, Sendable {
 actor DesktopAppConversation {
     static let shared = DesktopAppConversation()
     private var occupied: Set<DesktopAppProvider> = []
+    struct Timing: Sendable {
+        var pollInterval: Duration = .seconds(1)
+        var stableDuration: Duration = .seconds(3)
+        var replyTimeout: Duration = .seconds(180)
+        var callTimeout: TimeInterval = 30
+    }
     private let executable: URL?
-    init(executable: URL? = nil) {
+    private let timing: Timing
+    init(executable: URL? = nil, timing: Timing = Timing()) {
         self.executable = executable ?? Self.findDriver()
+        self.timing = timing
     }
     private static func findDriver() -> URL? {
         let paths = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
@@ -162,10 +168,11 @@ actor DesktopAppConversation {
         for (key, value) in booleans { object[key] = value }
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
         let cancellation = AgentCancellation()
+        let callTimeout = timing.callTimeout
         let result = try await withTaskCancellationHandler {
             try await Task.detached {
                 try AgentProcess.run(executable: executable, arguments: ["call", tool, payload], input: "",
-                                     environment: ProcessInfo.processInfo.environment, timeout: 30, cancellation: cancellation)
+                                     environment: ProcessInfo.processInfo.environment, timeout: callTimeout, cancellation: cancellation)
             }.value
         } onCancel: { cancellation.cancel() }
         guard result.status == 0, let data = result.stdout.data(using: .utf8) else {
@@ -222,11 +229,11 @@ actor DesktopAppConversation {
         }
         let button = try state.sendButton(app: app)
         _ = try await call("click", ["session": session, "element_token": button.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(180))
+        let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
         var previous: String?
         var stableSince = ContinuousClock.now
         while ContinuousClock.now < deadline {
-            try await Task.sleep(for: .seconds(1))
+            try await Task.sleep(for: timing.pollInterval)
             state = try await snapshot(target, session: session)
             try validate(state, app: app, binding: binding)
             let promptCount = try state.outgoingCount(prompt, app: app)
@@ -234,7 +241,7 @@ actor DesktopAppConversation {
             let candidate = composerCleared && promptCount > previousPromptCount
                 ? try state.reply(after: prompt, app: app, outgoingOccurrence: previousPromptCount + 1) : nil
             if candidate != previous || state.isGenerating { previous = candidate; stableSince = .now }
-            if let candidate, !state.isGenerating, ContinuousClock.now - stableSince >= .seconds(3) { return candidate }
+            if let candidate, !state.isGenerating, ContinuousClock.now - stableSince >= timing.stableDuration { return candidate }
         }
         throw DesktopAppError.unavailable("No stable reply was observed. The app may still be working. Check the conversation before explicitly allowing another request.")
     }
