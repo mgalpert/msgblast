@@ -52,24 +52,63 @@ replies from Grok Bot and Wabi using background delivery. ChatGPT remained the
 frontmost app after these tests. These were live account requests; they did not
 exercise tools, attachments, new-chat creation, or long-running jobs.
 
-Muse's message history was readable, but its composer was exposed as one compound
-button rather than an editable field. Pressing that button opened an attachment
-picker. With explicit foreground authorization, targeted Escape dismissed the picker.
-Background pixel typing left the composer empty; foreground pixel typing inserted
-the test prompt. A subsequent background pixel click submitted it, and a background
-accessibility snapshot read the exact reply `MUSE-OK-1019`. This mixed-mode test
-does **not** establish a fully background workflow or foreground preservation for
-submission. The adapter refuses to connect when it cannot identify a unique
-editable composer, so automatic Muse sending remains unavailable. The shipped
-adapter has no foreground fallback.
+Muse's main-chat composer was exposed as one compound button rather than an
+editable field. Pressing that button opened an attachment picker. With explicit
+foreground authorization, targeted Escape dismissed the picker. An initial
+main-chat probe required foreground typing; a subsequent background pixel click
+submitted it, and a background snapshot read `MUSE-OK-1019`.
+
+A later **side-chat** investigation demonstrated a fully background path on the
+same Muse 8.0 / cua-driver 0.22.1 installation:
+
+1. Press the fresh `New side chat` accessibility button. A fresh snapshot showed
+   an empty `New side chat` with `Back to main chat`.
+2. Type a short test draft using screenshot-grounded background pixel focus.
+   The screenshot showed the draft although the driver returned
+   `effect: unverifiable` with `escalation.reason: delivery_failed`.
+3. Append the minimal reply instruction through window-targeted background
+   typing, verify the full draft in the screenshot, and click Send by pixels.
+   The outgoing prompt and exact `MUSE-SIDE-OK-1019` reply appeared in both the
+   screenshot and accessibility snapshot.
+4. Send a second minimal prompt in that side chat using window-targeted
+   background typing followed by Return. No pixel click was needed. A fresh
+   snapshot read `MUSE-SIDE-SECOND-1019`. Typing had reported a zero-character
+   partial result, which the screenshot disproved; the action was not replayed.
+
+ChatGPT was frontmost before typing, after the first draft, after the first
+reply, and after the second reply. These are discrete observations, not a
+continuous focus/cursor/z-order oracle. No foreground delivery was used for
+side-chat creation, either prompt, or reply reading. This supersedes the earlier
+conclusion that Muse background typing was unavailable.
+
+Automatic Muse sending is still gated in the native adapter: it requires a
+unique editable composer and Send control, while the tested Muse accessibility
+tree exposes one compound button. Raw read-only AX inspection also found an
+empty child list for that compound button; increasing the driver's tree depth
+and element limits did not expose its inner controls. A read-only typed browser
+bind refused Muse as an unrecognized browser process. The main-chat parser and
+single displayed-name binding are also insufficient for separate side chats:
+recent messages use `You:` plus plain text and reply controls, and the side chat
+receives a generated title after its first prompt.
+
+The integration needs to create and track the intended side chat per comparison
+and independently verify its prepared draft before submission. This must not
+reuse the main chat or assume a successful type result. No fixed pixel layout,
+foreground fallback, OCR, or model-driven UI planning is enabled in the adapter.
+
+A further observation found Muse on another Space with zero AX windows. Its
+window capture still showed the two completed probes, but the driver marked the
+AX surface unresolved and refused every background input route. No further input
+was attempted in that state. Off-Space/hidden/minimized operation is not proven by
+the successful visible-window side-chat tests.
 
 The CLI's `elements_complete` flag was false even for full walks in this driver
 version. The adapter instead checks returned/total counts and requires the app's
 heading/composer sentinels; it cannot read history the app has not exposed.
 User changes, duplicate conversation names, UI updates, virtualized transcripts,
 and delayed replies can prevent reliable attribution. Review the app before
-explicitly allowing another request. No OCR, pixel coordinates, or model-driven
-UI planning is used in the shipped adapter.
+explicitly allowing another request. The shipped adapter uses no OCR, pixel
+coordinates, or model-driven UI planning.
 
 Demo runs simulate app replies and never start cua-driver or contact these apps.
 Live probe captures contain private account history and are not public PR media.
