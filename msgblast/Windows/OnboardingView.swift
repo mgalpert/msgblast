@@ -374,6 +374,8 @@ private struct OnboardingProviderView: View {
     @ObservedObject var setup: OnboardingController
     @ObservedObject var session: WebAgentSession
     @ObservedObject private var personalAgent: PersonalAgentController
+    @State private var desktopConnectedHere = false
+    private var ready: Bool { setup.isReady(session) && (session.provider.desktopApp == nil || desktopConnectedHere) }
 
     init(model: AppModel, setup: OnboardingController, session: WebAgentSession) {
         self.model = model
@@ -390,6 +392,20 @@ private struct OnboardingProviderView: View {
             }
             if session.provider == .grokbot {
                 ScrollView { GrokBotSetupView(session: session, busy: model.busy, selectAfterConnecting: false).padding(2) }.scrollIndicators(.hidden)
+            } else if session.provider.desktopApp != nil {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        CuaPermissionsView(demo: model.demo, busy: model.busy || model.webBroadcastBusy)
+                        Divider()
+                        if !desktopConnectedHere {
+                            Text("Connect this app to verify its current conversation before continuing.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("desktop-onboarding-connection-required")
+                        }
+                        DesktopAppSetupView(session: session, busy: model.busy || model.webBroadcastBusy,
+                                            onConnected: { desktopConnectedHere = true })
+                    }.padding(2)
+                }.scrollIndicators(.hidden)
             } else if let provider = session.provider.personalAgentProvider {
                 cliSetup(provider)
                 Spacer()
@@ -414,18 +430,24 @@ private struct OnboardingProviderView: View {
                     ProgressView().controlSize(.small)
                     Text(session.grokBotConnectionActivity?.title ?? "Checking connection…")
                         .font(.callout).foregroundStyle(.secondary)
-                } else if setup.isReady(session) {
+                } else if ready {
                     Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 }
                 Spacer()
                 Button("Continue") { setup.complete(session) }
-                    .buttonStyle(.borderedProminent).disabled(!setup.isReady(session) || setup.checking)
+                    .buttonStyle(.borderedProminent).disabled(!ready || setup.checking)
             }
         }.padding(28)
-        .task { await setup.refresh(session) }
-        .onChange(of: setup.isReady(session)) { _, _ in setup.advanceIfReady(session) }
+        .task {
+            if session.provider.desktopApp != nil { setup.prepareDesktopConnection(session) }
+            else { await setup.refresh(session) }
+        }
+        .onChange(of: setup.isReady(session)) { _, _ in
+            if session.provider.desktopApp == nil { setup.advanceIfReady(session) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await setup.refresh(session) }
+            if session.provider.desktopApp != nil { desktopConnectedHere = false }
+            else { Task { await setup.refresh(session) } }
         }
     }
 

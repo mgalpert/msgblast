@@ -39,6 +39,40 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testDesktopMuseOnboardingShowsCuaPermissionsAndConnectsWithoutBrowserImport() {
+        let app = launch()
+        defer { app.terminate() }
+        choose("Apps", in: app)
+        app.buttons["Choose Muse App"].click()
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
+        for id in ["cua-host", "cua-driver", "cua-capture"] {
+            let status = app.staticTexts["permission-status-\(id)"]
+            XCTAssertTrue(status.waitForExistence(timeout: 5))
+            XCTAssertEqual(status.label, "Allowed")
+        }
+        XCTAssertEqual(app.webViews.count, 0, "A desktop app must not open a website sign-in flow")
+        let connect = app.buttons["Connect Muse"]
+        for _ in 0..<6 where !connect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
+        XCTAssertTrue(connect.isHittable)
+        connect.click()
+        XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
+        waitForExpectations(timeout: 5)
+        app.buttons["Back"].click()
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.staticTexts["desktop-onboarding-connection-required"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Continue"].isEnabled, "A saved binding still requires an explicit live check")
+        let reconnect = app.buttons["Connect Muse"]
+        for _ in 0..<6 where !reconnect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
+        reconnect.click()
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
+        waitForExpectations(timeout: 5)
+        app.buttons["Continue"].click()
+        XCTAssertTrue(app.staticTexts["Help shape msgblast"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testMessagesChecklistRequiresPermissionsAndSupportsBack() {
         let app = launch(contactsDenied: true)
         defer { app.terminate() }

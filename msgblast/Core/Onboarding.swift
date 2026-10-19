@@ -1,7 +1,7 @@
 import Foundation
 
 public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Sendable, Hashable {
-    case chatgpt, claude, grokbot, muse, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
+    case chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
 
     public var id: String { rawValue }
     public var name: String {
@@ -23,6 +23,9 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
         case .grokbot: .grokbot
         case .grok: .grok
         case .muse: .muse
+        case .museApp: .museApp
+        case .grokBotApp: .grokBotApp
+        case .wabi: .wabi
         case .codexCLI: .codexCLI
         case .claudeCode: .claudeCode
         case .dots: .dots

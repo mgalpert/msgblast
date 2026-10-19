@@ -7,21 +7,49 @@ state files, histories, and execution paths.
 
 ## Setup
 
-1. Install cua-driver using its official instructions and grant its macOS
-   Accessibility permission. msgblast does not install it or change grants.
+1. Install cua-driver using its official instructions. In msgblast, open
+   **Settings → Permissions → Desktop app control**. Enable **msgblast
+   Accessibility** for Muse's independent draft/identity checks. Enable the
+   **CuaDriver** rows to open Cua's own Accessibility, Screen Recording and
+   window-capture setup. macOS owns the grant decisions; nothing is enabled by
+   opening Settings alone.
 2. Open the desktop app, sign in, dismiss dialogs, and keep one main window on
    the current desktop. Wabi supports only its AI conversation.
-3. Add the desktop app from **More agents** and enable it. For Muse, grant
-   **msgblast** Accessibility permission and choose **Connect Muse**. Resuming
-   chats also requires the driver's window-capture access. For Grok
-   Bot or Wabi, select the intended app conversation and choose
-   **Connect open conversation**.
+3. Choose Muse App, Grok Bot App or Wabi during **Apps** onboarding, or add it
+   from **More agents**. Onboarding shows the same permission controls before
+   connection. For Muse, choose **Connect Muse**. For Grok Bot or Wabi, select
+   the intended app conversation and choose **Connect open conversation**.
 4. Select the agent and use the private or shared msgblast message box.
 
 The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
 `/usr/local/bin`, or its inherited PATH and uses its public `call` JSON interface.
 Full Disk Access does not grant Accessibility permission. This prototype neither
 bundles the driver nor copies provider authentication into msgblast.
+
+## Permission checks and consent
+
+Settings and desktop-app onboarding share one permission view. The three rows
+separate msgblast's Accessibility access from CuaDriver's Accessibility and
+Screen Recording grants. Full Disk Access for Messages cannot satisfy them.
+Browser and CLI onboarding does not request Cua access. Entering or reactivating
+a desktop onboarding screen checks permission status only. Even a saved connection
+requires an explicit **Connect** or **Reconnect** before Continue is enabled;
+cached readiness cannot advance setup automatically.
+
+Refresh and **Check again** run `cua-driver permissions status --json`; this
+read-only command does not start a daemon or show permission prompts. Grants
+are accepted only when the report identifies the standalone CuaDriver daemon
+(`com.trycua.driver`). Missing drivers, failed checks, and reports from another
+permission owner remain unverified rather than showing Allowed.
+
+Only **Enable** or **Cua setup & capture check…** runs the supported
+`cua-driver permissions grant` consent flow. Public `check_permissions` calls
+cannot request grants. The setup command's exit does not establish access:
+msgblast independently refreshes permission status afterwards. Allowed means a
+macOS grant, not proof of current window capture; Cua's setup performs its own
+capture check. Follow any macOS restart instruction, then check again. Demo
+simulates every permission action and never invokes Cua, requests OS access, or
+opens privacy settings.
 
 ## Muse side chats
 
@@ -124,7 +152,9 @@ probe captures include private account information and are not public PR media.
 
 `DesktopAppConversationTests` covers parser attribution, provider/account
 separation, saved transcripts/drafts, and interrupted request ownership.
-`MuseAppConversationTests` covers strict URL identity, immutable comparison
+`CuaPermissionsTests` covers consent boundaries, permission-owner validation,
+revocation, supported CLI commands through a temporary executable, Demo isolation,
+and desktop onboarding progress. `MuseAppConversationTests` covers strict URL identity, immutable comparison
 ownership, persistence, text ranges, placeholder versus literal drafts, and
 speaker/baseline attribution.
 

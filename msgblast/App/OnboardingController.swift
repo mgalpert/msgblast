@@ -278,6 +278,13 @@ final class OnboardingController: ObservableObject {
         session.isReadyForOnboarding && (session.provider != .claudeCode || compatibility[.claudeCode] == true)
     }
 
+    func prepareDesktopConnection(_ session: WebAgentSession) {
+        guard state.stage == .connecting, state.currentStep == .agent(session.provider), session.provider.desktopApp != nil else { return }
+        if !session.isEnabled { session.setEnabled(true); session.updateState { $0.selected = false } }
+        // Checking a saved binding can start Cua's permission gate. Desktop
+        // onboarding waits for the user's explicit Connect/Reconnect action.
+    }
+
     func refresh(_ session: WebAgentSession) async {
         guard !checking, state.stage == .connecting, state.currentStep == .agent(session.provider) else { return }
         checking = true

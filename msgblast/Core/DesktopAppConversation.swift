@@ -188,7 +188,7 @@ actor DesktopAppConversation {
         self.executable = executable ?? Self.findDriver()
         self.timing = timing
     }
-    private static func findDriver() -> URL? {
+    static func findDriver() -> URL? {
         let paths = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
                      "/opt/homebrew/bin", "/usr/local/bin"] + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
         return paths.map { URL(fileURLWithPath: $0).appendingPathComponent("cua-driver") }.first { FileManager.default.isExecutableFile(atPath: $0.path) }

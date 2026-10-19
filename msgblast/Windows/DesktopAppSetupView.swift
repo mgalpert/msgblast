@@ -4,6 +4,7 @@ import msgblastCore
 struct DesktopAppSetupView: View {
     @ObservedObject var session: WebAgentSession
     var busy = false
+    var onConnected: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -21,7 +22,10 @@ struct DesktopAppSetupView: View {
                     .accessibilityIdentifier("Enable \(session.name)")
                 HStack {
                     Button(app == .muse ? "Connect Muse" : session.state.desktopConversation == nil ? "Connect open conversation" : "Reconnect open conversation") {
-                        Task { await session.connectDesktopConversation() }
+                        Task {
+                            await session.connectDesktopConversation()
+                            if session.isReadyForOnboarding { onConnected() }
+                        }
                     }.disabled(busy || session.loading || session.isSending || !session.isEnabled)
                     if session.loading { ProgressView().controlSize(.small) }
                 }
