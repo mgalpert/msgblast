@@ -54,10 +54,14 @@ exercise tools, attachments, new-chat creation, or long-running jobs.
 
 Muse's message history was readable, but its composer was exposed as one compound
 button rather than an editable field. Pressing that button opened an attachment
-picker. The background send path is **not verified**: the adapter refuses to
-connect when it cannot identify a unique editable composer. No Muse test prompt
-was sent. This entry is a capability check, not a claim of working Muse sending
-with that app/driver version. Foreground control requires separate authorization.
+picker. With explicit foreground authorization, targeted Escape dismissed the picker.
+Background pixel typing left the composer empty; foreground pixel typing inserted
+the test prompt. A subsequent background pixel click submitted it, and a background
+accessibility snapshot read the exact reply `MUSE-OK-1019`. This mixed-mode test
+does **not** establish a fully background workflow or foreground preservation for
+submission. The adapter refuses to connect when it cannot identify a unique
+editable composer, so automatic Muse sending remains unavailable. The shipped
+adapter has no foreground fallback.
 
 The CLI's `elements_complete` flag was false even for full walks in this driver
 version. The adapter instead checks returned/total counts and requires the app's
