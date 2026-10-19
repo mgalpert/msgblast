@@ -88,7 +88,7 @@ final class WebServiceTests: XCTestCase {
             XCTAssertFalse(WebSendStatus.observed.showsAttemptBanner(for: provider), provider.name)
             XCTAssertTrue(WebSendStatus.notSent.showsAttemptBanner(for: provider), provider.name)
         }
-        for provider in [WebProvider.codexCLI, .claudeCode] {
+        for provider in [WebProvider.codexCLI, .claudeCode, .dshCLI] {
             XCTAssertTrue(WebSendStatus.uncertain.showsAttemptBanner(for: provider), "Native requests still need their acknowledgement flow")
         }
         var state = WebWorkspaceState()

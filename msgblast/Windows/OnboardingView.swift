@@ -157,7 +157,7 @@ struct OnboardingView: View {
     }
 
     private func connectorArtwork(_ connector: OnboardingConnector) -> some View {
-        let choices: [OnboardingChoice] = connector == .messages ? [.fo, .instinct, .poke, .szn] : connector == .apps ? [.chatgpt, .claude, .grok, .grokbot, .muse] : [.codexCLI, .claudeCode, .openclaw, .hermes]
+        let choices: [OnboardingChoice] = connector == .messages ? [.fo, .instinct, .poke, .szn] : connector == .apps ? [.chatgpt, .claude, .grok, .grokbot, .muse] : [.codexCLI, .claudeCode, .dsh, .openclaw, .hermes]
         return ZStack {
             Circle().stroke(.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4])).frame(width: 156, height: 156)
             if connector == .messages {
@@ -435,14 +435,18 @@ private struct OnboardingProviderView: View {
             if session.fixture { Label("Demo account · no provider requests", systemImage: "testtube.2").font(.caption).foregroundStyle(.secondary) }
             if !installed {
                 Label("\(session.provider.name) isn’t installed yet", systemImage: "arrow.down.circle")
-                Link("Install \(session.provider.name)", destination: URL(string: provider == .codex ? "https://developers.openai.com/codex/cli" : "https://code.claude.com/docs/en/setup")!)
+                if let url = provider.installURL { Link("Install \(session.provider.name)", destination: url) }
+                Text(provider.installationHint).font(.callout).foregroundStyle(.secondary)
             } else if provider == .claude && setup.compatibility[session.provider] == false {
                 Label("Update Claude Code to continue", systemImage: "arrow.clockwise.circle")
                 Text(PersonalAgentError.conversationVersionRequired.localizedDescription).font(.callout).foregroundStyle(.secondary)
                 Link("Claude Code setup guide", destination: URL(string: "https://code.claude.com/docs/en/setup")!)
             } else {
                 Text(session.accountStatus.label).font(.headline)
-                if !setup.isReady(session) {
+                // DSH's account stays in the DSH app, so this step has no sign-in action.
+                if provider == .dsh {
+                    Text(provider.installationHint).font(.callout).foregroundStyle(.secondary)
+                } else if !setup.isReady(session) {
                     Button("Sign in to \(session.provider.name)") { personalAgent.signIn(provider) }
                         .buttonStyle(.borderedProminent).disabled(session.fixture)
                 }

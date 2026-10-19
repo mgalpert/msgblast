@@ -72,6 +72,8 @@ final class OnboardingTests: XCTestCase {
         XCTAssertTrue(OnboardingConnector.apps.includes(.grokbot))
         XCTAssertFalse(OnboardingConnector.apps.includes(.codexCLI))
         XCTAssertTrue(OnboardingConnector.clis.includes(.codexCLI))
+        XCTAssertTrue(OnboardingConnector.clis.includes(.dsh))
+        XCTAssertFalse(OnboardingConnector.apps.includes(.dsh))
         XCTAssertTrue(OnboardingConnector.clis.includes(.hermes))
         XCTAssertFalse(OnboardingConnector.clis.includes(.chatgpt))
     }

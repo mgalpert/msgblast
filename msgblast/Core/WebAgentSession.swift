@@ -1060,8 +1060,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if fresh != snapshot { snapshot = fresh }
             return
         }
-        fresh.ready = isEnabled && !storageFailed && (fixture || (installedAgent != nil && [.subscription, .apiKey, .other].contains(accountStatus)))
-        fresh.reason = !isEnabled ? "Enable \(provider.name) in Settings to send." : installedAgent == nil && !fixture ? "Install \(provider.personalAgentProvider!.name), then sign in with your local account." : accountStatus.label
+        fresh.ready = isEnabled && !storageFailed && (fixture || (installedAgent != nil && accountStatus.isConnected))
+        fresh.reason = !isEnabled ? "Enable \(provider.name) in Settings to send." : installedAgent == nil && !fixture ? provider.personalAgentProvider!.installationHint : accountStatus.label
         if fresh != snapshot { snapshot = fresh }
     }
 

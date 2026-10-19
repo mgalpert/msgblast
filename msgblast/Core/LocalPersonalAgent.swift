@@ -3,7 +3,7 @@ import Foundation
 private let summaryAnswerFilename = "answer.txt"
 
 public enum PersonalAgentProvider: String, CaseIterable, Identifiable, Sendable {
-    case codex, claude, cursor, gemini, pi, grok, hermes
+    case codex, claude, cursor, gemini, pi, grok, hermes, dsh
     public var id: String { rawValue }
     public var name: String {
         switch self {
@@ -14,6 +14,7 @@ public enum PersonalAgentProvider: String, CaseIterable, Identifiable, Sendable 
         case .pi: "Pi"
         case .grok: "Grok"
         case .hermes: "Hermes"
+        case .dsh: "DSH"
         }
     }
     public var executable: String { self == .cursor ? "cursor-agent" : rawValue }
@@ -26,6 +27,7 @@ public enum PersonalAgentProvider: String, CaseIterable, Identifiable, Sendable 
         case .pi: "pi"
         case .grok: "grok login"
         case .hermes: LocalAgentRuntime.hermes.setup
+        case .dsh: "Add DSH’s dsh command to your PATH"
         }
     }
 
@@ -41,6 +43,54 @@ public enum PersonalAgentProvider: String, CaseIterable, Identifiable, Sendable 
             return nil
         }
     }
+
+    // A provider can support a conversation pane without being safe for reports.
+    // Reports send a comparison's text unattended, so they need an adapter that
+    // verifiably denies every built-in and MCP tool. DSH's headless profile still
+    // executes tools when its tool plugins are disabled, so reports stay blocked.
+    public var reportUnavailabilityReason: String? {
+        switch self {
+        case .dsh:
+            return "DSH is available as a conversation agent. Its headless profile cannot prove complete tool denial for a report run yet, so comparison reports stay disabled. Choose another installed personal agent for reports."
+        default:
+            return nil
+        }
+    }
+
+    // The headless CLI reports persisted sessions as "session-<uuid>".
+    static let dshSessionPrefix = "session-"
+    func acceptsSessionID(_ value: String) -> Bool {
+        switch self {
+        case .dsh:
+            return value.hasPrefix(Self.dshSessionPrefix)
+                && UUID(uuidString: String(value.dropFirst(Self.dshSessionPrefix.count))) != nil
+        default:
+            return UUID(uuidString: value) != nil
+        }
+    }
+
+    // A local CLI conversation pane needs the executable and its own saved account.
+    // DSH keeps that account inside the DSH app and has no sign-in command here.
+    public var installationHint: String {
+        switch self {
+        case .dsh: "Install DSH and add its dsh command to your PATH."
+        default: "Install \(name), then sign in with your local account."
+        }
+    }
+
+    // Install or documentation page for a provider msgblast can point at.
+    public var installURL: URL? {
+        switch self {
+        case .codex: URL(string: "https://developers.openai.com/codex/cli")
+        case .claude: URL(string: "https://code.claude.com/docs/en/setup")
+        case .dsh: URL(string: "https://harness.deepseek.com/")
+        default: nil
+        }
+    }
+
+    // Only these adapters have a sign-in state msgblast can read. Other CLIs are
+    // detected, but their account stays with the CLI and its own configuration.
+    public var hasAccountStatusCheck: Bool { [.codex, .claude, .dsh].contains(self) }
 
     func arguments(in directory: URL, persistentConversation: Bool = false, sessionID: String? = nil) throws -> [String] {
         switch self {
@@ -81,6 +131,14 @@ public enum PersonalAgentProvider: String, CaseIterable, Identifiable, Sendable 
             throw PersonalAgentError.unsupportedProvider(self)
         case .hermes:
             return ["chat", "--query-file", "-", "--quiet", "--toolsets", "none", "--safe-mode", "--source", "tool", "--max-turns", "1"]
+        case .dsh:
+            // DSH answers one task per run. Report runs are blocked above, so only
+            // the persistent conversation form is valid here: JSON events carry the
+            // session id, and a known id resumes the same persisted session.
+            guard persistentConversation else { throw PersonalAgentError.unsupportedProvider(self) }
+            var args = ["--profile", "headless", "--json"]
+            if let sessionID { args += ["--session-id", sessionID] }
+            return args + ["-"]
         }
     }
 
@@ -100,6 +158,7 @@ public enum PersonalAgentProvider: String, CaseIterable, Identifiable, Sendable 
                 answer = text + "\n\nClaude Code denied \(denials.count) requested action(s) under its permission rules. Those actions were not completed. Review permissions in the CLI before trying again."
             } else { answer = text }
         case .pi, .grok, .hermes: answer = stdout
+        case .dsh: answer = try AgentProcess.dshFinalAnswer(fromEvents: stdout, name: name)
         }
         let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw PersonalAgentError.invalidResponse(name) }
@@ -123,7 +182,7 @@ public enum PersonalAgentError: LocalizedError {
         switch self {
         case .conversationVersionRequired: "Claude Code conversations require version 2.1.259 or later. Update Claude Code in Terminal to enable unattended permission handling, then try again."
         case .unavailable(let name): "\(name) could not be launched. Refresh installed agents and check its CLI installation."
-        case .unsupportedProvider(let provider): provider.unavailabilityReason ?? "\(provider.name) is unavailable for comparison reports."
+        case .unsupportedProvider(let provider): provider.unavailabilityReason ?? provider.reportUnavailabilityReason ?? "\(provider.name) is unavailable for comparison reports."
         case .failed(let name, let code): "\(name) exited with status \(code). Open its CLI in Terminal to check sign-in, permissions, usage limits, and updates, then try again."
         case .timedOut: "The personal agent did not finish within three minutes. Try again when it is ready."
         case .tooLarge: "The request or agent output is too large to complete in one request. No partial response was saved."
@@ -133,16 +192,20 @@ public enum PersonalAgentError: LocalizedError {
 }
 
 public enum PersonalAgentAccountStatus: String, Sendable {
-    case subscription, apiKey, other, signedOut, unknown
+    case subscription, apiKey, other, cliConfigured, signedOut, unknown
     public var label: String {
         switch self {
         case .subscription: "Subscription account connected"
         case .apiKey: "API key connected · usage billed separately"
         case .other: "CLI account connected · check provider billing"
+        case .cliConfigured: "CLI configured · uses its own saved account"
         case .signedOut: "Not signed in"
         case .unknown: "Could not verify sign-in · check CLI in Terminal"
         }
     }
+    // A conversation pane can send only when the CLI exists and its saved account
+    // can be used unattended.
+    public var isConnected: Bool { [.subscription, .apiKey, .other, .cliConfigured].contains(self) }
 }
 
 public struct PersonalAgentReply: Sendable {
@@ -165,12 +228,22 @@ public enum LocalPersonalAgent {
     }
 
     public static func accountStatus(using agent: InstalledPersonalAgent) async -> PersonalAgentAccountStatus {
-        guard agent.provider == .codex || agent.provider == .claude else { return .unknown }
+        guard agent.provider.hasAccountStatusCheck else { return .unknown }
         return await Task.detached(priority: .utility) {
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = agent.path
             environment["NO_COLOR"] = "1"
             environment.removeValue(forKey: "CLAUDECODE")
+            if agent.provider == .dsh {
+                // DSH has no status subcommand and keeps its provider account in its
+                // own profile. A running CLI is the only check msgblast can make, and
+                // it never reads or changes that account.
+                guard let result = try? AgentProcess.run(executable: agent.executableURL, arguments: ["--version"],
+                    input: "", environment: environment, timeout: 10, cancellation: AgentCancellation()),
+                    result.status == 0,
+                    !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .unknown }
+                return .cliConfigured
+            }
             let arguments = agent.provider == .codex ? ["login", "status"] : ["auth", "status"]
             guard let result = try? AgentProcess.run(executable: agent.executableURL, arguments: arguments,
                 input: "", environment: environment, timeout: 10, cancellation: AgentCancellation()) else { return .unknown }
@@ -252,13 +325,14 @@ public enum LocalPersonalAgent {
     }
 
     public static func summarize(_ input: ComparisonSummaryInput, using agent: InstalledPersonalAgent) async throws -> String {
-        try await request(prompt: input.prompt, using: agent).stdout
+        guard agent.provider.reportUnavailabilityReason == nil else { throw PersonalAgentError.unsupportedProvider(agent.provider) }
+        return try await request(prompt: input.prompt, using: agent).stdout
     }
 
     public static func reply(to conversation: [WebPageMessage], using agent: InstalledPersonalAgent,
                              sessionID: String? = nil, workingDirectory: URL? = nil) async throws -> PersonalAgentReply {
-        guard agent.provider == .codex || agent.provider == .claude else { throw PersonalAgentError.unsupportedProvider(agent.provider) }
-        if let sessionID, UUID(uuidString: sessionID) == nil { throw PersonalAgentError.invalidResponse(agent.provider.name) }
+        guard [.codex, .claude, .dsh].contains(agent.provider) else { throw PersonalAgentError.unsupportedProvider(agent.provider) }
+        if let sessionID, !agent.provider.acceptsSessionID(sessionID) { throw PersonalAgentError.invalidResponse(agent.provider.name) }
         let prompt: String
         if sessionID == nil && conversation.count > 1 {
             let data = try JSONEncoder().encode(conversation)
@@ -283,6 +357,9 @@ public enum LocalPersonalAgent {
                 environment["NO_COLOR"] = "1"
                 // Avoid inherited session markers when launched from another agent's terminal.
                 environment.removeValue(forKey: "CLAUDECODE")
+                // Pin DSH's unattended sandbox to this conversation's own working
+                // directory instead of inheriting a wider mode from the environment.
+                if agent.provider == .dsh { environment["DSH_PERMISSION_MODE"] = "workspace-write" }
                 let result = try AgentProcess.run(executable: agent.executableURL, input: prompt, environment: environment,
                     timeout: 180, cancellation: cancellation, provider: agent.provider,
                     persistentConversation: persistentConversation, sessionID: sessionID, workingDirectory: workingDirectory)
@@ -377,24 +454,48 @@ enum AgentProcess {
         let output = try readOutput(stdoutURL)
         if let provider, process.terminationStatus == 0 {
             var conversationID: String?
-            var completedCodexTurn = false
+            var completedCodexTurn = provider != .codex
+            var completedDSHTurn = provider != .dsh
             if persistentConversation {
-                let records = provider == .codex ? output.split(separator: "\n").map(String.init) : [output]
+                let records = provider == .codex || provider == .dsh ? output.split(separator: "\n").map(String.init) : [output]
                 for record in records {
                     guard let data = record.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-                    if provider == .codex, ["turn.failed", "error"].contains(object["type"] as? String ?? "") {
+                    let type = object["type"] as? String
+                    if provider == .codex, ["turn.failed", "error"].contains(type ?? "") {
                         throw PersonalAgentError.invalidResponse(provider.name)
                     }
-                    if provider == .codex, object["type"] as? String == "turn.completed" { completedCodexTurn = true }
-                    let candidate = provider == .codex && object["type"] as? String == "thread.started" ? object["thread_id"] as? String : provider == .claude ? object["session_id"] as? String : nil
-                    if let candidate, UUID(uuidString: candidate) != nil { conversationID = candidate }
+                    if provider == .dsh, ["error", "turn.failed"].contains(type ?? "") {
+                        throw PersonalAgentError.invalidResponse(provider.name)
+                    }
+                    if provider == .codex, type == "turn.completed" { completedCodexTurn = true }
+                    if provider == .dsh, type == "final" { completedDSHTurn = true }
+                    let candidate = provider == .codex && type == "thread.started" ? object["thread_id"] as? String
+                        : provider == .claude ? object["session_id"] as? String
+                        : provider == .dsh && type == "session" ? object["sessionId"] as? String : nil
+                    if let candidate, provider.acceptsSessionID(candidate) { conversationID = candidate }
                 }
             }
-            if persistentConversation, provider == .codex, !completedCodexTurn {
+            if persistentConversation, !completedCodexTurn || !completedDSHTurn {
                 throw PersonalAgentError.invalidResponse(provider.name)
             }
             return Result(status: 0, stdout: try provider.answer(stdout: output, directory: directory), sessionID: conversationID)
         }
         return Result(status: process.terminationStatus, stdout: output, stderr: try readOutput(stderrURL))
+    }
+
+    // The headless profile writes newline-delimited run events. Only the final
+    // event carries the completed answer; an error event or a missing final event
+    // is a failed turn, never a partial reply.
+    static func dshFinalAnswer(fromEvents output: String, name: String) throws -> String {
+        var answer: String?
+        for record in output.split(separator: "\n") {
+            guard let data = String(record).data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = object["type"] as? String else { continue }
+            if type == "error" || type == "turn.failed" { throw PersonalAgentError.invalidResponse(name) }
+            if type == "final", let text = object["text"] as? String { answer = text }
+        }
+        guard let answer else { throw PersonalAgentError.invalidResponse(name) }
+        return answer
     }
 }
