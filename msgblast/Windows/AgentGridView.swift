@@ -153,6 +153,7 @@ struct AgentGridView: View {
         let tile = AgentGridTile(entry: entry, size: size, avatars: avatars, editing: editing,
             available: available, selected: selected(entry.id), arrived: arrived == entry.id || dragging == entry.id,
             subtitle: available || editing ? nil : subtitle(entry.id),
+            modelName: available || editing ? nil : session(for: entry.id)?.state.geminiModel?.name,
             action: { if available { add(entry.id, scroll: scroll) } else if !editing { activate(entry.id) } },
             hide: { hide(entry.id) })
             .disabled(busy)
@@ -224,7 +225,6 @@ struct AgentGridView: View {
         if case .runtime = id { return "Local setup" }
         if let session = session(for: id), !session.provider.supportsSharedSubmissions { return "Manual chat" }
         if let session = session(for: id), !session.isEnabled { return "Set up" }
-        if let session = session(for: id), session.provider == .gemini, let model = session.state.geminiModel { return model.name }
         if case .featuredMessages = id, model.messageAgent(for: id) == nil { return "Connect Messages" }
         return nil
     }
@@ -303,6 +303,7 @@ private struct AgentGridTile: View {
     let selected: Bool
     let arrived: Bool
     let subtitle: String?
+    let modelName: String?
     let action: () -> Void
     let hide: () -> Void
 
@@ -315,7 +316,7 @@ private struct AgentGridTile: View {
                 } else {
                     Button(action: action) { avatar }.buttonStyle(.plain)
                         .accessibilityLabel(available ? "Add \(entry.name)" : entry.name)
-                        .accessibilityValue(available ? "Available to add" : subtitle ?? (selected ? "Selected" : "Not selected"))
+                        .accessibilityValue(available ? "Available to add" : subtitle ?? ([selected ? "Selected" : "Not selected", modelName].compactMap { $0 }.joined(separator: ", ")))
                 }
             }
                 .overlay(alignment: .topLeading) {
@@ -327,7 +328,7 @@ private struct AgentGridTile: View {
                     }
                 }
             Text(entry.name).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
-            if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+            if let subtitle = subtitle ?? modelName { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
         }.frame(maxWidth: .infinity).contentShape(Rectangle())
     }
 
