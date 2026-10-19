@@ -180,6 +180,33 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do { try save() } catch { state.displayName = previous; throw error }
     }
 
+    public func setGeminiModel(_ model: GeminiModelChoice?) throws {
+        guard provider == .gemini, !isSending, !loadingGeminiModels, !storageFailed else {
+            throw WebSessionFailure.notSent("Wait for Gemini to finish before changing its saved model.")
+        }
+        let previous = state.geminiModel
+        state.geminiModel = model
+        do { try save() } catch { state.geminiModel = previous; throw error }
+    }
+
+    @Published public private(set) var loadingGeminiModels = false
+    public func availableGeminiModels() async throws -> [GeminiModelChoice] {
+        guard provider == .gemini, !isSending, !loadingGeminiModels else {
+            throw WebSessionFailure.notSent("Wait for Gemini to finish before loading its models.")
+        }
+        loadingGeminiModels = true
+        defer { loadingGeminiModels = false }
+        connect()
+        try await prepareConversation()
+        let page = currentPage(), generation = navigationGeneration
+        let result = try await webView.callAsyncJavaScript(script.geminiModels, arguments: [:], in: nil, contentWorld: .defaultClient) as? [String: Any]
+        guard currentPage() === page, navigationGeneration == generation, result?["ok"] as? Bool == true,
+              let models = result?["models"] else {
+            throw WebSessionFailure.notSent(result?["reason"] as? String ?? "Could not read Gemini’s models. Sign in and reload its chat.")
+        }
+        return try JSONDecoder().decode([GeminiModelChoice].self, from: JSONSerialization.data(withJSONObject: models))
+    }
+
     public func updateState(_ edit: (inout WebWorkspaceState) -> Void) {
         guard !storageFailed else { return }
         let previous = state.comparisonID
@@ -874,7 +901,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
-        guard !isSending else { return nil }
+        guard !isSending, !loadingGeminiModels else { return nil }
         guard !hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
         isSending = true
         defer { isSending = false }
@@ -906,9 +933,17 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             let generation = navigationGeneration
             let expectedURL = snapshot.url
+            var expectedModel = ""
+            if provider == .gemini, let model = state.geminiModel {
+                let result = try await webView.callAsyncJavaScript(script.geminiModels, arguments: ["modelID": model.id, "modelName": model.name], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                guard generation == navigationGeneration, !loading, result?["ok"] as? Bool == true, let selectedLabel = result?["selectedLabel"] as? String, !selectedLabel.isEmpty else {
+                    throw WebSessionFailure.notSent(result?["reason"] as? String ?? "Could not select the saved Gemini model.")
+                }
+                expectedModel = selectedLabel
+            }
             let preparation: [String: Any]?
             do {
-                preparation = try await webView.callAsyncJavaScript(script.prepare, arguments: ["text": text], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                preparation = try await webView.callAsyncJavaScript(script.prepare, arguments: ["text": text, "expectedModel": expectedModel], in: nil, contentWorld: .defaultClient) as? [String: Any]
             } catch {
                 guard generation == navigationGeneration, !loading else {
                     throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.")
@@ -927,12 +962,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
             if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
-            else { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
+            else { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation, expectedModel: expectedModel) }
             guard generation == navigationGeneration, !loading else { throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.") }
             attempt.status = .attempting
             try store(attempt) // The possible external side effect is durably recorded first.
             submissionWasPossible = true
-            let result = try await webView.callAsyncJavaScript(script.clickSend, arguments: ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
+            let result = try await webView.callAsyncJavaScript(script.clickSend, arguments: ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL, "expectedModel": expectedModel], in: nil, contentWorld: .defaultClient) as? [String: Any]
             if result?["clicked"] as? Bool == false {
                 submissionWasPossible = false
                 throw WebSessionFailure.notSent(result?["reason"] as? String ?? "\(provider.name)’s Send control was not clicked.")
@@ -1157,7 +1192,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return attempt
     }
 
-    private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int) async throws {
+    private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int, expectedModel: String) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
             try Task.checkCancellation()
@@ -1168,7 +1203,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             // A navigation that cancels this read is still "not sent", with the same detail as the generation check.
             let result: [String: Any]?
             do {
-                result = try await webView.callAsyncJavaScript(script.sendReadiness, arguments: ["preparedDraft": preparedDraft, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                result = try await webView.callAsyncJavaScript(script.sendReadiness, arguments: ["preparedDraft": preparedDraft, "expectedURL": expectedURL, "expectedModel": expectedModel], in: nil, contentWorld: .defaultClient) as? [String: Any]
             } catch {
                 guard generation == navigationGeneration, !loading else {
                     throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.")

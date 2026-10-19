@@ -123,9 +123,11 @@ struct WebPageScript {
             else if (!input || input.disabled || input.readOnly || input.getAttribute('aria-disabled')==='true') reason=`Waiting for ${config.name}’s message field.`;
             return {url:conversationLocation(),ready:!reason,signedIn,reason:reason||`${config.name} chat ready`,draft:draft(input),draftAvailable:!!input,...(config.provider==='dots'?{signedOut:login && !all(config.account).length}:{})};
         };
+        const modelMatches = () => config.provider!=='gemini' || typeof expectedModel!=='string' || !expectedModel ||
+            unique('button[aria-label^="Open mode picker, currently "]')?.getAttribute('aria-label')==='Open mode picker, currently '+expectedModel;
         const submissionStatus = () => {
             const current=status();
-            if (!current.ready || current.url!==expectedURL || current.draft!==preparedDraft || observation.interrupted)
+            if (!current.ready || current.url!==expectedURL || current.draft!==preparedDraft || !modelMatches() || observation.interrupted)
                 return {ready:false,retryable:false,reason:`${config.name} changed during preparation. Review its draft; nothing was clicked.`};
             const candidates=all(config.send),send=candidates.length===1?candidates[0]:null;
             const ready=!!send && !send.disabled && send.getAttribute('aria-disabled')!=='true';
@@ -134,6 +136,52 @@ struct WebPageScript {
         const inspect = () => ({...status(),messages:pathAllowed()?messages():[],submissionInterrupted:observation.interrupted});
         """#
     }
+    var geminiModels: String {
+        helpers + #"""
+        const before=status(),startURL=location.href,picker=unique('button[aria-label^="Open mode picker, currently "]');
+        if (config.provider!=='gemini' || !before.ready || !picker) return {ok:false,reason:before.reason||'Open Gemini’s model picker in its chat first.'};
+        if (before.draft.trim()) return {ok:false,reason:'Gemini already has a draft. Send or clear it before choosing a saved model.'};
+        const menuSelector='[role="menu"][data-test-id="gem-mode-menu"]';
+        if (all(menuSelector).length) return {ok:false,reason:'Close Gemini’s open model menu first.'};
+        observation.interrupted=false;
+        picker.click();
+        for(let i=0;i<20 && !unique(menuSelector);i++) await new Promise(r=>setTimeout(r,100));
+        const menu=unique(menuSelector);
+        const valid=()=>location.href===startURL && !observation.interrupted && draft(editor())===before.draft;
+        if (!menu || !valid()) return {ok:false,reason:'Gemini changed while opening its model picker. Review the page.'};
+        const options=[...menu.querySelectorAll('[role="menuitem"][data-mode-id]')].filter(e=>visible(e) && e.getAttribute('aria-disabled')!=='true').map(e=>({
+            id:e.getAttribute('data-mode-id'),name:normalized(e.querySelector('.label')?.textContent||'')
+        })).filter(e=>e.id && e.name);
+        const ids=new Set(options.map(e=>e.id));
+        if (!options.length || ids.size!==options.length) { picker.click(); return {ok:false,reason:'Gemini’s available models could not be recognized.'}; }
+        if (typeof modelID!=='string' || !modelID) { picker.click(); return {ok:true,models:options}; }
+        const wanted=options.find(e=>e.id===modelID && e.name===modelName);
+        const matches=[...menu.querySelectorAll('[role="menuitem"][data-mode-id]')].filter(e=>e.getAttribute('data-mode-id')===modelID && visible(e));
+        if (!wanted || matches.length!==1) { picker.click(); return {ok:false,reason:'The saved Gemini model is unavailable. Choose an available model in Model settings.'}; }
+        const selected=e=>e.classList.contains('selected') || !!e.querySelector('[aria-label="Selected"]');
+        if (!selected(matches[0])) {
+            matches[0].click();
+            for(let i=0;i<20 && unique(menuSelector) && valid();i++) await new Promise(r=>setTimeout(r,100));
+            if (!valid() || unique(menuSelector)) return {ok:false,reason:'Gemini did not close its model picker. Nothing was sent.'};
+            const current=unique('button[aria-label^="Open mode picker, currently "]');
+            if (!current) return {ok:false,reason:'Gemini’s model picker changed. Nothing was sent.'};
+            current.click();
+            for(let i=0;i<20 && !unique(menuSelector) && valid();i++) await new Promise(r=>setTimeout(r,100));
+        }
+        const verifiedMenu=unique(menuSelector);
+        const selection=verifiedMenu ? [...verifiedMenu.querySelectorAll('[role="menuitem"][data-mode-id]')].filter(e=>visible(e) && selected(e)) : [];
+        const current=unique('button[aria-label^="Open mode picker, currently "]');
+        if (valid() && current && selection.length===1 && selection[0].getAttribute('data-mode-id')===modelID &&
+            normalized(selection[0].querySelector('.label')?.textContent||'')===modelName) {
+            const selectedLabel=current.getAttribute('aria-label').slice('Open mode picker, currently '.length);
+            current.click();
+            for(let i=0;i<20 && unique(menuSelector) && valid();i++) await new Promise(r=>setTimeout(r,100));
+            if (valid() && !unique(menuSelector) && selectedLabel) return {ok:true,models:options,selectedLabel};
+        }
+        return {ok:false,reason:'Gemini did not confirm the saved model. Nothing was sent.'};
+        """#
+    }
+
     var signInStatus: String { helpers + "\nreturn {...status(),messages:[]};" }
     var inspect: String { provider == .muse ? MusePageScript.inspect : helpers + "\nreturn inspect();" }
     // Apply the initial pane layout once per document. A user's later choice wins.
@@ -204,6 +252,7 @@ struct WebPageScript {
         return helpers + #"""
         const before=status();
         if (!before.ready) return {ok:false,reason:before.reason};
+        if (!modelMatches()) return {ok:false,reason:"Gemini’s model changed. Check the saved model before sending."};
         if (before.draft.trim()) return {ok:false,reason:`${config.name} already has a draft. Send or clear it in the page first.`};
         const baseline=messages(),input=editor();
         const existingConversationPaths=[...document.querySelectorAll('a[href]')].map(a=>new URL(a.href,location.href)).filter(u=>u.origin===location.origin).map(u=>u.pathname);
@@ -254,15 +303,30 @@ struct WebPageScript {
         let send = provider == .dots ? #"aria-label="Send""# : provider == .os3 ? #"aria-label="send message""# : provider == .grok ? #"data-testid="chat-submit" aria-label="Submit""# : #"aria-label="Send message""#
         let account = provider == .gemini ? #"aria-label="Google Account: Fixture""# : provider == .dots ? #"aria-label="Your dot actions""# : provider == .os3 ? #"aria-label="Settings""# : provider == .chatgpt ? #"data-testid="accounts-profile-button""# : #"data-testid="user-menu-button""#
         let login = provider == .dots ? #"aria-label="Sign in""# : ""
+        let modelPicker = provider == .gemini ? #"<button id="fixture-model-picker" aria-label="Open mode picker, currently 3.6 Flash">Gemini · 3.6 Flash</button>"# : ""
         let avatar = provider == .dots ? ##"<div id="fixture-dot-avatar"><button data-orbit-profile-trigger aria-label="Open Fixture’s profile"></button><span role="presentation" style="display:block;width:64px;height:64px"><svg width="64" height="64" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="22" fill="#23b88d"/><circle cx="24" cy="27" r="4" fill="white"/><circle cx="40" cy="27" r="4" fill="white"/><path d="M22 40 Q32 48 42 40" fill="none" stroke="white" stroke-width="3"/></svg></span></div>"## : ""
         return """
         <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
         :root{color-scheme:light dark;font:15px -apple-system,sans-serif}body{margin:0;padding:22px;background:Canvas;color:CanvasText}header{display:flex;gap:12px;align-items:center;border-bottom:1px solid #8884;padding-bottom:16px}small{color:#888}#transcript{min-height:150px;padding:20px 0}article{background:#8882;border-radius:16px;margin:12px 0;padding:14px}textarea,[contenteditable]{box-sizing:border-box;width:100%;min-height:70px;padding:12px;font:inherit;border:1px solid #8885;border-radius:14px}button{font:inherit;margin:8px 0;padding:8px 14px;border-radius:10px;border:1px solid #8885}[hidden]{display:none!important}
         </style></head><body><header><strong id="thread-title">New \(provider.name) chat</strong><small>Local fixture · no real sends</small></header>
-        <main id="chat">\(avatar)<button \(account)>Fixture account</button><div id="transcript" role="log" aria-label="conversation"></div>\(input)<button id="fixture-send" \(send) disabled>Send</button><button onclick="chat.hidden=true;login.hidden=false">Sign out of fixture</button>\(provider == .dots ? "<button onclick=\"changeFixtureAvatar()\">Change fixture avatar</button>" : "")</main>
+        <main id="chat">\(avatar)\(modelPicker)<button \(account)>Fixture account</button><div id="transcript" role="log" aria-label="conversation"></div>\(input)<button id="fixture-send" \(send) disabled>Send</button><button onclick="chat.hidden=true;login.hidden=false">Sign out of fixture</button>\(provider == .dots ? "<button onclick=\"changeFixtureAvatar()\">Change fixture avatar</button>" : "")</main>
         <div id="login" hidden><p>Sign in to continue.</p><button data-testid="login-button" \(login) onclick="chat.hidden=false;login.hidden=true">Sign in to fixture</button></div>
         <script>
         const provider='\(provider.rawValue)',input=document.querySelector('textarea,[contenteditable]'),send=document.getElementById('fixture-send');
+        if(provider==='gemini'){
+          const picker=document.getElementById('fixture-model-picker');
+          let selectedModelID='fbb127bbb056c959';
+          picker.onclick=()=>{
+            const old=document.querySelector('[data-test-id="gem-mode-menu"]');if(old){old.remove();return;}
+            const menu=document.createElement('div');menu.setAttribute('role','menu');menu.dataset.testId='gem-mode-menu';
+            for(const [id,name] of [['fbb127bbb056c959','3.6 Flash'],['5bf011840784117a','3.6 Thinking'],['9d8ca3786ebdfbea','3.1 Pro']]){
+              const item=document.createElement('button');item.setAttribute('role','menuitem');item.dataset.modeId=id;item.className=id===selectedModelID?'selected':'';
+              const label=document.createElement('span');label.className='label';label.textContent=name;item.append(label);
+              item.onclick=()=>{selectedModelID=id;picker.setAttribute('aria-label','Open mode picker, currently '+name.split(' ').slice(1).join(' '));picker.textContent='Gemini · '+name;menu.remove();};menu.append(item);
+            }picker.after(menu);
+          };
+          send.addEventListener('click',()=>document.body.dataset.sentModel=picker.getAttribute('aria-label'));
+        }
         const fixtureThreads = JSON.parse(localStorage.getItem('msgblastFixtureThreads')||'{}'),newPath='\(provider.newChatURL.path)';
         function saveFixtureThread(){if(location.pathname!==newPath){fixtureThreads[location.pathname]=document.getElementById('transcript').innerHTML;localStorage.setItem('msgblastFixtureThreads',JSON.stringify(fixtureThreads));}}
         function updateFixtureTitle(){document.getElementById('thread-title').textContent=location.pathname===newPath?'New \(provider.name) chat':'\(provider.name) chat · '+location.pathname.slice(-6);}
@@ -289,7 +353,8 @@ struct WebPageScript {
         a.textContent=text;document.getElementById('transcript').append(a);a.scrollIntoView({block:'nearest'});saveFixtureThread();}
         add('user',text);if(input.tagName==='TEXTAREA')input.value='';else input.textContent='';send.disabled=true;
         if(provider!=='os3'&&location.pathname===newPath){history.replaceState(null,'',(provider==='gemini'?'/app/':provider==='claude'?'/chat/':'/c/')+(provider==='gemini'?crypto.randomUUID().replaceAll('-','').slice(0,16):crypto.randomUUID()));updateFixtureTitle();saveFixtureThread();}
-        setTimeout(()=>add('assistant','\(provider.name) fixture reply: '+text),350);});
+        const model=provider==='gemini'?document.getElementById('fixture-model-picker')?.textContent+' · ':'';
+        setTimeout(()=>add('assistant',model+'\(provider.name) fixture reply: '+text),350);});
         </script></body></html>
         """
     }

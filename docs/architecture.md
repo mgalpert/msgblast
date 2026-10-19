@@ -76,7 +76,12 @@ agents retain their existing files and WebKit store identifiers. Named copies
 of Muse, ChatGPT, Claude, and Grok use separate state files and conversation
 pages; by default they share the source agent's WebKit sign-in store. Choosing
 **Use another account** gives the copy a separate store. Model and reasoning
-controls remain in the website; a custom agent name does not enforce a preset.
+controls remain in the website for other providers; a custom agent name does not enforce a preset.
+Gemini agents can save an optional model ID and label discovered from the signed-in
+website picker. Each copy retains its own choice. Before each shared submission,
+msgblast selects that exact available option and verifies the displayed label again
+at the Send boundary. Missing or changed options stop that agent without falling
+back to another model. An unset choice leaves the website setting in control.
 Dots and rabbit OS3 retain their existing single-conversation behavior, and CLI
 conversations retain their separate local account setup.
 
@@ -92,7 +97,8 @@ separate from Gemini CLI. Sign in to retain website history. New comparisons ope
 keeps its own saved URL and page. Its Quill prompt editor uses the existing
 contenteditable insertion flow, with one Send click, draft protection, and
 rendered user/assistant receipts. Unknown layouts and signed-out sessions do not
-receive shared submissions. Model choice remains in Gemini's website controls.
+receive shared submissions. Gemini model settings are available from an agent’s
+context menu and when duplicating it.
 
 Hark is available during onboarding at `https://hark.com/chat`. Its embedded
 page supports manual chat; shared submissions and receipt extraction remain

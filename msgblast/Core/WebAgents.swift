@@ -67,17 +67,17 @@ public final class WebAgents: ObservableObject {
     }
     public func name(for id: WebAgentID) -> String { session(for: id)?.name ?? id.provider.name }
     @discardableResult
-    public func duplicate(_ source: WebAgentSession, name: String, separateAccount: Bool = false) throws -> WebAgentSession {
+    public func duplicate(_ source: WebAgentSession, name: String, separateAccount: Bool = false, geminiModel: GeminiModelChoice? = nil) throws -> WebAgentSession {
         guard source.provider.supportsCopies, sessions.contains(where: { $0 === source }), source.isStorageAvailable else {
             throw WebAgentConfigurationError.unavailable
         }
-        return try add(provider: source.provider, name: name, accountID: separateAccount ? UUID() : source.state.sessionID)
+        return try add(provider: source.provider, name: name, accountID: separateAccount ? UUID() : source.state.sessionID, geminiModel: geminiModel)
     }
     @discardableResult
     public func addGrokBot(name: String) throws -> WebAgentSession {
         try add(provider: .grokbot, name: name, accountID: UUID())
     }
-    private func add(provider: WebProvider, name: String, accountID: UUID) throws -> WebAgentSession {
+    private func add(provider: WebProvider, name: String, accountID: UUID, geminiModel: GeminiModelChoice? = nil) throws -> WebAgentSession {
         guard configurationError == nil else { throw WebAgentConfigurationError.invalidRegistry }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 80 else { throw WebAgentConfigurationError.invalidName }
@@ -85,6 +85,7 @@ public final class WebAgents: ObservableObject {
         let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(configuration.filename),
             fixture: fixture, agentID: configuration.id, accountID: accountID, name: name)
         guard session.isStorageAvailable else { throw WebAgentConfigurationError.unavailable }
+        if provider == .gemini { try session.setGeminiModel(geminiModel) }
         let saved = configurations + [configuration]
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -170,9 +171,10 @@ private struct WebAgentConfiguration: Codable {
 }
 
 public enum WebAgentConfigurationError: LocalizedError {
-    case invalidName, invalidRegistry, unavailable
+    case invalidName, invalidRegistry, unavailable, unavailableModel
     public var errorDescription: String? {
         switch self {
+        case .unavailableModel: "The chosen model is no longer available. Choose another model or Use website setting explicitly."
         case .invalidName: "Enter an agent name between 1 and 80 characters."
         case .invalidRegistry: "Saved agent copies are unavailable. Repair their storage before adding another agent."
         case .unavailable: "This agent cannot be copied while its saved state is unavailable."

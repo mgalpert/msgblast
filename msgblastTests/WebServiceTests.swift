@@ -4,6 +4,100 @@ import WebKit
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testGeminiSavedModelIsAppliedBeforeSending() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("gemini.json")
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(WebWorkspaceState())) as? [String: Any])
+        saved["geminiModel"] = ["id": "thinking-fixture", "name": "Thinking fixture"]
+        try JSONSerialization.data(withJSONObject: saved).write(to: url)
+        let session = WebAgentSession(provider: .gemini, storageURL: url, fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.webView.callAsyncJavaScript("""
+            document.getElementById('fixture-model-picker')?.remove();
+            const picker=document.createElement('button'); picker.setAttribute('aria-label','Open mode picker, currently Flash fixture'); document.body.append(picker);
+            let selectedID='flash-fixture';
+            picker.onclick=()=>{const open=document.querySelector('[data-test-id="gem-mode-menu"]');if(open){open.remove();return;}const menu=document.createElement('div');menu.setAttribute('role','menu');menu.dataset.testId='gem-mode-menu';
+              for(const [id,name] of [['flash-fixture','Flash fixture'],['thinking-fixture','Thinking fixture']]){
+                const option=document.createElement('div');option.setAttribute('role','menuitem');option.dataset.modeId=id;option.className=id===selectedID?'selected':'';
+                option.innerHTML='<span class="label">'+name+'</span>';option.onclick=()=>{selectedID=id;picker.setAttribute('aria-label','Open mode picker, currently '+name);menu.remove();};menu.append(option);
+              }document.body.append(menu);};
+            document.getElementById('fixture-send').addEventListener('click',()=>document.body.dataset.sentModel=picker.getAttribute('aria-label'));
+            """, arguments: [:], in: nil, contentWorld: .page)
+        let attempt = await session.send("Saved model request")
+        XCTAssertEqual(attempt?.status, .observed, attempt?.detail ?? "Missing attempt")
+        let model = try await session.webView.callAsyncJavaScript("return document.body.dataset.sentModel", arguments: [:], in: nil, contentWorld: .page) as? String
+        XCTAssertEqual(model, "Open mode picker, currently Thinking fixture")
+    }
+
+    func testGeminiModelsRunTogetherAndRestoreIndependently() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let first = try XCTUnwrap(agents.session(for: .gemini))
+        first.connect()
+        try await waitFor { first.snapshot.ready }
+        let models = try await first.availableGeminiModels()
+        XCTAssertEqual(models.map(\.name), ["3.6 Flash", "3.6 Thinking", "3.1 Pro"])
+        let flash = try XCTUnwrap(models.first { $0.name == "3.6 Flash" })
+        let thinking = try XCTUnwrap(models.first { $0.name == "3.6 Thinking" })
+        try first.setGeminiModel(flash)
+        let second = try agents.duplicate(first, name: "Gemini Thinking", geminiModel: thinking)
+        XCTAssertEqual(first.state.sessionID, second.state.sessionID)
+        let comparison = UUID()
+        let result = await WebAgents.send("Compare these models", to: [first, second], comparisonID: comparison)
+        for session in [first, second] {
+            XCTAssertEqual(result[session.id]?.status, .observed, result[session.id]?.detail ?? "No attempt")
+            try await waitFor { session.snapshot.messages.last?.role == "assistant" }
+            XCTAssertTrue(session.snapshot.messages.last?.text.contains(session.state.geminiModel!.name) == true)
+        }
+        XCTAssertNotEqual(first.state.conversationURLs[comparison.uuidString], second.state.conversationURLs[comparison.uuidString])
+        let reopened = WebAgents(directory: directory, fixture: true)
+        defer { reopened.beginShutdown() }
+        XCTAssertEqual(reopened.session(for: first.id)?.state.geminiModel, flash)
+        XCTAssertEqual(reopened.session(for: second.id)?.state.geminiModel, thinking)
+        _ = await second.openComparison(UUID())
+        let fresh = await second.send("Another chat with the saved model")
+        XCTAssertEqual(fresh?.status, .observed, fresh?.detail ?? "No attempt")
+        let model = try await second.webView.callAsyncJavaScript("return document.body.dataset.sentModel", arguments: [:], in: nil, contentWorld: .page) as? String
+        XCTAssertEqual(model, "Open mode picker, currently Thinking")
+    }
+
+    func testGeminiUnavailableModelAndModelChangeBeforeClickNeverSend() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .gemini, storageURL: directory.appendingPathComponent("gemini.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        try session.setGeminiModel(GeminiModelChoice(id: "removed", name: "Unavailable model"))
+        let missing = await session.send("Never fall back")
+        XCTAssertEqual(missing?.status, .notSent)
+        XCTAssertTrue(missing?.detail?.contains("unavailable") == true)
+        XCTAssertFalse(session.snapshot.hasDraft)
+        XCTAssertTrue(session.snapshot.messages.isEmpty)
+        let models = try await session.availableGeminiModels()
+        try session.setGeminiModel(try XCTUnwrap(models.first { $0.name == "3.6 Thinking" }))
+        // A provider change after insertion must still be caught at the last Send boundary.
+        _ = try await session.webView.callAsyncJavaScript("""
+            document.querySelector('[role=textbox]').addEventListener('input',()=>{
+                document.getElementById('fixture-model-picker').setAttribute('aria-label','Open mode picker, currently 3.6 Flash');
+            });
+            """, arguments: [:], in: nil, contentWorld: .page)
+        let changed = await session.send("Keep this draft instead")
+        await session.refresh()
+        XCTAssertEqual(changed?.status, .notSent)
+        XCTAssertTrue(changed?.detail?.contains("changed during preparation") == true, changed?.detail ?? "Missing failure detail")
+        XCTAssertTrue(session.snapshot.messages.isEmpty)
+        XCTAssertEqual(session.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines), "Keep this draft instead")
+        try session.setGeminiModel(nil)
+        XCTAssertNil(session.state.geminiModel)
+    }
+
     func testGeminiOnboardingAndConversationIdentity() throws {
         let provider = try XCTUnwrap(WebProvider(rawValue: "gemini"))
         let choice = try XCTUnwrap(OnboardingChoice(rawValue: "gemini"))

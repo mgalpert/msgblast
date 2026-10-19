@@ -198,8 +198,12 @@ no live routine, provider request, or tunnel is started.
 
 `AgentGridWorkflowTests/testDuplicateWebAgentCreatesIndependentRecipientAndCanBeRenamed`
 checks the actual Duplicate/Rename sheets and independently selected tiles in
-an isolated Demo session. Change reasoning in the embedded website manually;
-this feature does not automate or verify provider model settings.
+an isolated Demo session. Choose models manually in other providers’ embedded websites. Gemini’s saved
+model selection has WebKit coverage in `WebServiceTests`: applying before sending,
+two simultaneous agents with different models and independent threads, preference
+restore, new chats, unavailable options and a model change immediately before Send.
+The Demo picker and replies are simulated; these checks do not prove live Google
+sign-in, account entitlements, or current website behavior inside WKWebView.
 
 ## Business choice fixtures
 
