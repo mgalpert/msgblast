@@ -22,3 +22,17 @@ comparison, which is why the pane is narrow.
 Capture revision: `953a711ed8d653f9628ce1c420932b87669e750c`, the commit that
 carries the DSH adapter and its tests. The evidence commit that adds these files
 is a head commit on top of it; it changes only this folder.
+
+## Updated Settings evidence
+
+`settings-dev.jpg` and `settings-dev.mp4` show the Settings list in a freshly
+built `msgblast Dev` preview. DSH appears directly below Hermes and its icon is
+circular. The short recording scrolls the Settings window to this part of the
+list and shows the resulting order.
+
+The preview was built from source revision
+`0345c1cf60a5a8160e7b13002a2a641152fec381`, based on `main` at
+`b8bf6143f4875a1b6de9372335bf77dae8035f75`. DSH was not installed or enabled;
+Messages access was off, and no messages or provider requests were sent. This
+capture verifies the Settings presentation only; it does not demonstrate a DSH
+conversation.
