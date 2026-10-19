@@ -45,6 +45,11 @@ struct WebPageScript {
                          #"button[data-testid="chat-submit"],button[aria-label="Submit"]"#,
                          #"[data-message-id][data-message-role],.message-bubble"#,
                          #"button[data-testid="user-menu-button"],button[aria-label="User menu"],button[aria-label="Open user menu"],button[aria-label="Account menu"],button[aria-label^="Account menu, "],button[aria-haspopup="menu"]:has(img[alt="pfp"])"#)
+        case .gemini:
+            selectors = (#"rich-textarea .ql-editor[contenteditable="true"][role="textbox"][aria-label="Enter a prompt for Gemini"]"#,
+                         #"button[aria-label="Send message"]"#,
+                         #"user-query,model-response"#,
+                         #"a[aria-label^="Google Account:"],button[aria-label^="Google Account:"]"#)
         case .os3:
             selectors = (#"textarea[aria-label="message input"]"#,
                          #"button[aria-label="send message"]"#,
@@ -69,7 +74,7 @@ struct WebPageScript {
                 window.addEventListener(event,e=>{if(e.isTrusted) observation.interrupted=true;},true);
         }
         const pathAllowed = () => location.protocol==='https:' && location.hostname===config.host &&
-            (config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
+            (config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='gemini' ? /^\/app(?:\/[a-f0-9]{16})?$/i.test(location.pathname) && !location.search && !location.hash : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
         const messages = () => [...document.querySelectorAll(config.messages)].filter(e => !e.parentElement?.closest(config.messages)).map(e => {
             let role=e.getAttribute('data-message-author-role') || e.getAttribute('data-message-role');
             let id=e.getAttribute('data-message-id') || e.closest('[data-message-id]')?.getAttribute('data-message-id');
@@ -78,11 +83,13 @@ struct WebPageScript {
                 const ids=[...new Set((e.getAttribute('data-chatgpt-search-message-ids')||'').split(/\s+/).filter(Boolean))];
                 if (roleMatch && ids.length===1) { role=roleMatch[1]; id=ids[0]; }
             }
+            if (config.provider==='gemini') { role=e.tagName==='USER-QUERY' ? 'user' : 'assistant'; id=e.querySelector('message-content[id]')?.id; }
             if (config.provider==='dots') role=e.classList.contains('self') ? 'user' : 'assistant';
             if (!role && config.provider==='claude') role=e.getAttribute('data-testid')==='user-message' ? 'user' : 'assistant';
             if (!role && config.provider==='grok') role=e.classList.contains('items-end') || e.closest('[data-role="user"],.items-end') ? 'user' : 'assistant';
             if (config.provider==='os3') { role=e.classList.contains('dial-user') ? 'user' : 'assistant'; id=e.dataset.renderId; }
-            const copy=(config.provider==='dots' ? e.querySelector('.message-text') || document.createElement('span') : e).cloneNode(true); copy.querySelectorAll('button,[role="button"],time').forEach(n=>n.remove());
+            const copy=(config.provider==='gemini' ? e.querySelector(role==='user' ? '.query-text' : 'message-content') || document.createElement('span') : config.provider==='dots' ? e.querySelector('.message-text') || document.createElement('span') : e).cloneNode(true); copy.querySelectorAll('button,[role="button"],time').forEach(n=>n.remove());
+            if (config.provider==='gemini') copy.querySelectorAll('.cdk-visually-hidden').forEach(n=>n.remove());
             if (config.provider==='chatgpt') copy.querySelectorAll('h4[data-conversation-role]').forEach(n=>n.remove());
             if (config.provider==='os3') copy.querySelectorAll('.dial-meta,.dial-reaction').forEach(n=>n.remove());
             copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
@@ -239,12 +246,13 @@ struct WebPageScript {
         case .dots: #"<div contenteditable="true" role="textbox" aria-label="Message" data-composer-markdown></div>"#
         case .claude: #"<div class="ProseMirror" role="textbox" aria-label="Message Claude" contenteditable="true"></div>"#
         case .chatgpt: #"<textarea aria-label="Chat with ChatGPT"></textarea>"#
+        case .gemini: #"<rich-textarea><div class="ql-editor" contenteditable="true" role="textbox" aria-label="Enter a prompt for Gemini"><p><br></p></div><div class="ql-clipboard" contenteditable="true" tabindex="-1"></div></rich-textarea>"#
         case .hark: #"<textarea aria-label="Message Hark"></textarea>"#
         case .os3: #"<textarea aria-label="message input"></textarea>"#
         default: #"<textarea aria-label="Ask Grok anything"></textarea>"#
         }
         let send = provider == .dots ? #"aria-label="Send""# : provider == .os3 ? #"aria-label="send message""# : provider == .grok ? #"data-testid="chat-submit" aria-label="Submit""# : #"aria-label="Send message""#
-        let account = provider == .dots ? #"aria-label="Your dot actions""# : provider == .os3 ? #"aria-label="Settings""# : provider == .chatgpt ? #"data-testid="accounts-profile-button""# : #"data-testid="user-menu-button""#
+        let account = provider == .gemini ? #"aria-label="Google Account: Fixture""# : provider == .dots ? #"aria-label="Your dot actions""# : provider == .os3 ? #"aria-label="Settings""# : provider == .chatgpt ? #"data-testid="accounts-profile-button""# : #"data-testid="user-menu-button""#
         let login = provider == .dots ? #"aria-label="Sign in""# : ""
         let avatar = provider == .dots ? ##"<div id="fixture-dot-avatar"><button data-orbit-profile-trigger aria-label="Open Fixture’s profile"></button><span role="presentation" style="display:block;width:64px;height:64px"><svg width="64" height="64" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="22" fill="#23b88d"/><circle cx="24" cy="27" r="4" fill="white"/><circle cx="40" cy="27" r="4" fill="white"/><path d="M22 40 Q32 48 42 40" fill="none" stroke="white" stroke-width="3"/></svg></span></div>"## : ""
         return """
@@ -272,6 +280,7 @@ struct WebPageScript {
         input.addEventListener('input',()=>send.disabled=!value().trim());
         send.addEventListener('click',()=>{const text=value();if(!text.trim())return;
         function add(role,text){const a=document.createElement('article');
+        if(provider==='gemini'){const message=document.createElement(role==='user'?'user-query':'model-response');const body=document.createElement(role==='user'?'div':'message-content');if(role==='user')body.className='query-text';else body.id='message-content-id-r_'+crypto.randomUUID();const label=document.createElement(role==='user'?'h5':'h6');label.className='cdk-visually-hidden';label.hidden=true;label.textContent=role==='user'?'You said '+text:'Gemini said';body.append(label,document.createTextNode(text));message.append(body);document.getElementById('transcript').append(message);saveFixtureThread();return;}
         if(provider==='dots'){a.className='message-row'+(role==='user'?' self':'');a.dataset.messageId=crypto.randomUUID();const body=document.createElement('div');body.className='message-text';body.textContent=text;a.append(body);document.getElementById('transcript').append(a);return;}
         if(provider==='chatgpt'){a.dataset.messageAuthorRole=role;a.dataset.messageId=crypto.randomUUID();}
         if(provider==='claude'){a.dataset.testid=role==='user'?'user-message':'assistant-message';}
@@ -279,7 +288,7 @@ struct WebPageScript {
         if(provider==='os3'){a.dataset.renderId='msg-'+crypto.randomUUID();a.className='dial-msg '+(role==='user'?'dial-user':'dial-system');}
         a.textContent=text;document.getElementById('transcript').append(a);a.scrollIntoView({block:'nearest'});saveFixtureThread();}
         add('user',text);if(input.tagName==='TEXTAREA')input.value='';else input.textContent='';send.disabled=true;
-        if(provider!=='os3'&&location.pathname===newPath){history.replaceState(null,'',(provider==='claude'?'/chat/':'/c/')+crypto.randomUUID());updateFixtureTitle();saveFixtureThread();}
+        if(provider!=='os3'&&location.pathname===newPath){history.replaceState(null,'',(provider==='gemini'?'/app/':provider==='claude'?'/chat/':'/c/')+(provider==='gemini'?crypto.randomUUID().replaceAll('-','').slice(0,16):crypto.randomUUID()));updateFixtureTitle();saveFixtureThread();}
         setTimeout(()=>add('assistant','\(provider.name) fixture reply: '+text),350);});
         </script></body></html>
         """

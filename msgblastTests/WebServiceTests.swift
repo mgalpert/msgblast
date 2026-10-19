@@ -4,6 +4,73 @@ import WebKit
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testGeminiOnboardingAndConversationIdentity() throws {
+        let provider = try XCTUnwrap(WebProvider(rawValue: "gemini"))
+        let choice = try XCTUnwrap(OnboardingChoice(rawValue: "gemini"))
+        XCTAssertEqual(choice.provider, provider)
+        XCTAssertTrue(OnboardingConnector.apps.includes(choice))
+        XCTAssertEqual(provider.newChatURL.absoluteString, "https://gemini.google.com/app")
+        let thread = URL(string: "https://gemini.google.com/app/5cd339559845be83")!
+        XCTAssertTrue(provider.isChatURL(provider.newChatURL))
+        XCTAssertNil(provider.canonicalConversationURL(provider.newChatURL))
+        XCTAssertEqual(provider.canonicalConversationURL(thread), thread)
+        XCTAssertTrue(provider.acceptsReceipt(from: provider.newChatURL, at: thread))
+        XCTAssertFalse(provider.acceptsReceipt(from: thread, at: URL(string: "https://gemini.google.com/app/abcdef0123456789")!))
+        for value in ["https://gemini.google.com/", "https://gemini.google.com/app/settings", "https://gemini.google.com/app/5cd339559845be83/extra", "https://gemini.google.com/app/5cd339559845be83?other=chat", "https://gemini.google.com.evil.test/app/5cd339559845be83"] {
+            XCTAssertNil(provider.canonicalConversationURL(URL(string: value)!))
+        }
+    }
+
+    func testGeminiQuillSubmissionStartsSeparateChatsAndPreservesDrafts() async throws {
+        let provider = try XCTUnwrap(WebProvider(rawValue: "gemini"))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent("gemini.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        XCTAssertTrue(session.isReadyForOnboarding)
+        let first = UUID(), second = UUID()
+        let text = "Compare these ideas.\nKeep  both spaces and this apostrophe: it's useful."
+        let attempt = await session.send(text, comparisonID: first)
+        XCTAssertEqual(attempt?.status, .observed)
+        try await waitFor { session.snapshot.messages.last?.role == "assistant" }
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), [text.split(whereSeparator: \.isWhitespace).joined(separator: " ")])
+        XCTAssertFalse(session.snapshot.messages.contains { $0.text.contains("You said") || $0.text.contains("Gemini said") })
+        let firstURL = try XCTUnwrap(session.state.conversationURLs[first.uuidString])
+        _ = await session.openComparison(second)
+        XCTAssertEqual(session.webView.url, provider.newChatURL)
+        let secondAttempt = await session.send("Separate Gemini thread", comparisonID: second)
+        XCTAssertEqual(secondAttempt?.status, .observed)
+        XCTAssertNotEqual(session.state.conversationURLs[second.uuidString], firstURL)
+        _ = await session.openComparison(first)
+        XCTAssertEqual(session.webView.url, firstURL)
+        _ = try await session.webView.callAsyncJavaScript("document.querySelector('[role=textbox]').textContent='Keep my private draft'", arguments: [:], in: nil, contentWorld: .page)
+        let blocked = await session.send("Must not overwrite", comparisonID: first)
+        XCTAssertEqual(blocked?.status, .notSent)
+        XCTAssertEqual(session.snapshot.draft, "Keep my private draft")
+        XCTAssertEqual(session.state.attempts.filter { $0.status == .observed }.count, 2)
+    }
+
+    func testGeminiRequiresSignInAndWaitsForAnActiveResponse() async throws {
+        let provider = try XCTUnwrap(WebProvider(rawValue: "gemini"))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent("gemini.json"), fixture: true)
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.webView.callAsyncJavaScript("const stop=document.createElement('button');stop.setAttribute('aria-label','Stop response');document.body.append(stop)", arguments: [:], in: nil, contentWorld: .page)
+        let busy = await session.send("Wait for the current reply")
+        XCTAssertEqual(busy?.status, .notSent)
+        XCTAssertFalse(session.snapshot.hasDraft)
+        _ = try await session.webView.callAsyncJavaScript("document.querySelector('[aria-label=\"Stop response\"]').remove();document.getElementById('chat').hidden=true;document.getElementById('login').hidden=false", arguments: [:], in: nil, contentWorld: .page)
+        _ = await session.checkSignIn()
+        XCTAssertEqual(session.snapshot.signedIn, false)
+        XCTAssertFalse(session.isReadyForOnboarding)
+        let signedOut = await session.send("Do not submit anonymously")
+        XCTAssertEqual(signedOut?.status, .notSent)
+        XCTAssertTrue(session.snapshot.messages.isEmpty)
+    }
+
     func testCurrentGrokComboboxAndAccountMenuAllowSimultaneousBroadcast() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

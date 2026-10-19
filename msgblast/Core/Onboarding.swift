@@ -1,7 +1,7 @@
 import Foundation
 
 public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Sendable, Hashable {
-    case chatgpt, claude, grokbot, muse, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
+    case chatgpt, claude, grokbot, muse, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages, gemini
 
     public var id: String { rawValue }
     public var name: String {
@@ -28,6 +28,7 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
         case .dots: .dots
         case .os3: .os3
         case .hark: .hark
+        case .gemini: .gemini
         case .instinct, .fo, .szn, .poke, .otherMessages, .openclaw, .hermes: nil
         }
     }

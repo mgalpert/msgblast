@@ -86,6 +86,14 @@ agent. Additional identities live in `web-agent-instances.json`; their state and
 Grok Bot credentials use distinct instance paths. Unreadable state is preserved
 and never replaced with a new empty registry.
 
+Gemini is available in Apps onboarding at `https://gemini.google.com/app`,
+separate from Gemini CLI. Sign in to retain website history. New comparisons open
+`/app`; the first submission assigns `/app/<16-character hex ID>`. Each comparison
+keeps its own saved URL and page. Its Quill prompt editor uses the existing
+contenteditable insertion flow, with one Send click, draft protection, and
+rendered user/assistant receipts. Unknown layouts and signed-out sessions do not
+receive shared submissions. Model choice remains in Gemini's website controls.
+
 Hark is available during onboarding at `https://hark.com/chat`. Its embedded
 page supports manual chat; shared submissions and receipt extraction remain
 disabled until its authenticated layout is verified. Selecting Hark keeps its
