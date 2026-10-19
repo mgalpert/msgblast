@@ -90,10 +90,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
     @Published public private(set) var desktopReady = false
     @Published public private(set) var desktopStatus = "Connect an open app conversation."
+    @Published public private(set) var desktopInstallation = DesktopAppInstallation(url: nil, processID: nil)
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
     private let museApp: MuseAppConversation
+    private let desktopApps: DesktopAppInstallationClient
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
     private var grokBotReceiver: GrokBotCallbackReceiver?
@@ -133,8 +135,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
         self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
     }
-    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation) {
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil) {
         self.museApp = museApp
+        self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
         self.storageURL = storageURL
@@ -173,7 +176,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             setGrokBotConnectionActivity(.readingKey)
             Task { [weak self] in _ = await self?.restoreGrokBotConnection() }
         }
-        if provider.usesNativeConversation { updateNativeSnapshot() }
+        if provider.desktopApp != nil { refreshDesktopInstallation() }
+        else if provider.usesNativeConversation { updateNativeSnapshot() }
         if failure == nil { persist() }
     }
 
@@ -222,6 +226,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func setEnabled(_ enabled: Bool) {
         guard provider.usesNativeConversation else { return }
+        if enabled, provider.desktopApp != nil {
+            refreshDesktopInstallation()
+            guard desktopInstallation.isInstalled else { return }
+        }
         updateState {
             $0.enabled = enabled
             if !enabled { $0.selected = false }
@@ -1061,8 +1069,42 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { self.error = "Could not save the recovered conversation. Repair storage before sending." }
     }
 
+    public var desktopConnectionConfirmation: String? {
+        guard isReadyForOnboarding, desktopReady, let app = provider.desktopApp, let binding = state.desktopConversation else { return nil }
+        return app == .muse
+            ? "Your first prompt in a new comparison starts a new side chat in Muse. This check didn’t send a message."
+            : "Your prompts will go to “\(binding.name)” in \(app.name). Comparisons share that conversation. This check didn’t send a message."
+    }
+
+    public func refreshDesktopInstallation() {
+        guard let app = provider.desktopApp else { return }
+        let fresh = desktopApps.inspect(app)
+        let changed = fresh != desktopInstallation
+        if changed { desktopReady = false }
+        desktopInstallation = fresh
+        if !fresh.isInstalled { desktopStatus = "Install \(app.name) on this Mac to connect." }
+        else if !fresh.isRunning { desktopStatus = "Open \(app.name) and sign in, then check the connection." }
+        else if !desktopReady && (changed || desktopStatus.isEmpty) { desktopStatus = "Check the connection to get ready for your first prompt." }
+        updateNativeSnapshot()
+    }
+
+    public func openDesktopApp() async {
+        guard provider.desktopApp != nil, !loading, !isSending else { return }
+        refreshDesktopInstallation()
+        guard let url = desktopInstallation.url else { return }
+        loading = true
+        defer { loading = false }
+        do { try await desktopApps.open(url); refreshDesktopInstallation() }
+        catch { desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
+    }
+
     public func connectDesktopConversation() async {
         guard let app = provider.desktopApp, !isSending, !storageFailed, !loading, !shuttingDown else { return }
+        refreshDesktopInstallation()
+        guard isEnabled, desktopInstallation.isRunning else { return }
+        let installation = desktopInstallation
+        desktopReady = false
+        desktopStatus = "Checking \(app.name)'s conversation…"
         loading = true
         defer { loading = false }
         do {
@@ -1071,6 +1113,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 if !fixture { try await museApp.checkAvailable() }
                 binding = DesktopConversationBinding(name: "Muse")
             } else { binding = fixture ? DesktopConversationBinding(name: app == .grokBot ? "Demo Bot" : app.name) : try await DesktopAppConversation.shared.inspect(app) }
+            refreshDesktopInstallation()
+            guard isEnabled, !shuttingDown else { throw CancellationError() }
+            guard desktopInstallation == installation else { throw DesktopAppError.unavailable("\(app.name) changed while checking. Check the connection again.") }
             state.desktopConversation = binding
             try save()
             connected = true
@@ -1085,7 +1130,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let app = provider.desktopApp, !loading, !refreshing, !shuttingDown else { return }
         refreshing = true
         defer { refreshing = false }
+        refreshDesktopInstallation()
         desktopReady = false
+        guard desktopInstallation.isRunning else { updateNativeSnapshot(); return }
         if let binding = state.desktopConversation {
             do {
                 if app == .muse {
@@ -1128,7 +1175,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         fresh.draft = state.draft
         if provider.desktopApp != nil {
             if provider == .museApp { fresh.url = state.comparisonID.flatMap { state.museAppConversations[$0.uuidString]?.url?.absoluteString } ?? "" }
-            fresh.ready = isEnabled && !storageFailed && desktopReady && !hasIncompleteNativeRequest(for: state.comparisonID)
+            fresh.ready = isEnabled && !storageFailed && desktopInstallation.isRunning && desktopReady && !hasIncompleteNativeRequest(for: state.comparisonID)
             fresh.reason = !isEnabled ? "Enable \(provider.name) to send." : hasIncompleteNativeRequest(for: state.comparisonID) ? "Review the previous incomplete request before continuing." : desktopStatus
             if fresh != snapshot { snapshot = fresh }
             return
@@ -1179,6 +1226,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if provider.desktopApp != nil {
+            refreshDesktopInstallation()
+            guard desktopInstallation.isRunning else { error = desktopStatus; return nil }
+        }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: id) else {
             error = "An earlier request did not complete. Review it before explicitly allowing another request; usage may have been consumed."

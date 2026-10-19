@@ -62,7 +62,10 @@ struct OnboardingView: View {
                         Spacer()
                         Button("Continue setup") { setup.begin() }
                             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                            .disabled(setup.state.selected.isEmpty)
+                            .disabled(setup.state.selected.isEmpty || setup.state.selected.contains { choice in
+                                guard let provider = choice.provider, provider.desktopApp != nil else { return false }
+                                return setup.desktopInstallations[provider]?.isInstalled != true
+                            })
                     } else {
                         Button("Back") { setup.back() }
                         Spacer()
@@ -83,6 +86,10 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .frame(minWidth: 740, minHeight: 560)
         .background(Color(nsColor: .windowBackgroundColor))
+        .task { setup.refreshDesktopInstallations() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            setup.refreshDesktopInstallations()
+        }
         .onChange(of: telemetryScreenKey, initial: true) { _, _ in
             var properties = TelemetryProperties()
             properties.screen = telemetryScreen
@@ -292,6 +299,9 @@ struct OnboardingView: View {
 
     private func choiceButton(_ choice: OnboardingChoice) -> some View {
         let selected = setup.state.selected.contains(choice)
+        let selectionStatus = selected ? "Selected" : "Not selected"
+        let desktop = choice.provider.flatMap { $0.desktopApp == nil ? nil : $0 }
+        let installed = desktop.map { setup.desktopInstallations[$0]?.isInstalled == true } ?? true
         return Button { setup.edit { $0.toggle(choice) } } label: {
             HStack(spacing: 14) {
                 if let provider = choice.provider {
@@ -304,8 +314,15 @@ struct OnboardingView: View {
                 } else {
                     AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice)), name: choice.name, size: 44)
                 }
-                Text(choice == .otherMessages ? "Another Messages agent" : choice.name)
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(choice == .otherMessages ? "Another Messages agent" : choice.name)
+                        .font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
+                    if let desktop {
+                        Text(setup.desktopInstallations[desktop] == nil ? "Checking this Mac…" : installed ? "Installed on this Mac" : "Not installed")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("desktop-installation-\(desktop.rawValue)")
+                    }
+                }
                 Spacer(minLength: 6)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22)).foregroundStyle(selected ? Color.blue : .secondary)
@@ -315,7 +332,8 @@ struct OnboardingView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.blue : Color.primary.opacity(0.14), lineWidth: selected ? 1.5 : 1))
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }.buttonStyle(.plain).accessibilityLabel("Choose \(choice.name)")
-            .accessibilityValue(selected ? "Selected" : "Not selected")
+            .accessibilityValue(!installed ? "Not installed" : desktop != nil ? "Installed on this Mac. \(selectionStatus)" : selectionStatus)
+            .disabled(!installed && !selected)
     }
 
 }
@@ -398,11 +416,12 @@ private struct OnboardingProviderView: View {
                         CuaPermissionsView(demo: model.demo, busy: model.busy || model.webBroadcastBusy)
                         Divider()
                         if !desktopConnectedHere {
-                            Text("Connect this app to verify its current conversation before continuing.")
+                            Text("Check the connection before continuing.")
                                 .font(.caption).foregroundStyle(.secondary)
                                 .accessibilityIdentifier("desktop-onboarding-connection-required")
                         }
                         DesktopAppSetupView(session: session, busy: model.busy || model.webBroadcastBusy,
+                                            showConnectionConfirmation: desktopConnectedHere,
                                             onConnected: { desktopConnectedHere = true })
                     }.padding(2)
                 }.scrollIndicators(.hidden)

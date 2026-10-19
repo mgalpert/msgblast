@@ -7,6 +7,7 @@ final class OnboardingController: ObservableObject {
     unowned let model: AppModel
     @Published private(set) var checking = false
     @Published private(set) var compatibility: [WebProvider: Bool] = [:]
+    @Published private(set) var desktopInstallations: [WebProvider: DesktopAppInstallation] = [:]
     @Published var error: String?
     @Published var browserSource: BrowserLoginSource?
     @Published private(set) var browserProfiles: [BrowserLoginProfile] = []
@@ -280,9 +281,19 @@ final class OnboardingController: ObservableObject {
 
     func prepareDesktopConnection(_ session: WebAgentSession) {
         guard state.stage == .connecting, state.currentStep == .agent(session.provider), session.provider.desktopApp != nil else { return }
+        session.refreshDesktopInstallation()
+        guard session.desktopInstallation.isInstalled else { return }
         if !session.isEnabled { session.setEnabled(true); session.updateState { $0.selected = false } }
         // Checking a saved binding can start Cua's permission gate. Desktop
-        // onboarding waits for the user's explicit Connect/Reconnect action.
+        // onboarding waits for the user's explicit connection check.
+    }
+
+    func refreshDesktopInstallations() {
+        for provider in WebProvider.allCases where provider.desktopApp != nil {
+            let session = session(for: provider)
+            session.refreshDesktopInstallation()
+            desktopInstallations[provider] = session.desktopInstallation
+        }
     }
 
     func refresh(_ session: WebAgentSession) async {

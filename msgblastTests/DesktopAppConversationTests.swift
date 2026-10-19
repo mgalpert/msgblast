@@ -468,6 +468,65 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testMuseOnboardingCheckReadsComposerWithoutInputAndKeepsAnActionableFailure() async throws {
+        for draft in ["", "Unsent Muse draft"] {
+            var window = windows()
+            window["native"] = try object(museObservation(draft: draft))
+            let fixture = try driver([apps(.muse), window])
+            defer { fixture.remove() }
+            let session = WebAgentSession(provider: .museApp, storageURL: fixture.directory.appendingPathComponent("state.json"),
+                                          fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
+            session.setEnabled(true)
+            await session.connectDesktopConversation()
+            XCTAssertEqual(session.desktopReady, draft.isEmpty)
+            XCTAssertEqual(session.desktopConnectionConfirmation != nil, draft.isEmpty)
+            if !draft.isEmpty {
+                let failure = session.desktopStatus
+                XCTAssertTrue(failure.contains("draft"))
+                session.refreshDesktopInstallation()
+                XCTAssertEqual(session.desktopStatus, failure, "Reactivation must preserve the reason a check failed")
+            }
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            XCTAssertTrue(session.state.museAppConversations.isEmpty)
+            let calls = try fixture.calls()
+            XCTAssertEqual(calls.map(\.tool), ["list_apps", "list_windows"])
+            assertNoInput(calls)
+            session.beginShutdown()
+        }
+    }
+
+    func testMuseCheckCannotClaimReadyAfterRemovalDisableOrShutdownDuringTheRead() async throws {
+        @MainActor final class InstalledApp {
+            var installation = DesktopAppInstallation(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242)
+        }
+        for change in ["removal", "disable", "shutdown"] {
+            var window = windows()
+            window["native"] = try object(museObservation())
+            window["wait_for_release"] = true
+            let fixture = try driver([apps(.muse), window])
+            defer { fixture.remove() }
+            let installed = InstalledApp()
+            let client = DesktopAppInstallationClient(inspect: { _ in installed.installation }, open: { _ in XCTFail("A check must not launch the app") })
+            let session = WebAgentSession(provider: .museApp, storageURL: fixture.directory.appendingPathComponent("state.json"),
+                                          fixture: false, museApp: museAdapter(fixture), desktopApps: client)
+            session.setEnabled(true)
+            let check = Task { await session.connectDesktopConversation() }
+            try await waitForCall("list_windows", in: fixture)
+            if change == "removal" { installed.installation = .init(url: nil, processID: nil) }
+            else if change == "disable" { session.setEnabled(false) }
+            else { session.beginShutdown() }
+            try Data().write(to: fixture.directory.appendingPathComponent("release"))
+            await check.value
+            XCTAssertFalse(session.desktopReady)
+            XCTAssertFalse(session.snapshot.ready)
+            XCTAssertNil(session.desktopConnectionConfirmation)
+            XCTAssertNil(session.state.desktopConversation)
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            assertNoInput(try fixture.calls())
+            session.beginShutdown()
+        }
+    }
+
     func testMuseCreatesSideChatVerifiesDraftAndPersistsUUIDBeforeReply() async throws {
         let owner = UUID(), thread = UUID()
         let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
@@ -476,7 +535,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
         try JSONEncoder().encode(saved).write(to: stateURL)
-        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, transientWindowFailure: true))
+        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, transientWindowFailure: true), desktopApps: .demo)
         let sending = Task { await session.send(prompt, comparisonID: owner) }
         try await waitForCall("press_key", in: fixture)
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -562,12 +621,12 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
         try JSONEncoder().encode(saved).write(to: stateURL)
-        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)))
+        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo)
         let result = await session.send(prompt, comparisonID: owner)
         XCTAssertEqual(result?.status, .uncertain)
         XCTAssertEqual(session.state.museAppConversations[owner.uuidString]?.threadID, thread)
         session.beginShutdown()
-        let reopened = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture))
+        let reopened = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
         reopened.updateState { $0.comparisonID = other }
         let blocked = await reopened.send("Other comparison", comparisonID: other)
         XCTAssertNil(blocked)
@@ -594,7 +653,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
-        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)))
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo)
         let sent = await session.send(prompt, comparisonID: owner)
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)
@@ -603,7 +662,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertNil(result.conversationURL)
         XCTAssertNil(session.state.museAppConversations[owner.uuidString]?.threadID)
         session.beginShutdown()
-        let reopened = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture))
+        let reopened = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
         reopened.acknowledgeIncompleteRequest()
         reopened.connect(automaticallyRefresh: false)
         try fixture.replacePlan([apps(.muse), windows()])
@@ -638,7 +697,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
-        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture))
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
         let sent = await session.send(prompt, comparisonID: owner)
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)

@@ -13,12 +13,20 @@ state files, histories, and execution paths.
    **CuaDriver** rows to open Cua's own Accessibility, Screen Recording and
    window-capture setup. macOS owns the grant decisions; nothing is enabled by
    opening Settings alone.
-2. Open the desktop app, sign in, dismiss dialogs, and keep one main window on
-   the current desktop. Wabi supports only its AI conversation.
+2. Install the desktop app on this Mac and sign in. Onboarding labels each app
+   **Installed on this Mac** or **Not installed** before it can be selected.
+   Settings also checks installation before allowing an app to be enabled.
+   If it is installed but closed, **Open Muse**, **Open Grok Bot**, or **Open Wabi**
+   opens it normally. Keep one main window on the current desktop and dismiss
+   dialogs. Wabi supports only its AI conversation.
 3. Choose Muse App, Grok Bot App or Wabi during **Apps** onboarding, or add it
    from **More agents**. Onboarding shows the same permission controls before
-   connection. For Muse, choose **Connect Muse**. For Grok Bot or Wabi, select
-   the intended app conversation and choose **Connect open conversation**.
+   connection. For Muse, choose **Check Muse connection**. For Grok Bot or Wabi,
+   select the intended app conversation and choose **Check connection**.
+   This read-only check verifies the conversation and composer without sending
+   a test prompt or creating a side chat. A **Ready for your first prompt** note
+   confirms the destination before Continue is enabled. Muse starts its own side
+   chat with the first real prompt; Grok Bot and Wabi use the checked conversation.
 4. Select the agent and use the private or shared msgblast message box.
 
 The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
@@ -26,21 +34,33 @@ The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
 Full Disk Access does not grant Accessibility permission. This prototype neither
 bundles the driver nor copies provider authentication into msgblast.
 
+Installation discovery validates the app's bundle identifier and executable; a
+stale LaunchServices entry is insufficient. App removal or a process change clears
+the in-memory connection check. A valid running copy takes precedence over a
+registered path; its process ID is never attached to a different installed copy.
+Before a send, msgblast rechecks installation and
+running status. Saved conversations, drafts, and receipts remain intact if an app
+is missing. Demo simulates installed apps and connection checks without contacting
+them.
+
 ## Permission checks and consent
 
 Settings and desktop-app onboarding share one permission view. The three rows
 separate msgblast's Accessibility access from CuaDriver's Accessibility and
 Screen Recording grants. Full Disk Access for Messages cannot satisfy them.
 Browser and CLI onboarding does not request Cua access. Entering or reactivating
-a desktop onboarding screen checks permission status only. Even a saved connection
-requires an explicit **Connect** or **Reconnect** before Continue is enabled;
+a desktop onboarding screen reads permission and installation status without
+opening an app or inspecting its conversation. Even a saved connection
+requires an explicit connection check before Continue is enabled;
 cached readiness cannot advance setup automatically.
 
-Refresh and **Check again** run `cua-driver permissions status --json`; this
+In the permission controls, Refresh and **Check again** run
+`cua-driver permissions status --json`; this
 read-only command does not start a daemon or show permission prompts. Grants
 are accepted only when the report identifies the standalone CuaDriver daemon
 (`com.trycua.driver`). Missing drivers, failed checks, and reports from another
 permission owner remain unverified rather than showing Allowed.
+**Check installation** only refreshes native installation discovery.
 
 Only **Enable** or **Cua setup & capture check…** runs the supported
 `cua-driver permissions grant` consent flow. Public `check_permissions` calls

@@ -43,8 +43,20 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        app.buttons["Choose Muse App"].click()
-        app.buttons["Continue setup"].click()
+        for name in ["Muse App", "Grok Bot App", "Wabi"] {
+            let installedApp = app.buttons["Choose \(name)"]
+            XCTAssertTrue(installedApp.waitForExistence(timeout: 5))
+            XCTAssertTrue(installedApp.isEnabled)
+            XCTAssertEqual(installedApp.value as? String, "Installed on this Mac. Not selected")
+        }
+        let muse = app.buttons["Choose Muse App"]
+        muse.click()
+        expectation(for: NSPredicate(format: "value == %@", "Installed on this Mac. Selected"), evaluatedWith: muse)
+        waitForExpectations(timeout: 5)
+        let continueSetup = app.buttons["Continue setup"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: continueSetup)
+        waitForExpectations(timeout: 5)
+        continueSetup.click()
         XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
         for id in ["cua-host", "cua-driver", "cua-capture"] {
             let status = app.staticTexts["permission-status-\(id)"]
@@ -52,10 +64,14 @@ final class OnboardingWorkflowTests: XCTestCase {
             XCTAssertEqual(status.value as? String, "Allowed")
         }
         XCTAssertEqual(app.webViews.count, 0, "A desktop app must not open a website sign-in flow")
-        let connect = app.buttons["Connect Muse"]
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists)
+        let connect = app.buttons["Check Muse connection"]
         for _ in 0..<6 where !connect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         XCTAssertTrue(connect.isHittable)
         connect.click()
+        XCTAssertTrue(app.staticTexts["Ready for your first prompt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Your first prompt in a new comparison starts a new side chat in Muse. This check didn’t send a message."].exists)
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
         waitForExpectations(timeout: 5)
@@ -63,7 +79,8 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.staticTexts["desktop-onboarding-connection-required"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Continue"].isEnabled, "A saved binding still requires an explicit live check")
-        let reconnect = app.buttons["Connect Muse"]
+        XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists, "A cached check must not show a new confirmation")
+        let reconnect = app.buttons["Check Muse connection"]
         for _ in 0..<6 where !reconnect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         reconnect.click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
