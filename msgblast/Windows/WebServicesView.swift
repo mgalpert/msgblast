@@ -492,7 +492,7 @@ struct LocalAgentSettingsView: View {
             if let image = localAccountIcons[icon] {
                 Image(nsImage: image).resizable().scaledToFit()
                     .frame(width: 32, height: 32)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(icon == "dsh" ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 8)))
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 3) {
