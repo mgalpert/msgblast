@@ -60,7 +60,10 @@ bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
 ```
 
 - Web fixtures compile actual app/controller code with local website/Messages
-  substitutes, checking comparison and broadcast lifecycle.
+  substitutes, checking comparison and broadcast lifecycle. They also verify
+  that feedback failures retain the form while a confirmed receipt closes it
+  and restores the workspace. Feedback HTTP responses are supplied by a local
+  URLProtocol fixture; no report is uploaded.
 - Configured CLI fixtures invoke the real adapter with a deterministic local
   executable and temporary configuration. They test new/resumed sessions,
   configuration transport, denied writes, restricted reports, and legacy history.

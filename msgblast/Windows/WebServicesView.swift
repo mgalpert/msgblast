@@ -135,7 +135,10 @@ struct AgentsWorkspaceView: View {
         return web.displayed.filter { !hiddenWebAgents.contains($0.id) }
     }
     private var displayedMembers: [Member] { nativeComparison?.members.filter { !hiddenMembers.contains($0.id) } ?? [] }
-    private var comparisonChatCount: Int { displayedSessions.count + displayedMembers.count }
+    private var unsentMessageAgents: [Agent] {
+        windowComparisonID == nil && web.comparisonID == nil ? nativeRecipients.filter { !hiddenMembers.contains($0.id) } : []
+    }
+    private var comparisonChatCount: Int { displayedSessions.count + displayedMembers.count + unsentMessageAgents.count }
 
     private var comparisonPanes: some View {
         chatColumns
@@ -144,6 +147,7 @@ struct AgentsWorkspaceView: View {
 
     private var chatColumns: some View {
         GeometryReader { geometry in
+            let unsentAgents = unsentMessageAgents
             let columns = comparisonChatCount
             let width = max(320, (geometry.size.width - CGFloat(max(0, columns - 1))) / CGFloat(max(1, columns)))
             ScrollView(.horizontal) {
@@ -170,6 +174,22 @@ struct AgentsWorkspaceView: View {
                             })
                                 .frame(width: width).id(member.id.uuidString)
                         }
+                    }
+                    ForEach(unsentAgents) { agent in
+                        if !displayedSessions.isEmpty || agent.id != unsentAgents.first?.id { Divider() }
+                        VStack(spacing: 0) {
+                            ContactHeader(agent: agent, name: agent.name + (model.demo ? " (Demo)" : ""), destination: model.route(agent)?.handle ?? "", removeFromView: {
+                                model.state.selection.remove(agent.id)
+                                hiddenMembers.insert(agent.id)
+                                model.persist()
+                            })
+                            .background(.bar).disabled(sending)
+                            Spacer()
+                            Text("Your message has not been sent. Use Send & compare after signing in to your selected accounts.")
+                                .foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
+                            Spacer()
+                        }
+                        .frame(width: width).id(agent.id.uuidString)
                     }
                 }.frame(height: geometry.size.height)
             }.scrollIndicators(.visible)

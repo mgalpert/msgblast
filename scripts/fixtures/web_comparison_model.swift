@@ -6,6 +6,32 @@ import msgblastCore
     var messagesFinished = false
 }
 
+private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url == FeedbackSubmission.productionEndpoint }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        let payload = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let status = payload["note"] as? String == "Feedback failure fixture" ? 503 : 201
+        let body = try! JSONSerialization.data(withJSONObject: ["id": payload["id"]!])
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 @main struct SideChatModelCheck {
     @MainActor static func waitUntil(file: StaticString = #fileID, line: UInt = #line, _ check: () -> Bool) async throws {
         for _ in 0..<100 { if check() { return }; try await Task.sleep(for: .milliseconds(100)) }
@@ -59,8 +85,41 @@ import msgblastCore
         precondition(relaunched.telemetryAgentCounts == counts)
         print("PASS: actual same-store AppModel relaunch preserves Messages and website recipients, draft, inferred grid, and adoption baseline during permission review.")
     }
+    @MainActor static func runFeedbackWindowChecks() async throws {
+        let model = AppModel()
+        model.timer?.invalidate()
+        model.coordinator = WindowCoordinator(model: model)
+        let workspace = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 800, height: 600), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        workspace.isReleasedWhenClosed = false
+        model.coordinator?.workspaceWindow = workspace
+        let configuration = FeedbackSubmission.sessionConfiguration()
+        configuration.protocolClasses = [FeedbackWindowProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        defer { transport.invalidateAndCancel(); workspace.orderOut(nil) }
+        let controller = FeedbackWindowController(model: model, updater: AppUpdater(), transport: transport)
+        FeedbackWindowController.current = controller
+        let feedback = NSApp.windows.first { $0.title == "Send Feedback" }!
+        NSApp.activate()
+        feedback.makeKeyAndOrderFront(nil)
+        controller.session.note = "Feedback failure fixture"
+        controller.session.send()
+        try await waitUntil { !controller.session.isSending }
+        precondition(feedback.isVisible && FeedbackWindowController.current === controller, "Failed feedback must keep its window open")
+        precondition(controller.session.note == "Feedback failure fixture" && controller.session.canSend, "Failed feedback must retain an editable, retryable note")
+        controller.session.note = "Feedback success fixture"
+        controller.session.send()
+        try await waitUntil { !controller.session.isSending }
+        precondition(!feedback.isVisible, "A confirmed feedback receipt must close its window")
+        try await waitUntil { FeedbackWindowController.current == nil && workspace.isKeyWindow }
+        precondition(workspace.isVisible && workspace.isKeyWindow, "Successful feedback must return focus to the main workspace")
+        model.webAgents.beginShutdown()
+        await model.webAgents.cancelAndWait()
+        print("PASS: feedback failure preserves its window/note; a confirmed receipt closes feedback and restores the main workspace. Local URLProtocol fixture; no feedback uploaded.")
+    }
+
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared
+        try await runFeedbackWindowChecks()
         let scrollModel = AppModel()
         let scrollAgent = scrollModel.state.agents[0]
         let scrollID = await scrollModel.prepareWebComparison("Scroll fixture original", recipientIDs: Set(scrollModel.state.agents.prefix(3).map(\.id)), agents: [])!
