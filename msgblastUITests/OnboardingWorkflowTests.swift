@@ -49,7 +49,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         for id in ["cua-host", "cua-driver", "cua-capture"] {
             let status = app.staticTexts["permission-status-\(id)"]
             XCTAssertTrue(status.waitForExistence(timeout: 5))
-            XCTAssertEqual(status.label, "Allowed")
+            XCTAssertEqual(status.value as? String, "Allowed")
         }
         XCTAssertEqual(app.webViews.count, 0, "A desktop app must not open a website sign-in flow")
         let connect = app.buttons["Connect Muse"]

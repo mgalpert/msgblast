@@ -157,10 +157,12 @@ final class WorkflowTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["Cedar"].waitForExistence(timeout: 10))
-        app.typeKey(",", modifierFlags: .command)
+        let prompt = app.textViews["Shared prompt"]
+        prompt.click()
+        prompt.typeKey(",", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
         for id in ["cua-host", "cua-driver", "cua-capture"] {
-            XCTAssertEqual(app.staticTexts["permission-status-\(id)"].label, "Allowed")
+            XCTAssertEqual(app.staticTexts["permission-status-\(id)"].value as? String, "Allowed")
         }
         let setup = app.buttons["setup-cua-permissions"]
         let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
@@ -168,10 +170,6 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(setup.isHittable)
         setup.click()
         XCTAssertEqual(app.state, .runningForeground, "Demo setup must not open macOS privacy settings")
-        let screenshot = XCTAttachment(screenshot: settings.screenshot())
-        screenshot.name = "Cua permissions — simulated grants, no native setup"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
     }
 
     @MainActor
