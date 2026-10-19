@@ -402,6 +402,9 @@ struct LocalAgentSettingsView: View {
     var busy = false
     @State private var setupRuntime: LocalAgentRuntime?
     private var isBusy: Bool { busy || !agent.running.isEmpty }
+    private var optionalWebProviders: [WebProvider] {
+        WebProvider.optionalProviders.filter { $0 != .dshCLI }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -417,30 +420,8 @@ struct LocalAgentSettingsView: View {
             }.padding(.bottom, 12)
             Text("ChatGPT and Claude use their websites by default. Enable a CLI below to add it as a separate agent.")
                 .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
-            ForEach(WebProvider.optionalProviders) { webProvider in
-                let provider = webProvider.personalAgentProvider!
-                Toggle("Enable \(webProvider.name)", isOn: Binding(
-                    get: { web.sessions.first(where: { $0.provider == webProvider })?.isEnabled == true },
-                    set: { web.setEnabled($0, for: webProvider) }
-                )).toggleStyle(.switch).accessibilityIdentifier("Enable \(webProvider.name)")
-                    .disabled(isBusy).padding(.top, 8)
-                let installed = agent.installed.contains { $0.provider == provider }
-                let connected = agent.accounts[provider]?.isConnected == true
-                accountRow(name: webProvider.name,
-                           icon: webProvider.artworkName,
-                           status: installed ? (agent.accounts[provider]?.label ?? "Checking sign-in…") : "Not installed") {
-                    if provider == .dsh {
-                        // DSH keeps its provider account inside the DSH app. msgblast
-                        // never reads or changes it, so there is no sign-in step here.
-                        if !installed, let url = provider.installURL { Link("Get DSH", destination: url) }
-                    } else if installed {
-                        Button(connected ? "Switch account" : provider == .codex ? "Sign in with ChatGPT" : "Sign in with Claude") { agent.signIn(provider) }
-                            .disabled(agent.demo || isBusy || agent.checkingAccounts)
-                    } else if let url = provider.installURL {
-                        Link("Install \(provider.name)", destination: url)
-                    }
-                }
-                Divider()
+            ForEach(optionalWebProviders) { webProvider in
+                optionalWebProviderRow(webProvider)
             }
             ForEach(LocalAgentRuntime.allCases) { runtime in
                 let installed = agent.detectedLocalAgents.contains { $0.runtime == runtime }
@@ -459,6 +440,7 @@ struct LocalAgentSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary).padding(.leading, 44).padding(.bottom, 10)
                 if runtime != LocalAgentRuntime.allCases.last { Divider() }
             }
+            optionalWebProviderRow(.dshCLI)
             if agent.demo {
                 Text("Demo accounts · sign-in and setup are simulated.")
                     .font(.caption).foregroundStyle(.secondary).padding(.top, 8)
@@ -502,6 +484,32 @@ struct LocalAgentSettingsView: View {
             Spacer(minLength: 12)
             action().controlSize(.regular)
         }.padding(.vertical, 10)
+    }
+
+    @ViewBuilder private func optionalWebProviderRow(_ webProvider: WebProvider) -> some View {
+        let provider = webProvider.personalAgentProvider!
+        Toggle("Enable \(webProvider.name)", isOn: Binding(
+            get: { web.sessions.first(where: { $0.provider == webProvider })?.isEnabled == true },
+            set: { web.setEnabled($0, for: webProvider) }
+        )).toggleStyle(.switch).accessibilityIdentifier("Enable \(webProvider.name)")
+            .disabled(isBusy).padding(.top, 8)
+        let installed = agent.installed.contains { $0.provider == provider }
+        let connected = agent.accounts[provider]?.isConnected == true
+        accountRow(name: webProvider.name,
+                   icon: webProvider.artworkName,
+                   status: installed ? (agent.accounts[provider]?.label ?? "Checking sign-in…") : "Not installed") {
+            if provider == .dsh {
+                // DSH keeps its provider account inside the DSH app. msgblast
+                // never reads or changes it, so there is no sign-in step here.
+                if !installed, let url = provider.installURL { Link("Get DSH", destination: url) }
+            } else if installed {
+                Button(connected ? "Switch account" : provider == .codex ? "Sign in with ChatGPT" : "Sign in with Claude") { agent.signIn(provider) }
+                    .disabled(agent.demo || isBusy || agent.checkingAccounts)
+            } else if let url = provider.installURL {
+                Link("Install \(provider.name)", destination: url)
+            }
+        }
+        Divider()
     }
 }
 
