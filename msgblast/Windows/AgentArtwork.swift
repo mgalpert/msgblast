@@ -65,9 +65,9 @@ enum AgentArtwork {
     private static let museDefaultAvatar = bundle.url(forResource: "MuseAvatar", withExtension: "jpg")
         .flatMap { try? Data(contentsOf: $0) }
     private static let webDefaultAvatars: [WebProvider: Data] = Dictionary(uniqueKeysWithValues:
-        [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots, .os3, .hark].compactMap { provider in
+        [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots, .os3, .hark, .wabi].compactMap { provider in
             let resource = provider == .codexCLI ? "chatgpt" : provider == .claudeCode ? "claude" : provider.rawValue
-            let fileExtension = provider == .dots ? "pdf" : [.grok, .os3, .hark].contains(provider) ? "png" : "jpg"
+            let fileExtension = provider == .wabi ? "icns" : provider == .dots ? "pdf" : [.grok, .os3, .hark].contains(provider) ? "png" : "jpg"
             guard let url = bundle.url(forResource: resource, withExtension: fileExtension, subdirectory: "WebAgentIcons"),
                   let data = try? Data(contentsOf: url) else { return nil }
             if provider == .hark, let source = NSImage(data: data) {

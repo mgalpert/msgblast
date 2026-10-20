@@ -201,3 +201,8 @@ Retrieved October 10, 2026 from the providers' official websites.
 These service marks identify their respective services. Artwork and trademarks
 remain the property of their respective owners and are not covered by msgblast's
 GPL license. Hark's transparent mark is presented on white backing for contrast.
+
+Wabi: unmodified native icon from Wabi 0.1.11 (ai.wabi.desktop), retrieved
+October 19, 2026 from the installed Mac app's Contents/Resources/icon.icns.
+The icon identifies Wabi in msgblast. Artwork and trademarks remain Wabi's
+property and are not covered by msgblast's GPL license.
