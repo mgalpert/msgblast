@@ -416,7 +416,7 @@ private struct OnboardingProviderView: View {
                         CuaPermissionsView(demo: model.demo, busy: model.busy || model.webBroadcastBusy)
                         Divider()
                         if !desktopConnectedHere {
-                            Text("Check the connection before continuing.")
+                            Text(session.provider == .grokBotApp ? "Choose a bot to continue." : "Check the connection before continuing.")
                                 .font(.caption).foregroundStyle(.secondary)
                                 .accessibilityIdentifier("desktop-onboarding-connection-required")
                         }

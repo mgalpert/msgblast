@@ -31,17 +31,35 @@ struct DesktopAppSetupView: View {
                     Text(!installed ? "Install \(app.name), then check again. You can connect it later, too." : app == .muse
                          ? "Open Muse and sign in. We’ll check its conversation and message field; your first prompt will start its own side chat."
                          : app == .wabi ? "Open Wabi and sign in. Your first prompt in each comparison starts a dedicated AI chat; follow-ups stay together."
-                         : "Open the conversation you want to use in \(app.name). We’ll check it before you send a prompt.")
+                         : "Choose your bot below. msgblast will open it for you whenever you send a message.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Enable \(session.name)", isOn: Binding(get: { session.isEnabled }, set: { session.setEnabled($0) }))
                     .toggleStyle(.switch).disabled(busy || session.isSending || session.loading || (!installed && !session.isEnabled))
                     .accessibilityIdentifier("Enable \(session.name)")
+                if app == .grokBot, installed, session.desktopInstallation.isRunning {
+                    Picker("Bot", selection: Binding<String?>(get: {
+                        session.state.desktopConversation.map(\.name).flatMap { session.grokBotNames.contains($0) ? $0 : nil }
+                    }, set: { name in
+                        guard let name else { return }
+                        Task {
+                            await session.connectDesktopConversation(botName: name)
+                            if session.isReadyForOnboarding { onConnected() }
+                        }
+                    })) {
+                        Text("Choose a bot…").tag(String?.none)
+                        ForEach(session.grokBotNames, id: \.self) { name in Text(name).tag(Optional(name)) }
+                    }.pickerStyle(.menu).accessibilityIdentifier("grok-bot-picker")
+                        .disabled(busy || session.loading || session.isSending || !session.isEnabled || session.grokBotNames.isEmpty)
+                }
                 HStack {
                     if installed && !session.desktopInstallation.isRunning {
-                        Button("Open \(app.name)") { Task { await session.openDesktopApp() } }
+                        Button("Open \(app.name)") { Task {
+                            await session.openDesktopApp()
+                            if app == .grokBot { await loadBots() }
+                        } }
                             .disabled(busy || session.loading || session.isSending)
-                    } else if installed {
+                    } else if installed, app != .grokBot {
                         Button(app == .muse ? "Check Muse connection" : "Check connection") {
                             Task {
                                 await session.connectDesktopConversation()
@@ -49,7 +67,10 @@ struct DesktopAppSetupView: View {
                             }
                         }.disabled(busy || session.loading || session.isSending || !session.isEnabled)
                     }
-                    Button("Check installation") { session.refreshDesktopInstallation() }
+                    Button(app == .grokBot ? "Refresh bots" : "Check installation") {
+                        if app == .grokBot { Task { await loadBots() } }
+                        else { session.refreshDesktopInstallation() }
+                    }
                         .disabled(busy || session.loading || session.isSending)
                         .accessibilityIdentifier("check-desktop-installation")
                     if session.loading { ProgressView().controlSize(.small) }
@@ -57,9 +78,18 @@ struct DesktopAppSetupView: View {
                 if !session.desktopReady { Text(session.desktopStatus).font(.caption).foregroundStyle(.secondary) }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
-        .task { session.refreshDesktopInstallation() }
+        .task {
+            session.refreshDesktopInstallation()
+            if session.provider == .grokBotApp { await loadBots() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             session.refreshDesktopInstallation()
+            if session.provider == .grokBotApp { Task { await loadBots() } }
         }
+    }
+
+    private func loadBots() async {
+        await session.refreshGrokBots()
+        if session.isReadyForOnboarding { onConnected() }
     }
 }

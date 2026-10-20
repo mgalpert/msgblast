@@ -9,7 +9,7 @@ state files, histories, and execution paths.
 
 1. Install cua-driver using its official instructions. In msgblast, open
    **Settings → Permissions → Desktop app control**. Enable **msgblast
-   Accessibility** for Muse and Wabi's independent draft/identity checks. Enable the
+   Accessibility** for the apps' independent draft/identity checks. Enable the
    **CuaDriver** rows to open Cua's own Accessibility, Screen Recording and
    window-capture setup. macOS owns the grant decisions; nothing is enabled by
    opening Settings alone.
@@ -22,13 +22,13 @@ state files, histories, and execution paths.
 3. Choose Muse App, Grok Bot App or Wabi during **Apps** onboarding, or add it
    from **More agents**. Onboarding shows the same permission controls before
    connection. For Muse, choose **Check Muse connection**. For Wabi, choose
-   **Check connection**. For Grok Bot, select the intended app conversation
-   and choose **Check connection**.
-   This read-only check verifies the conversation and composer without sending
+   **Check connection**. For Grok Bot App, choose a bot from the **Bot** menu in
+   msgblast. Selecting it checks the connection automatically.
+   Connection checks verify the conversation and composer without sending
    a test prompt or creating a side chat. A **Ready for your first prompt** note
    confirms the destination before Continue is enabled. Muse starts its own side
    chat with the first real prompt. Wabi starts a dedicated AI chat per comparison;
-   follow-ups return to that saved chat. Grok Bot uses the checked conversation.
+   follow-ups return to that saved chat. Grok Bot opens the bot selected in msgblast.
 4. Select the agent and use the private or shared msgblast message box.
 
 The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
@@ -148,13 +148,26 @@ read-only and never creates a chat or sends a test prompt.
 
 ## Grok Bot
 
-This connection records the conversation's displayed name. Comparisons keep
+Choose the bot in msgblast's **Bot** menu during onboarding or in Settings. The
+list comes from Grok Bot's sidebar, including its compact layout; loading the
+list never sends a message or selects a bot. Selecting an entry opens that bot
+and confirms readiness, with no separate Check connection button. **Refresh bots**
+reloads the list. The choice is saved on this Mac and reopened before sending.
+Automatic readiness and focus checks verify availability without switching bots;
+only choosing a bot or sending a prompt opens it. If the saved bot has its own
+draft, the send check preserves it and stops before typing.
+
+This connection records the bot's displayed name. Comparisons keep
 separate local transcripts but share the app conversation and its earlier
 context. Names are accessibility observations, not provider-issued IDs. Keep
-that conversation selected while a request runs.
+that conversation selected while a request runs. Missing, renamed, or duplicate
+names require another selection; the adapter does not choose a substitute.
 
 The adapter checks the exact process/window, conversation name, and empty
-composer. It types with a fresh element token, independently reads the prepared
+composer. In Grok Bot 0.71.2, the native `sand-conversation-heading` identifies
+the actual chat header independently of headings inside a reply. msgblast's
+Accessibility access reads that header and the composer's actual value; placeholder
+text is never treated as proof of an empty draft. It types with a fresh element token, independently reads the prepared
 draft, and clicks the enabled Send control once. Every mutation specifies
 `delivery_mode: background`; a refusal never triggers foreground input or replay.
 

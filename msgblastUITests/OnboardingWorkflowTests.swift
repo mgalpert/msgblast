@@ -68,6 +68,26 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testGrokBotIsChosenInsideMsgblastAndConnectsWithoutAnExtraCheck() {
+        let app = launch()
+        defer { app.terminate() }
+        choose("Apps", in: app)
+        app.buttons["Choose Grok Bot App"].click()
+        app.buttons["Continue setup"].click()
+        let picker = app.popUpButtons["grok-bot-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !picker.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        XCTAssertFalse(app.buttons["Check connection"].exists)
+        picker.click()
+        app.menuItems["Research Bot"].click()
+        XCTAssertTrue(app.staticTexts["Ready for your first prompt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "Research Bot")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["Continue"].isEnabled)
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+
+    @MainActor
     func testDesktopMuseOnboardingShowsCuaPermissionsAndConnectsWithoutBrowserImport() {
         let app = launch()
         defer { app.terminate() }

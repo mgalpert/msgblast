@@ -48,6 +48,38 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try interrupted.reply(after: "Background test", app: .grokBot))
     }
 
+    func testGrokConversationHeaderIgnoresHeadingsInsideReplies() throws {
+        var header = element("AXHeading", "Test Bot")
+        header["element_index"] = 2
+        var details = element("AXButton", "View conversation details")
+        details["parent_index"] = 2
+        let snapshot = try decode([header, details,
+                                   element("AXHeading", "A heading in the bot's answer"),
+                                   element("AXTextArea", "Prompt", value: "")])
+        XCTAssertEqual(try snapshot.conversation(app: .grokBot), "Test Bot")
+    }
+
+    func testGrokEmptyParagraphRequiresNativeEmptyEditorEvidence() {
+        XCTAssertEqual(GrokBotNativeReader.draftValue("\n", emptyEditor: true), "")
+        XCTAssertEqual(GrokBotNativeReader.draftValue("\n", emptyEditor: false), "\n")
+        for text in ["Message Test Bot", "Type your answer, or talk about something else", "Keep this draft", "\n\n"] {
+            XCTAssertEqual(GrokBotNativeReader.draftValue(text, emptyEditor: true), text)
+        }
+    }
+
+    func testGrokBotListSeparatesExistingBotsFromActionsAndUnreadLabels() throws {
+        let elements: [[String: Any]] = [
+            ["role": "AXButton", "label": "Main, Main Bot, Unread activity", "element_index": 1, "element_token": "s00000001:main"],
+            ["role": "AXImage", "label": "Main Bot", "parent_index": 1],
+            ["role": "AXList", "element_index": 3],
+            ["role": "AXButton", "label": "Research, Unread activity", "element_index": 4, "parent_index": 3, "element_token": "s00000001:research"],
+            ["role": "AXButton", "label": "New Bot", "element_index": 5, "element_token": "s00000001:new"],
+            ["role": "AXSplitter", "label": "Resize sidebar"]
+        ]
+        let snapshot = try JSONDecoder().decode(DesktopAppSnapshot.self, from: JSONSerialization.data(withJSONObject: ["elements": elements]))
+        XCTAssertEqual(try snapshot.grokBots().map(\.name), ["Main", "Research"])
+    }
+
     func testSidebarPromptPreviewCannotBeUsedAsOutgoingMessage() throws {
         let snapshot = try decode([
             element("AXStaticText", "Background test"),
@@ -276,6 +308,199 @@ final class DesktopAppConversationTests: XCTestCase {
 final class DesktopAppDriverTests: XCTestCase {
     private let prompt = "Fixture prompt"
     private let binding = DesktopConversationBinding(name: "Fixture Bot")
+
+    func testBotDiscoveryIsReadOnlyAndSelectionOpensOnlyTheChosenBot() async throws {
+        let initial = grok(name: "Other Bot", bots: ["Other Bot", "Fixture Bot"])
+        let discovery = try driver([apps(), windows(), snapshot(initial)])
+        defer { discovery.remove() }
+        let names = try await adapter(discovery).availableGrokBots()
+        XCTAssertEqual(names, ["Fixture Bot", "Other Bot"])
+        assertNoInput(try await finishedCalls(discovery))
+        let fixture = try driver([apps(), windows(), snapshot(initial),
+                                  step("click", [:], arguments: ["element_token": "s00000001:bot1"]),
+                                  snapshot(grok())])
+        defer { fixture.remove() }
+        let selected = try await adapter(fixture).connectGrokBot(named: "Fixture Bot")
+        XCTAssertEqual(selected.name, "Fixture Bot")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" })
+        assertBackgroundTargets(calls)
+    }
+
+    func testSavedBotIsOpenedBeforeTypingAndDuplicateOrDraftedTargetsStop() async throws {
+        let initial = grok(name: "Other Bot", bots: ["Other Bot", "Fixture Bot"])
+        let fixture = try driver([apps(), windows(), snapshot(initial),
+                                  step("click", [:], arguments: ["element_token": "s00000001:bot1"]),
+                                  snapshot(grok(token: "s00000002")),
+                                  step("type_text", [:], arguments: ["element_token": "s00000002:composer"]),
+                                  snapshot(grok(draft: prompt, token: "s00000003")),
+                                  step("click", [:], arguments: ["element_token": "s00000003:send"]),
+                                  snapshot(grok(reply: "Chosen bot answer", token: "s00000004"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Chosen bot answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        for state in [grok(bots: ["Fixture Bot", "Fixture Bot"]), grok(draft: "Message Fixture Bot")] {
+            let denied = try driver([apps(), windows(), snapshot(state)])
+            defer { denied.remove() }
+            _ = await failure { try await self.adapter(denied).reply(self.prompt, app: .grokBot, binding: self.binding) }
+            assertNoInput(try await finishedCalls(denied))
+        }
+        let drafted = try driver([apps(), windows(), snapshot(initial), step("click", [:]), snapshot(grok(draft: "Keep this draft"))])
+        defer { drafted.remove() }
+        _ = await failure { try await self.adapter(drafted).reply(self.prompt, app: .grokBot, binding: self.binding) }
+        let draftedCalls = try await finishedCalls(drafted)
+        XCTAssertEqual(draftedCalls.filter { $0.tool == "click" }.count, 1, "Only bot navigation is allowed")
+        XCTAssertFalse(draftedCalls.contains { $0.tool == "type_text" })
+    }
+
+    func testNativeBotOrDraftDisagreementAndReadFailurePreventAllInput() async throws {
+        let observations: [[String: String]?] = [
+            ["name": "Other Bot", "draft": ""],
+            ["name": "Fixture Bot", "draft": "Keep this native draft"],
+            nil
+        ]
+        for native in observations {
+            var state = grok()
+            state["_grok_native"] = native
+            let fixture = try driver([apps(), windows(), snapshot(state)])
+            defer { fixture.remove() }
+            _ = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+
+    func testNativeDisagreementAfterTypingNeverClicksSend() async throws {
+        let observations: [[String: String]?] = [
+            ["name": "Other Bot", "draft": prompt],
+            ["name": "Fixture Bot", "draft": "Changed after typing"],
+            nil
+        ]
+        for native in observations {
+            var prepared = grok(draft: prompt, token: "s00000002")
+            prepared["_grok_native"] = native
+            var typed = step("type_text", [:])
+            if native == nil { typed["remove_grok_native"] = true }
+            let fixture = try driver([apps(), windows(), snapshot(grok()), typed, snapshot(prepared)])
+            defer { fixture.remove() }
+            _ = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+            XCTAssertFalse(calls.contains { $0.tool == "click" })
+            assertBackgroundTargets(calls)
+        }
+    }
+
+    func testChoosingABotSavesAndRestoresTheExplicitChoiceWithoutASend() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("grok-bot-choice-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("state.json")
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: file, fixture: true)
+        session.setEnabled(true)
+        await session.refreshGrokBots()
+        XCTAssertNil(session.state.desktopConversation)
+        XCTAssertFalse(session.desktopReady)
+        await session.connectDesktopConversation(botName: "Research Bot")
+        XCTAssertTrue(session.desktopReady)
+        XCTAssertEqual(session.state.desktopConversation?.name, "Research Bot")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        session.beginShutdown()
+        let reopened = WebAgentSession(provider: .grokBotApp, storageURL: file, fixture: true)
+        defer { reopened.beginShutdown() }
+        await reopened.refreshGrokBots()
+        XCTAssertEqual(reopened.state.desktopConversation?.name, "Research Bot")
+        XCTAssertTrue(reopened.desktopReady)
+        XCTAssertTrue(reopened.state.attempts.isEmpty)
+        var pending = WebSendAttempt(text: "Earlier request", status: .uncertain)
+        pending.comparisonID = UUID()
+        reopened.updateState { $0.attempts = [pending] }
+        await reopened.connectDesktopConversation(botName: "Writing Bot")
+        XCTAssertEqual(reopened.state.desktopConversation?.name, "Research Bot")
+        XCTAssertEqual(reopened.state.attempts.first?.status, .uncertain)
+        XCTAssertFalse(reopened.desktopReady)
+    }
+
+    func testSavedBotAvailabilityChecksDoNotNavigateFromTheCurrentBot() async throws {
+        let other = grok(name: "Other Bot", bots: ["Fixture Bot", "Other Bot"])
+        let read = [apps(), windows(), snapshot(other)]
+        let fixture = try driver(read + read + read)
+        defer { fixture.remove() }
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = binding }
+        await session.refreshGrokBots()
+        XCTAssertEqual(session.grokBotNames, ["Fixture Bot", "Other Bot"])
+        XCTAssertEqual(session.state.desktopConversation, binding)
+        XCTAssertTrue(session.isReadyForOnboarding, session.desktopStatus)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.ready, session.desktopStatus)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        assertNoInput(try await finishedCalls(fixture, cleanupCount: 3))
+    }
+
+    func testGrokDiscoveryAndSelectionWaitForReadinessRefresh() async throws {
+        for choosing in [false, true] {
+            let initial = grok(bots: ["Fixture Bot", "Other Bot"])
+            var waiting = windows(); waiting["wait_for_release"] = true
+            let afterRefresh = choosing
+                ? [apps(), windows(), snapshot(initial), step("click", [:]), snapshot(grok(name: "Other Bot", bots: ["Fixture Bot", "Other Bot"]))]
+                : [apps(), windows(), snapshot(initial), apps(), windows(), snapshot(initial)]
+            let fixture = try driver([apps(), waiting, snapshot(initial)] + afterRefresh)
+            defer { fixture.remove() }
+            let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
+                                          museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture))
+            defer { session.beginShutdown() }
+            session.setEnabled(true)
+            session.updateState { $0.desktopConversation = binding }
+            session.connect(automaticallyRefresh: false)
+            let readiness = Task { await session.refresh() }
+            try await waitForCall("list_windows", in: fixture)
+            let setup = Task {
+                if choosing { await session.connectDesktopConversation(botName: "Other Bot") }
+                else { await session.refreshGrokBots() }
+            }
+            try await Task.sleep(for: .milliseconds(50))
+            try Data().write(to: fixture.directory.appendingPathComponent("release"))
+            await readiness.value
+            await setup.value
+            XCTAssertEqual(session.state.desktopConversation?.name, choosing ? "Other Bot" : "Fixture Bot")
+            if !choosing { XCTAssertEqual(session.grokBotNames, ["Fixture Bot", "Other Bot"]) }
+            XCTAssertTrue(session.desktopReady, session.desktopStatus)
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            let calls = try await finishedCalls(fixture, cleanupCount: choosing ? 2 : 3)
+            XCTAssertFalse(calls.contains { $0.tool == "type_text" })
+            if !choosing { assertNoInput(calls) }
+        }
+    }
+
+    func testSendingWhileBotSelectionIsInProgressCannotUseTheOldBinding() async throws {
+        var switching = step("click", [:]); switching["wait_for_release"] = true
+        let fixture = try driver([apps(), windows(), snapshot(grok()),
+                                  apps(), windows(), snapshot(grok(bots: ["Fixture Bot", "Other Bot"])), switching])
+        defer { fixture.remove() }
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        await session.connectDesktopConversation(botName: "Fixture Bot")
+        XCTAssertTrue(session.snapshot.ready)
+        let changing = Task { await session.connectDesktopConversation(botName: "Other Bot") }
+        try await waitForCall("click", in: fixture)
+        XCTAssertTrue(session.loading)
+        let sent = await session.send(prompt, comparisonID: UUID())
+        XCTAssertNil(sent)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        changing.cancel()
+        await changing.value
+        XCTAssertEqual(session.state.desktopConversation?.name, "Fixture Bot")
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" })
+    }
 
     func testUnverifiedTypingUsesFreshDraftEvidenceAndSubmitsOnlyOnce() async throws {
         for diagnostic: [String: Any] in [
@@ -519,9 +744,9 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
-    func testExternalDraftAndWrongConversationPreventAllInput() async throws {
+    func testExternalDraftAndMissingBotPreventAllInput() async throws {
         for (state, reason) in [(grok(draft: "Keep this external draft"), "unsent draft"),
-                                (grok(name: "Other Bot"), "conversation changed")] {
+                                (grok(name: "Other Bot"), "missing")] {
             let fixture = try driver([apps(), windows(), snapshot(state)])
             defer { fixture.remove() }
             let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
@@ -573,7 +798,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var disabled = button; disabled["enabled"] = false
         let variants = [Array(elements.dropLast()), Array(elements.dropLast()) + [disabled], elements + [button]]
         for variant in variants {
-            let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(["elements": variant])])
+            let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(["elements": variant, "_grok_native": ["name": "Fixture Bot", "draft": prompt]])])
             defer { fixture.remove() }
             let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
             XCTAssertTrue(error.contains("Send control"), error)
@@ -654,7 +879,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(kill(Int32(call.pid), 0), -1, "The fake driver process must not survive cancellation")
         XCTAssertFalse(calls.contains { $0.tool == "click" })
         try fixture.replacePlan([apps(), windows(), snapshot(grok())])
-        let inspected = try await conversation.inspect(.grokBot)
+        let inspected = try await conversation.connectGrokBot(named: binding.name)
         XCTAssertEqual(inspected, binding)
         _ = try await finishedCalls(fixture, cleanupCount: 2)
     }
@@ -698,7 +923,7 @@ final class DesktopAppDriverTests: XCTestCase {
         ] {
             let fixture = try driver([apps(.muse), windows(), snapshot(state)])
             defer { fixture.remove() }
-            _ = await failure { try await self.adapter(fixture).inspect(.muse) }
+            _ = await failure { try await self.adapter(fixture).reply(self.prompt, app: .muse, binding: .init(name: "Muse")) }
             assertNoInput(try await finishedCalls(fixture))
         }
     }
@@ -1230,7 +1455,11 @@ final class DesktopAppDriverTests: XCTestCase {
     }
 
     private func adapter(_ fixture: DriverFixture, replyTimeout: Duration = .seconds(3), callTimeout: TimeInterval = 3) -> DesktopAppConversation {
-        DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout))
+        let file = fixture.directory.appendingPathComponent("grok-native.json")
+        return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout)) { target in
+            guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
+            return try JSONDecoder().decode(GrokBotNativeState.self, from: Data(contentsOf: file))
+        }
     }
     private func sendSteps() -> [[String: Any]] {
         [apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(grok(draft: prompt, token: "s00000002")), step("click", [:])]
@@ -1245,7 +1474,10 @@ final class DesktopAppDriverTests: XCTestCase {
         step("list_windows", ["windows": [["window_id": 101, "title": "Fixture app", "bounds": ["width": 800, "height": 600]]]])
     }
     private func snapshot(_ result: [String: Any], repeating: Bool = false) -> [String: Any] {
-        var result = step("get_window_state", result); result["repeat"] = repeating; return result
+        var step = step("get_window_state", result)
+        step["repeat"] = repeating
+        if let native = result["_grok_native"] { step["grok_native"] = native }
+        return step
     }
     private func element(_ role: String, _ label: String, value: String? = nil, token: String = "s00000001:item") -> [String: Any] {
         var result: [String: Any] = ["role": role, "label": label, "element_token": token, "enabled": true]
@@ -1262,8 +1494,17 @@ final class DesktopAppDriverTests: XCTestCase {
         body += [element("AXTextArea", "Message", value: draft, token: "\(token):composer"), element("AXButton", "Send", token: "\(token):send")]
         return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count]
     }
-    private func grok(draft: String = "", reply: String? = nil, name: String = "Fixture Bot", token: String = "s00000001", previousReply: String? = nil, generating: Bool = false) -> [String: Any] {
-        var body = [element("AXHeading", name, value: "2"), element("AXSplitter", "Resize sidebar")]
+    private func grok(draft: String = "", reply: String? = nil, name: String = "Fixture Bot", token: String = "s00000001", previousReply: String? = nil, generating: Bool = false, bots: [String]? = nil) -> [String: Any] {
+        var list = element("AXList", ""); list["element_index"] = 1
+        var body = [list]
+        for (index, bot) in (bots ?? [name]).enumerated() {
+            var item = element("AXButton", bot, token: "\(token):bot\(index)")
+            item["element_index"] = index + 2; item["parent_index"] = 1
+            body.append(item)
+        }
+        var heading = element("AXHeading", name, value: "2"); heading["element_index"] = 100
+        var details = element("AXButton", "View conversation details"); details["parent_index"] = 100
+        body += [element("AXSplitter", "Resize sidebar"), heading, details]
         if let previousReply {
             body += [element("AXStaticText", "You"), element("AXStaticText", prompt), element("AXStaticText", name), element("AXStaticText", previousReply)]
         }
@@ -1273,7 +1514,8 @@ final class DesktopAppDriverTests: XCTestCase {
         body += [element("AXTextArea", "Prompt", value: draft, token: "\(token):composer"),
                  element("AXButton", "Send message", token: "\(token):send")]
         if generating { body.append(element("AXButton", "Stop generating")) }
-        return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count]
+        return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count,
+                "_grok_native": ["name": name, "draft": draft]]
     }
     private func failure<T>(_ operation: () async throws -> T) async -> String {
         do { _ = try await operation(); XCTFail("Expected the adapter to refuse this workflow"); return "" }
@@ -1366,6 +1608,10 @@ final class DesktopAppDriverTests: XCTestCase {
             raise SystemExit(91)
         if "native" in expected:
             (root / "native.json").write_text(json.dumps(expected["native"]))
+        if "grok_native" in expected:
+            (root / "grok-native.json").write_text(json.dumps(expected["grok_native"]))
+        if expected.get("remove_grok_native"):
+            (root / "grok-native.json").unlink(missing_ok=True)
         if not expected.get("repeat"):
             (root / "index").write_text(str(index + 1))
     if expected.get("wait_for_release"):

@@ -91,12 +91,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @Published public private(set) var desktopReady = false
     @Published public private(set) var desktopStatus = "Connect an open app conversation."
     @Published public private(set) var desktopInstallation = DesktopAppInstallation(url: nil, processID: nil)
+    @Published public private(set) var grokBotNames: [String] = []
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
     private let museApp: MuseAppConversation
     private let wabiApp: WabiAppConversation
     private let desktopApps: DesktopAppInstallationClient
+    private let desktopDriver: DesktopAppConversation
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
     private var grokBotReceiver: GrokBotCallbackReceiver?
@@ -136,10 +138,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
         self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
     }
-    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared) {
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation = .shared) {
         self.museApp = museApp
         self.wabiApp = wabiApp
         self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
+        self.desktopDriver = desktopDriver
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
         self.storageURL = storageURL
@@ -1074,19 +1077,55 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var desktopConnectionConfirmation: String? {
         guard isReadyForOnboarding, desktopReady, let app = provider.desktopApp, let binding = state.desktopConversation else { return nil }
         if app == .wabi { return "Your first prompt in a new comparison starts a dedicated AI chat in Wabi. Follow-ups stay in that chat. This check didn’t send a message." }
+        if app == .grokBot { return "Messages go to “\(binding.name)” in Grok Bot, using that bot’s existing chat. No message was sent." }
         return app == .muse
             ? "Your first prompt in a new comparison starts a new side chat in Muse. This check didn’t send a message."
             : "Your prompts will go to “\(binding.name)” in \(app.name). Comparisons share that conversation. This check didn’t send a message."
+    }
+
+    public func refreshGrokBots() async {
+        guard provider == .grokBotApp, !loading, !isSending, !shuttingDown, !storageFailed else { return }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { grokBotNames = []; return }
+        let installation = desktopInstallation
+        desktopReady = false
+        desktopStatus = "Finding your bots…"
+        loading = true
+        updateNativeSnapshot()
+        do {
+            try await waitForDesktopRefresh()
+            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await desktopDriver.availableGrokBots()
+            refreshDesktopInstallation()
+            guard desktopInstallation == installation, !shuttingDown else { throw CancellationError() }
+            grokBotNames = names
+            desktopStatus = "Choose a bot to start chatting."
+        } catch {
+            grokBotNames = []
+            desktopReady = false
+            desktopStatus = error.localizedDescription
+        }
+        loading = false
+        if let name = state.desktopConversation?.name, grokBotNames.contains(name), isEnabled {
+            connected = true
+            await refreshDesktop()
+        }
+        updateNativeSnapshot()
+    }
+
+    private func waitForDesktopRefresh() async throws {
+        while refreshing && !shuttingDown { try await Task.sleep(for: .milliseconds(20)) }
+        try Task.checkCancellation()
+        guard !shuttingDown else { throw CancellationError() }
     }
 
     public func refreshDesktopInstallation() {
         guard let app = provider.desktopApp else { return }
         let fresh = desktopApps.inspect(app)
         let changed = fresh != desktopInstallation
-        if changed { desktopReady = false }
+        if changed { desktopReady = false; grokBotNames = [] }
         desktopInstallation = fresh
         if !fresh.isInstalled { desktopStatus = "Install \(app.name) on this Mac to connect." }
-        else if !fresh.isRunning { desktopStatus = "Open \(app.name) and sign in, then check the connection." }
+        else if !fresh.isRunning { desktopStatus = app == .grokBot ? "Open Grok Bot and sign in to choose your bot." : "Open \(app.name) and sign in, then check the connection." }
         else if !desktopReady && (changed || desktopStatus.isEmpty) { desktopStatus = "Check the connection to get ready for your first prompt." }
         updateNativeSnapshot()
     }
@@ -1101,16 +1140,29 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
     }
 
-    public func connectDesktopConversation() async {
+    public func connectDesktopConversation(botName: String? = nil) async {
         guard let app = provider.desktopApp, !isSending, !storageFailed, !loading, !shuttingDown else { return }
         refreshDesktopInstallation()
         guard isEnabled, desktopInstallation.isRunning else { return }
+        if app == .grokBot, hasIncompleteNativeRequest(for: state.comparisonID) {
+            desktopReady = false
+            desktopStatus = "Review the previous incomplete request before changing bots."
+            updateNativeSnapshot()
+            return
+        }
+        if app == .grokBot, botName == nil {
+            desktopStatus = "Choose your bot in msgblast."
+            return
+        }
         let installation = desktopInstallation
         desktopReady = false
         desktopStatus = "Checking \(app.name)'s conversation…"
         loading = true
+        updateNativeSnapshot()
         defer { loading = false }
         do {
+            try await waitForDesktopRefresh()
+            guard isEnabled else { throw CancellationError() }
             let binding: DesktopConversationBinding
             if app == .muse {
                 if !fixture { try await museApp.checkAvailable() }
@@ -1118,7 +1170,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             } else if app == .wabi {
                 if !fixture { try await wabiApp.checkAvailable() }
                 binding = DesktopConversationBinding(name: "Wabi")
-            } else { binding = fixture ? DesktopConversationBinding(name: "Demo Bot") : try await DesktopAppConversation.shared.inspect(app) }
+            } else if let botName {
+                if fixture {
+                    guard grokBotNames.contains(botName) else { throw DesktopAppError.unavailable("Refresh the bots and choose your bot again.") }
+                    binding = .init(name: botName)
+                } else { binding = try await desktopDriver.connectGrokBot(named: botName) }
+            } else { throw DesktopAppError.unavailable("Choose your bot in msgblast.") }
             refreshDesktopInstallation()
             guard isEnabled, !shuttingDown else { throw CancellationError() }
             guard desktopInstallation == installation else { throw DesktopAppError.unavailable("\(app.name) changed while checking. Check the connection again.") }
@@ -1185,12 +1242,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     updateNativeSnapshot()
                     return
                 }
-                let current = fixture ? binding : try await DesktopAppConversation.shared.inspect(app)
-                guard current == binding else { throw WebSessionFailure.notReady("Open \(binding.name) in \(app.name), or reconnect to the intended conversation.") }
+                guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete request before changing bots.") }
+                if !fixture { try await desktopDriver.checkGrokBot(named: binding.name) }
                 desktopReady = true
                 desktopStatus = "Connected to \(binding.name) · background input"
             } catch { desktopStatus = error.localizedDescription }
-        } else { desktopStatus = "Open the intended conversation in \(app.name), then connect it here." }
+        } else { desktopStatus = app == .grokBot ? "Choose your bot in msgblast." : "Open the intended conversation in \(app.name), then connect it here." }
         updateNativeSnapshot()
     }
 
@@ -1253,6 +1310,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         if provider.desktopApp != nil {
+            guard !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
             refreshDesktopInstallation()
             guard desktopInstallation.isRunning else { error = desktopStatus; return nil }
         }
@@ -1290,7 +1348,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let workingDirectory = conversationWorkingDirectory(id)
             let binding = state.desktopConversation
             let museBinding = provider == .museApp ? try state.museAppBinding(for: id) : nil
-            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp] in
+            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
                     if provider == .museApp {
@@ -1317,7 +1375,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
-                    return PersonalAgentReply(text: try await DesktopAppConversation.shared.reply(text, app: app, binding: binding), sessionID: binding.name)
+                    return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding), sessionID: binding.name)
                 }
                 guard let installedAgent else { throw PersonalAgentError.unavailable(provider.name) }
                 return try await LocalPersonalAgent.reply(to: history, using: installedAgent, sessionID: savedSessionID, workingDirectory: workingDirectory)
