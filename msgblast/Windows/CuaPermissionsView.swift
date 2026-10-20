@@ -20,7 +20,7 @@ struct CuaPermissionsView: View {
                 }
             }.font(.callout)
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                row("msgblast Accessibility", benefit: "Verify Muse's selected side chat and message draft.", status: permissions.hostAccessibility, identifier: "cua-host") {
+                row("msgblast Accessibility", benefit: "Verify Muse and Wabi chat identities and message drafts.", status: permissions.hostAccessibility, identifier: "cua-host") {
                     if permissions.hostAccessibility == .allowed { permissions.openSettings("Privacy_Accessibility", demo: demo) }
                     else { permissions.enableHostAccessibility(demo: demo) }
                 }

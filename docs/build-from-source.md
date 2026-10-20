@@ -172,10 +172,11 @@ See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbo
 Optional **Muse App**, **Grok Bot App**, and **Wabi** entries appear under More
 agents. They use native msgblast conversation panes and an installed `cua-driver`
 command, while authentication stays in the desktop app. Muse creates a side chat
-per comparison and also needs msgblast Accessibility permission and driver window
-capture. Installed apps are detected before they can be enabled or selected in
-onboarding. Enable the agent and choose **Check Muse connection**. For Grok Bot or
-Wabi, select the intended conversation and choose **Check connection**. The check
+per comparison and needs msgblast Accessibility permission and driver window
+capture. Wabi creates a dedicated AI chat per comparison and needs msgblast
+Accessibility to verify its thread address and draft. Installed apps are detected before they can be enabled or selected in
+onboarding. Enable the agent and choose **Check Muse connection**. For Wabi, choose **Check connection**. For Grok Bot, select the intended
+conversation and choose **Check connection**. The check
 does not send a test prompt; it confirms readiness before your first real message.
 These entries keep separate state from the existing Muse website and Grok Bot
 webhook. See [desktop app conversations](desktop-app-conversations.md) for

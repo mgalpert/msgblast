@@ -30,7 +30,8 @@ struct DesktopAppSetupView: View {
                 } else {
                     Text(!installed ? "Install \(app.name), then check again. You can connect it later, too." : app == .muse
                          ? "Open Muse and sign in. We’ll check its conversation and message field; your first prompt will start its own side chat."
-                         : "Open the conversation you want to use in \(app.name). \(app == .wabi ? "Only the Wabi AI conversation is supported. " : "")We’ll check it before you send a prompt.")
+                         : app == .wabi ? "Open Wabi and sign in. Your first prompt in each comparison starts a dedicated AI chat; follow-ups stay together."
+                         : "Open the conversation you want to use in \(app.name). We’ll check it before you send a prompt.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Enable \(session.name)", isOn: Binding(get: { session.isEnabled }, set: { session.setEnabled($0) }))

@@ -111,6 +111,65 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try snapshot.conversation(app: .grokBot))
     }
 
+    func testWabiThreadOwnershipIsImmutableUniqueAndCompatibleWithOlderState() throws {
+        let first = UUID(), second = UUID()
+        let url = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
+        var state = try JSONDecoder().decode(WebWorkspaceState.self, from: Data("{\"sessionID\":\"\(UUID())\"}".utf8))
+        XCTAssertNil(try state.wabiConversation(for: first))
+        try state.recordWabiConversation(url, for: first)
+        XCTAssertThrowsError(try state.recordWabiConversation(url, for: second))
+        XCTAssertThrowsError(try state.recordWabiConversation(URL(string: "wabi://app/threads/bbbbbbbbbbbbbbbbbbbbbbbb")!, for: first))
+        for invalid in ["https://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa", "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa?x=1", "wabi://app/threads/new", "wabi://other/threads/aaaaaaaaaaaaaaaaaaaaaaaa", "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa/"] {
+            XCTAssertThrowsError(try state.recordWabiConversation(URL(string: invalid)!, for: second))
+        }
+        let reopened = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(try reopened.wabiConversation(for: first), url)
+        XCTAssertNil(try reopened.wabiConversation(for: second))
+    }
+
+    func testWabiReceiptRejectsChangedHistoryAndForeignOutgoingMessages() throws {
+        let old: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier answer")]
+        let prompt = WabiAppMessage(role: .user, text: "New question")
+        let answer = WabiAppMessage(role: .assistant, text: "New answer")
+        let foreign = WabiAppMessage(role: .user, text: "Another outgoing question")
+        let receipt = WabiAppReceipt(baseline: old, prompt: prompt.text)
+        XCTAssertNil(try receipt.reply(in: old.reversed()))
+        XCTAssertNil(try receipt.reply(in: [prompt] + old.reversed()))
+        XCTAssertEqual(try receipt.reply(in: [answer, prompt] + old.reversed()), "New answer")
+        XCTAssertThrowsError(try receipt.reply(in: [old[1], prompt, answer]))
+        XCTAssertThrowsError(try receipt.reply(in: old + [foreign, answer]))
+        XCTAssertThrowsError(try receipt.reply(in: old + [prompt, foreign]))
+        XCTAssertThrowsError(try receipt.reply(in: old + [prompt, foreign, answer]))
+    }
+
+    func testWabiNativeMessageFramesProveSendersAndKeepLiteralMetadataText() throws {
+        func frame(_ sender: String, _ text: String) -> WabiAXNode {
+            .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: [
+                .init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction"), .init(role: "AXStaticText", value: "5:13 PM")])
+        }
+        let root = WabiAXNode(role: "AXWebArea", children: [frame("xpvyfi4", "Read"), frame("xqcrz7y", "5:13 PM")])
+        XCTAssertEqual(try WabiNativeMessages.read(root), [.init(role: .user, text: "Read"), .init(role: .assistant, text: "5:13 PM")])
+        XCTAssertThrowsError(try WabiNativeMessages.read(frame("unknown", "A message")))
+        XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [.init(role: "AXPopUpButton", label: "Add reaction")])))
+    }
+
+    @MainActor
+    func testLegacyWabiTranscriptIsPreservedWithoutAdoptingAnExistingChat() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("wabi-legacy-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        await session.connectDesktopConversation()
+        let comparison = UUID()
+        session.updateState { $0.localConversations[comparison.uuidString] = [WebPageMessage(role: "assistant", text: "Earlier shared chat")] }
+        let attempt = await session.send("Continue", comparisonID: comparison)
+        XCTAssertEqual(attempt?.status, .notSent)
+        XCTAssertNil(session.state.conversationURLs[comparison.uuidString])
+        XCTAssertEqual(session.state.localConversations[comparison.uuidString]?.map(\.text), ["Earlier shared chat"])
+        XCTAssertTrue(attempt?.detail?.contains("without a tracked dedicated chat") == true)
+    }
+
     @MainActor
     func testNativeDesktopConversationSavesHistoryAndKeepsCLISessionsEmpty() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-test-\(UUID())")
@@ -124,9 +183,18 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertEqual(session.snapshot.messages.map(\.role), ["user", "assistant"])
         XCTAssertEqual(session.snapshot.messages.first?.text, "Fixture prompt")
         XCTAssertTrue(session.state.localSessionIDs.isEmpty, "Desktop bindings are not CLI session IDs")
+        let firstThread = try XCTUnwrap(session.state.conversationURLs[comparison.uuidString])
+        let followup = await session.send("Follow up", comparisonID: comparison)
+        XCTAssertEqual(followup?.status, .observed)
+        XCTAssertEqual(session.state.conversationURLs[comparison.uuidString], firstThread)
+        let other = UUID()
+        let separate = await session.send("Separate comparison", comparisonID: other)
+        XCTAssertEqual(separate?.status, .observed)
+        XCTAssertNotEqual(session.state.conversationURLs[other.uuidString], firstThread)
         let reopened = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("wabi.json"), fixture: true)
         XCTAssertEqual(reopened.state.desktopConversation?.name, "Wabi")
-        XCTAssertEqual(reopened.state.localConversations[comparison.uuidString], session.snapshot.messages)
+        XCTAssertEqual(reopened.state.conversationURLs, session.state.conversationURLs)
+        XCTAssertEqual(reopened.state.localConversations[comparison.uuidString]?.last?.text, "Wabi fixture reply: Follow up")
         session.beginShutdown(); reopened.beginShutdown()
     }
 
@@ -231,29 +299,196 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
-    func testWabiUsesOnlyItsAIConversationAndFreshSendControl() async throws {
-        let fixture = try driver([
-            apps(.wabi), windows(), snapshot(wabi()),
-            step("type_text", ["effect": "unverifiable"], arguments: ["element_token": "s00000001:composer"]),
-            snapshot(wabi(draft: prompt, token: "s00000002")),
-            step("click", [:], arguments: ["element_token": "s00000002:send"]),
-            snapshot(wabi(reply: "Wabi fixture answer", token: "s00000003"), repeating: true)
-        ])
+    func testWabiUsesSavedThreadIdentityAndFreshSendControl() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", ["effect": "unverifiable"], arguments: ["element_token": "s00000001:composer"])
+        typed["native"] = wabiNative(draft: prompt)
+        var sent = step("click", [:], arguments: ["element_token": "s00000002:send"])
+        sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Wabi fixture answer")])
+        var renamed = wabi(reply: "Wabi fixture answer", token: "s00000003")
+        var body = renamed["elements"] as! [[String: Any]]; body[0]["label"] = "Renamed by Wabi"; renamed["elements"] = body
+        let fixture = try driver([apps(.wabi), initial, snapshot(wabi()), typed,
+                                  snapshot(wabi(draft: prompt, token: "s00000002")), sent, snapshot(renamed, repeating: true)])
         defer { fixture.remove() }
-        let answer = try await adapter(fixture).reply(prompt, app: .wabi, binding: .init(name: "Wabi"))
+        let answer = try await wabiAdapter(fixture).reply(prompt, in: wabiURL)
         XCTAssertEqual(answer, "Wabi fixture answer")
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         assertBackgroundTargets(calls)
-        var human = wabi()
-        var elements = try XCTUnwrap(human["elements"] as? [[String: Any]])
-        elements[0]["label"] = "A human contact"
-        human["elements"] = elements
-        let denied = try driver([apps(.wabi), windows(), snapshot(human)])
+
+        var wrong = windows(); wrong["native"] = wabiNative(url: otherWabiURL)
+        let denied = try driver([apps(.wabi), wrong, snapshot(wabi())])
         defer { denied.remove() }
-        let error = await failure { try await self.adapter(denied).reply(self.prompt, app: .wabi, binding: .init(name: "Wabi")) }
-        XCTAssertTrue(error.contains("Human conversations are not supported"), error)
+        let error = await failure { try await self.wabiAdapter(denied).reply(self.prompt, in: self.wabiURL) }
+        XCTAssertTrue(error.contains("selected chat changed"), error)
         assertNoInput(try await finishedCalls(denied))
+    }
+
+    func testWabiReplyUsesNewMessagesInEitherOrderAndAcceptsAnEcho() async throws {
+        let welcome = "What can I do for you?"
+        for (messages, expected) in [(["New answer", prompt, welcome], "New answer"),
+                                     ([welcome, prompt, prompt], prompt),
+                                     (["Read", prompt, welcome], "Read"),
+                                     (["Today", prompt, welcome], "Today"),
+                                     (["5:13 PM", prompt, welcome], "5:13 PM")] {
+            let before: [WabiAppMessage] = [.init(role: .assistant, text: welcome)]
+            let outgoing = WabiAppMessage(role: .user, text: prompt)
+            let incoming = WabiAppMessage(role: .assistant, text: expected)
+            let observed = messages.first == welcome ? before + [outgoing, incoming] : [incoming, outgoing] + before
+            var initial = windows(); initial["native"] = wabiNative(messages: before)
+            var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt, messages: before)
+            var sent = step("click", [:]); sent["native"] = wabiNative(messages: observed)
+            let fixture = try driver([apps(.wabi), initial, snapshot(wabiMessages([welcome])), typed,
+                                      snapshot(wabiMessages([welcome], draft: prompt)), sent,
+                                      snapshot(wabiMessages(messages), repeating: true)])
+            defer { fixture.remove() }
+            let answer = try await wabiAdapter(fixture).reply(prompt, in: wabiURL)
+            XCTAssertEqual(answer, expected)
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        }
+    }
+
+    private func wabiMessages(_ messages: [String], draft: String = "") -> [String: Any] {
+        var state = wabi(draft: draft)
+        var body = state["elements"] as! [[String: Any]]
+        let content = messages.flatMap { [element("AXStaticText", $0), element("AXPopUpButton", "Add reaction"), element("AXStaticText", "5:13 PM")] }
+        body.insert(contentsOf: content, at: 3)
+        state["elements"] = body; state["returned_element_count"] = body.count; state["total_element_count"] = body.count
+        return state
+    }
+
+    func testWabiCreatesAIThreadThroughChooserAndResumesExactSidebarURL() async throws {
+        let fixture = try driver(wabiCreationSteps())
+        defer { fixture.remove() }
+        let created = try await wabiAdapter(fixture).prepare(savedURL: nil)
+        XCTAssertEqual(created, otherWabiURL)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2)
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" })
+        assertBackgroundTargets(calls)
+
+        var resume = windows(); resume["native"] = wabiNative(links: [["url": otherWabiURL.absoluteString, "label": "Same title"]])
+        var select = step("click", [:], arguments: ["element_token": "s00000004:saved"]); select["native"] = wabiNative(url: otherWabiURL)
+        let saved = try driver([apps(.wabi), resume, snapshot(wabiWith([element("AXLink", "Same title", token: "s00000004:saved")])), select, snapshot(wabi())])
+        defer { saved.remove() }
+        let resumed = try await wabiAdapter(saved).prepare(savedURL: otherWabiURL)
+        XCTAssertEqual(resumed, otherWabiURL)
+        let resumeCalls = try await finishedCalls(saved)
+        XCTAssertEqual(resumeCalls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiMissingAmbiguousSavedChatAndDraftNeverCreateReplacement() async throws {
+        for mode in ["missing", "ambiguous", "draft"] {
+            let links = mode == "missing" ? [] : [["url": otherWabiURL.absoluteString, "label": "Same title"]]
+            var initial = windows(); initial["native"] = wabiNative(draft: mode == "draft" ? "Keep this" : "", links: links)
+            let rows = mode == "ambiguous" ? [element("AXLink", "Same title"), element("AXLink", "Same title")] : []
+            let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith(rows, draft: mode == "draft" ? "Keep this" : ""))])
+            defer { fixture.remove() }
+            let error = await failure { try await self.wabiAdapter(fixture).prepare(savedURL: self.otherWabiURL).absoluteString }
+            XCTAssertFalse(error.isEmpty)
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+
+    func testWabiChangedThreadOrHistoryAfterTypingPreservesDraftWithoutSend() async throws {
+        for changedHistory in [false, true] {
+            var initial = windows(); initial["native"] = wabiNative()
+            var typed = step("type_text", [:])
+            typed["native"] = wabiNative(url: changedHistory ? wabiURL : otherWabiURL, draft: prompt,
+                                         messages: changedHistory ? [.init(role: .user, text: "Another outgoing question")] : [])
+            let fixture = try driver([apps(.wabi), initial, snapshot(wabi()), typed, snapshot(wabi(draft: prompt))])
+            defer { fixture.remove() }
+            let error = await failure { try await self.wabiAdapter(fixture).reply(self.prompt, in: self.wabiURL) }
+            XCTAssertTrue(error.contains("Send was not pressed"), error)
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+            XCTAssertFalse(calls.contains { $0.tool == "click" })
+        }
+    }
+
+    func testWabiConnectionCheckIsReadOnlyAndGenericSendIsUnavailable() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])
+        defer { fixture.remove() }
+        try await wabiAdapter(fixture).checkAvailable()
+        assertNoInput(try await finishedCalls(fixture))
+        let generic = try driver([])
+        defer { generic.remove() }
+        let error = await failure { try await self.adapter(generic).reply(self.prompt, app: .wabi, binding: .init(name: "Wabi")) }
+        XCTAssertTrue(error.contains("dedicated chat"), error)
+        XCTAssertTrue(try generic.calls().isEmpty)
+    }
+
+    func testWabiSavesCreatedDestinationBeforeTypingAndKeepsItAfterCancellation() async throws {
+        var ready = windows(); ready["native"] = wabiNative(url: otherWabiURL)
+        var blocked = step("type_text", [:]); blocked["wait_for_release"] = true
+        let fixture = try driver(wabiCreationSteps() + [apps(.wabi), ready, snapshot(wabi()), blocked])
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("state.json")
+        let owner = UUID()
+        let session = WebAgentSession(provider: .wabi, storageURL: file, fixture: false, museApp: .shared, desktopApps: .demo, wabiApp: wabiAdapter(fixture))
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi") }
+        let sending = Task { await session.send(prompt, comparisonID: owner) }
+        try await waitForCall("type_text", in: fixture)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: file))
+        XCTAssertEqual(saved.conversationURLs[owner.uuidString], otherWabiURL)
+        XCTAssertEqual(saved.attempts.first?.conversationURL, otherWabiURL)
+        XCTAssertEqual(saved.attempts.first?.status, .attempting)
+        session.cancelNativeRequest()
+        let attempt = await sending.value
+        XCTAssertEqual(attempt?.status, .uncertain)
+        session.beginShutdown()
+        let reopened = WebAgentSession(provider: .wabi, storageURL: file, fixture: true)
+        defer { reopened.beginShutdown() }
+        XCTAssertEqual(reopened.state.conversationURLs[owner.uuidString], otherWabiURL)
+        XCTAssertEqual(reopened.state.attempts.first?.conversationURL, otherWabiURL)
+        let retry = await reopened.send("Another prompt", comparisonID: owner)
+        XCTAssertNil(retry)
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "Only the two New chat navigation controls were pressed")
+        XCTAssertFalse(calls.contains { $0.arguments["element_token"] as? String == "s00000001:send" })
+    }
+
+    private func wabiCreationSteps() -> [[String: Any]] {
+        var initial = windows(); initial["native"] = wabiNative()
+        let navigation = [element("AXButton", "New chat", token: "s00000001:new")]
+        var open = step("click", [:], arguments: ["element_token": "s00000001:new"])
+        open["native"] = wabiNative(draft: nil)
+        let chooser = [element("AXHeading", "New chat"), element("AXHeading", "Contacts on Wabi"),
+                       element("AXTextField", "Name, username, or phone number"), element("AXButton", "New chat", token: "s00000002:new"),
+                       element("AXButton", "Eugenia Kuyda @eugenia")]
+        var create = step("click", [:], arguments: ["element_token": "s00000002:new"])
+        create["native"] = wabiNative(url: otherWabiURL, messages: [.init(role: .assistant, text: "What can I do for you?")])
+        var blank = wabi(); var elements = blank["elements"] as! [[String: Any]]
+        elements[0]["label"] = "New chat"; elements.insert(contentsOf: [element("AXStaticText", "What can I do for you?"), element("AXPopUpButton", "Add reaction"), element("AXStaticText", "5:13 PM")], at: 3)
+        blank["elements"] = elements; blank["returned_element_count"] = elements.count; blank["total_element_count"] = elements.count
+        return [apps(.wabi), initial, snapshot(wabiWith(navigation)), open, snapshot(["elements": chooser]), create, snapshot(blank)]
+    }
+
+    private var wabiURL: URL { URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")! }
+    private var otherWabiURL: URL { URL(string: "wabi://app/threads/bbbbbbbbbbbbbbbbbbbbbbbb")! }
+    private func wabiNative(url: URL? = nil, draft: String? = "", links: [[String: String]] = [], messages: [WabiAppMessage] = []) -> [String: Any] {
+        var result: [String: Any] = ["url": (url ?? wabiURL).absoluteString, "links": links, "messages": messages.map { ["role": $0.role.rawValue, "text": $0.text] }]
+        if let draft { result["draft"] = draft }
+        return result
+    }
+    private func wabiWith(_ additions: [[String: Any]], draft: String = "") -> [String: Any] {
+        var state = wabi(draft: draft)
+        let body = additions + (state["elements"] as! [[String: Any]])
+        state["elements"] = body; state["returned_element_count"] = body.count; state["total_element_count"] = body.count
+        return state
+    }
+    private func wabiAdapter(_ fixture: DriverFixture) -> WabiAppConversation {
+        let file = fixture.directory.appendingPathComponent("native.json")
+        return WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(2), callTimeout: 3)) { target in
+            guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
+            return try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+        }
     }
 
     func testAmbiguousMainWindowsPreventAllInput() async throws {

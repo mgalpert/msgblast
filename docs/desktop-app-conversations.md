@@ -9,7 +9,7 @@ state files, histories, and execution paths.
 
 1. Install cua-driver using its official instructions. In msgblast, open
    **Settings → Permissions → Desktop app control**. Enable **msgblast
-   Accessibility** for Muse's independent draft/identity checks. Enable the
+   Accessibility** for Muse and Wabi's independent draft/identity checks. Enable the
    **CuaDriver** rows to open Cua's own Accessibility, Screen Recording and
    window-capture setup. macOS owns the grant decisions; nothing is enabled by
    opening Settings alone.
@@ -18,15 +18,17 @@ state files, histories, and execution paths.
    Settings also checks installation before allowing an app to be enabled.
    If it is installed but closed, **Open Muse**, **Open Grok Bot**, or **Open Wabi**
    opens it normally. Keep one main window on the current desktop and dismiss
-   dialogs. Wabi supports only its AI conversation.
+   dialogs. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
 3. Choose Muse App, Grok Bot App or Wabi during **Apps** onboarding, or add it
    from **More agents**. Onboarding shows the same permission controls before
-   connection. For Muse, choose **Check Muse connection**. For Grok Bot or Wabi,
-   select the intended app conversation and choose **Check connection**.
+   connection. For Muse, choose **Check Muse connection**. For Wabi, choose
+   **Check connection**. For Grok Bot, select the intended app conversation
+   and choose **Check connection**.
    This read-only check verifies the conversation and composer without sending
    a test prompt or creating a side chat. A **Ready for your first prompt** note
    confirms the destination before Continue is enabled. Muse starts its own side
-   chat with the first real prompt; Grok Bot and Wabi use the checked conversation.
+   chat with the first real prompt. Wabi starts a dedicated AI chat per comparison;
+   follow-ups return to that saved chat. Grok Bot uses the checked conversation.
 4. Select the agent and use the private or shared msgblast message box.
 
 The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
@@ -118,9 +120,35 @@ from each fresh capture rather than a saved layout. No OCR, DOM injection,
 foreground fallback, or automatic replay is used. A transient failed native read is retried once without repeating
 an input action.
 
-## Grok Bot and Wabi
+## Wabi dedicated chats
 
-These connections record the conversation's displayed name. Comparisons keep
+Each comparison creates a dedicated Wabi AI chat through **New chat**, then
+**New chat** in the chooser. No contact, group, invitation, or existing personal
+chat is selected. The adapter verifies a fresh thread address, empty composer,
+New chat heading, and AI welcome message before saving the destination.
+
+The `wabi://app/threads/` address is saved before typing the first prompt. Follow-ups
+and reopened comparisons keep that exact address, including after a title change
+or interrupted send. Resuming uses a sidebar link whose native AXURL matches the
+saved address, then checks the opened thread again. Duplicate labels and missing
+links require the user to open the saved chat in Wabi; no replacement is created.
+The installed Wabi version did not respond to a background deep-link open request.
+
+msgblast needs Accessibility to read Wabi's native address and actual composer
+value and sender boundaries; cua-driver supplies background controls and input.
+Both sources must agree on the prepared draft. Wabi 0.1.11 exposes
+sender-specific message frames through
+native `AXDOMClassList`; the reader validates their frame boundaries, sender
+markers, footer timestamps, and reaction-control count. Unknown layouts stop the
+adapter rather than guessing a speaker. This native contract can require an
+adapter update after Wabi changes its UI.
+An old comparison with Wabi history but no saved thread stays preserved and
+blocked: start a new comparison to get a dedicated chat. Onboarding's check is
+read-only and never creates a chat or sends a test prompt.
+
+## Grok Bot
+
+This connection records the conversation's displayed name. Comparisons keep
 separate local transcripts but share the app conversation and its earlier
 context. Names are accessibility observations, not provider-issued IDs. Keep
 that conversation selected while a request runs.
@@ -133,7 +161,11 @@ draft, and clicks the enabled Send control once. Every mutation specifies
 ## Replies, recovery, and limits
 
 Reply attribution requires a newly observed outgoing message after the captured
-baseline. Muse additionally checks the UUID, speaker boundaries, and unchanged
+baseline. Wabi matches the exact new prompt and one response against unchanged
+prior messages and native sender identities in either accessibility order; extra
+messages or a second outgoing request stop attribution. A reply that echoes the
+prompt remains a valid assistant response.
+Muse additionally checks the UUID, speaker boundaries, and unchanged
 history; another outgoing request invalidates attribution. Known generation
 controls defer completion. Otherwise reply text must stay stable for three
 seconds. This is an observation, not proof that all provider work has finished;
@@ -162,6 +194,20 @@ check. These checks do not establish continuous focus preservation,
 off-Space, hidden, or minimized operation. A Muse window on another Space was
 previously unresolved and background input was refused. App updates, virtualized
 history, or user navigation can stop the adapter safely.
+
+A dedicated-thread check with Wabi 0.1.11 on the same date created a fresh AI
+chat in the background, sent one fixed-response prompt, and observed exactly
+`WABI-THREAD-OK-1019`. It then navigated to the existing Wabi AI chat and reopened
+the saved dedicated address through the sidebar without sending another message.
+A follow-up in that same saved thread produced `WABI-RESUME-OK-1019`. Switching
+Spaces made the native window tree unavailable during observation; with approved
+brief foreground access, the final sender-aware reader verified the existing
+user/assistant pair without another submission. The prior app was restored.
+Background use therefore requires Wabi's window to remain on the current desktop;
+off-Space reads are not supported by this adapter.
+The chooser exposed **Contacts on Wabi** rather than the earlier **Suggested**
+heading; contact suggestions do not identify the New chat action. These local
+checks used the current adapter source, not a distributed app build.
 
 The driver's `elements_complete` flag was false even for full walks in 0.22.1.
 The adapter checks returned/total counts and app-specific sentinels instead.
@@ -193,8 +239,13 @@ that records every call. It never contacts installed apps. Coverage includes:
 - Exact background targets, one submission, no foreground fallback, and no replay.
 - Resized capture geometry, background composer focus without AXPress, invalid
   or missing capture refusal, and removal of private temporary screenshots.
-- Grok Bot/Wabi token-based sends and degraded, truncated, ambiguous, or refused
-  driver results. The generic Muse name-based route remains disabled.
+- Wabi creation through the AI chooser, exact URL resume despite renamed titles,
+  missing/ambiguous chat refusal, immutable ownership, destination persistence
+  before input, cancellation across restart, read-only onboarding checks, native
+  sender boundaries, reversed accessibility order after reopen, echoed prompts,
+  and refusal to attribute a foreign outgoing message as a reply.
+- Grok Bot token-based sends and degraded, truncated, ambiguous, or refused
+  driver results. Generic name-based Muse and Wabi sending stays disabled.
 
 Fixture timeouts are shortened without changing production defaults. These tests
 prove adapter/controller behavior, not real macOS TCC grants or current provider

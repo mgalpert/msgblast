@@ -39,6 +39,35 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testWabiOnboardingConfirmsDedicatedChatBeforeFirstPrompt() {
+        let app = launch()
+        defer { app.terminate() }
+        choose("Apps", in: app)
+        let wabi = app.buttons["Choose Wabi"]
+        XCTAssertTrue(wabi.waitForExistence(timeout: 5))
+        wabi.click()
+        expectation(for: NSPredicate(format: "value == %@", "Installed on this Mac. Selected"), evaluatedWith: wabi)
+        waitForExpectations(timeout: 5)
+        let next = app.buttons["Continue setup"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
+        waitForExpectations(timeout: 5)
+        next.click()
+        XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists)
+        let check = app.buttons["Check connection"]
+        for _ in 0..<6 where !check.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
+        XCTAssertTrue(check.isHittable)
+        check.click()
+        XCTAssertTrue(app.staticTexts["Ready for your first prompt"].waitForExistence(timeout: 5))
+        let confirmation = "Your first prompt in a new comparison starts a dedicated AI chat in Wabi. Follow-ups stay in that chat. This check didn’t send a message."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value == %@", confirmation)).firstMatch.exists)
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
+        waitForExpectations(timeout: 5)
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+
+    @MainActor
     func testDesktopMuseOnboardingShowsCuaPermissionsAndConnectsWithoutBrowserImport() {
         let app = launch()
         defer { app.terminate() }

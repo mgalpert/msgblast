@@ -95,6 +95,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
     private let museApp: MuseAppConversation
+    private let wabiApp: WabiAppConversation
     private let desktopApps: DesktopAppInstallationClient
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
@@ -135,8 +136,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
         self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
     }
-    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil) {
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared) {
         self.museApp = museApp
+        self.wabiApp = wabiApp
         self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
@@ -463,7 +465,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public var locationLabel: String {
-        if provider.desktopApp != nil { return fixture ? "Simulated desktop app · no app contacted" : provider == .museApp ? "Muse app · Side chat" : "Desktop app · Shared conversation" }
+        if provider.desktopApp != nil { return fixture ? "Simulated desktop app · no app contacted" : provider == .museApp ? "Muse app · Side chat" : provider == .wabi ? "Wabi · Dedicated chat" : "Desktop app · Shared conversation" }
         if provider == .grokbot { return fixture ? "Simulated webhook · no Bot contacted" : "Webhook connection" }
         if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
@@ -1071,6 +1073,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public var desktopConnectionConfirmation: String? {
         guard isReadyForOnboarding, desktopReady, let app = provider.desktopApp, let binding = state.desktopConversation else { return nil }
+        if app == .wabi { return "Your first prompt in a new comparison starts a dedicated AI chat in Wabi. Follow-ups stay in that chat. This check didn’t send a message." }
         return app == .muse
             ? "Your first prompt in a new comparison starts a new side chat in Muse. This check didn’t send a message."
             : "Your prompts will go to “\(binding.name)” in \(app.name). Comparisons share that conversation. This check didn’t send a message."
@@ -1112,7 +1115,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if app == .muse {
                 if !fixture { try await museApp.checkAvailable() }
                 binding = DesktopConversationBinding(name: "Muse")
-            } else { binding = fixture ? DesktopConversationBinding(name: app == .grokBot ? "Demo Bot" : app.name) : try await DesktopAppConversation.shared.inspect(app) }
+            } else if app == .wabi {
+                if !fixture { try await wabiApp.checkAvailable() }
+                binding = DesktopConversationBinding(name: "Wabi")
+            } else { binding = fixture ? DesktopConversationBinding(name: "Demo Bot") : try await DesktopAppConversation.shared.inspect(app) }
             refreshDesktopInstallation()
             guard isEnabled, !shuttingDown else { throw CancellationError() }
             guard desktopInstallation == installation else { throw DesktopAppError.unavailable("\(app.name) changed while checking. Check the connection again.") }
@@ -1135,6 +1141,25 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard desktopInstallation.isRunning else { updateNativeSnapshot(); return }
         if let binding = state.desktopConversation {
             do {
+                if app == .wabi {
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete Wabi request before navigating to another chat.") }
+                    if let comparison = state.comparisonID {
+                        let saved = try state.wabiConversation(for: comparison)
+                        guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else {
+                            throw WebSessionFailure.notReady("This comparison has Wabi history without a tracked dedicated chat. Its history was preserved; start a new comparison.")
+                        }
+                        let url: URL
+                        if fixture { url = saved ?? URL(string: "wabi://app/threads/\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))")! }
+                        else { url = try await wabiApp.prepare(savedURL: saved) }
+                        guard state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                        try state.recordWabiConversation(url, for: comparison)
+                        try save()
+                    } else if !fixture { try await wabiApp.checkAvailable() }
+                    desktopReady = true
+                    desktopStatus = state.comparisonID == nil ? "Connected to Wabi · each comparison gets its own AI chat" : "Dedicated Wabi chat ready · background input"
+                    updateNativeSnapshot()
+                    return
+                }
                 if app == .muse {
                     guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete Muse request before navigating to another side chat.") }
                     let comparison = state.comparisonID
@@ -1175,6 +1200,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         fresh.draft = state.draft
         if provider.desktopApp != nil {
             if provider == .museApp { fresh.url = state.comparisonID.flatMap { state.museAppConversations[$0.uuidString]?.url?.absoluteString } ?? "" }
+            if provider == .wabi { fresh.url = state.comparisonID.flatMap { state.conversationURLs[$0.uuidString]?.absoluteString } ?? "" }
             fresh.ready = isEnabled && !storageFailed && desktopInstallation.isRunning && desktopReady && !hasIncompleteNativeRequest(for: state.comparisonID)
             fresh.reason = !isEnabled ? "Enable \(provider.name) to send." : hasIncompleteNativeRequest(for: state.comparisonID) ? "Review the previous incomplete request before continuing." : desktopStatus
             if fresh != snapshot { snapshot = fresh }
@@ -1256,13 +1282,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let user = WebPageMessage(role: "user", text: text)
             let history = (state.localConversations[id.uuidString] ?? []) + [user]
             attempt.status = .attempting
+            let wabiURL = provider == .wabi ? try state.wabiConversation(for: id) : nil
+            if provider == .wabi { attempt.conversationURL = wabiURL }
             try store(attempt)
             started = true
             let savedSessionID = state.resumableLocalSessionID(for: id)
             let workingDirectory = conversationWorkingDirectory(id)
             let binding = state.desktopConversation
             let museBinding = provider == .museApp ? try state.museAppBinding(for: id) : nil
-            let request = Task { [fixture, provider, installedAgent, museApp] in
+            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
                     if provider == .museApp {
@@ -1282,6 +1310,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         try await self.recordMuseAppSubmission(discovered, attemptID: attemptID)
                     })
                     return PersonalAgentReply(text: answer, sessionID: "Muse side chat")
+                }
+                if provider == .wabi {
+                    guard let wabiURL else { throw WebSessionFailure.notSent("Prepare this comparison's dedicated Wabi chat first.") }
+                    return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL), sessionID: "Dedicated Wabi chat")
                 }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }

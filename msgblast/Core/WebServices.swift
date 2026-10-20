@@ -142,6 +142,21 @@ public struct WebWorkspaceState: Codable, Sendable {
         }
         return museAppConversations[comparison.uuidString]
     }
+    func wabiConversation(for comparison: UUID) throws -> URL? {
+        guard conversationURLs.values.allSatisfy(WabiThread.isValid),
+              Set(conversationURLs.values).count == conversationURLs.count else {
+            throw DesktopAppError.unavailable("Saved Wabi chat ownership is inconsistent. The saved state was preserved.")
+        }
+        return conversationURLs[comparison.uuidString]
+    }
+    mutating func recordWabiConversation(_ url: URL, for comparison: UUID) throws {
+        let previous = try wabiConversation(for: comparison)
+        guard WabiThread.isValid(url), previous == nil || previous == url,
+              !conversationURLs.contains(where: { $0.key != comparison.uuidString && $0.value == url }) else {
+            throw DesktopAppError.unavailable("Wabi's dedicated chat changed or belongs to another comparison. The original binding was preserved.")
+        }
+        conversationURLs[comparison.uuidString] = url
+    }
     public mutating func recordMuseAppBinding(_ binding: MuseSideChatBinding) throws {
         let previous = try museAppBinding(for: binding.comparisonID)
         guard previous?.threadID == nil || previous?.threadID == binding.threadID,

@@ -124,12 +124,19 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         }
         return Array(content.dropFirst(sidebar + 1))
     }
+    var wabiIsBlankAIChat: Bool {
+        get throws {
+            let text = try transcript(app: .wabi).filter { $0.role == "AXStaticText" }.map(\.text)
+                .filter { $0 != "Today" && !Self.isTimestamp($0) }
+            return text == ["What can I do for you?"]
+        }
+    }
     func outgoingCount(_ prompt: String, app: DesktopAppProvider) throws -> Int {
         let text = app == .muse ? "User message: \(prompt)" : prompt
         return try transcript(app: app).filter { $0.role == "AXStaticText" && $0.text == text }.count
     }
     func reply(after prompt: String, app: DesktopAppProvider, outgoingOccurrence: Int = 1) throws -> String? {
-        let name = try conversation(app: app)
+        let name = app == .wabi ? "Wabi" : try conversation(app: app)
         let transcript = try transcript(app: app)
         let outgoing = app == .muse ? "User message: \(prompt)" : prompt
         let matches = transcript.indices.filter { transcript[$0].role == "AXStaticText" && transcript[$0].text == outgoing }
@@ -242,6 +249,7 @@ actor DesktopAppConversation {
         return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
     func inspect(_ app: DesktopAppProvider) async throws -> DesktopConversationBinding {
+        guard app != .wabi else { throw DesktopAppError.unavailable("Wabi requires a dedicated chat for each comparison.") }
         guard !occupied.contains(app) else { throw DesktopAppError.unavailable("\(app.name) is already handling a request.") }
         let session = "msgblast-inspect-\(UUID().uuidString)"
         defer { Task { await endSession(session) } }
@@ -252,6 +260,7 @@ actor DesktopAppConversation {
         return DesktopConversationBinding(name: name)
     }
     func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding) async throws -> String {
+        guard app != .wabi else { throw DesktopAppError.unavailable("Wabi requires a dedicated chat for each comparison.") }
         guard occupied.insert(app).inserted else { throw DesktopAppError.unavailable("\(app.name) is already handling a request.") }
         defer { occupied.remove(app) }
         let session = "msgblast-send-\(UUID().uuidString)"
