@@ -179,9 +179,9 @@ final class GeminiAppDriverTests: XCTestCase {
         }
         let observations = try roots.map { try GeminiAppObservation(root: $0, allowingRename: true) }
         try snapshotData(roots, driverPID: driverPID).write(to: dir.appendingPathComponent("snapshots.json"))
-        let actions: [[String: String]] = [
+        let actions: [[String: Any]] = [
             ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
-            ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"],
+            ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help", "next_stage": 4],
             ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
             ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"],
             ["tool": "type_text", "role": "AXTextArea", "label": "Ask Gemini", "text": prompt],
@@ -222,7 +222,7 @@ final class GeminiAppDriverTests: XCTestCase {
             else: assert s==0 and args['x']==65 and args['y']==20
             assert args['pid']==42 and args['window_id']==21 and args['delivery_mode']=='background'
             if tool=='type_text':assert args['text']==expected['text']
-            if not (\(modelPressNoop ? "True" : "False") and s==0 and 'element_token' in args): (p/'stage').write_text(str(s+1))
+            if not (\(modelPressNoop ? "True" : "False") and s==0 and 'element_token' in args): (p/'stage').write_text(str(expected.get('next_stage',s+1)))
             if s!=5:print(json.dumps({'effect':'unverifiable'}))
         else: print('{}')
         sys.stdout.flush()
@@ -313,6 +313,14 @@ final class GeminiAppDriverTests: XCTestCase {
         XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
     }
 
+    func testDefaultModelKeepsCurrentSelectionWithoutReopeningItsPicker() async throws {
+        let f = try fixture()
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let (selected, _) = try await adapter(f).prepare(binding: nil, preferences: .init())
+        XCTAssertEqual(selected.model, "3.8 Flash, All-around help")
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 2)
+    }
+
     func testModelPickerWithNoOpAXPressUsesVerifiedBackgroundCaptureWithoutTyping() async throws {
         let f = try fixture(modelPressNoop: true)
         defer { try? FileManager.default.removeItem(at: f.directory) }
@@ -380,7 +388,14 @@ final class GeminiAppDriverTests: XCTestCase {
     }
     @MainActor
     func testUnavailableModelDoesNotReserveAnUnsubmittedConversation() async throws {
-        let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
+        let base = try fixture()
+        let f = try scenario(Array(base.observations.prefix(5)).map(\.root), actions: [
+            ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
+            ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"],
+            ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
+            ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"]
+        ], in: base)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
         let id = UUID()
         let session = WebAgentSession(provider: .geminiApp, storageURL: f.directory.appendingPathComponent("session.json"), fixture: false,
                                       museApp: .shared, desktopApps: .demo, desktopDriver: DesktopAppConversation(executable: f.executable), geminiApp: adapter(f))

@@ -155,7 +155,7 @@ actor GeminiAppConversation {
             try await click(label: selected.label, target: target, session: session)
             throw GeminiSelectionError(options: .init(models: models), message: "The selected model isn’t available in Gemini’s \(desired.mode.name) mode. Choose an available model.")
         }
-        if desired.model != selected.label {
+        if model != selected.label {
             try await click(label: model, target: target, session: session)
             menu = try await modelMenu(target: target, session: session)
             choices = modelChoices(menu)
