@@ -10,10 +10,10 @@ struct CuaPermissionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Desktop app control").font(.headline)
-            Text("Cua lets you chat with installed Mac apps in the background. These optional permissions are separate from Messages access.")
+            Text("msgblast connects to installed Mac apps. These optional permissions are separate from Messages access.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
-                Label(permissions.installed ? "Cua driver installed" : "Cua driver required", systemImage: permissions.installed ? "checkmark.circle" : "arrow.down.circle")
+                Label(permissions.installed ? "msgblast driver installed" : "msgblast driver required", systemImage: permissions.installed ? "checkmark.circle" : "arrow.down.circle")
                 Spacer()
                 if !permissions.installed {
                     Link("Installation guide", destination: URL(string: "https://cua.ai/docs/cua-driver")!).disabled(demo)
@@ -24,25 +24,25 @@ struct CuaPermissionsView: View {
                     if permissions.hostAccessibility == .allowed { permissions.openSettings("Privacy_Accessibility", demo: demo) }
                     else { permissions.enableHostAccessibility(demo: demo) }
                 }
-                row("CuaDriver Accessibility", benefit: "Read and operate the selected app's controls.", status: permissions.driverAccessibility, identifier: "cua-driver") {
+                row("msgblast driver Accessibility", benefit: "Read and operate the selected app's controls.", status: permissions.driverAccessibility, identifier: "cua-driver") {
                     if permissions.driverAccessibility == .allowed { permissions.openSettings("Privacy_Accessibility", demo: demo) }
                     else { Task { await permissions.enableDriver(demo: demo) } }
                 }
-                row("CuaDriver Screen Recording", benefit: "Capture the selected app window to focus Muse, ChatGPT, Dots, and Claude message fields.", status: permissions.windowCapture, identifier: "cua-capture") {
+                row("msgblast driver Screen Recording", benefit: "Capture the selected app window to focus Muse, ChatGPT, Dots, and Claude message fields.", status: permissions.windowCapture, identifier: "cua-capture") {
                     if permissions.windowCapture == .allowed { permissions.openSettings("Privacy_ScreenCapture", demo: demo) }
                     else { Task { await permissions.enableDriver(demo: demo) } }
                 }
             }
-            Text("Choose CuaDriver in macOS Privacy & Security. Enable opens Cua's setup and window-capture check. Full Disk Access does not grant these permissions.")
+            Text("Enable access for msgblast and its driver when macOS asks. Full Disk Access does not grant app control or screen capture.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button("Cua setup & capture check…") { Task { await permissions.enableDriver(demo: demo) } }
+                Button("Set up app access…") { Task { await permissions.enableDriver(demo: demo) } }
                     .disabled(!permissions.installed).accessibilityIdentifier("setup-cua-permissions")
                 Button("Check again") { Task { await permissions.refresh(demo: demo) } }
                     .accessibilityIdentifier("check-cua-permissions")
                 if permissions.checking { ProgressView().controlSize(.small) }
             }.controlSize(.small)
-            Text(demo ? "Cua permissions are simulated. No system access is changed." : "Allowed reports a macOS grant. Use Cua setup to verify capture; a grant alone does not prove that a window can be captured. Restart CuaDriver if macOS asks, then check again.")
+            Text(demo ? "App permissions are simulated. No system access is changed." : "Set up app access to verify capture. Follow any restart instructions from macOS; access refreshes when you return.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let message = permissions.message { Text(message).font(.caption).foregroundStyle(.orange) }
         }

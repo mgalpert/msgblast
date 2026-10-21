@@ -246,7 +246,7 @@ actor DesktopAppConversation {
         let windows: [Window]
     }
     func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
-        guard let executable else { throw DesktopAppError.unavailable("Install cua-driver and grant its Accessibility permission before connecting desktop apps.") }
+        guard let executable else { throw DesktopAppError.unavailable("Set up the msgblast driver and allow Accessibility before connecting Mac apps.") }
         var object: [String: Any] = arguments
         for (key, value) in numbers { object[key] = value }
         for (key, value) in booleans { object[key] = value }
@@ -261,11 +261,11 @@ actor DesktopAppConversation {
             }.value
         } onCancel: { cancellation.cancel() }
         guard result.status == 0, let data = result.stdout.data(using: .utf8) else {
-            throw DesktopAppError.unavailable("cua-driver could not complete \(tool). Check its service and permissions; nothing will be retried automatically.")
+            throw DesktopAppError.unavailable("The msgblast driver could not complete \(tool). Check its service and permissions; nothing will be retried automatically.")
         }
         let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         if envelope?["refusal"] != nil || envelope?["status"] as? String == "refused" || envelope?["effect"] as? String == "refused" || envelope?["isError"] as? Bool == true || envelope?["error"] != nil {
-            throw DesktopAppError.unavailable("cua-driver refused \(tool). Review the app and driver permissions; foreground control is never automatic.")
+            throw DesktopAppError.unavailable("The msgblast driver refused \(tool). Review the app and driver permissions; foreground control is never automatic.")
         }
         return try JSONDecoder().decode(type, from: data)
     }

@@ -429,6 +429,55 @@ import msgblastCore
         nativeJoinModel.webAgents.beginShutdown()
         await nativeJoinModel.webAgents.cancelAndWait()
         print("PASS: ChatGPT App, Dots App and Claude App join through actual AppModel preparation, preserve comparison membership on reload, and submit the full simulated shared context exactly once across repeated joins.")
+        let automaticMessages = AppModel()
+        automaticMessages.state.selection = []
+        await automaticMessages.onboarding.refreshPermissions()
+        var automaticSetup = OnboardingState()
+        automaticSetup.completePermissions(messaging: true, apps: true)
+        automaticMessages.state.onboarding = automaticSetup
+        let foundFo = Agent(contactID: "auto-fo", name: "Fo", handles: ["auto-fo@example.com"])
+        let missingSzn = Agent(contactID: "auto-szn", name: "Szn", handles: ["no-chat@example.com"])
+        let unsavedContact = Agent(name: "Instinct", handles: ["manual@example.com"])
+        automaticMessages.chats += [Chat(id: "auto-fo", handle: "auto-fo@example.com", lastActivity: 1),
+                                    Chat(id: "manual", handle: "manual@example.com", lastActivity: 1)]
+        await automaticMessages.onboarding.addMessagesAutomatically(suggestions: [foundFo, missingSzn, unsavedContact])
+        let added = automaticMessages.savedAgent(matching: foundFo)!
+        precondition(automaticMessages.state.onboarding?.selected == [.fo])
+        precondition(automaticMessages.state.onboarding?.completed == [.fo])
+        precondition(automaticMessages.state.onboarding?.messagesAutomaticallyAdded == true)
+        precondition(automaticMessages.savedAgent(matching: missingSzn) == nil)
+        precondition(automaticMessages.savedAgent(matching: unsavedContact) == nil, "Automatic setup must never create Contacts")
+        precondition(automaticMessages.state.selection.isEmpty && automaticMessages.webAgents.selected.isEmpty)
+        automaticMessages.onboarding.toggleChoice(.fo)
+        precondition(automaticMessages.state.onboarding?.selected.isEmpty == true)
+        precondition(automaticMessages.state.onboarding?.selectedMessageAgentIDs.isEmpty == true)
+        await automaticMessages.onboarding.finishPermissionSetup()
+        precondition(automaticMessages.state.onboarding?.selected.isEmpty == true, "Permission review must retain opt-outs")
+        automaticMessages.state.onboarding = try automaticMessages.local.load().onboarding
+        await automaticMessages.onboarding.addMessagesAutomatically(suggestions: [foundFo])
+        precondition(automaticMessages.state.onboarding?.selected.isEmpty == true, "Relaunch must not reselect an automatically added agent")
+        automaticMessages.onboarding.toggleChoice(.fo)
+        automaticMessages.onboarding.begin()
+        precondition(automaticMessages.state.onboarding?.stage == .feedback, "Connected Messages agents go straight to the final screen")
+        precondition(automaticMessages.state.onboarding?.messageAgentIDs["fo"] == added.id)
+        var appsOnly = OnboardingState()
+        appsOnly.completePermissions(messaging: false, apps: true)
+        automaticMessages.state.onboarding = appsOnly
+        await automaticMessages.onboarding.addMessagesAutomatically(suggestions: [foundFo])
+        precondition(automaticMessages.state.onboarding == appsOnly, "App-only approval cannot authorize Messages discovery")
+        var legacyMessages = OnboardingState()
+        legacyMessages.completePermissions(messaging: true, apps: true)
+        legacyMessages.selected = [.fo, .szn]
+        legacyMessages.messageAgentIDs["fo"] = added.id
+        legacyMessages.stage = .connecting
+        legacyMessages.messagesDiscoveryReviewed = false
+        automaticMessages.state.onboarding = legacyMessages
+        await automaticMessages.onboarding.resolveMessagesAutomatically()
+        precondition(automaticMessages.state.onboarding?.stage == .feedback)
+        precondition(automaticMessages.state.onboarding?.completed == [.fo])
+        precondition(automaticMessages.state.onboarding?.skipped == [.szn])
+        precondition(automaticMessages.state.selection.isEmpty)
+        print("PASS: automatic Messages setup adds only existing routable contacts, preserves opt-outs across permission review and store reload, never selects recipients, and resumes legacy discovery without another picker.")
         let onboardingModel = AppModel()
         let connectedContact = Agent(contactID: "fixture-connected-fo", name: "Fo", handles: ["fo@example.com"])
         onboardingModel.state.selection = []

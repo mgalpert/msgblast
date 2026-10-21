@@ -119,6 +119,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     public var connectorStartCompleted: Bool? = false
     public var connector: OnboardingConnector?
     public var prerequisitesCompleted: Bool? = false
+    public var messagesAutomaticallyAdded: Bool?
     public var messagesDiscoveryReviewed: Bool?
     public var discoveredMessageAgentIDs: [UUID]?
     public var excludedDiscoveredMessageAgentIDs: [UUID]?

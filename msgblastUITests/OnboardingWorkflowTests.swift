@@ -18,7 +18,10 @@ final class OnboardingWorkflowTests: XCTestCase {
         waitForExpectations(timeout: 5)
         next.click()
         XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
-        if connector == "Messages" { selectChoice("Fo", in: app) }
+        if connector == "Messages" {
+            expectation(for: NSPredicate(format: "value == %@", "Selected"), evaluatedWith: app.buttons["Choose Fo"])
+            waitForExpectations(timeout: 5)
+        }
     }
 
     @MainActor
@@ -39,15 +42,24 @@ final class OnboardingWorkflowTests: XCTestCase {
 
     @MainActor
     func testUnifiedPermissionsPrecedeAllAgentGroupsAndSelectionIsRequired() {
-        let app = launch()
+        let app = launch(contactsDenied: true)
         defer { app.terminate() }
+        XCTAssertFalse(app.buttons["check-onboarding-permissions"].exists)
+        XCTAssertEqual(app.scrollViews.count, 0, "Permission setup fits without scrolling")
+        XCTAssertFalse(app.staticTexts["System Settings · Privacy & Security"].exists)
+        XCTAssertTrue(app.switches["enable-cua-driver-permission"].exists)
+        XCTAssertFalse(app.buttons["Manage"].exists)
+        XCTAssertFalse(app.staticTexts["Messaging agents"].exists)
+        XCTAssertFalse(app.staticTexts["App agents"].exists)
         for identifier in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-driver", "cua-capture"] {
-            XCTAssertTrue(app.staticTexts["permission-status-\(identifier)"].exists)
+            XCTAssertTrue(app.switches["enable-\(identifier)-permission"].exists)
         }
         XCTAssertFalse(app.buttons["Choose ChatGPT App"].exists)
         choose("Apps", in: app)
         XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
-        for name in ["Fo", "ChatGPT App", "ChatGPT", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
+        XCTAssertTrue(app.buttons["Choose Fo"].exists)
+        XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
+        for name in ["ChatGPT App", "ChatGPT", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
             XCTAssertTrue(revealChoice(name, in: app).exists)
         }
         selectChoice("ChatGPT App", in: app)
@@ -66,20 +78,20 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         let next = app.buttons["continue-permissions"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
-        let host = app.buttons["enable-cua-host-permission"]
+        let host = app.switches["enable-cua-host-permission"]
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: host)
         waitForExpectations(timeout: 5)
         XCTAssertFalse(next.isEnabled)
         for _ in 0..<8 where !host.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -160) }
         host.click()
-        XCTAssertEqual(app.staticTexts["permission-status-cua-host"].value as? String, "Allowed")
+        XCTAssertEqual(app.switches["enable-cua-host-permission"].value as? String, "1")
         XCTAssertFalse(next.isEnabled, "One Accessibility grant does not complete App access")
-        let driver = app.buttons["enable-cua-driver-permission"]
+        let driver = app.switches["enable-cua-driver-permission"]
         for _ in 0..<8 where !driver.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -160) }
         driver.click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
         waitForExpectations(timeout: 5)
-        XCTAssertNotEqual(app.staticTexts["permission-status-messages-contacts"].value as? String, "Allowed")
+        XCTAssertNotEqual(app.switches["enable-messages-contacts-permission"].value as? String, "1")
         next.click()
         XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
@@ -266,47 +278,27 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
         XCTAssertTrue(app.buttons["Choose ChatGPT App"].isEnabled)
         app.buttons["Back"].click()
-        let contacts = app.buttons["enable-messages-contacts-permission"]
+        let contacts = app.switches["enable-messages-contacts-permission"]
         XCTAssertTrue(contacts.waitForExistence(timeout: 5))
         contacts.click()
-        app.buttons["check-onboarding-permissions"].click()
         choose("Apps", in: app)
         XCTAssertTrue(app.buttons["Choose Fo"].isEnabled)
-        XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
+        XCTAssertEqual(app.buttons["Choose Fo"].value as? String, "Selected")
+        XCTAssertTrue(app.buttons["Continue setup"].isEnabled, "Granting Messaging access adds existing agents automatically")
     }
 
     @MainActor
-    func testDiscoveredMessagesCanBeDeselectedAndContactsSearched() {
+    func testMessagesAreAddedWithoutDiscoveryOrConversationPicker() {
         let app = launch()
         defer { app.terminate() }
         choose("Messages", in: app)
-        app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.buttons["Deselect Fo"].waitForExistence(timeout: 5))
-        app.buttons["Deselect Fo"].click()
-        XCTAssertTrue(app.buttons["Select Fo"].waitForExistence(timeout: 5))
-        app.buttons["Select Fo"].click()
-        app.buttons["Search for more agents in Messages"].click()
-        XCTAssertTrue(app.textFields["Find onboarding contact"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].click()
-        app.buttons["Add other agents"].click()
-        XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
-        app.buttons["Back"].click()
-        XCTAssertTrue(app.staticTexts["Allow access"].waitForExistence(timeout: 5))
-        choose("Apps", in: app)
-        app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5), "Permission review must retain completed agent setup")
-    }
-
-    @MainActor
-    func testMessagesContinueGoesToContributionWithoutRepeatedSelection() {
-        let app = launch()
-        defer { app.terminate() }
-        choose("Messages", in: app)
-        app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.buttons["Deselect Fo"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["Choose Fo"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["Choose Instinct"].value as? String, "Selected")
+        XCTAssertFalse(app.staticTexts["Agents we found"].exists)
+        XCTAssertFalse(app.buttons["Search for more agents in Messages"].exists)
+        XCTAssertFalse(app.textFields["Find onboarding contact"].exists)
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.staticTexts["Help shape msgblast"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["Choose who to connect"].exists)
         XCTAssertTrue(app.buttons["Start chatting"].exists)
     }
 
@@ -315,10 +307,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Messages", in: app)
-        selectChoice("Instinct", in: app)
-        app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.buttons["Deselect Fo"].waitForExistence(timeout: 5))
-        app.buttons["Deselect Fo"].click()
+        selectChoice("Fo", in: app)
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
         app.buttons["Back"].click()
@@ -356,10 +345,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Allow access"].waitForExistence(timeout: 5))
         choose("Apps", in: app)
-        selectChoice("Poke", in: app)
-        app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.buttons["Deselect Poke 🌴"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.buttons["Deselect Poke 🌴"].value as? String, "Connected · Business conversation")
+        XCTAssertEqual(app.buttons["Choose Poke"].value as? String, "Selected")
         XCTAssertFalse(app.buttons["Choose conversation"].exists)
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))

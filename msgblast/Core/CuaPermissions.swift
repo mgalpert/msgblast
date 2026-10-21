@@ -36,10 +36,10 @@ struct CuaPermissionDriver: Sendable {
                                          timeout: timeout, cancellation: cancellation)
                 }.value
             } onCancel: { cancellation.cancel() }
-            guard result.status == 0 else { throw DesktopAppError.unavailable("Cua \(operation) could not finish. Open CuaDriver and check its permissions, then check again here.") }
+            guard result.status == 0 else { throw DesktopAppError.unavailable("msgblast driver \(operation) could not finish. Use Set up app access to review its permissions.") }
             return result.stdout
         } catch PersonalAgentError.timedOut {
-            throw DesktopAppError.unavailable("Cua \(operation) timed out after \(Int(timeout)) seconds. Open CuaDriver and check its permissions, then check again here.")
+            throw DesktopAppError.unavailable("msgblast driver \(operation) timed out after \(Int(timeout)) seconds. Use Set up app access to review its permissions.")
         }
     }
 }
@@ -130,7 +130,7 @@ public final class CuaPermissionsController: ObservableObject {
             let report = try await client.driverPermissions()
             guard report.identifiesDriver else {
                 driverAccessibility = .unknown; windowCapture = .unknown
-                message = "CuaDriver's permission status is unavailable. Open CuaDriver, then check again."
+                message = "The msgblast driver’s permission status is unavailable. Use Set up app access to reconnect."
                 return
             }
             func status(_ grant: Bool?) -> CuaPermissionStatus { grant.map { $0 ? .allowed : .off } ?? .unknown }
@@ -144,7 +144,7 @@ public final class CuaPermissionsController: ObservableObject {
 
     private static func systemClient() -> CuaPermissionClient {
         @Sendable func driver() throws -> CuaPermissionDriver {
-            guard let executable = DesktopAppConversation.findDriver() else { throw DesktopAppError.unavailable("Install cua-driver before setting up desktop app control.") }
+            guard let executable = DesktopAppConversation.findDriver() else { throw DesktopAppError.unavailable("Set up the msgblast driver before connecting Mac apps.") }
             return CuaPermissionDriver(executable: executable)
         }
         return CuaPermissionClient(installed: { DesktopAppConversation.findDriver() != nil }, hostAccessibility: { prompt in

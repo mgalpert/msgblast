@@ -2,6 +2,24 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testAutomaticMessagesCheckpointRetainsOptOutAcrossPermissionRestart() throws {
+        var setup = OnboardingState()
+        let id = UUID()
+        setup.selected = [.fo]
+        setup.completed = [.fo]
+        setup.messageAgentIDs = ["fo": id]
+        setup.discoveredMessageAgentIDs = [id]
+        setup.messagesAutomaticallyAdded = true
+        setup.excludeDiscoveredMessageAgent(id, agents: [], availableIDs: [])
+        setup.preparePermissionChange()
+        var restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(setup))
+        restored.completePermissions(messaging: true, apps: true)
+        XCTAssertEqual(restored.messagesAutomaticallyAdded, true)
+        XCTAssertTrue(restored.selected.isEmpty)
+        XCTAssertTrue(restored.selectedMessageAgentIDs.isEmpty)
+        XCTAssertEqual(restored.excludedDiscoveredMessageAgentIDs, [id])
+    }
+
     func testPermissionGateRequiresOneCompleteSection() {
         // Cover all combinations: grants split across incomplete sections must not unlock setup.
         for mask in 0..<128 {

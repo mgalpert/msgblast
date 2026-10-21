@@ -8,12 +8,21 @@ state files, histories, and execution paths.
 ## Setup
 
 Onboarding starts with **Stats → Allow access → Choose your agents**. The access
-screen groups Messages permissions (Full Disk Access, Contacts, Automation) and
-app permissions (msgblast Accessibility, CuaDriver Accessibility and Screen
-Recording). Continue requires every permission in at least one section; partial
+screen shows switches for Full Disk Access, Contacts, Automation, msgblast
+Accessibility, msgblast driver Accessibility and Screen Recording. It has no
+section headings, manual check button, or scrolling. Continue requires every permission in at least one section; partial
 grants from different sections cannot be combined. The agent picker enables
 Messages or native apps according to the completed sections, and checks native
-app installation separately. Websites and CLIs remain available after the gate.
+app installation separately. Websites and CLIs remain available after the gate. Permissions refresh automatically when the app returns from macOS settings.
+Switches display the live grants; switching opens the required OS handoff rather
+than changing a cached approval.
+
+With complete Messaging access, existing routable agents are added automatically
+and selected in the chooser. Users can deselect them there; their opt-outs survive
+permission review and restarts. Setup does not create Contacts, select send
+recipients, or show a separate discovery or conversation picker. Missing or
+unsupported conversations are not added. Older saved Messages setup steps resolve
+automatically using their saved destinations.
 
 Before any permission action, msgblast saves a checkpoint with the selected
 agents, completed steps, drafts and current setup position. After a permission
@@ -25,9 +34,11 @@ sharing choices intact.
 1. Install cua-driver using its official instructions. In msgblast, open
    **Settings → Permissions → Desktop app control**. Enable **msgblast
    Accessibility** for the apps' independent draft/identity checks. Enable the
-   **CuaDriver** rows to open Cua's own Accessibility, Screen Recording and
+   **msgblast driver** rows to open the helper’s Accessibility, Screen Recording and
    window-capture setup. macOS owns the grant decisions; nothing is enabled by
-   opening Settings alone.
+   opening Settings alone. The app calls this component the msgblast driver; macOS
+   still lists the independently installed helper under its registered name,
+   **CuaDriver**. It is not bundled or renamed by this UI change.
 2. Install the desktop app on this Mac and sign in. Onboarding labels each app
    **Installed on this Mac** or **Not installed** before it can be selected.
    Settings also checks installation before allowing an app to be enabled.
