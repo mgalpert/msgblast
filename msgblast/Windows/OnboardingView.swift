@@ -140,7 +140,7 @@ struct OnboardingView: View {
                             }
                             connectorArtwork(connector)
                             Text(connector.name).font(.title2.bold())
-                            Text(connector == .messages ? "Connect your existing conversations" : connector == .apps ? "Use your browser logins or sign in" : "Connect your local tools")
+                            Text(connector == .messages ? "Connect your existing conversations" : connector == .apps ? "Connect native Mac apps or websites" : "Connect your local tools")
                                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         }.padding(18).frame(maxWidth: .infinity, minHeight: 340)
                             .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16))
@@ -164,17 +164,14 @@ struct OnboardingView: View {
     }
 
     private func connectorArtwork(_ connector: OnboardingConnector) -> some View {
-        let choices: [OnboardingChoice] = connector == .messages ? [.fo, .instinct, .poke, .szn] : connector == .apps ? [.chatgpt, .claude, .grok, .grokbot, .muse] : [.codexCLI, .claudeCode, .openclaw, .hermes]
+        let choices: [OnboardingChoice] = connector == .messages ? [.fo, .instinct, .poke, .szn] : connector == .apps ? [.geminiApp, .museApp, .wabi, .grokBotApp] : [.codexCLI, .claudeCode, .openclaw, .hermes]
         return ZStack {
             Circle().stroke(.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4])).frame(width: 156, height: 156)
             if connector == .messages {
                 Image(systemName: "message.fill").font(.system(size: 54)).foregroundStyle(.white)
                     .frame(width: 78, height: 78).background(.green, in: RoundedRectangle(cornerRadius: 18))
             } else if connector == .apps {
-                ZStack {
-                    browserOrbitIcon(.chrome).frame(width: 52, height: 52).offset(x: 20)
-                    browserOrbitIcon(.safari).frame(width: 52, height: 52).offset(x: -20)
-                }.frame(width: 92, height: 52)
+                Image(systemName: "macwindow").font(.system(size: 62)).foregroundStyle(.secondary)
             } else {
                 Image(systemName: "terminal.fill").font(.system(size: 70)).foregroundStyle(.secondary)
             }
@@ -262,29 +259,19 @@ struct OnboardingView: View {
         }
     }
 
-    private func browserOrbitIcon(_ source: BrowserLoginSource) -> some View {
-        Group {
-            if let icon = Self.browserIcons[source.rawValue] {
-                let cropped = NSImage(size: NSSize(width: 128, height: 128), flipped: false) { bounds in
-                    NSBezierPath(ovalIn: bounds).addClip()
-                    let original = NSRect(origin: .zero, size: icon.size)
-                    icon.draw(in: bounds, from: original.insetBy(dx: icon.size.width * 0.18, dy: icon.size.height * 0.18), operation: .sourceOver, fraction: 1)
-                    return true
-                }
-                Image(nsImage: cropped).resizable().scaledToFit()
-            } else {
-                browserIcon(source).clipShape(Circle())
-            }
-        }
-    }
-
     private var chooser: some View {
         VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(setup.state.connector == .clis ? "Which CLIs do you use?" : "Which apps do you use?").font(.system(size: 28, weight: .bold))
+                    if setup.state.connector == .apps {
+                        Text("Connect a Mac app for a native chat experience, or keep using your websites.").foregroundStyle(.secondary)
+                        if setup.desktopInstallations[.geminiApp]?.isInstalled == false {
+                            Link("Install Gemini for Mac", destination: WebProvider.geminiApp.homeURL)
+                        }
+                    }
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                    ForEach(OnboardingChoice.allCases.filter { !$0.isMessages && (setup.state.connector?.includes($0) ?? true) }) { choice in
+                    ForEach(OnboardingChoice.allCases.sorted { ($0.provider?.desktopApp != nil ? 0 : 1) < ($1.provider?.desktopApp != nil ? 0 : 1) }.filter { !$0.isMessages && (setup.state.connector?.includes($0) ?? true) }) { choice in
                         choiceButton(choice)
                     }
                 }

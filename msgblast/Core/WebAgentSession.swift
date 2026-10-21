@@ -96,6 +96,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
     private let museApp: MuseAppConversation
+    private let geminiApp: GeminiAppConversation
+    @Published public private(set) var geminiOptions = GeminiOptions()
+    private var geminiConfigurationError: String?
     private let wabiApp: WabiAppConversation
     private let desktopApps: DesktopAppInstallationClient
     private let desktopDriver: DesktopAppConversation
@@ -138,8 +141,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
         self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
     }
-    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation = .shared) {
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation = .shared, geminiApp: GeminiAppConversation = .shared) {
         self.museApp = museApp
+        self.geminiApp = geminiApp
         self.wabiApp = wabiApp
         self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
         self.desktopDriver = desktopDriver
@@ -468,7 +472,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public var locationLabel: String {
-        if provider.desktopApp != nil { return fixture ? "Simulated desktop app · no app contacted" : provider == .museApp ? "Muse app · Side chat" : provider == .wabi ? "Wabi · Dedicated chat" : "Desktop app · Shared conversation" }
+        if provider.desktopApp != nil {
+            if fixture { return "Simulated desktop app · no app contacted" }
+            switch provider {
+            case .museApp: return "Muse app · Side chat"
+            case .geminiApp: return "Gemini · Dedicated \(geminiPreferences.mode.name.lowercased())"
+            case .wabi: return "Wabi · Dedicated chat"
+            default: return "Desktop app · Shared conversation"
+            }
+        }
         if provider == .grokbot { return fixture ? "Simulated webhook · no Bot contacted" : "Webhook connection" }
         if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
@@ -479,10 +491,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @discardableResult
     public func openComparison(_ id: UUID?) async -> Bool {
         guard !isSending else { return false }
-        if state.comparisonID != id { updateState { $0.comparisonID = id } }
+        if state.comparisonID != id {
+            if provider == .geminiApp { geminiConfigurationError = nil; geminiOptions = .init() }
+            updateState { $0.comparisonID = id }
+        }
         connect(automaticallyRefresh: !provider.usesNativeConversation)
         if provider.usesNativeConversation {
             await refresh()
+            if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
             return snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
         }
         do {
@@ -1074,8 +1090,63 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { self.error = "Could not save the recovered conversation. Repair storage before sending." }
     }
 
+    public var geminiPreferences: GeminiPreferences {
+        state.comparisonID.flatMap { state.geminiComparisonPreferences[$0.uuidString] } ?? state.geminiPreferences
+    }
+    public var geminiModeLocked: Bool {
+        state.comparisonID.flatMap { state.geminiConversations[$0.uuidString]?.firstPrompt } != nil
+    }
+    public func configureGemini(_ preferences: GeminiPreferences) async {
+        guard provider == .geminiApp, !loading, !isSending, !storageFailed, !shuttingDown else { return }
+        guard !geminiModeLocked || preferences.mode == geminiPreferences.mode else { return }
+        guard !hasIncompleteNativeRequest(for: state.comparisonID) else { return }
+        loading = true; desktopReady = false
+        defer { loading = false; updateNativeSnapshot() }
+        do {
+            try await waitForDesktopRefresh()
+            try await prepareGemini(preferences)
+            desktopReady = true; desktopStatus = "Gemini ready · \(geminiPreferences.mode.name) · background input"; error = nil
+        } catch { self.error = error.localizedDescription; desktopStatus = error.localizedDescription }
+    }
+    private func prepareGemini(_ desired: GeminiPreferences? = nil) async throws {
+        let comparison = state.comparisonID
+        let binding = try comparison.flatMap { try state.geminiBinding(for: $0) }
+        guard binding != nil || comparison.flatMap({ state.localConversations[$0.uuidString] })?.isEmpty != false else {
+            throw WebSessionFailure.notReady("This comparison has Gemini history without a tracked conversation. Start a new comparison; its history was preserved.")
+        }
+        let requested = desired ?? geminiPreferences
+        let result: (GeminiPreferences, GeminiOptions)
+        if fixture {
+            let models = requested.mode == .chat ? ["3.5 Flash-Lite, Fastest answers", "3.8 Flash, All-around help", "3.1 Pro, Advanced reasoning", "4 Argon, Complex tasks"] : ["3.8 Flash, All-around help", "4 Argon, Complex tasks"]
+            var selected = requested
+            selected.model = selected.model ?? models[0]
+            let levels = requested.mode == .chat && selected.model == "4 Argon, Complex tasks" ? ["Low, Quick and efficient", "Medium, Balanced depth", "High, Extra thorough"] : []
+            selected.thinking = levels.isEmpty ? nil : selected.thinking ?? levels[0]
+            result = (selected, .init(models: models, thinkingLevels: levels))
+        } else {
+            do { result = try await geminiApp.prepare(binding: binding, preferences: requested) }
+            catch let problem as GeminiSelectionError {
+                guard state.comparisonID == comparison else { throw CancellationError() }
+                geminiOptions = problem.options
+                geminiConfigurationError = problem.localizedDescription
+                throw problem
+            }
+        }
+        guard state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+        if let comparison { state.geminiComparisonPreferences[comparison.uuidString] = result.0 }
+        else { state.geminiPreferences = result.0 }
+        geminiOptions = result.1
+        geminiConfigurationError = nil
+        try save()
+    }
+    private func recordGeminiSubmission(_ binding: GeminiConversationBinding) throws {
+        try state.recordGeminiBinding(binding)
+        try save()
+    }
+
     public var desktopConnectionConfirmation: String? {
         guard isReadyForOnboarding, desktopReady, let app = provider.desktopApp, let binding = state.desktopConversation else { return nil }
+        if app == .gemini { return "Each comparison gets its own Gemini conversation. Choose Chat or Task, model, and available thinking level here. This check didn’t send a message." }
         if app == .wabi { return "Your first prompt in a new comparison starts a dedicated AI chat in Wabi. Follow-ups stay in that chat. This check didn’t send a message." }
         if app == .grokBot { return "Messages go to “\(binding.name)” in Grok Bot, using that bot’s existing chat. No message was sent." }
         return app == .muse
@@ -1167,6 +1238,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if app == .muse {
                 if !fixture { try await museApp.checkAvailable() }
                 binding = DesktopConversationBinding(name: "Muse")
+            } else if app == .gemini {
+                if !fixture { try await geminiApp.checkAvailable() }
+                binding = .init(name: "Gemini")
             } else if app == .wabi {
                 if !fixture { try await wabiApp.checkAvailable() }
                 binding = DesktopConversationBinding(name: "Wabi")
@@ -1198,6 +1272,20 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard desktopInstallation.isRunning else { updateNativeSnapshot(); return }
         if let binding = state.desktopConversation {
             do {
+                if app == .gemini {
+                    if let geminiConfigurationError { throw WebSessionFailure.notReady(geminiConfigurationError) }
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous Gemini request before navigating.") }
+                    if let comparison = state.comparisonID {
+                        let saved = try state.geminiBinding(for: comparison)
+                        guard saved?.firstPrompt == nil || saved?.title != nil else { throw WebSessionFailure.notReady("Gemini’s first submission was interrupted. Review it before starting a new comparison.") }
+                        guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("Gemini’s saved history has no tracked conversation. Start a new comparison; its history was preserved.") }
+                    }
+                    if !fixture { try await geminiApp.checkAvailable() }
+                    desktopReady = true
+                    desktopStatus = "Gemini ready · \(geminiPreferences.mode.name) · background input"
+                    updateNativeSnapshot()
+                    return
+                }
                 if app == .wabi {
                     guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete Wabi request before navigating to another chat.") }
                     if let comparison = state.comparisonID {
@@ -1348,12 +1436,22 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let workingDirectory = conversationWorkingDirectory(id)
             let binding = state.desktopConversation
             let museBinding = provider == .museApp ? try state.museAppBinding(for: id) : nil
-            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver] in
+            var geminiBinding: GeminiConversationBinding?
+            let geminiPreferences = self.geminiPreferences
+            if provider == .geminiApp {
+                geminiBinding = try state.geminiBinding(for: id) ?? GeminiConversationBinding(comparisonID: id, mode: geminiPreferences.mode)
+            }
+            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
                     if provider == .museApp {
                         let simulated = MuseSideChatBinding(comparisonID: id, threadID: museBinding?.threadID ?? UUID(), title: "Simulated side chat")
                         try self.recordMuseAppSubmission(simulated, attemptID: attempt.id)
+                    }
+                    if provider == .geminiApp, var saved = geminiBinding {
+                        saved.firstPrompt = saved.firstPrompt ?? saved.firstMessage(text)
+                        saved.title = saved.dedicatedTitle
+                        try self.recordGeminiSubmission(saved)
                     }
                     return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
                 }
@@ -1372,6 +1470,17 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 if provider == .wabi {
                     guard let wabiURL else { throw WebSessionFailure.notSent("Prepare this comparison's dedicated Wabi chat first.") }
                     return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL), sessionID: "Dedicated Wabi chat")
+                }
+                if provider == .geminiApp {
+                    guard let saved = geminiBinding else { throw WebSessionFailure.notSent("Prepare Gemini first.") }
+                    let answer = try await geminiApp.reply(text, binding: saved, preferences: geminiPreferences, onPrepared: { [weak self] prepared in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordGeminiSubmission(prepared)
+                    }) { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordGeminiSubmission(discovered)
+                    }
+                    return PersonalAgentReply(text: answer, sessionID: "Dedicated Gemini conversation")
                 }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
@@ -1399,7 +1508,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
                 attempt.recoveryConversationURL = state.attempts.first { $0.id == attempt.id }?.recoveryConversationURL
             }
-            attempt.status = started ? .uncertain : .notSent
+            if provider == .geminiApp, let problem = error as? GeminiSelectionError {
+                geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
+            }
+            attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
             attempt.detail = error.localizedDescription
             self.error = error.localizedDescription
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }

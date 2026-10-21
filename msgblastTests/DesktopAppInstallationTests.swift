@@ -30,7 +30,7 @@ final class DesktopAppInstallationTests: XCTestCase {
     func testMissingAppsCannotEnableConnectOrSendEvenWithALegacyBinding() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-missing-desktop-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
-        for provider in [WebProvider.museApp, .grokBotApp, .wabi] {
+        for provider in WebProvider.desktopProviders {
             let apps = Apps()
             let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true,
                                           museApp: .shared, desktopApps: apps.client)
@@ -51,6 +51,7 @@ final class DesktopAppInstallationTests: XCTestCase {
             XCTAssertEqual(session.state.draft, "Keep this draft")
             XCTAssertTrue(session.state.attempts.isEmpty)
             XCTAssertTrue(session.state.museAppConversations.isEmpty)
+            XCTAssertTrue(session.state.geminiConversations.isEmpty)
             XCTAssertTrue(apps.opened.isEmpty)
             session.beginShutdown()
         }

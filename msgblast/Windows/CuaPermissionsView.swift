@@ -10,7 +10,7 @@ struct CuaPermissionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Desktop app control").font(.headline)
-            Text("Cua lets you chat with Muse App, Grok Bot App and Wabi in the background. These optional permissions are separate from Messages access.")
+            Text("Cua lets you chat with Muse App, Grok Bot App, Wabi and Gemini in the background. These optional permissions are separate from Messages access.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Label(permissions.installed ? "Cua driver installed" : "Cua driver required", systemImage: permissions.installed ? "checkmark.circle" : "arrow.down.circle")

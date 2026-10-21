@@ -39,6 +39,42 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testGeminiSetupOffersChatTaskModelsAndThinkingInsideMsgblast() {
+        let app = launch()
+        defer { app.terminate() }
+        choose("Apps", in: app)
+        app.buttons["Choose Gemini"].click()
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
+        let check = app.buttons["Check connection"]
+        for _ in 0..<8 where !check.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
+        check.click()
+        let models = app.popUpButtons["gemini-model-picker"]
+        XCTAssertTrue(models.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !models.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
+        models.click()
+        app.menuItems["4 Argon · Complex tasks"].click()
+        let thinking = app.popUpButtons["gemini-thinking-picker"]
+        XCTAssertTrue(thinking.waitForExistence(timeout: 5))
+        thinking.click()
+        app.menuItems["High, Extra thorough"].click()
+        XCTAssertEqual(thinking.value as? String, "High, Extra thorough")
+        let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        screenshot.name = "Gemini Chat model and thinking — simulated native options"
+        screenshot.lifetime = .keepAlways; add(screenshot)
+        let mode = app.segmentedControls["gemini-mode-picker"]
+        mode.buttons["Task"].click()
+        expectation(for: NSPredicate(format: "value == %@", "3.8 Flash · All-around help"), evaluatedWith: models)
+        waitForExpectations(timeout: 5)
+        XCTAssertFalse(thinking.exists)
+        XCTAssertTrue(app.buttons["Continue"].isEnabled)
+        XCTAssertEqual(app.webViews.count, 0)
+        let task = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        task.name = "Gemini Task mode — simulated native options"
+        task.lifetime = .keepAlways; add(task)
+    }
+
+    @MainActor
     func testWabiOnboardingConfirmsDedicatedChatBeforeFirstPrompt() {
         let app = launch()
         defer { app.terminate() }

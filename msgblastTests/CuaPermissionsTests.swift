@@ -217,16 +217,16 @@ final class CuaPermissionsTests: XCTestCase {
     func testDesktopOnboardingUsesNativeConnectionsWithoutBrowserImportOrCLISetup() throws {
         var state = OnboardingState()
         state.chooseConnector(.apps)
-        state.selected = [.museApp, .grokBotApp, .wabi]
+        state.selected = [.museApp, .grokBotApp, .wabi, .geminiApp]
         XCTAssertTrue(state.selected.allSatisfy { OnboardingConnector.apps.includes($0) })
         XCTAssertTrue(state.selected.allSatisfy { !OnboardingConnector.clis.includes($0) })
         state.begin()
         XCTAssertEqual(state.stage, .connecting)
         XCTAssertTrue(state.pendingWebProviders.isEmpty)
-        XCTAssertEqual(Set(state.pendingSteps), [.agent(.museApp), .agent(.grokBotApp), .agent(.wabi)])
+        XCTAssertEqual(Set(state.pendingSteps), [.agent(.museApp), .agent(.grokBotApp), .agent(.wabi), .agent(.geminiApp)])
         let reopened = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(state))
         XCTAssertEqual(reopened.selected, state.selected)
-        state.complete(.museApp); state.skip(.grokBotApp); state.skip(.wabi)
+        state.complete(.museApp); state.skip(.grokBotApp); state.skip(.wabi); state.skip(.geminiApp)
         XCTAssertEqual(state.stage, .feedback)
         XCTAssertTrue(state.hasConnectedAgent)
     }

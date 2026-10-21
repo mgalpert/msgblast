@@ -59,6 +59,9 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var savedAvatar: Data?
     public var grokBotRememberedConnection: Bool?
     public var desktopConversation: DesktopConversationBinding?
+    public var geminiPreferences = GeminiPreferences()
+    public var geminiComparisonPreferences: [String: GeminiPreferences] = [:]
+    public var geminiConversations: [String: GeminiConversationBinding] = [:]
     public var museAppConversations: [String: MuseSideChatBinding] = [:]
     var legacyLocalStatePresent = false
     public var sessionID = UUID()
@@ -79,12 +82,15 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case museAppConversations, desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
         desktopConversation = try c.decodeIfPresent(DesktopConversationBinding.self, forKey: .desktopConversation)
+        geminiPreferences = try c.decodeIfPresent(GeminiPreferences.self, forKey: .geminiPreferences) ?? .init()
+        geminiComparisonPreferences = try c.decodeIfPresent([String: GeminiPreferences].self, forKey: .geminiComparisonPreferences) ?? [:]
+        geminiConversations = try c.decodeIfPresent([String: GeminiConversationBinding].self, forKey: .geminiConversations) ?? [:]
         museAppConversations = try c.decodeIfPresent([String: MuseSideChatBinding].self, forKey: .museAppConversations) ?? [:]
         dotsURL = try c.decodeIfPresent(URL.self, forKey: .dotsURL)
         savedAvatar = try c.decodeIfPresent(Data.self, forKey: .savedAvatar)
@@ -112,6 +118,9 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(providerIdentityVersion, forKey: .providerIdentityVersion)
         try c.encodeIfPresent(enabled, forKey: .enabled)
         try c.encodeIfPresent(desktopConversation, forKey: .desktopConversation)
+        try c.encode(geminiPreferences, forKey: .geminiPreferences)
+        try c.encode(geminiComparisonPreferences, forKey: .geminiComparisonPreferences)
+        try c.encode(geminiConversations, forKey: .geminiConversations)
         try c.encode(museAppConversations, forKey: .museAppConversations)
         try c.encodeIfPresent(dotsURL, forKey: .dotsURL)
         try c.encodeIfPresent(savedAvatar, forKey: .savedAvatar)
@@ -131,6 +140,24 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(localSessionPolicyVersions, forKey: .localSessionPolicyVersions)
         try c.encode(localConfiguredSessionIDs, forKey: .localConfiguredSessionIDs)
         try c.encode(localPreviousSessionIDs, forKey: .localPreviousSessionIDs)
+    }
+    public func geminiBinding(for comparison: UUID) throws -> GeminiConversationBinding? {
+        for (key, binding) in geminiConversations {
+            guard key == binding.comparisonID.uuidString,
+                  binding.title == nil || binding.title == binding.dedicatedTitle else {
+                throw DesktopAppError.unavailable("Saved Gemini conversation ownership is inconsistent. The saved state was preserved.")
+            }
+        }
+        return geminiConversations[comparison.uuidString]
+    }
+    public mutating func recordGeminiBinding(_ binding: GeminiConversationBinding) throws {
+        let previous = try geminiBinding(for: binding.comparisonID)
+        guard previous == nil || (previous?.mode == binding.mode &&
+              (previous?.title == nil || previous?.title == binding.title) &&
+              (previous?.firstPrompt == nil || previous?.firstPrompt == binding.firstPrompt)) else {
+            throw DesktopAppError.unavailable("Gemini’s saved conversation changed. The original binding was preserved.")
+        }
+        geminiConversations[binding.comparisonID.uuidString] = binding
     }
     public func museAppBinding(for comparison: UUID) throws -> MuseSideChatBinding? {
         var owners: Set<UUID> = []

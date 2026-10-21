@@ -206,3 +206,9 @@ Wabi: unmodified native icon from Wabi 0.1.11 (ai.wabi.desktop), retrieved
 October 19, 2026 from the installed Mac app's Contents/Resources/icon.icns.
 The icon identifies Wabi in msgblast. Artwork and trademarks remain Wabi's
 property and are not covered by msgblast's GPL license.
+
+Gemini: unmodified native icon from Gemini 1.131.4.1198
+(com.google.GeminiMacOS), retrieved October 20, 2026 from the installed Mac
+app's Contents/Resources/AppIcon.icns. The icon identifies Gemini in msgblast.
+Artwork and trademarks remain Google's property and are not covered by
+msgblast's GPL license.

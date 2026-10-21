@@ -2,9 +2,9 @@ import Foundation
 import ImageIO
 
 public enum DesktopAppProvider: String, Codable, Sendable {
-    case muse, grokBot, wabi
-    public var name: String { switch self { case .muse: "Muse"; case .grokBot: "Grok Bot"; case .wabi: "Wabi" } }
-    var bundleID: String { switch self { case .muse: "com.meta.endo"; case .grokBot: "com.anysphere.sand"; case .wabi: "ai.wabi.desktop" } }
+    case muse, grokBot, wabi, gemini
+    public var name: String { switch self { case .muse: "Muse"; case .grokBot: "Grok Bot"; case .wabi: "Wabi"; case .gemini: "Gemini" } }
+    var bundleID: String { switch self { case .muse: "com.meta.endo"; case .grokBot: "com.anysphere.sand"; case .wabi: "ai.wabi.desktop"; case .gemini: "com.google.GeminiMacOS" } }
 }
 
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {
@@ -19,7 +19,7 @@ enum DesktopAppError: LocalizedError {
 
 struct DesktopAppSnapshot: Decodable, Sendable {
     struct Element: Decodable, Sendable {
-        struct Frame: Decodable, Sendable { let x: Double; let y: Double; let w: Double; let h: Double }
+        struct Frame: Decodable, Equatable, Sendable { let x: Double; let y: Double; let w: Double; let h: Double }
         let role: String
         var label: String?
         var value: String?
@@ -97,6 +97,8 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             if headers.count == 1, let name = headers[0].label, !name.isEmpty { return name }
             guard headings.count == 1 else { throw DesktopAppError.unavailable("Open one Grok Bot conversation before connecting.") }
             return headings[0]
+        case .gemini:
+            throw DesktopAppError.unavailable("Gemini requires its dedicated conversation adapter.")
         case .muse:
             // The Muse heading is shared by its main chat and every side chat.
             throw DesktopAppError.unavailable("Muse requires a tracked side-chat binding. Connect Muse through its dedicated side-chat adapter.")
@@ -232,7 +234,7 @@ actor DesktopAppConversation {
     struct Target: Sendable, Equatable { let pid: Int; let window: Int }
     private struct AppList: Decodable, Sendable { struct App: Decodable, Sendable { let bundle_id: String; let pid: Int; let running: Bool }; let apps: [App] }
     private struct WindowList: Decodable, Sendable {
-        struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; let bounds: Bounds }
+        struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; let bounds: Bounds }
         let windows: [Window]
     }
     func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
@@ -330,7 +332,7 @@ actor DesktopAppConversation {
             throw DesktopAppError.unavailable(app == .grokBot ? "Open Grok Bot and sign in, then choose your bot in msgblast." : "Open \(app.name), sign in, and select its conversation first.")
         }
         let windows = try await call("list_windows", [:], numbers: ["pid": live.pid], as: WindowList.self)
-        let candidates = windows.windows.filter { $0.bounds.width >= 400 && $0.bounds.height >= 400 && !($0.title ?? "").isEmpty && $0.title != "Log in" }
+        let candidates = windows.windows.filter { $0.bounds.width >= 400 && $0.bounds.height >= 400 && (app == .gemini ? $0.is_on_screen == true : !($0.title ?? "").isEmpty) && $0.title != "Log in" }
         guard candidates.count == 1, let window = candidates.first else {
             throw DesktopAppError.unavailable("Keep one main \(app.name) window open and dismiss any dialogs before connecting.")
         }
@@ -342,7 +344,7 @@ actor DesktopAppConversation {
         return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
     func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding) async throws -> String {
-        guard app != .wabi else { throw DesktopAppError.unavailable("Wabi requires a dedicated chat for each comparison.") }
+        guard app != .wabi && app != .gemini else { throw DesktopAppError.unavailable("Wabi requires a dedicated chat for each comparison.") }
         guard occupied.insert(app).inserted else { throw DesktopAppError.unavailable("\(app.name) is already handling a request.") }
         defer { occupied.remove(app) }
         let session = "msgblast-send-\(UUID().uuidString)"

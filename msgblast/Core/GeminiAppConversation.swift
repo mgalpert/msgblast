@@ -1,0 +1,229 @@
+import Foundation
+
+actor GeminiAppConversation {
+    static let shared = GeminiAppConversation()
+    typealias NativeRead = @Sendable (DesktopAppConversation.Target, Bool) throws -> GeminiAppObservation
+    private let driver: DesktopAppConversation
+    private let timing: DesktopAppConversation.Timing
+    private let readNative: NativeRead
+    private var occupied = false
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = { try GeminiNativeReader.capture($0, allowingRename: $1) }) {
+        driver = DesktopAppConversation(executable: executable, timing: timing)
+        self.timing = timing; self.readNative = readNative
+    }
+    private func read(_ target: DesktopAppConversation.Target, rename: Bool = false) async throws -> GeminiAppObservation {
+        let read = readNative
+        var remainingRetries = 2
+        while true {
+            try Task.checkCancellation()
+            do { return try await Task.detached { try read(target, rename) }.value }
+            catch is GeminiObservationError where remainingRetries > 0 {
+                remainingRetries -= 1
+                try await Task.sleep(for: timing.pollInterval)
+            }
+        }
+    }
+    private func empty(_ native: GeminiAppObservation) throws {
+        guard native.draft.isEmpty, !native.generating else { throw DesktopAppError.unavailable("Gemini has a draft or an active response. It was preserved.") }
+    }
+    // Resolve a native semantic control against one fresh driver snapshot. Titles
+    // alone cannot distinguish Gemini's identically labelled toolbar buttons.
+    private func token(_ control: GeminiAXNode, target: DesktopAppConversation.Target, session: String, rename: Bool = false, expected: GeminiAppObservation? = nil) async throws -> String {
+        let before = try await read(target, rename: rename)
+        guard expected.map({ $0.sameConversation(as: before) }) ?? true else { throw DesktopAppError.unavailable("Gemini changed before input. Nothing was typed or submitted.") }
+        let state = try await driver.snapshot(target, session: session)
+        try state.checkReadable()
+        let after = try await read(target, rename: rename)
+        guard before.sameConversation(as: after), state.pid == target.pid, state.window_id == target.window else { throw DesktopAppError.unavailable("Gemini changed during the check. Nothing was retried.") }
+        let current = after.nodes.filter { $0.role == control.role && $0.id == control.id && $0.label == control.label && $0.frame == control.frame && $0.value == control.value && $0.selectedText == control.selectedText }
+        let matches = state.body.filter { e in
+            e.role == control.role && e.enabled != false && e.element_token != nil &&
+            (control.frame != nil ? e.frame == control.frame : e.label == control.label)
+        }
+        guard current.count == 1, matches.count == 1 else { throw DesktopAppError.unavailable("Gemini’s control could not be verified for background input.") }
+        return matches[0].element_token!
+    }
+    private func attemptActionOnce(_ tool: String = "click", control: GeminiAXNode, text: String? = nil, target: DesktopAppConversation.Target, session: String, rename: Bool = false, expected: GeminiAppObservation? = nil) async throws {
+        let token = try await token(control, target: target, session: session, rename: rename, expected: expected)
+        var args = ["element_token": token, "session": session, "delivery_mode": "background"]
+        if let text { args["text"] = text }
+        do { _ = try await driver.call(tool, args, numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self) }
+        catch { try Task.checkCancellation() }
+    }
+    private func click(label: String, role: String = "AXButton", target: DesktopAppConversation.Target, session: String, rename: Bool = false) async throws {
+        try await attemptActionOnce(control: read(target, rename: rename).control(label: label, role: role), target: target, session: session, rename: rename)
+    }
+    private func open(_ binding: GeminiConversationBinding?, mode: GeminiMode, target: DesktopAppConversation.Target, session: String) async throws -> GeminiAppObservation {
+        var native = try await read(target)
+        try empty(native)
+        if let binding, let title = binding.title {
+            guard binding.mode == mode, title == binding.dedicatedTitle else { throw DesktopAppError.unavailable("Gemini’s saved conversation identity is invalid. It was preserved.") }
+            if native.title != title {
+                try await click(label: title, target: target, session: session)
+                native = try await read(target)
+            }
+            guard native.nodes.filter({ $0.role == "AXButton" && $0.label == title }).count == 1,
+                  native.title == title, let prompt = binding.firstPrompt,
+                  native.messages.first == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Open this comparison’s dedicated Gemini conversation and check again. No replacement was created.") }
+            return native
+        }
+        guard binding?.firstPrompt == nil else { throw DesktopAppError.unavailable("Gemini’s first submission was interrupted. Review its saved conversation before starting a new comparison; nothing will be resent.") }
+        if !native.isNew {
+            let buttons = native.nodes.filter { $0.id == "newChat_button" || ($0.role == "AXButton" && $0.label == "Gemini") }
+            guard let control = buttons.first(where: { $0.id == "newChat_button" }) ?? buttons.first, buttons.count <= 2 else { throw DesktopAppError.unavailable("Gemini’s New chat control is unavailable.") }
+            try await attemptActionOnce(control: control, target: target, session: session)
+            native = try await read(target)
+        }
+        guard native.isNew else { throw DesktopAppError.unavailable("Gemini did not open a blank conversation. Nothing was sent.") }
+        if native.mode != mode {
+            try await attemptActionOnce(control: native.control(id: mode == .chat ? "chat-input-mode-ask" : "chat-input-mode-assign"), target: target, session: session)
+            native = try await read(target)
+        }
+        try empty(native)
+        guard native.isNew, native.mode == mode else { throw DesktopAppError.unavailable("Gemini did not select \(mode.name). Nothing was sent.") }
+        return native
+    }
+    private func modelMenu(target: DesktopAppConversation.Target, session: String) async throws -> GeminiAppObservation {
+        let native = try await read(target)
+        try await click(label: native.model, target: target, session: session)
+        let opened = try await read(target)
+        guard opened.nodes.filter({ $0.role == "AXPopover" }).count == 1 else { throw DesktopAppError.unavailable("Gemini’s model picker did not open.") }
+        return opened
+    }
+    private func modelChoices(_ native: GeminiAppObservation) -> [GeminiAXNode] {
+        native.nodes.filter { $0.role == "AXPopover" }.flatMap(\.descendants).filter { $0.role == "AXButton" && $0.label.contains(", ") && $0.enabled }
+    }
+    private func configure(_ desired: GeminiPreferences, target: DesktopAppConversation.Target, session: String) async throws -> (GeminiPreferences, GeminiOptions) {
+        var menu = try await modelMenu(target: target, session: session)
+        var choices = modelChoices(menu)
+        let models = choices.map(\.label)
+        guard Set(models).count == models.count, !models.isEmpty,
+              let selected = choices.first(where: \.selected), choices.filter(\.selected).count == 1 else { throw DesktopAppError.unavailable("Gemini’s available models could not be read.") }
+        let model = desired.model ?? selected.label
+        guard models.contains(model) else {
+            try await click(label: selected.label, target: target, session: session)
+            throw GeminiSelectionError(options: .init(models: models), message: "The selected model isn’t available in Gemini’s \(desired.mode.name) mode. Choose an available model.")
+        }
+        if desired.model != selected.label {
+            try await click(label: model, target: target, session: session)
+            menu = try await modelMenu(target: target, session: session)
+            choices = modelChoices(menu)
+            guard choices.filter(\.selected).map(\.label) == [model] else { throw DesktopAppError.unavailable("Gemini did not select the requested model.") }
+        }
+        var levels: [String] = [], thinking: String?
+        if menu.nodes.contains(where: { $0.role == "AXButton" && $0.label == "Thinking level" }) {
+            try await click(label: "Thinking level", target: target, session: session)
+            let submenu = try await read(target)
+            let options = (submenu.nodes.last { $0.role == "AXPopover" }?.descendants ?? []).filter { $0.role == "AXButton" && $0.enabled && !$0.label.isEmpty && $0.label != "Thinking level" && !models.contains($0.label) }
+            levels = options.map(\.label)
+            guard Set(levels).count == levels.count, !levels.isEmpty, options.filter(\.selected).count == 1 else { throw DesktopAppError.unavailable("Gemini’s thinking levels are unavailable. Nothing was sent.") }
+            thinking = desired.thinking ?? options.first(where: \.selected)?.label
+            guard let thinking, levels.contains(thinking) else {
+                try await click(label: options.first(where: \.selected)!.label, target: target, session: session)
+                throw GeminiSelectionError(options: .init(models: models, thinkingLevels: levels), message: "Choose an available Gemini thinking level.")
+            }
+            let alreadySelected = options.contains { $0.label == thinking && $0.selected }
+            try await click(label: thinking, target: target, session: session)
+            if !alreadySelected {
+                _ = try await modelMenu(target: target, session: session)
+                try await click(label: "Thinking level", target: target, session: session)
+                let checked = try await read(target)
+                guard checked.nodes.contains(where: { $0.role == "AXButton" && $0.label == thinking && $0.selected }) else { throw DesktopAppError.unavailable("Gemini did not apply the requested thinking level.") }
+                try await click(label: thinking, target: target, session: session)
+            }
+        } else {
+            try await click(label: model, target: target, session: session)
+            guard desired.thinking == nil else {
+                throw GeminiSelectionError(options: .init(models: models), message: "This Gemini model has no selectable thinking level. Use Gemini’s default thinking or choose a supported model.")
+            }
+        }
+        let closed = try await read(target)
+        guard !closed.nodes.contains(where: { $0.role == "AXPopover" }) else { throw DesktopAppError.unavailable("Close Gemini’s model picker and check again.") }
+        return (.init(mode: desired.mode, model: model, thinking: thinking), .init(models: models, thinkingLevels: levels))
+    }
+    func checkAvailable() async throws {
+        guard !occupied else { throw DesktopAppError.unavailable("Gemini is already handling a request.") }
+        occupied = true; defer { occupied = false }
+        let target = try await driver.target(.gemini)
+        try empty(await read(target))
+    }
+    func prepare(binding: GeminiConversationBinding?, preferences: GeminiPreferences) async throws -> (GeminiPreferences, GeminiOptions) {
+        guard !occupied else { throw DesktopAppError.unavailable("Gemini is already handling a request.") }
+        occupied = true; defer { occupied = false }
+        let session = "msgblast-gemini-options-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
+        let target = try await driver.target(.gemini)
+        _ = try await open(binding, mode: preferences.mode, target: target, session: session)
+        return try await configure(preferences, target: target, session: session)
+    }
+    private func rename(_ binding: GeminiConversationBinding, target: DesktopAppConversation.Target, session: String) async throws {
+        var native = try await read(target)
+        try empty(native)
+        try await attemptActionOnce(control: native.control(id: "more_button"), target: target, session: session)
+        try await click(label: "Rename", role: "AXMenuItem", target: target, session: session)
+        native = try await read(target, rename: true)
+        let sheets = native.nodes.filter { $0.role == "AXSheet" }
+        let fields = sheets.flatMap(\.descendants).filter { $0.role == "AXTextField" }
+        guard sheets.count == 1, fields.count == 1, let value = fields[0].value, value == native.title, fields[0].selectedText == value,
+              sheets[0].descendants.filter({ $0.role == "AXButton" && $0.label == "Confirm" }).count == 1 else { throw DesktopAppError.unavailable("Gemini’s Rename field is not ready. No text was replaced.") }
+        try await attemptActionOnce("type_text", control: fields[0], text: binding.dedicatedTitle, target: target, session: session, rename: true)
+        native = try await read(target, rename: true)
+        guard native.nodes.filter({ $0.role == "AXTextField" }).compactMap(\.value) == [binding.dedicatedTitle] else { throw DesktopAppError.unavailable("Gemini’s dedicated title could not be verified.") }
+        try await click(label: "Confirm", target: target, session: session, rename: true)
+        guard try await read(target).title == binding.dedicatedTitle else { throw DesktopAppError.unavailable("Gemini did not save its dedicated conversation title.") }
+    }
+    func reply(_ text: String, binding: GeminiConversationBinding, preferences: GeminiPreferences,
+               onPrepared: @Sendable (GeminiConversationBinding) async throws -> Void,
+               onBinding: @Sendable (GeminiConversationBinding) async throws -> Void) async throws -> String {
+        guard !occupied else { throw DesktopAppError.unavailable("Gemini is already handling a request.") }
+        occupied = true; defer { occupied = false }
+        let session = "msgblast-gemini-send-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
+        let target = try await driver.target(.gemini)
+        let prompt = binding.title == nil ? binding.firstMessage(text) : text
+        let opened = try await open(binding, mode: preferences.mode, target: target, session: session)
+        _ = try await configure(preferences, target: target, session: session)
+        var native = try await read(target)
+        try empty(native)
+        guard opened.sameContent(as: native) else { throw DesktopAppError.unavailable("Gemini changed during configuration. Nothing was typed or submitted.") }
+        let baseline = native.messages
+        let field = try native.composer()
+        var pending = binding
+        pending.firstPrompt = pending.firstPrompt ?? prompt
+        try await onPrepared(pending)
+        try await attemptActionOnce("type_text", control: field, text: prompt, target: target, session: session, expected: native)
+        let prepared = try await read(target)
+        guard prepared.draft == prompt, prepared.messages == baseline, prepared.title == native.title, prepared.model == native.model else { throw DesktopAppError.unavailable("Gemini’s prepared prompt changed. It was not sent or retried.") }
+        try await attemptActionOnce(control: prepared.control(id: "send_button"), target: target, session: session, expected: prepared)
+        let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
+        var stableText: String?, stableSince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            do { native = try await read(target) }
+            catch is GeminiObservationError {
+                stableText = nil
+                try Task.checkCancellation()
+                try await Task.sleep(for: timing.pollInterval)
+                continue
+            }
+            guard binding.title == nil || native.title == binding.title else { throw DesktopAppError.unavailable("Gemini navigated away from this comparison. No reply was attributed.") }
+            guard native.draft.isEmpty || native.draft == prompt else { throw DesktopAppError.unavailable("Gemini’s draft changed while waiting. Review its conversation.") }
+            let messages = native.messages
+            guard messages.starts(with: baseline), messages.count <= baseline.count + 2 else { throw DesktopAppError.unavailable("Gemini’s conversation changed. No reply was attributed.") }
+            if messages.count > baseline.count {
+                guard messages[baseline.count] == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Gemini’s outgoing message did not match this request.") }
+            }
+            if messages.count == baseline.count + 2, let answer = messages.last, answer.role == .assistant, !native.generating, native.draft.isEmpty {
+                if stableText != answer.text { stableText = answer.text; stableSince = .now }
+                if ContinuousClock.now - stableSince >= timing.stableDuration {
+                    var saved = binding
+                    if saved.title == nil { try await rename(binding, target: target, session: session); saved.title = binding.dedicatedTitle }
+                    saved.firstPrompt = binding.firstPrompt ?? prompt
+                    try await onBinding(saved)
+                    return answer.text
+                }
+            } else { stableText = nil }
+            try await Task.sleep(for: timing.pollInterval)
+        }
+        throw DesktopAppError.unavailable("Gemini has not completed its reply. Review the dedicated conversation; nothing will be resent automatically.")
+    }
+}
