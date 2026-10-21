@@ -49,6 +49,11 @@ sharing choices intact.
    window are reused; an explicit start reopens an unavailable window. Background checks never launch apps. The explicit Connect action in onboarding opens a closed app before checking it; it does not create a conversation or send a prompt.
    A failed launch leaves the prompt intact and creates no send attempt; sign-in,
    permissions, an existing draft, or an unavailable window still need attention.
+   Connected conversation panes show messages and their composer. Installation,
+   enablement and connection controls live behind the header's options button;
+   the same popover keeps Grok bot and Gemini mode/model/thinking choices
+   available. An existing conversation that loses its connection shows a compact
+   reconnect action instead of the setup panel.
 
 The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
 `/usr/local/bin`, or its inherited PATH and uses its public `call` JSON interface.

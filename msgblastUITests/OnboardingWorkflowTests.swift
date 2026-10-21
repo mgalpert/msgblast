@@ -240,6 +240,22 @@ final class OnboardingWorkflowTests: XCTestCase {
         waitForExpectations(timeout: 5)
         app.buttons["Continue"].click()
         XCTAssertTrue(app.staticTexts["Help shape msgblast"].waitForExistence(timeout: 5), "Native apps complete in one batch")
+        app.buttons["Start chatting"].click()
+        XCTAssertTrue(app.buttons["ChatGPT App"].waitForExistence(timeout: 5))
+        app.buttons["ChatGPT App"].click()
+        app.buttons["Claude App"].click()
+        let prompt = app.textViews["Shared prompt"]
+        prompt.click(); prompt.typeText("Clean native conversation fixture")
+        app.buttons["Send & compare"].click()
+        XCTAssertTrue(app.textViews["Message ChatGPT App"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["desktop-app-installation"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["desktop-connection-confirmation"].exists)
+        XCTAssertFalse(app.switches["Enable ChatGPT App"].exists)
+        XCTAssertFalse(app.buttons["Check installation"].exists)
+        app.buttons["ChatGPT App options"].click()
+        XCTAssertTrue(app.staticTexts["desktop-app-installation"].waitForExistence(timeout: 5))
+        app.buttons["Done"].click()
+        XCTAssertFalse(app.staticTexts["desktop-app-installation"].exists)
     }
 
     @MainActor

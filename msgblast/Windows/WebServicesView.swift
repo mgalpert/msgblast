@@ -594,6 +594,7 @@ private struct LocalAgentSetupView: View {
 private struct WebAgentPane: View {
     @ObservedObject var session: WebAgentSession
     @ObservedObject var account: PersonalAgentController
+    @State private var showingDesktopOptions = false
     let busy: Bool
     var endedMessages: [WebPageMessage]? = nil
     var removalDisabled = false
@@ -609,6 +610,20 @@ private struct WebAgentPane: View {
                 }
                 Spacer()
                 if session.loading { ProgressView().controlSize(.small) }
+                if session.provider.desktopApp != nil {
+                    Button { showingDesktopOptions = true } label: { Image(systemName: "gearshape") }
+                        .help("\(session.name) options").accessibilityLabel("\(session.name) options")
+                        .popover(isPresented: $showingDesktopOptions) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack {
+                                    Text("\(session.name) options").font(.headline)
+                                    Spacer()
+                                    Button("Done") { showingDesktopOptions = false }
+                                }
+                                DesktopAppSetupView(session: session, busy: busy, showConnectionConfirmation: false)
+                            }.padding(20).frame(width: 440)
+                        }
+                }
                 if session.provider == .grokbot {
                     SettingsLink { Image(systemName: "gearshape") }
                         .help("Grok Bot settings").accessibilityLabel("Grok Bot settings")
@@ -699,8 +714,21 @@ private struct WebAgentPane: View {
             if !session.isEnabled {
                 Text("Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
                     .font(.caption).foregroundStyle(.secondary)
-            } else if session.provider.desktopApp != nil {
-                DesktopAppSetupView(session: session, busy: busy)
+            } else if let app = session.provider.desktopApp, !connected,
+                      !session.desktopInstallation.isInstalled || !session.snapshot.messages.isEmpty {
+                HStack {
+                    Text(session.desktopInstallation.isInstalled ? "Reconnect to continue this conversation." : "Install \(app.name) to continue.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if session.desktopInstallation.isInstalled {
+                        Button("Reconnect") { Task {
+                            if !session.desktopInstallation.isRunning { await session.openDesktopApp() }
+                            await session.connectDesktopConversation(botName: session.state.desktopConversation?.name)
+                        } }.disabled(busy || session.loading || session.isSending)
+                    } else {
+                        Link("Get \(app.name)", destination: session.provider.homeURL)
+                    }
+                }.accessibilityIdentifier("desktop-connection-recovery")
             } else if session.provider == .grokbot {
                 if session.fixture {
                     Text("Simulated webhook and callback · no Bot contacted")
@@ -729,7 +757,7 @@ private struct WebAgentPane: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         if session.snapshot.messages.isEmpty {
-                            Text(connected ? "Ready to chat. Send a message below, or use the shared message box to ask your selected agents." : "Sign in to \(session.name) to start chatting. Your request stays in the message box until you send it.")
+                            Text(session.provider.desktopApp != nil ? "Send a message to start a conversation." : connected ? "Ready to chat. Send a message below, or use the shared message box to ask your selected agents." : "Sign in to \(session.name) to start chatting. Your request stays in the message box until you send it.")
                                 .foregroundStyle(.secondary).padding(.vertical, 20)
                         }
                         ForEach(session.snapshot.messages) { message in
