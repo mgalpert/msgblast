@@ -45,7 +45,12 @@ final class MessagesAccessGuide: ObservableObject {
     func start(appURL: URL = Bundle.main.bundleURL, appName: String = "msgblast",
                pane: String = "Privacy_AllFiles", permissionName: String = "Full Disk Access",
                checkAccess: (() async -> Bool)? = nil) {
-        guard !flow.isActive else { return }
+        guard !dragInProgress, !returning else { return }
+        if flow.isActive {
+            stopOperation()
+            hidePanel()
+            flow.cancel()
+        }
         self.appURL = appURL
         self.appName = appName
         self.permissionName = permissionName
