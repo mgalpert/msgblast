@@ -92,10 +92,54 @@ actor GeminiAppConversation {
     }
     private func modelMenu(target: DesktopAppConversation.Target, session: String) async throws -> GeminiAppObservation {
         let native = try await read(target)
+        guard !native.nodes.contains(where: { $0.role == "AXPopover" }) else {
+            throw DesktopAppError.unavailable("Close Gemini’s model picker before checking its options.")
+        }
         try await click(label: native.model, target: target, session: session)
-        let opened = try await read(target)
-        guard opened.nodes.filter({ $0.role == "AXPopover" }).count == 1 else { throw DesktopAppError.unavailable("Gemini’s model picker did not open.") }
+        if let opened = try await observedModelMenu(expected: native, target: target) { return opened }
+
+        // Gemini can accept AXPress without opening this native popover. Only
+        // this non-submitting control gets a background pixel alternative,
+        // after a bounded read-back and a new exact-window capture.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-gemini-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let image = directory.appendingPathComponent("model-picker.png")
+        let before = try await read(target)
+        guard native.sameConversation(as: before), !before.nodes.contains(where: { $0.role == "AXPopover" }) else {
+            throw DesktopAppError.unavailable("Gemini changed before opening its model picker. Nothing was clicked.")
+        }
+        let control = try before.control(label: before.model)
+        let state = try await driver.snapshot(target, session: session, screenshotURL: image)
+        let after = try await read(target)
+        let current = try after.control(label: after.model)
+        guard before.sameConversation(as: after), !after.nodes.contains(where: { $0.role == "AXPopover" }),
+              current.frame == control.frame, current.id == control.id, current.role == control.role,
+              let capture = state.capture_id else {
+            throw DesktopAppError.unavailable("Gemini’s model control changed or its capture could not be verified. Nothing was clicked.")
+        }
+        let matches = state.body.filter { $0.role == control.role && $0.frame == control.frame && $0.enabled != false && $0.element_token != nil }
+        guard matches.count == 1 else { throw DesktopAppError.unavailable("Gemini’s model control is missing or ambiguous. Nothing was clicked.") }
+        let point = try state.pixelCenter(of: matches[0], target: target, imageURL: image, appName: "Gemini")
+        do {
+            _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "capture_id": capture],
+                                      numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
+        } catch { try Task.checkCancellation() }
+        guard let opened = try await observedModelMenu(expected: native, target: target) else {
+            throw DesktopAppError.unavailable("Gemini’s model picker did not open. No message was sent.")
+        }
         return opened
+    }
+    private func observedModelMenu(expected: GeminiAppObservation, target: DesktopAppConversation.Target) async throws -> GeminiAppObservation? {
+        for attempt in 0..<3 {
+            let native = try await read(target)
+            guard expected.sameConversation(as: native) else { throw DesktopAppError.unavailable("Gemini changed while opening its model picker. Nothing was retried.") }
+            let count = native.nodes.filter { $0.role == "AXPopover" }.count
+            if count == 1 { return native }
+            guard count == 0 else { throw DesktopAppError.unavailable("Gemini’s model picker is ambiguous. Nothing was clicked.") }
+            if attempt < 2 { try await Task.sleep(for: timing.pollInterval) }
+        }
+        return nil
     }
     private func modelChoices(_ native: GeminiAppObservation) -> [GeminiAXNode] {
         native.nodes.filter { $0.role == "AXPopover" }.flatMap(\.descendants).filter { $0.role == "AXButton" && $0.label.contains(", ") && $0.enabled }

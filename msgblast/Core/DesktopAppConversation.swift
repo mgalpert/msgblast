@@ -52,8 +52,9 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     var screenshot_width: Int?
     var screenshot_height: Int?
     var screenshot_file_path: String?
+    var capture_id: String?
 
-    func pixelCenter(of element: Element, target: DesktopAppConversation.Target, imageURL: URL) throws -> (x: Int, y: Int) {
+    func pixelCenter(of element: Element, target: DesktopAppConversation.Target, imageURL: URL, appName: String = "Muse") throws -> (x: Int, y: Int) {
         try checkReadable()
         guard pid == target.pid, window_id == target.window, screenshot_frame_valid == true,
               screenshot_file_path.map({ URL(fileURLWithPath: $0).resolvingSymlinksInPath() }) == imageURL.resolvingSymlinksInPath(), let width = screenshot_width, let height = screenshot_height,
@@ -68,14 +69,14 @@ struct DesktopAppSnapshot: Decodable, Sendable {
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               properties[kCGImagePropertyPixelWidth] as? Int == width,
               properties[kCGImagePropertyPixelHeight] as? Int == height else {
-            throw DesktopAppError.unavailable("Muse's current screenshot and control geometry could not be verified. Nothing was clicked.")
+            throw DesktopAppError.unavailable("\(appName)'s current screenshot and control geometry could not be verified. Nothing was clicked.")
         }
         // Account for window origin and the driver's resized capture. Its scale
         // field alone does not describe the returned PNG's dimensions.
         let x = ((frame.x + frame.w / 2 - bounds.x) * Double(width) / bounds.width).rounded()
         let y = ((frame.y + frame.h / 2 - bounds.y) * Double(height) / bounds.height).rounded()
         guard x.isFinite, y.isFinite, x >= 0, x < Double(width), y >= 0, y < Double(height) else {
-            throw DesktopAppError.unavailable("Muse's control geometry is outside the current capture.")
+            throw DesktopAppError.unavailable("\(appName)'s control geometry is outside the current capture.")
         }
         return (Int(x), Int(y))
     }

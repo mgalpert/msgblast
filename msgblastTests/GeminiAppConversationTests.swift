@@ -137,7 +137,7 @@ final class GeminiAppDriverTests: XCTestCase {
             (try? String(contentsOf: log, encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? []
         }
     }
-    private func fixture(foreignPrompt: Bool = false, driverPID: Int = 42) throws -> Fixture {
+    private func fixture(foreignPrompt: Bool = false, driverPID: Int = 42, modelPressNoop: Bool = false, validCapture: Bool = true) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
@@ -195,22 +195,34 @@ final class GeminiAppDriverTests: XCTestCase {
         let executable = dir.appendingPathComponent("driver")
         try Data("""
         #!/usr/bin/env python3
-        import sys,json,pathlib
+        import sys,json,pathlib,struct,zlib
         p=pathlib.Path(__file__).parent
         tool=sys.argv[2];args=json.loads(sys.argv[3])
         with (p/'calls.jsonl').open('a') as f:f.write(json.dumps({'tool':tool,'arguments':args})+'\\n')
         s=int((p/'stage').read_text()) if (p/'stage').exists() else 0
         if tool=='list_apps': print(json.dumps({'apps':[{'bundle_id':'com.google.GeminiMacOS','pid':42,'running':True}]}))
         elif tool=='list_windows': print(json.dumps({'windows':[{'window_id':21,'title':'','is_on_screen':False,'on_current_space':False,'space_ids':[1],'bounds':{'width':1000,'height':900}}]}))
-        elif tool=='get_window_state': print(json.dumps(json.loads((p/'snapshots.json').read_text())[s]))
+        elif tool=='get_window_state':
+            result=json.loads((p/'snapshots.json').read_text())[s]
+            if 'screenshot_out_file' in args:
+                path=pathlib.Path(args['screenshot_out_file'])
+                def chunk(kind,data):
+                    body=kind+data
+                    return struct.pack('>I',len(data))+body+struct.pack('>I',zlib.crc32(body)&0xffffffff)
+                pixels=(b'\\x00'+b'\\xff\\xff\\xff'*320)*200
+                path.write_bytes(b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',320,200,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(pixels))+chunk(b'IEND',b''))
+                result.update({'window_bounds':{'x':0,'y':0,'width':320,'height':200},'screenshot_frame_valid':\(validCapture ? "True" : "False"),'screenshot_width':320,'screenshot_height':200,'screenshot_file_path':str(path),'capture_id':'capture-model'})
+            print(json.dumps(result))
         elif tool in ['click','type_text']:
             expected=json.loads((p/'actions.json').read_text())[s]
             candidates=[e for e in json.loads((p/'snapshots.json').read_text())[s]['elements'] if e['role']==expected['role'] and e['label']==expected['label']]
             assert len(candidates)==1
-            assert tool==expected['tool'] and args['element_token']==candidates[0]['element_token']
+            assert tool==expected['tool']
+            if 'element_token' in args: assert args['element_token']==candidates[0]['element_token']
+            else: assert s==0 and args['x']==65 and args['y']==20
             assert args['pid']==42 and args['window_id']==21 and args['delivery_mode']=='background'
             if tool=='type_text':assert args['text']==expected['text']
-            (p/'stage').write_text(str(s+1))
+            if not (\(modelPressNoop ? "True" : "False") and s==0 and 'element_token' in args): (p/'stage').write_text(str(s+1))
             if s!=5:print(json.dumps({'effect':'unverifiable'}))
         else: print('{}')
         sys.stdout.flush()
@@ -235,12 +247,19 @@ final class GeminiAppDriverTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: actions).write(to: fixture.directory.appendingPathComponent("actions.json"))
         return .init(directory: fixture.directory, executable: fixture.executable, observations: try roots.map { try GeminiAppObservation(root: $0, allowingRename: true) })
     }
-    private func adapter(_ fixture: Fixture, navigateBeforeTyping: Bool = false, failReadAfterSendOnce: Bool = false, failRenameReadOnce: Bool = false, failRenamePermanently: Bool = false, cancelDuringRename: Bool = false) -> GeminiAppConversation {
+    private func adapter(_ fixture: Fixture, navigateBeforeTyping: Bool = false, failReadAfterSendOnce: Bool = false, failRenameReadOnce: Bool = false, failRenamePermanently: Bool = false, cancelDuringRename: Bool = false, delayModelPopoverOnce: Bool = false, moveModelAfterCapture: Bool = false) -> GeminiAppConversation {
         let race = NavigationRace()
         let fault = NativeReadFault()
+        let modelDelay = NativeReadFault()
         return GeminiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(2), callTimeout: 3), readNative: { target, _ in
             guard target == .init(pid: 42, window: 21) else { throw DesktopAppError.unavailable("Wrong exact window") }
             let stage = Int((try? String(contentsOf: fixture.stage, encoding: .utf8)) ?? "0") ?? 0
+            if delayModelPopoverOnce, modelDelay.shouldFail(stage: stage, at: 1) { return fixture.observations[0] }
+            if moveModelAfterCapture, fixture.calls().contains(where: { ($0["arguments"] as? [String: Any])?["screenshot_out_file"] != nil }) {
+                var root = fixture.observations[stage].root
+                root.children[0].children[1].children[1].frame = .init(x: 90, y: 10, w: 30, h: 20)
+                return try GeminiAppObservation(root: root)
+            }
             if failReadAfterSendOnce, fault.shouldFail(stage: stage, at: 6) { throw GeminiObservationError.transient("Gemini’s accessibility tree is incomplete.") }
             if failRenameReadOnce, fault.shouldFail(stage: stage, at: 8) { throw GeminiObservationError.transient("Gemini’s exact window is unavailable during the Rename transition.") }
             if stage >= 7, failRenamePermanently { throw DesktopAppError.unavailable("Gemini's Rename is permanently unavailable") }
@@ -292,6 +311,54 @@ final class GeminiAppDriverTests: XCTestCase {
         XCTAssertEqual(options.models, ["3.8 Flash, All-around help"])
         XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 2, "Open the picker, verify its selected model, close it once")
         XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+    }
+
+    func testModelPickerWithNoOpAXPressUsesVerifiedBackgroundCaptureWithoutTyping() async throws {
+        let f = try fixture(modelPressNoop: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let (_, options) = try await adapter(f).prepare(binding: nil, preferences: .init(model: "3.8 Flash, All-around help"))
+        XCTAssertEqual(options.models, ["3.8 Flash, All-around help"])
+        let pixels = f.calls().filter { ($0["arguments"] as? [String: Any])?["x"] != nil }
+        XCTAssertEqual(pixels.count, 1)
+        let args = try XCTUnwrap(pixels.first?["arguments"] as? [String: Any])
+        XCTAssertEqual(args["delivery_mode"] as? String, "background")
+        XCTAssertEqual(args["pid"] as? Int, 42)
+        XCTAssertEqual(args["window_id"] as? Int, 21)
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+        for call in f.calls() {
+            if let path = (call["arguments"] as? [String: Any])?["screenshot_out_file"] as? String {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+            }
+        }
+    }
+
+    func testNoOpModelPickerWithUnverifiedCaptureCannotClickPixels() async throws {
+        let f = try fixture(modelPressNoop: true, validCapture: false)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await adapter(f).prepare(binding: nil, preferences: .init(model: "3.8 Flash, All-around help"))
+            XCTFail("Unverified geometry cannot authorize a pixel action")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("geometry"), error.localizedDescription) }
+        XCTAssertFalse(f.calls().contains { ($0["arguments"] as? [String: Any])?["x"] != nil })
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+    }
+
+    func testDelayedModelPopoverDoesNotToggleItWithAPixelClick() async throws {
+        let f = try fixture()
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        _ = try await adapter(f, delayModelPopoverOnce: true).prepare(binding: nil, preferences: .init(model: "3.8 Flash, All-around help"))
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 2)
+        XCTAssertFalse(f.calls().contains { ($0["arguments"] as? [String: Any])?["screenshot_out_file"] != nil })
+    }
+
+    func testModelControlMovingAfterCapturePreventsPixelClick() async throws {
+        let f = try fixture(modelPressNoop: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await adapter(f, moveModelAfterCapture: true).prepare(binding: nil, preferences: .init(model: "3.8 Flash, All-around help"))
+            XCTFail("A moved model control must invalidate its capture geometry")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("changed"), error.localizedDescription) }
+        XCTAssertFalse(f.calls().contains { ($0["arguments"] as? [String: Any])?["x"] != nil })
     }
     func testNavigationAfterBaselineCannotReceiveEvenPreparedText() async throws {
         let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
