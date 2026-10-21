@@ -33,7 +33,12 @@ struct OnboardingPermissionsView: View {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
                         .resizable().interpolation(.high).scaledToFit()
                         .frame(width: 36, height: 36).accessibilityHidden(true)
-                    Text("msgblast").font(.headline)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("msgblast").font(.headline)
+                        Text("Feel free to inspect how we use this information. Everything is [open source](https://github.com/mgalpert/msgblast).")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }.padding(.vertical, 4)
                 VStack(spacing: 0) {
                     permissionRow("Full Disk Access", icon: "externaldrive", status: messages.history.title,
@@ -107,9 +112,6 @@ struct OnboardingPermissionsView: View {
                 if let message = messages.message ?? apps.message ?? appGuide.message ?? guide.message {
                     Text(message).font(.caption).foregroundStyle(.orange).lineLimit(2)
                 }
-                Text("msgblast is [open source](https://github.com/mgalpert/msgblast). Feel free to inspect how we use this information.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16).frame(maxWidth: 680, alignment: .leading)
             .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 16))
