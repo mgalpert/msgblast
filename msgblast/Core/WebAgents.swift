@@ -21,7 +21,7 @@ public final class WebAgents: ObservableObject {
         sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) }
     }
     public var comparisonID: UUID? { workspaceSession.state.comparisonID }
-    public init(directory: URL, fixture: Bool) {
+    public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false) {
         self.fixture = fixture
         self.directory = directory
         var migrationErrors: [WebProvider: String] = [:]
@@ -33,7 +33,16 @@ public final class WebAgents: ObservableObject {
                 migrationErrors[pair.native] = message
             }
         }
-        let defaults = WebProvider.allCases.map { WebAgentSession(provider: $0, storageURL: directory.appendingPathComponent($0.storageFilename), fixture: fixture, migrationError: migrationErrors[$0]) }
+        let defaults = WebProvider.allCases.map { provider in
+            let url = directory.appendingPathComponent(provider.storageFilename)
+            let existed = FileManager.default.fileExists(atPath: url.path)
+            let session = WebAgentSession(provider: provider, storageURL: url, fixture: fixture, migrationError: migrationErrors[provider])
+            // Only fresh accounts opt in. Existing histories and explicit choices survive upgrades.
+            if websiteOptInRequired, !existed, WebProvider.settingsOnlyWebProviders.contains(provider) {
+                session.setEnabled(false)
+            }
+            return session
+        }
         sessions = defaults
         workspaceSession = defaults.first { $0.provider == .muse }!
         do {
@@ -105,7 +114,7 @@ public final class WebAgents: ObservableObject {
         for session in sessions where session.state.comparisonID != id { session.updateState { $0.comparisonID = id } }
     }
     public func setEnabled(_ enabled: Bool, for provider: WebProvider) {
-        guard let session = sessions.first(where: { $0.provider == provider }), provider.usesNativeConversation else { return }
+        guard let session = sessions.first(where: { $0.provider == provider }) else { return }
         session.setEnabled(enabled)
         if enabled { session.connect() }
     }

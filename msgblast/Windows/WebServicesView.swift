@@ -421,7 +421,7 @@ struct LocalAgentSettingsView: View {
                     .accessibilityLabel("Refresh accounts")
                     .disabled(isBusy || agent.checkingAccounts || agent.detectingLocalAgents)
             }.padding(.bottom, 12)
-            Text("ChatGPT and Claude use their websites by default. Enable a CLI below to add it as a separate agent.")
+            Text("Enable a CLI to add it as a separate agent.")
                 .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
             ForEach(WebProvider.optionalProviders) { webProvider in
                 let provider = webProvider.personalAgentProvider!

@@ -3,6 +3,7 @@ import Foundation
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, museApp, grokBotApp, wabi, geminiApp, chatgptApp, dotsApp, claudeApp
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
+    public static let settingsOnlyWebProviders: [Self] = [.muse, .chatgpt, .claude, .dots, .grok]
     public static let optionalProviders: [Self] = [.codexCLI, .claudeCode]
     public static let desktopProviders: [Self] = [.chatgptApp, .dotsApp, .claudeApp, .geminiApp, .museApp, .grokBotApp, .wabi]
     public var desktopApp: DesktopAppProvider? {

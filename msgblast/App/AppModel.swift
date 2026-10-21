@@ -52,7 +52,7 @@ final class AppModel: ObservableObject {
     var lastTelemetryInventory: [String: Int]?
     var lastTelemetryActivityDay: Int?
     var telemetryTimer: Timer?
-    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true)
+    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     var database: MessagesDatabase?
     var timer: Timer?
     var coordinator: WindowCoordinator?

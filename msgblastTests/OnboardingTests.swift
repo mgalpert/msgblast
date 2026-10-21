@@ -2,6 +2,18 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testOnboardingOffersNativeAppsAndRetainsLegacyWebCheckpoints() throws {
+        let offered = Set(OnboardingChoice.offeredChoices)
+        for choice: OnboardingChoice in [.muse, .chatgpt, .claude, .dots, .grok] { XCTAssertFalse(offered.contains(choice)) }
+        for choice: OnboardingChoice in [.museApp, .chatgptApp, .claudeApp, .dotsApp, .grokBotApp, .wabi, .geminiApp, .hark, .os3] { XCTAssertTrue(offered.contains(choice)) }
+        var saved = OnboardingState()
+        saved.selected = [.chatgpt, .muse]
+        saved.completed = [.muse]
+        let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(saved))
+        XCTAssertEqual(restored.selected, [.chatgpt, .muse])
+        XCTAssertEqual(restored.pendingChoices, [.chatgpt], "An existing setup checkpoint must remain resumable")
+    }
+
     func testAutomaticMessagesCheckpointRetainsOptOutAcrossPermissionRestart() throws {
         var setup = OnboardingState()
         let id = UUID()

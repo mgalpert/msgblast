@@ -721,6 +721,9 @@ struct AppSettingsView: View {
             Section {
                 LocalAgentSettingsView(agent: model.personalAgent, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
             }
+            Section("Web agents") {
+                WebAgentSettingsView(model: model, web: model.webAgents)
+            }
             Section("Grok Bot") {
                 GrokBotConnectionsView(model: model, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
             }
@@ -737,5 +740,27 @@ struct AppSettingsView: View {
             }
             Section("Sharing") { SharingSettingsView(model: model) }
         }.formStyle(.grouped).padding(20).frame(width: 640, height: 650)
+    }
+}
+
+private struct WebAgentSettingsView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var web: WebAgents
+
+    var body: some View {
+        ForEach(WebProvider.settingsOnlyWebProviders) { provider in
+            Toggle(provider.name, isOn: Binding(
+                get: { web.session(for: WebAgentID(provider: provider))?.isEnabled == true },
+                set: { enabled in
+                    web.setEnabled(enabled, for: provider)
+                    if enabled {
+                        var grid = model.agentGridLayout
+                        grid.add(WebAgentID(provider: provider).gridID)
+                        _ = model.setAgentGrid(grid)
+                    }
+                }
+            )).toggleStyle(.switch).accessibilityIdentifier("enable-web-\(provider.rawValue)")
+                .disabled(model.busy || model.webBroadcastBusy)
+        }
     }
 }

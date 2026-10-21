@@ -97,6 +97,13 @@ For an authorized live check, leave an app on another desktop and connect it fro
 msgblast; verify readiness while the active desktop and existing draft stay
 unchanged. Do not send a prompt solely to validate window discovery.
 
+`OnboardingTests.testOnboardingOffersNativeAppsAndRetainsLegacyWebCheckpoints`
+covers the offered catalog and resumable older setup state. `WebAgentInstanceTests`
+covers new-user website opt-in, disabled sends, Settings toggles across reload,
+and preservation of existing website identity/history. The Demo UI regression
+`OnboardingWorkflowTests.testNativeChoicesReplaceWebAlternativesInOnboarding`
+checks the actual chooser.
+
 ## Native UI tests and manual checks
 
 Use an authorized Mac with an interactive desktop and native runner permissions.

@@ -218,16 +218,16 @@ struct OnboardingView: View {
                 Text("Agents from your existing Messages conversations have been added. You can deselect any you don’t want.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            choiceGrid(OnboardingChoice.allCases.filter { $0.isMessages && $0 != .otherMessages })
+            choiceGrid(OnboardingChoice.offeredChoices.filter { $0.isMessages && $0 != .otherMessages })
             Text("Mac apps").font(.headline)
             if !(setup.state.approvedPermissionSections ?? []).contains(.apps) {
                 permissionNote("Enable App access to connect installed Mac apps.")
             }
-            choiceGrid(OnboardingChoice.allCases.filter { $0.provider?.desktopApp != nil })
+            choiceGrid(OnboardingChoice.offeredChoices.filter { $0.provider?.desktopApp != nil })
             Text("Websites").font(.headline)
-            choiceGrid(OnboardingChoice.allCases.filter { OnboardingConnector.apps.includes($0) && $0.provider?.desktopApp == nil })
+            choiceGrid(OnboardingChoice.offeredChoices.filter { OnboardingConnector.apps.includes($0) && $0.provider?.desktopApp == nil })
             Text("CLIs").font(.headline)
-            choiceGrid(OnboardingChoice.allCases.filter { OnboardingConnector.clis.includes($0) })
+            choiceGrid(OnboardingChoice.offeredChoices.filter { OnboardingConnector.clis.includes($0) })
             if model.onboardingPreview {
                 Label("Demo onboarding · accounts and conversations are simulated", systemImage: "testtube.2")
                     .font(.caption).foregroundStyle(.secondary)

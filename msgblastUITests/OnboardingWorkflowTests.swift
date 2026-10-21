@@ -41,6 +41,37 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsOffersWebAlternativesDisabledForNewUsers() {
+        let app = launch()
+        defer { app.terminate() }
+        app.typeKey(",", modifierFlags: .command)
+        let chatgpt = app.switches["enable-web-chatgpt"]
+        XCTAssertTrue(chatgpt.waitForExistence(timeout: 5))
+        for provider in ["muse", "chatgpt", "claude", "dots", "grok"] {
+            let toggle = app.switches["enable-web-\(provider)"]
+            XCTAssertTrue(toggle.exists)
+            let value = toggle.value
+            let enabled = (value as? NSNumber)?.boolValue ?? (value as? String).flatMap {
+                ["1", "on"].contains($0) ? true : ["0", "off"].contains($0) ? false : nil
+            }
+            XCTAssertEqual(enabled, false, "New installations must opt into web agents")
+        }
+    }
+
+    @MainActor
+    func testNativeChoicesReplaceWebAlternativesInOnboarding() {
+        let app = launch()
+        defer { app.terminate() }
+        choose("Apps", in: app)
+        for name in ["Muse", "ChatGPT", "Claude", "Dots", "Grok"] {
+            XCTAssertFalse(app.buttons["Choose \(name)"].exists)
+        }
+        for name in ["Muse App", "ChatGPT App", "Claude App", "Dots App", "Grok Bot App", "Wabi", "Gemini"] {
+            XCTAssertTrue(app.buttons["Choose \(name)"].exists)
+        }
+    }
+
+    @MainActor
     func testUnifiedPermissionsPrecedeAllAgentGroupsAndSelectionIsRequired() {
         let app = launch(contactsDenied: true)
         defer { app.terminate() }
@@ -59,8 +90,11 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
         XCTAssertTrue(app.buttons["Choose Fo"].exists)
         XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
-        for name in ["ChatGPT App", "ChatGPT", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
+        for name in ["ChatGPT App", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
             XCTAssertTrue(revealChoice(name, in: app).exists)
+        }
+        for name in ["Muse", "ChatGPT", "Claude", "Dots", "Grok"] {
+            XCTAssertFalse(app.buttons["Choose \(name)"].exists, "Web alternatives are enabled in Settings")
         }
         selectChoice("ChatGPT App", in: app)
         XCTAssertTrue(app.buttons["Continue setup"].isEnabled)
@@ -361,11 +395,11 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        selectChoice("ChatGPT", in: app)
+        selectChoice("Hark", in: app)
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.staticTexts["Use your existing logins"].waitForExistence(timeout: 5))
         app.buttons["Skip for now"].click()
-        XCTAssertTrue(app.staticTexts["Let’s connect ChatGPT"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Let’s connect Hark"].waitForExistence(timeout: 5))
         app.buttons["Back"].click()
         XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
     }

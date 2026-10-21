@@ -55,6 +55,7 @@ struct WebReceiptContext: Codable, Equatable, Sendable {
 public struct WebWorkspaceState: Codable, Sendable {
     public var providerIdentityVersion = 2
     public var enabled: Bool?
+    public var websiteEnabled: Bool?
     public var dotsURL: URL?
     public var savedAvatar: Data?
     public var grokBotRememberedConnection: Bool?
@@ -84,11 +85,12 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, websiteEnabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        websiteEnabled = try c.decodeIfPresent(Bool.self, forKey: .websiteEnabled)
         desktopConversation = try c.decodeIfPresent(DesktopConversationBinding.self, forKey: .desktopConversation)
         claudeConversations = try c.decodeIfPresent([String: ClaudeConversationBinding].self, forKey: .claudeConversations) ?? [:]
         chatgptConversations = try c.decodeIfPresent([String: ChatGPTConversationBinding].self, forKey: .chatgptConversations) ?? [:]
@@ -121,6 +123,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(providerIdentityVersion, forKey: .providerIdentityVersion)
         try c.encodeIfPresent(enabled, forKey: .enabled)
+        try c.encodeIfPresent(websiteEnabled, forKey: .websiteEnabled)
         try c.encodeIfPresent(desktopConversation, forKey: .desktopConversation)
         try c.encode(claudeConversations, forKey: .claudeConversations)
         try c.encode(chatgptConversations, forKey: .chatgptConversations)

@@ -244,16 +244,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         persist()
     }
 
-    public var isEnabled: Bool { !provider.usesNativeConversation || state.enabled == true }
+    public var isEnabled: Bool { provider.usesNativeConversation ? state.enabled == true : state.websiteEnabled != false }
 
     public func setEnabled(_ enabled: Bool) {
-        guard provider.usesNativeConversation else { return }
         if enabled, provider.desktopApp != nil {
             refreshDesktopInstallation()
             guard desktopInstallation.isInstalled else { return }
         }
         updateState {
-            $0.enabled = enabled
+            if provider.usesNativeConversation { $0.enabled = enabled }
+            else { $0.websiteEnabled = enabled }
             if !enabled { $0.selected = false }
         }
         if !enabled { cancelNativeRequest() }
@@ -938,10 +938,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func send(_ text: String, comparisonID: UUID? = nil) async -> WebSendAttempt? {
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID) }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID) }
-        guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
-        guard !isSending else { return nil }
+        guard isEnabled, !isSending else { return nil }
         guard !hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
         isSending = true
         defer { isSending = false }
