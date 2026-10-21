@@ -123,6 +123,7 @@ struct OnboardingPermissionsView: View {
         })) {
             Label(title, systemImage: icon)
                 .font(.callout.weight(.medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .toggleStyle(.switch).controlSize(.small)
         .disabled(busy || !available)

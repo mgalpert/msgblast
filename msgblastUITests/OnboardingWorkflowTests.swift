@@ -82,16 +82,16 @@ final class OnboardingWorkflowTests: XCTestCase {
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: host)
         waitForExpectations(timeout: 5)
         XCTAssertFalse(next.isEnabled)
-        for _ in 0..<8 where !host.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -160) }
+        XCTAssertTrue(host.isHittable)
         host.click()
-        XCTAssertEqual(app.switches["enable-cua-host-permission"].value as? String, "1")
+        XCTAssertEqual((app.switches["enable-cua-host-permission"].value as? NSNumber)?.boolValue, true)
         XCTAssertFalse(next.isEnabled, "One Accessibility grant does not complete App access")
         let driver = app.switches["enable-cua-driver-permission"]
-        for _ in 0..<8 where !driver.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -160) }
+        XCTAssertTrue(driver.isHittable)
         driver.click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
         waitForExpectations(timeout: 5)
-        XCTAssertNotEqual(app.switches["enable-messages-contacts-permission"].value as? String, "1")
+        XCTAssertEqual((app.switches["enable-messages-contacts-permission"].value as? NSNumber)?.boolValue, false)
         next.click()
         XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
