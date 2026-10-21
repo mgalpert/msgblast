@@ -467,7 +467,7 @@ import msgblastCore
         precondition(automaticMessages.state.onboarding == appsOnly, "App-only approval cannot authorize Messages discovery")
         var legacyMessages = OnboardingState()
         legacyMessages.completePermissions(messaging: true, apps: true)
-        legacyMessages.selected = [.fo, .szn]
+        legacyMessages.selected = [.fo, .szn, .otherMessages]
         legacyMessages.messageAgentIDs["fo"] = added.id
         legacyMessages.stage = .connecting
         legacyMessages.messagesDiscoveryReviewed = false
@@ -475,7 +475,7 @@ import msgblastCore
         await automaticMessages.onboarding.resolveMessagesAutomatically()
         precondition(automaticMessages.state.onboarding?.stage == .feedback)
         precondition(automaticMessages.state.onboarding?.completed == [.fo])
-        precondition(automaticMessages.state.onboarding?.skipped == [.szn])
+        precondition(automaticMessages.state.onboarding?.skipped == [.szn, .otherMessages])
         precondition(automaticMessages.state.selection.isEmpty)
         print("PASS: automatic Messages setup adds only existing routable contacts, preserves opt-outs across permission review and store reload, never selects recipients, and resumes legacy discovery without another picker.")
         let onboardingModel = AppModel()

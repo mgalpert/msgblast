@@ -236,7 +236,7 @@ struct OnboardingView: View {
     private func choiceAvailable(_ choice: OnboardingChoice) -> Bool {
         if choice.isMessages {
             return (setup.state.approvedPermissionSections ?? []).contains(.messaging) &&
-                setup.candidate(for: choice).map { model.route($0) != nil } == true
+                (choice == .otherMessages || setup.candidate(for: choice).map { model.route($0) != nil } == true)
         }
         if let provider = choice.provider, provider.desktopApp != nil {
             return (setup.state.approvedPermissionSections ?? []).contains(.apps) && setup.desktopInstallations[provider]?.isInstalled == true
