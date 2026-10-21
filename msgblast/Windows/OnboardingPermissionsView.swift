@@ -48,9 +48,7 @@ struct OnboardingPermissionsView: View {
                         guard setup.checkpointPermissionChange() else { return }
                         Task { await messages.enableSending(model: model, requestAfterOpening: true) }
                     }
-                }
-                Divider()
-                VStack(spacing: 0) {
+                    Divider()
                     permissionRow(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility", icon: "accessibility", status: apps.hostAccessibility.title,
                                   allowed: apps.hostAccessibility == .allowed, identifier: "cua-host") {
                         guard setup.checkpointPermissionChange() else { return }
@@ -58,8 +56,26 @@ struct OnboardingPermissionsView: View {
                         else if model.demo { apps.enableHostAccessibility(demo: true) }
                         else { showAppAccessGuide(helper: false, capture: false) }
                     }.background(PermissionSourceAnchor(guide: appGuide))
-                    Divider()
-                    permissionRow("App control", icon: "accessibility", status: apps.driverAccessibility.title,
+                }
+                Divider()
+                HStack(alignment: .center, spacing: 12) {
+                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.trycua.driver") {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                            .resizable().interpolation(.high).scaledToFit()
+                            .frame(width: 36, height: 36).accessibilityHidden(true)
+                    } else {
+                        Image(systemName: "app.dashed").font(.system(size: 28))
+                            .frame(width: 36, height: 36).accessibilityHidden(true)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("CuaDriver").font(.headline)
+                        Text("We use the open-source CuaDriver to run agent apps on your Mac.")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }.padding(.vertical, 4)
+                VStack(spacing: 0) {
+                    permissionRow(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility", icon: "accessibility", status: apps.driverAccessibility.title,
                                   allowed: apps.driverAccessibility == .allowed, identifier: "cua-driver", available: apps.installed) {
                         guard setup.checkpointPermissionChange() else { return }
                         if apps.driverAccessibility == .allowed { apps.openSettings("Privacy_Accessibility", demo: model.demo) }
@@ -73,8 +89,6 @@ struct OnboardingPermissionsView: View {
                         else { showAppAccessGuide(helper: true, capture: true) }
                     }
                 }
-                Text("macOS calls the app control helper “CuaDriver”.")
-                    .font(.caption).foregroundStyle(.secondary)
                 if !apps.installed {
                     HStack {
                         Text("Set up app access to connect Mac apps.").font(.callout).foregroundStyle(.secondary)
