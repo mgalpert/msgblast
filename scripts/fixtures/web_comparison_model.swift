@@ -59,6 +59,23 @@ import msgblastCore
         precondition(relaunched.telemetryAgentCounts == counts)
         print("PASS: actual same-store AppModel relaunch preserves Messages and website recipients, draft, inferred grid, and adoption baseline during permission review.")
 
+        var legacyAppsOnly = OnboardingState()
+        legacyAppsOnly.completePermissions(messaging: true, apps: true)
+        legacyAppsOnly.selected = [.wabi, .otherMessages]
+        legacyAppsOnly.messageAgentIDs["otherMessages"] = agent.id
+        legacyAppsOnly.discoveredMessageAgentIDs = [agent.id]
+        relaunched.state.onboarding = legacyAppsOnly
+        try relaunched.save()
+        await relaunched.onboarding.refreshPermissions()
+        precondition(relaunched.onboarding.state.approvedPermissionSections == [.apps])
+        precondition(relaunched.onboarding.state.selected == [.wabi], "Refreshing a resumed chooser must remove its invisible Messages prerequisite")
+        precondition(relaunched.onboarding.state.messageAgentIDs["otherMessages"] == agent.id)
+        let savedLegacyMigration = try relaunched.local.load().onboarding
+        precondition(savedLegacyMigration == relaunched.onboarding.state)
+        relaunched.onboarding.begin()
+        precondition(relaunched.onboarding.state.currentStep == .agent(.wabi), "Apps-only onboarding must continue without returning to permissions")
+        print("PASS: resumed apps-only chooser drops the hidden legacy Messages prerequisite through real permission refresh, saves the migration, retains agent identity, and starts the selected native connection.")
+
         var progress = OnboardingState()
         progress.selected = [.chatgptApp, .claudeApp, .codexCLI, .fo]
         progress.completed = [.chatgptApp]
