@@ -6,9 +6,104 @@ final class DesktopAppInstallationTests: XCTestCase {
     @MainActor private final class Apps {
         var installation = DesktopAppInstallation(url: nil, processID: nil)
         var opened: [URL] = []
+        var onOpen: (() async throws -> Void)?
         var client: DesktopAppInstallationClient {
-            .init(inspect: { _ in self.installation }, open: { self.opened.append($0) })
+            .init(inspect: { _ in self.installation }, open: { self.opened.append($0); try await self.onOpen?() })
         }
+    }
+
+    func testStartingConversationsLaunchesClosedInstalledAppsButChecksAndRunningAppsDoNot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in WebProvider.desktopProviders {
+            let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + provider.rawValue + ".app")
+            apps.installation = .init(url: url, processID: nil)
+            apps.onOpen = { apps.installation = .init(url: url, processID: 123) }
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: apps.client)
+            session.setEnabled(true)
+            session.updateState { $0.desktopConversation = .init(name: provider == .grokBotApp ? "Demo Bot" : provider.name) }
+            await session.refresh()
+            XCTAssertTrue(apps.opened.isEmpty, "A background check must not launch an app")
+            let ready = await session.openComparison(nil)
+            XCTAssertTrue(ready, provider.name)
+            XCTAssertEqual(apps.opened, [url])
+            XCTAssertTrue(session.state.attempts.isEmpty, "Opening a conversation never sends a probe")
+            XCTAssertTrue(session.state.localConversations.isEmpty)
+            _ = await session.openComparison(UUID())
+            XCTAssertEqual(apps.opened, [url], "A running app should not be activated again")
+            session.beginShutdown()
+        }
+    }
+
+    func testFirstDirectPromptLaunchesItsAppAndKeepsTheComparisonAndReceipt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/Wabi.app"), id = UUID()
+        apps.installation = .init(url: url, processID: nil)
+        apps.onOpen = { apps.installation = .init(url: url, processID: 123) }
+        let session = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("state.json"), fixture: true, museApp: .shared, desktopApps: apps.client)
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi"); $0.draft = "Hello" }
+        XCTAssertTrue(session.canSubmitNativePrompt, "A closed installed app must not disable the direct composer")
+        let attempt = await session.send("Hello", comparisonID: id)
+        XCTAssertEqual(apps.opened, [url])
+        XCTAssertEqual(attempt?.status, .observed)
+        XCTAssertEqual(attempt?.comparisonID, id)
+        XCTAssertNotNil(try session.state.wabiConversation(for: id))
+        XCTAssertEqual(session.state.localConversations[id.uuidString]?.first?.text, "Hello")
+        session.beginShutdown()
+    }
+
+    func testFailedLaunchPreservesDraftAndDoesNotCreateASendAttempt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/Wabi.app")
+        apps.installation = .init(url: url, processID: nil)
+        apps.onOpen = { throw CocoaError(.executableNotLoadable) }
+        let session = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("state.json"), fixture: true, museApp: .shared, desktopApps: apps.client)
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi"); $0.draft = "Keep me" }
+        let attempt = await session.send("Keep me", comparisonID: UUID())
+        XCTAssertNil(attempt)
+        XCTAssertEqual(apps.opened, [url])
+        XCTAssertEqual(session.state.draft, "Keep me")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertNotNil(session.error)
+        session.beginShutdown()
+    }
+
+    func testChangingComparisonDuringLaunchStopsTheOriginalStartBeforePreparingOrSending() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/Wabi.app"), first = UUID(), second = UUID()
+        apps.installation = .init(url: url, processID: nil)
+        let (launchRelease, releaseLaunch) = AsyncStream<Void>.makeStream()
+        apps.onOpen = {
+            for await _ in launchRelease { break }
+            apps.installation = .init(url: url, processID: 123)
+        }
+        let session = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("state.json"), fixture: true, museApp: .shared, desktopApps: apps.client)
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi") }
+        let opening = Task { await session.openComparison(first) }
+        while apps.opened.isEmpty { await Task.yield() }
+        XCTAssertTrue(session.loading, "Both composers can observe the in-progress launch")
+        XCTAssertFalse(session.canSubmitNativePrompt)
+        let concurrentPreparation = await session.openComparison(first)
+        XCTAssertFalse(concurrentPreparation, "Preparation must not race an existing launch")
+        XCTAssertEqual(apps.opened, [url], "Concurrent preparation cannot launch twice")
+        session.updateState { $0.comparisonID = second }
+        session.updateState { $0.draft = "Second conversation draft" }
+        releaseLaunch.yield(())
+        releaseLaunch.finish()
+        let ready = await opening.value
+        XCTAssertFalse(ready)
+        XCTAssertEqual(session.state.comparisonID, second)
+        XCTAssertEqual(session.state.draft, "Second conversation draft")
+        XCTAssertTrue(session.state.conversationURLs.isEmpty)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        session.beginShutdown()
     }
 
     func testDiscoveryRequiresTheMatchingBundleAndAnExecutableThatStillExists() throws {
@@ -41,6 +136,7 @@ final class DesktopAppInstallationTests: XCTestCase {
                 $0.desktopConversation = .init(name: "Saved conversation")
                 $0.draft = "Keep this draft"
             }
+            _ = await session.openComparison(UUID())
             await session.connectDesktopConversation()
             let sent = await session.send("Keep this draft", comparisonID: UUID())
             XCTAssertNil(sent)

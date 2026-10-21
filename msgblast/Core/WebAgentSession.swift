@@ -132,6 +132,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var isStorageAvailable: Bool { !storageFailed }
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
+    public var canSubmitNativePrompt: Bool {
+        snapshot.ready || (provider.desktopApp != nil && isEnabled && !storageFailed && !loading && !isSending && !shuttingDown &&
+            desktopInstallation.isInstalled && !desktopInstallation.isRunning && state.desktopConversation != nil &&
+            !hasIncompleteNativeRequest(for: state.comparisonID))
+    }
+
     public var isReadyForOnboarding: Bool {
         guard isEnabled, connected, !storageFailed, !loading else { return false }
         if provider.usesNativeConversation { return snapshot.ready }
@@ -490,10 +496,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     @discardableResult
     public func openComparison(_ id: UUID?) async -> Bool {
-        guard !isSending else { return false }
+        guard !isSending, !shuttingDown else { return false }
+        if provider.desktopApp != nil, loading || !isEnabled || storageFailed { return false }
         if state.comparisonID != id {
             if provider == .geminiApp { geminiConfigurationError = nil; geminiOptions = .init() }
             updateState { $0.comparisonID = id }
+        }
+        let generation = comparisonGeneration
+        if provider.desktopApp != nil {
+            guard await ensureDesktopAppRunning(), comparisonGeneration == generation else { return false }
         }
         connect(automaticallyRefresh: !provider.usesNativeConversation)
         if provider.usesNativeConversation {
@@ -1211,6 +1222,25 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
     }
 
+    private func ensureDesktopAppRunning() async -> Bool {
+        guard let app = provider.desktopApp, isEnabled, !storageFailed, !shuttingDown, !loading, !Task.isCancelled else { return false }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isInstalled else { error = desktopStatus; return false }
+        if desktopInstallation.isRunning { return true }
+        await openDesktopApp()
+        guard desktopInstallation.isRunning, isEnabled, !shuttingDown, !Task.isCancelled else { return false }
+        loading = true
+        defer { loading = false }
+        do {
+            if !fixture { try await desktopDriver.waitForWindow(app) }
+            return isEnabled && !shuttingDown && !Task.isCancelled
+        } catch {
+            desktopStatus = error.localizedDescription
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
     public func connectDesktopConversation(botName: String? = nil) async {
         guard let app = provider.desktopApp, !isSending, !storageFailed, !loading, !shuttingDown else { return }
         refreshDesktopInstallation()
@@ -1397,15 +1427,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        if provider.desktopApp != nil {
-            guard !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
-            refreshDesktopInstallation()
-            guard desktopInstallation.isRunning else { error = desktopStatus; return nil }
-        }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: id) else {
             error = "An earlier request did not complete. Review it before explicitly allowing another request; usage may have been consumed."
             return nil
+        }
+        if provider.desktopApp != nil {
+            guard !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
+            let generation = comparisonGeneration
+            guard await ensureDesktopAppRunning(), comparisonGeneration == generation else { return nil }
         }
         isSending = true
         requestCancelled = false

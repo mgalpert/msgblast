@@ -338,6 +338,18 @@ actor DesktopAppConversation {
         }
         return Target(pid: live.pid, window: window.window_id)
     }
+    func waitForWindow(_ app: DesktopAppProvider) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while true {
+            try Task.checkCancellation()
+            do { _ = try await target(app); return }
+            catch {
+                try Task.checkCancellation()
+                guard ContinuousClock.now < deadline else { throw error }
+                try await Task.sleep(for: timing.pollInterval)
+            }
+        }
+    }
     func snapshot(_ target: Target, session: String, screenshotURL: URL? = nil) async throws -> DesktopAppSnapshot {
         var arguments = ["session": session]
         if let screenshotURL { arguments["screenshot_out_file"] = screenshotURL.path }

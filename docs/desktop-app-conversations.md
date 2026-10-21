@@ -30,6 +30,12 @@ state files, histories, and execution paths.
    chat with the first real prompt. Wabi starts a dedicated AI chat per comparison;
    follow-ups return to that saved chat. Grok Bot opens the bot selected in msgblast.
 4. Select the agent and use the private or shared msgblast message box.
+   Starting a conversation opens its installed app automatically if it is closed,
+   waits for one main window, then performs the existing connection and chat checks.
+   Direct first prompts use the same launch step. Running apps are not activated
+   again. Background connection checks and onboarding checks never launch apps.
+   A failed launch leaves the prompt intact and creates no send attempt; sign-in,
+   permissions, an existing draft, or an unavailable window still need attention.
 
 The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
 `/usr/local/bin`, or its inherited PATH and uses its public `call` JSON interface.

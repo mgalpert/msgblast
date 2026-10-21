@@ -309,6 +309,15 @@ final class DesktopAppDriverTests: XCTestCase {
     private let prompt = "Fixture prompt"
     private let binding = DesktopConversationBinding(name: "Fixture Bot")
 
+    func testLaunchingWaitsForTheMainWindowUsingOnlyReadOnlyDiscovery() async throws {
+        let fixture = try driver([apps(.wabi), step("list_windows", ["windows": []]), apps(.wabi), windows()])
+        defer { fixture.remove() }
+        try await adapter(fixture).waitForWindow(.wabi)
+        let calls = try fixture.calls()
+        XCTAssertEqual(calls.map(\.tool), ["list_apps", "list_windows", "list_apps", "list_windows"])
+        assertNoInput(calls)
+    }
+
     func testBotDiscoveryIsReadOnlyAndSelectionOpensOnlyTheChosenBot() async throws {
         let initial = grok(name: "Other Bot", bots: ["Other Bot", "Fixture Bot"])
         let discovery = try driver([apps(), windows(), snapshot(initial)])

@@ -34,8 +34,14 @@ struct AgentsWorkspaceView: View {
     }
     private var attachmentComparisonID: UUID? { showingComparison ? nativeComparison?.id : nil }
     private var attachments: [MessageAttachment] { model.attachmentDraft(comparisonID: attachmentComparisonID) }
+    private var preparingDesktopSessions: [WebAgentSession] {
+        selectedWebSessions.filter { $0.provider.desktopApp != nil && $0.loading }
+    }
     private var sharedSendDisabledReason: String? {
         guard !busy else { return nil }
+        if !preparingDesktopSessions.isEmpty {
+            return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
+        }
         let drafts = selectedWebSessions.filter { $0.snapshot.hasDraft }.map { $0.name }
         guard !drafts.isEmpty else { return nil }
         let names = drafts.formatted(.list(type: .and))
@@ -43,7 +49,7 @@ struct AgentsWorkspaceView: View {
     }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return nativeComparison?.endedAt == nil && !busy && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
+        return nativeComparison?.endedAt == nil && !busy && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
             && selectedWebSessions.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
@@ -753,7 +759,7 @@ private struct WebAgentPane: View {
             MessageInput(text: Binding(get: { session.state.draft }, set: { text in session.updateState { $0.draft = text } }),
                 attachments: [], addAttachments: { _ in }, removeAttachment: { _ in }, placeholder: "Message \(session.name)",
                 accessibilityName: "Message \(session.name)", sendLabel: "Send to \(session.name)",
-                disabled: busy || !session.snapshot.ready, attachmentsEnabled: false) {
+                disabled: busy || !session.canSubmitNativePrompt, attachmentsEnabled: false) {
                     sendNative(session.state.draft)
                 }
         }.padding(14)
