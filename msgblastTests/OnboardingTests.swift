@@ -15,6 +15,19 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(restored.discoveredMessageAgentIDs, [agentID])
     }
 
+    func testRefreshingSavedAppsOnlyPermissionsRemovesHiddenPrerequisiteWithoutRewindingSetup() {
+        var setup = OnboardingState()
+        setup.completePermissions(messaging: true, apps: true)
+        setup.selected = [.wabi, .otherMessages]
+        setup.completed = [.wabi]
+        setup.revalidatePermissionSections([.apps])
+        XCTAssertEqual(setup.selected, [.wabi])
+        XCTAssertEqual(setup.completed, [.wabi])
+        XCTAssertEqual(setup.stage, .choosing)
+        XCTAssertEqual(setup.permissionsCompleted, true)
+        XCTAssertEqual(setup.approvedPermissionSections, [.apps])
+    }
+
     func testOnboardingOffersNativeAppsAndRetainsLegacyWebCheckpoints() throws {
         let offered = Set(OnboardingChoice.offeredChoices)
         for choice: OnboardingChoice in [.muse, .chatgpt, .claude, .dots, .grok] { XCTAssertFalse(offered.contains(choice)) }

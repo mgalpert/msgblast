@@ -77,7 +77,7 @@ final class OnboardingController: ObservableObject {
             let sections = permissionReadiness.completedSections
             var next = state
             if sections.isEmpty { next.preparePermissionChange() }
-            next.approvedPermissionSections = sections
+            next.revalidatePermissionSections(sections)
             next.completed = next.completed.filter { choice in
                 if choice.isMessages { return sections.contains(.messaging) }
                 if choice.provider?.desktopApp != nil { return sections.contains(.apps) }

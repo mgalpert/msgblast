@@ -146,12 +146,8 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         var sections: Set<OnboardingPermissionSection> = []
         if messaging { sections.insert(.messaging) }
         if apps { sections.insert(.apps) }
-        approvedPermissionSections = sections
+        revalidatePermissionSections(sections)
         permissionsCompleted = true
-        // This legacy picker is hidden now that Messages agents are discovered
-        // automatically. Without Messaging access it cannot remain an invisible
-        // selected prerequisite. Keep its saved agent identity and discovery data.
-        if !messaging { selected.remove(.otherMessages) }
         connector = nil
         connectorStartCompleted = true
         prerequisitesCompleted = true
@@ -159,6 +155,14 @@ public struct OnboardingState: Codable, Equatable, Sendable {
             messagesDiscoveryReviewed = true
         }
         return true
+    }
+
+    public mutating func revalidatePermissionSections(_ sections: Set<OnboardingPermissionSection>) {
+        approvedPermissionSections = sections
+        // This legacy picker is hidden now that Messages agents are discovered
+        // automatically. Without Messaging access it cannot remain an invisible
+        // selected prerequisite. Keep its saved agent identity and discovery data.
+        if sections.contains(.apps), !sections.contains(.messaging) { selected.remove(.otherMessages) }
     }
 
     public mutating func chooseConnector(_ connector: OnboardingConnector) {
