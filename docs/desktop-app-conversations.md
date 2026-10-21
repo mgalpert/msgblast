@@ -7,6 +7,21 @@ state files, histories, and execution paths.
 
 ## Setup
 
+Onboarding starts with **Stats → Allow access → Choose your agents**. The access
+screen groups Messages permissions (Full Disk Access, Contacts, Automation) and
+app permissions (msgblast Accessibility, CuaDriver Accessibility and Screen
+Recording). Continue requires every permission in at least one section; partial
+grants from different sections cannot be combined. The agent picker enables
+Messages or native apps according to the completed sections, and checks native
+app installation separately. Websites and CLIs remain available after the gate.
+
+Before any permission action, msgblast saves a checkpoint with the selected
+agents, completed steps, drafts and current setup position. After a permission
+restart it returns to Allow access and reads current grants again. Saved setup
+progress never substitutes for live permission checks. A failed checkpoint save
+prevents opening permission controls. Back returns to Stats with the user's
+sharing choices intact.
+
 1. Install cua-driver using its official instructions. In msgblast, open
    **Settings → Permissions → Desktop app control**. Enable **msgblast
    Accessibility** for the apps' independent draft/identity checks. Enable the
@@ -19,21 +34,19 @@ state files, histories, and execution paths.
    If it is installed but closed, the app's **Open** button
    opens it normally. Keep one main window on the current desktop and dismiss
    dialogs. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
-3. Choose a native app during **Apps** onboarding, or add it
-   from **More agents**. Onboarding shows the same permission controls before
-   connection. For Muse, choose **Check Muse connection**. For Wabi, choose
-   **Check connection**. For Grok Bot App, choose a bot from the **Bot** menu in
-   msgblast. Selecting it checks the connection automatically.
-   Connection checks verify the conversation and composer without sending
-   a test prompt or creating a side chat. A **Ready for your first prompt** note
-   confirms the destination before Continue is enabled. Muse starts its own side
-   chat with the first real prompt. Wabi starts a dedicated AI chat per comparison;
-   follow-ups return to that saved chat. Grok Bot opens the bot selected in msgblast.
+3. Choose your agents after completing the access screen. Native apps share one
+   compact connection checklist: choose **Connect** beside each app, or explicitly
+   skip it for now. Continue stays disabled until every row is connected or
+   skipped. Grok Bot keeps its bot picker in its row; Gemini keeps Chat/Task,
+   model and thinking choices there. These checks send no messages. Each
+   connected row confirms it is ready for the first prompt. A restart preserves
+   selected agents but requires fresh connection checks. Settings keeps the
+   full installation and permission controls for later changes.
 4. Select the agent and use the private or shared msgblast message box.
    Starting a conversation opens its installed app automatically if it is closed,
    waits for one main window, then performs the existing connection and chat checks.
    Direct first prompts use the same launch step. Running apps with a usable main
-   window are reused; an explicit start reopens an unavailable window. Background connection checks and onboarding checks never launch apps.
+   window are reused; an explicit start reopens an unavailable window. Background checks never launch apps. The explicit Connect action in onboarding opens a closed app before checking it; it does not create a conversation or send a prompt.
    A failed launch leaves the prompt intact and creates no send attempt; sign-in,
    permissions, an existing draft, or an unavailable window still need attention.
 
@@ -54,11 +67,11 @@ them.
 
 ## Permission checks and consent
 
-Settings and desktop-app onboarding share one permission view. The three rows
+Settings and the unified onboarding access screen use the same permission controllers. The app rows
 separate msgblast's Accessibility access from CuaDriver's Accessibility and
 Screen Recording grants. Full Disk Access for Messages cannot satisfy them.
-Browser and CLI onboarding does not request Cua access. Entering or reactivating
-a desktop onboarding screen reads permission and installation status without
+Permission requests remain explicit. Completing Messaging access also allows website and CLI setup without granting Cua access. Entering or reactivating
+onboarding reads permission and installation status without
 opening an app or inspecting its conversation. Even a saved connection
 requires an explicit connection check before Continue is enabled;
 cached readiness cannot advance setup automatically.

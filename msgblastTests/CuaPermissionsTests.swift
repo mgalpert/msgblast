@@ -33,6 +33,28 @@ final class CuaPermissionsTests: XCTestCase {
         }
     }
 
+    func testDemoPartialGrantsPersistAcrossRefreshWithoutNativeRequests() async {
+        let probe = Probe()
+        let checked = CuaPermissionsController(client: probe.client(), demoInitiallyAllowed: false)
+        await checked.refresh(demo: true)
+        XCTAssertEqual(checked.hostAccessibility, .off)
+        XCTAssertEqual(checked.driverAccessibility, .off)
+        XCTAssertEqual(checked.windowCapture, .off)
+        checked.enableHostAccessibility(demo: true)
+        await checked.refresh(demo: true)
+        XCTAssertEqual(checked.hostAccessibility, .allowed)
+        XCTAssertEqual(checked.driverAccessibility, .off)
+        await checked.enableDriver(demo: true)
+        await checked.refresh(demo: true)
+        XCTAssertEqual(checked.hostAccessibility, .allowed)
+        XCTAssertEqual(checked.driverAccessibility, .allowed)
+        XCTAssertEqual(checked.windowCapture, .allowed)
+        XCTAssertTrue(probe.state.hostRequests.isEmpty)
+        XCTAssertEqual(probe.state.driverRequests, 0)
+        XCTAssertEqual(probe.state.setupRequests, 0)
+        XCTAssertTrue(probe.state.settings.isEmpty)
+    }
+
     func testRefreshChecksBothOwnersWithoutPromptingOrCapturing() async {
         let probe = Probe()
         let checked = CuaPermissionsController(client: probe.client())

@@ -62,9 +62,15 @@ public final class CuaPermissionsController: ObservableObject {
     @Published public private(set) var message: String?
     private let client: CuaPermissionClient
     private var pendingRefresh: Bool?
+    private var demoHostAllowed: Bool
+    private var demoDriverAllowed: Bool
 
-    public convenience init() { self.init(client: Self.systemClient()) }
-    init(client: CuaPermissionClient) { self.client = client }
+    public convenience init(demoInitiallyAllowed: Bool = true) { self.init(client: Self.systemClient(), demoInitiallyAllowed: demoInitiallyAllowed) }
+    init(client: CuaPermissionClient, demoInitiallyAllowed: Bool = true) {
+        self.client = client
+        demoHostAllowed = demoInitiallyAllowed
+        demoDriverAllowed = demoInitiallyAllowed
+    }
 
     public func refresh(demo: Bool) async {
         guard !checking else { pendingRefresh = demo; return }
@@ -76,7 +82,7 @@ public final class CuaPermissionsController: ObservableObject {
 
     public func enableHostAccessibility(demo: Bool) {
         guard !checking else { return }
-        if demo { hostAccessibility = .allowed; return }
+        if demo { demoHostAllowed = true; hostAccessibility = .allowed; return }
         hostAccessibility = client.hostAccessibility(true) ? .allowed : .off
         if hostAccessibility != .allowed { openSettings("Privacy_Accessibility", demo: demo) }
     }
@@ -86,7 +92,7 @@ public final class CuaPermissionsController: ObservableObject {
         checking = true
         defer { checking = false }
         message = nil
-        if demo { await checkAndDrain(demo: true); return }
+        if demo { demoDriverAllowed = true; await checkAndDrain(demo: true); return }
         if client.installed() {
             do { try await client.openDriverSetup() }
             catch { message = error.localizedDescription }
@@ -110,7 +116,13 @@ public final class CuaPermissionsController: ObservableObject {
     }
 
     private func check(demo: Bool) async {
-        if demo { installed = true; hostAccessibility = .allowed; driverAccessibility = .allowed; windowCapture = .allowed; return }
+        if demo {
+            installed = true
+            hostAccessibility = demoHostAllowed ? .allowed : .off
+            driverAccessibility = demoDriverAllowed ? .allowed : .off
+            windowCapture = demoDriverAllowed ? .allowed : .off
+            return
+        }
         hostAccessibility = client.hostAccessibility(false) ? .allowed : .off
         installed = client.installed()
         guard installed else { driverAccessibility = .notInstalled; windowCapture = .notInstalled; return }

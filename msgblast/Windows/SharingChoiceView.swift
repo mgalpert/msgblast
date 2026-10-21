@@ -32,6 +32,7 @@ struct SharingChoiceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .frame(minWidth: 740, minHeight: 560)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { preferences = model.state.sharingConsent?.preferences ?? SharingPreferences() }
     }
 }
 

@@ -30,6 +30,7 @@ final class AppModel: ObservableObject {
         false
         #endif
     }
+    @Published var reviewingSharingChoice = false
     var onboardingRestartRequested = false
     var needsOnboarding: Bool { state.onboarding.map { !$0.isFinished } ?? false }
     var usesMessages: Bool {

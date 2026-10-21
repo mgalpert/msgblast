@@ -12,10 +12,16 @@ final class OnboardingController: ObservableObject {
     @Published var browserSource: BrowserLoginSource?
     @Published private(set) var browserProfiles: [BrowserLoginProfile] = []
     @Published private(set) var browserImportNotice: String?
+    let messagesPermissions = AppPermissions()
+    let appPermissions: CuaPermissionsController
+    @Published private(set) var checkingPermissions = false
     private var browserTask: Task<Void, Never>?
     private var checkGeneration = UUID()
 
-    init(model: AppModel) { self.model = model }
+    init(model: AppModel, appPermissions: CuaPermissionsController? = nil) {
+        self.model = model
+        self.appPermissions = appPermissions ?? CuaPermissionsController(demoInitiallyAllowed: !(model.demo && ProcessInfo.processInfo.arguments.contains("--onboarding-permissions-preview")))
+    }
     var state: OnboardingState { model.state.onboarding ?? OnboardingState() }
 
     func edit(_ change: (inout OnboardingState) -> Void) {
@@ -44,6 +50,84 @@ final class OnboardingController: ObservableObject {
         model.telemetryHeartbeat()
     }
 
+    var permissionReadiness: OnboardingPermissionReadiness {
+        .init(fullDiskAccess: messagesPermissions.history == .allowed,
+              contacts: messagesPermissions.contacts == .allowed,
+              automation: messagesPermissions.sending == .allowed,
+              hostAccessibility: appPermissions.hostAccessibility == .allowed,
+              driverAccessibility: appPermissions.driverAccessibility == .allowed,
+              screenCapture: appPermissions.windowCapture == .allowed,
+              driverInstalled: appPermissions.installed)
+    }
+    var permissionSetupReady: Bool { permissionReadiness.canContinue }
+    var permissionChecksBusy: Bool {
+        checkingPermissions || messagesPermissions.checkingSending || messagesPermissions.requestingContacts || appPermissions.checking ||
+        messagesPermissions.history == .checking || messagesPermissions.contacts == .checking || messagesPermissions.sending == .checking ||
+        appPermissions.hostAccessibility == .checking || appPermissions.driverAccessibility == .checking || appPermissions.windowCapture == .checking
+    }
+
+    func refreshPermissions() async {
+        guard !checkingPermissions else { return }
+        checkingPermissions = true
+        defer { checkingPermissions = false }
+        await messagesPermissions.refresh(model: model)
+        await appPermissions.refresh(demo: model.demo)
+        // Saved sections describe completed setup, never a cached permission
+        // grant. Revalidate them whenever the app returns from System Settings.
+        if state.permissionsCompleted == true {
+            let sections = permissionReadiness.completedSections
+            var next = state
+            if sections.isEmpty { next.preparePermissionChange() }
+            next.approvedPermissionSections = sections
+            next.completed = next.completed.filter { choice in
+                if choice.isMessages { return sections.contains(.messaging) }
+                if choice.provider?.desktopApp != nil { return sections.contains(.apps) }
+                return true
+            }
+            if next != state {
+                // Revoked access must stay revoked in memory even when storage
+                // fails. A saved checkpoint is never authority to use an app.
+                model.state.onboarding = next
+                do { try model.save() }
+                catch { self.error = "Could not save setup progress: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    func finishPermissionSetup() async {
+        guard !permissionChecksBusy, !model.busy, !model.webBroadcastBusy else { return }
+        await refreshPermissions()
+        let ready = permissionReadiness
+        guard ready.canContinue else { return }
+        error = nil
+        edit { $0.completePermissions(messaging: ready.messagingReady, apps: ready.appsReady) }
+    }
+
+    @discardableResult
+    func checkpointPermissionChange() -> Bool {
+        guard !model.busy, !model.webBroadcastBusy, var next = model.state.onboarding else { return false }
+        let previous = model.state.onboarding
+        next.preparePermissionChange()
+        model.state.onboarding = next
+        do { try model.saveForTermination(); error = nil; return true }
+        catch {
+            model.state.onboarding = previous
+            self.error = "Could not save setup progress: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func reviewPermissions() {
+        invalidateCheck()
+        model.accessGuide.cancel()
+        edit { $0.preparePermissionChange() }
+    }
+
+    func reviewStats() {
+        guard checkpointPermissionChange() else { return }
+        model.reviewingSharingChoice = true
+    }
+
     func completePrerequisites(discoverMessages: Bool = false) {
         error = nil
         edit {
@@ -53,26 +137,28 @@ final class OnboardingController: ObservableObject {
     }
 
     func restartForAccess() {
-        guard !model.busy, !model.webBroadcastBusy else { return }
-        error = nil
-        let previous = model.state.onboarding
-        model.state.onboarding?.prerequisitesCompleted = false
-        do {
-            try model.saveForTermination()
-        } catch {
-            model.state.onboarding = previous
-            self.error = "Could not save setup progress: \(error.localizedDescription)"
-            return
-        }
+        guard checkpointPermissionChange() else { return }
         model.onboardingRestartRequested = true
         NSApp.terminate(nil)
     }
 
     func begin() {
+        guard !state.needsPermissionSetup, !permissionChecksBusy else { return }
+        let sections = state.approvedPermissionSections ?? []
+        guard state.selected.allSatisfy({ choice in
+            if choice.isMessages { return sections.contains(.messaging) }
+            if choice.provider?.desktopApp != nil { return sections.contains(.apps) }
+            return true
+        }) else { return }
         error = nil
         browserImportNotice = nil
         invalidateCheck()
-        edit { $0.begin() }
+        edit {
+            if !$0.pendingChoices.filter(\.isMessages).isEmpty {
+                $0.messagesDiscoveryReviewed = false
+            }
+            $0.begin()
+        }
     }
 
     func back() {
@@ -220,17 +306,21 @@ final class OnboardingController: ObservableObject {
 
     func finish() async {
         let telemetryStarted = Date()
-        guard state.stage == .feedback, !checking else { return }
+        guard state.stage == .feedback, !checking, !permissionChecksBusy else { return }
         checking = true
         let generation = UUID()
         checkGeneration = generation
         defer { if checkGeneration == generation { checking = false } }
+        await refreshPermissions()
+        guard checkGeneration == generation, !state.needsPermissionSetup,
+              permissionReadiness.canContinue else { return }
         model.refresh()
         var hasUsableAgent = false
         var checkedChoices: Set<OnboardingChoice> = []
         for choice in OnboardingChoice.allCases where state.completed.intersection(state.selected).contains(choice) {
             checkedChoices.insert(choice)
             if let provider = choice.provider {
+                if provider.desktopApp != nil, !permissionReadiness.appsReady { continue }
                 let session = session(for: provider)
                 guard session.isEnabled else { continue }
                 if provider.personalAgentProvider != nil {
@@ -242,6 +332,7 @@ final class OnboardingController: ObservableObject {
                 guard checkGeneration == generation, state.stage == .feedback else { return }
                 hasUsableAgent = session.isEnabled && isReady(session)
             } else if choice.isMessages {
+                guard permissionReadiness.messagingReady else { continue }
                 model.refresh()
                 if model.databaseAvailable, model.contactsAvailable, let agent = candidate(for: choice) {
                     hasUsableAgent = model.route(agent) != nil
@@ -280,12 +371,34 @@ final class OnboardingController: ObservableObject {
     }
 
     func prepareDesktopConnection(_ session: WebAgentSession) {
-        guard state.stage == .connecting, state.currentStep == .agent(session.provider), session.provider.desktopApp != nil else { return }
+        guard state.stage == .connecting, (state.approvedPermissionSections ?? []).contains(.apps),
+              state.pendingChoices.contains(where: { $0.provider == session.provider }), session.provider.desktopApp != nil else { return }
         session.refreshDesktopInstallation()
         guard session.desktopInstallation.isInstalled else { return }
         if !session.isEnabled { session.setEnabled(true); session.updateState { $0.selected = false } }
         // Checking a saved binding can start Cua's permission gate. Desktop
         // onboarding waits for the user's explicit connection check.
+    }
+
+    var pendingDesktopSessions: [WebAgentSession] {
+        state.pendingChoices.compactMap(\.provider).filter { $0.desktopApp != nil }.map { session(for: $0) }
+    }
+
+    func completeDesktopConnections(checked: Set<WebProvider>, skipped: Set<WebProvider>) {
+        guard state.stage == .connecting, case .agent(let current) = state.currentStep,
+              current.desktopApp != nil, !checking, !permissionChecksBusy, !model.busy, !model.webBroadcastBusy else { return }
+        let sessions = pendingDesktopSessions
+        guard !sessions.isEmpty, sessions.allSatisfy({ session in
+            !session.loading && !session.isSending && (skipped.contains(session.provider) || ((state.approvedPermissionSections ?? []).contains(.apps) && checked.contains(session.provider) && isReady(session)))
+        }) else { return }
+        let completed = Set(sessions.filter { !skipped.contains($0.provider) }.map(\.provider))
+        edit { next in
+            for choice in next.pendingChoices {
+                guard let provider = choice.provider, provider.desktopApp != nil else { continue }
+                if completed.contains(provider) { next.complete(choice) }
+                else if skipped.contains(provider) { next.skip(choice) }
+            }
+        }
     }
 
     func refreshDesktopInstallations() {
@@ -357,8 +470,13 @@ final class OnboardingController: ObservableObject {
     }
 
     func toggleDiscoveredMessage(_ agent: Agent) async {
-        guard let saved = model.savedAgent(matching: agent), !model.busy else { return }
-        if (state.excludedDiscoveredMessageAgentIDs ?? []).contains(saved.id) {
+        guard !model.busy else { return }
+        guard let saved = model.savedAgent(matching: agent) else {
+            let choice = OnboardingChoice.allCases.first { !$0.contactSuggestions(in: [agent]).isEmpty } ?? .otherMessages
+            await connectDiscoveredMessage(agent, choice: choice)
+            return
+        }
+        if !state.selectedMessageAgentIDs.contains(saved.id) {
             edit { $0.excludedDiscoveredMessageAgentIDs?.removeAll { $0 == saved.id } }
             let choice = OnboardingChoice.allCases.first { !$0.contactSuggestions(in: [saved]).isEmpty } ?? .otherMessages
             await connectDiscoveredMessage(saved, choice: choice)

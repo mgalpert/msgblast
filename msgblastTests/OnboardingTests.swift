@@ -2,6 +2,119 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testPermissionGateRequiresOneCompleteSection() {
+        // Cover all combinations: grants split across incomplete sections must not unlock setup.
+        for mask in 0..<128 {
+            let granted = (0..<7).map { mask & (1 << $0) != 0 }
+            let readiness = OnboardingPermissionReadiness(
+                fullDiskAccess: granted[0], contacts: granted[1], automation: granted[2],
+                hostAccessibility: granted[3], driverAccessibility: granted[4],
+                screenCapture: granted[5], driverInstalled: granted[6])
+            let messagingReady = mask & 0b0000111 == 0b0000111
+            let appsReady = mask & 0b1111000 == 0b1111000
+            XCTAssertEqual(readiness.messagingReady, messagingReady, "Grants mask: \(mask)")
+            XCTAssertEqual(readiness.appsReady, appsReady, "Grants mask: \(mask)")
+            XCTAssertEqual(readiness.canContinue, messagingReady || appsReady, "Grants mask: \(mask)")
+            var sections: Set<OnboardingPermissionSection> = []
+            if messagingReady { sections.insert(.messaging) }
+            if appsReady { sections.insert(.apps) }
+            XCTAssertEqual(readiness.completedSections, sections, "Grants mask: \(mask)")
+        }
+    }
+
+    func testPermissionCompletionRejectsPartialSetupAndRecordsOnlyCompleteSections() throws {
+        for (messaging, apps, sections): (Bool, Bool, Set<OnboardingPermissionSection>) in [
+            (false, false, []), (true, false, [.messaging]),
+            (false, true, [.apps]), (true, true, [.messaging, .apps])
+        ] {
+            var setup = OnboardingState()
+            setup.chooseConnector(.messages)
+            setup.selected = [.fo, .chatgptApp]
+            setup.completed = [.fo]
+            setup.skipped = [.chatgptApp]
+            let before = setup
+            XCTAssertEqual(setup.completePermissions(messaging: messaging, apps: apps), !sections.isEmpty)
+            if sections.isEmpty {
+                XCTAssertEqual(setup, before, "An incomplete section must not advance or replace saved setup")
+            } else {
+                XCTAssertFalse(setup.needsPermissionSetup)
+                XCTAssertEqual(setup.approvedPermissionSections, sections)
+                XCTAssertNil(setup.connector)
+                XCTAssertEqual(setup.connectorStartCompleted, true)
+                XCTAssertEqual(setup.prerequisitesCompleted, true)
+                XCTAssertEqual(setup.messagesDiscoveryReviewed, true)
+                XCTAssertEqual(setup.selected, before.selected)
+                XCTAssertEqual(setup.completed, before.completed)
+                XCTAssertEqual(setup.skipped, before.skipped)
+                XCTAssertEqual(setup.stage, before.stage)
+                let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(setup))
+                XCTAssertEqual(restored, setup)
+            }
+        }
+    }
+
+    func testPermissionHandoffSurvivesRestartWithoutLosingActiveSetup() throws {
+        for stage: OnboardingState.Stage in [.choosing, .importing, .connecting, .feedback] {
+            var setup = OnboardingState()
+            setup.selected = [.fo, .chatgptApp, .claudeApp]
+            setup.completed = [.chatgptApp]
+            setup.skipped = [.claudeApp]
+            setup.messageAgentIDs = [OnboardingChoice.fo.rawValue: UUID()]
+            setup.discoveredMessageAgentIDs = [UUID()]
+            setup.excludedDiscoveredMessageAgentIDs = [UUID()]
+            setup.messagesDiscoveryReviewed = false
+            setup.stage = stage
+            setup.completePermissions(messaging: false, apps: true)
+            XCTAssertEqual(setup.messagesDiscoveryReviewed, stage == .choosing,
+                           "Permission completion must not dismiss an active discovery step")
+            let beforeHandoff = setup
+            setup.preparePermissionChange()
+            var restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(setup))
+            XCTAssertTrue(restored.needsPermissionSetup)
+            XCTAssertEqual(restored.approvedPermissionSections, [.apps], "Saved section choices are not current OS grants")
+            var expected = beforeHandoff
+            expected.permissionsCompleted = false
+            XCTAssertEqual(restored, expected, "A restart must retain every choice, ID, and active stage")
+            restored.completePermissions(messaging: true, apps: true)
+            XCTAssertEqual(restored.stage, stage)
+            XCTAssertEqual(restored.selected, beforeHandoff.selected)
+            XCTAssertEqual(restored.completed, beforeHandoff.completed)
+            XCTAssertEqual(restored.skipped, beforeHandoff.skipped)
+            XCTAssertEqual(restored.messageAgentIDs, beforeHandoff.messageAgentIDs)
+            XCTAssertEqual(restored.discoveredMessageAgentIDs, beforeHandoff.discoveredMessageAgentIDs)
+            XCTAssertEqual(restored.excludedDiscoveredMessageAgentIDs, beforeHandoff.excludedDiscoveredMessageAgentIDs)
+        }
+    }
+
+    func testLegacyUnfinishedSetupRequiresPermissionCheckAndKeepsItsPendingStep() throws {
+        let messageID = UUID()
+        let object: [String: Any] = [
+            "selected": ["chatgptApp", "fo"], "completed": ["chatgptApp"], "skipped": [],
+            "messageAgentIDs": ["fo": messageID.uuidString], "stage": "connecting"
+        ]
+        let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(restored.permissionsCompleted)
+        XCTAssertNil(restored.approvedPermissionSections)
+        XCTAssertTrue(restored.needsPermissionSetup)
+        XCTAssertEqual(restored.stage, .connecting)
+        XCTAssertEqual(restored.currentStep, .messages)
+        XCTAssertEqual(restored.messageAgentIDs["fo"], messageID)
+    }
+
+    func testResumingCompletedOnboardingRequiresFreshPermissionChecks() {
+        var setup = OnboardingState()
+        setup.selected = [.chatgptApp]
+        setup.completed = [.chatgptApp]
+        setup.completePermissions(messaging: false, apps: true)
+        setup.stage = .finished
+        setup.resume()
+        XCTAssertTrue(setup.needsPermissionSetup)
+        XCTAssertEqual(setup.approvedPermissionSections, [.apps])
+        XCTAssertEqual(setup.selected, [.chatgptApp])
+        XCTAssertEqual(setup.completed, [.chatgptApp])
+        XCTAssertEqual(setup.stage, .choosing)
+    }
+
     func testMessagesReviewPreservesConnectionsAndReturnsToContactList() throws {
         var setup = OnboardingState()
         setup.chooseConnector(.messages)

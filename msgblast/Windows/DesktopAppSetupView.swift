@@ -5,6 +5,7 @@ import msgblastCore
 struct DesktopAppSetupView: View {
     @ObservedObject var session: WebAgentSession
     var busy = false
+    var compact = false
     var showConnectionConfirmation = true
     var onConnected: () -> Void = {}
 
@@ -12,12 +13,14 @@ struct DesktopAppSetupView: View {
         VStack(alignment: .leading, spacing: 10) {
             if let app = session.provider.desktopApp {
                 let installed = session.desktopInstallation.isInstalled
-                Label(installed ? "\(app.name) is installed on this Mac" : "\(app.name) isn’t installed on this Mac",
-                      systemImage: installed ? "checkmark.application" : "app.badge")
-                    .font(.callout.weight(.medium)).accessibilityIdentifier("desktop-app-installation")
-                if session.fixture {
-                    Text("Simulated installation and connection · no app contacted")
-                        .font(.caption).foregroundStyle(.secondary)
+                if !compact {
+                    Label(installed ? "\(app.name) is installed on this Mac" : "\(app.name) isn’t installed on this Mac",
+                          systemImage: installed ? "checkmark.application" : "app.badge")
+                        .font(.callout.weight(.medium)).accessibilityIdentifier("desktop-app-installation")
+                    if session.fixture {
+                        Text("Simulated installation and connection · no app contacted")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 if showConnectionConfirmation, let confirmation = session.desktopConnectionConfirmation {
                     VStack(alignment: .leading, spacing: 6) {
@@ -27,13 +30,15 @@ struct DesktopAppSetupView: View {
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                         .accessibilityIdentifier("desktop-connection-confirmation")
-                } else {
+                } else if !compact {
                     Text(instructions(for: app, installed: installed))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Toggle("Enable \(session.name)", isOn: Binding(get: { session.isEnabled }, set: { session.setEnabled($0) }))
-                    .toggleStyle(.switch).disabled(busy || session.isSending || session.loading || (!installed && !session.isEnabled))
-                    .accessibilityIdentifier("Enable \(session.name)")
+                if !compact {
+                    Toggle("Enable \(session.name)", isOn: Binding(get: { session.isEnabled }, set: { session.setEnabled($0) }))
+                        .toggleStyle(.switch).disabled(busy || session.isSending || session.loading || (!installed && !session.isEnabled))
+                        .accessibilityIdentifier("Enable \(session.name)")
+                }
                 if app == .grokBot, installed, session.desktopInstallation.isRunning {
                     Picker("Bot", selection: Binding<String?>(get: {
                         session.state.desktopConversation.map(\.name).flatMap { session.grokBotNames.contains($0) ? $0 : nil }
@@ -87,19 +92,25 @@ struct DesktopAppSetupView: View {
                                 Task { await session.configureGemini(choice) }
                             }
                         }
-                        Button("Refresh Gemini options") { Task { await session.configureGemini(session.geminiPreferences) } }
-                            .accessibilityIdentifier("gemini-refresh-options")
+                        if !compact {
+                            Button("Refresh Gemini options") { Task { await session.configureGemini(session.geminiPreferences) } }
+                                .accessibilityIdentifier("gemini-refresh-options")
+                        }
                     }.disabled(busy || session.loading || session.isSending || !session.desktopInstallation.isRunning)
                 }
                 HStack {
                     if !installed { Link("Get \(app.name)", destination: session.provider.homeURL) }
-                    if installed && !session.desktopInstallation.isRunning {
+                    if compact, installed, !showConnectionConfirmation {
+                        Button("Connect") { Task { await connect(app) } }
+                            .accessibilityLabel("Connect \(session.provider.name)")
+                            .disabled(busy || session.loading || session.isSending || !session.isEnabled)
+                    } else if !compact, installed && !session.desktopInstallation.isRunning {
                         Button("Open \(app.name)") { Task {
                             await session.openDesktopApp()
                             if app == .grokBot { await loadBots() }
                         } }
                             .disabled(busy || session.loading || session.isSending)
-                    } else if installed, app != .grokBot {
+                    } else if !compact, installed, app != .grokBot {
                         Button(app == .muse ? "Check Muse connection" : "Check connection") {
                             Task {
                                 await session.connectDesktopConversation()
@@ -108,12 +119,14 @@ struct DesktopAppSetupView: View {
                             }
                         }.disabled(busy || session.loading || session.isSending || !session.isEnabled)
                     }
-                    Button(app == .grokBot ? "Refresh bots" : "Check installation") {
-                        if app == .grokBot { Task { await loadBots() } }
-                        else { session.refreshDesktopInstallation() }
+                    if !compact {
+                        Button(app == .grokBot ? "Refresh bots" : "Check installation") {
+                            if app == .grokBot { Task { await loadBots() } }
+                            else { session.refreshDesktopInstallation() }
+                        }
+                            .disabled(busy || session.loading || session.isSending)
+                            .accessibilityIdentifier("check-desktop-installation")
                     }
-                        .disabled(busy || session.loading || session.isSending)
-                        .accessibilityIdentifier("check-desktop-installation")
                     if session.loading { ProgressView().controlSize(.small) }
                 }
                 if !session.desktopReady { Text(session.desktopStatus).font(.caption).foregroundStyle(.secondary) }
@@ -121,11 +134,11 @@ struct DesktopAppSetupView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
         .task {
             session.refreshDesktopInstallation()
-            if session.provider == .grokBotApp { await loadBots() }
+            if session.provider == .grokBotApp { await loadBots(markConnected: !compact) }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             session.refreshDesktopInstallation()
-            if session.provider == .grokBotApp { Task { await loadBots() } }
+            if session.provider == .grokBotApp { Task { await loadBots(markConnected: !compact) } }
         }
     }
 
@@ -141,8 +154,26 @@ struct DesktopAppSetupView: View {
         }
     }
 
-    private func loadBots() async {
-        await session.refreshGrokBots()
+    private func connect(_ app: DesktopAppProvider) async {
+        if !session.desktopInstallation.isRunning { await session.openDesktopApp() }
+        guard session.desktopInstallation.isRunning else { return }
+        if app == .grokBot {
+            await loadBots(markConnected: false)
+            if let name = session.state.desktopConversation?.name, session.grokBotNames.contains(name) {
+                await session.connectDesktopConversation(botName: name)
+                if session.isReadyForOnboarding { onConnected() }
+            }
+            return
+        }
+        await session.connectDesktopConversation()
+        if app == .gemini, session.isReadyForOnboarding {
+            await session.configureGemini(session.geminiPreferences)
+        }
         if session.isReadyForOnboarding { onConnected() }
+    }
+
+    private func loadBots(markConnected: Bool = true) async {
+        await session.refreshGrokBots()
+        if markConnected, session.isReadyForOnboarding { onConnected() }
     }
 }

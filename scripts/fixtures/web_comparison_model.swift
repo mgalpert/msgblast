@@ -26,7 +26,7 @@ import msgblastCore
         application.setActivationPolicy(.regular)
         Task { @MainActor in
             do {
-                if ProcessInfo.processInfo.arguments.contains("--permission-review-relaunch-fixture") { try runPermissionReviewRelaunchChecks() }
+                if ProcessInfo.processInfo.arguments.contains("--permission-review-relaunch-fixture") { try await runPermissionReviewRelaunchChecks() }
                 else { try await runChecks() }
             }
             catch { fatalError("Isolated model fixture failed: \(error)") }
@@ -36,7 +36,7 @@ import msgblastCore
         }
         application.run()
     }
-    @MainActor static func runPermissionReviewRelaunchChecks() throws {
+    @MainActor static func runPermissionReviewRelaunchChecks() async throws {
         let model = AppModel()
         let root = model.local.url.deletingLastPathComponent()
         precondition(root.lastPathComponent.hasPrefix("msgblast-PermissionReview-"))
@@ -58,6 +58,128 @@ import msgblastCore
         precondition(relaunched.state.agentGrid == grid)
         precondition(relaunched.telemetryAgentCounts == counts)
         print("PASS: actual same-store AppModel relaunch preserves Messages and website recipients, draft, inferred grid, and adoption baseline during permission review.")
+
+        var progress = OnboardingState()
+        progress.selected = [.chatgptApp, .claudeApp, .codexCLI, .fo]
+        progress.completed = [.chatgptApp]
+        progress.skipped = [.claudeApp]
+        progress.messageAgentIDs[OnboardingChoice.fo.rawValue] = agent.id
+        progress.discoveredMessageAgentIDs = [agent.id]
+        progress.excludedDiscoveredMessageAgentIDs = [model.state.agents[1].id]
+        progress.messagesDiscoveryReviewed = false
+        progress.stage = .connecting
+        precondition(progress.completePermissions(messaging: true, apps: true))
+        let pendingStep = progress.currentStep
+        precondition(pendingStep == .agent(.codexCLI))
+        relaunched.state.onboarding = progress
+        try relaunched.save()
+        precondition(relaunched.onboarding.checkpointPermissionChange())
+        var checkpoint = progress
+        checkpoint.preparePermissionChange()
+        let savedCheckpoint = try relaunched.local.load().onboarding
+        precondition(savedCheckpoint == checkpoint, "Permission handoff must synchronously persist its checkpoint before macOS can restart the app")
+
+        let resumed = AppModel()
+        resumed.onboarding = OnboardingController(model: resumed, appPermissions: CuaPermissionsController(demoInitiallyAllowed: false))
+        defer {
+            for instance in [model, relaunched, resumed] {
+                instance.timer?.invalidate()
+                instance.telemetryTimer?.invalidate()
+            }
+        }
+        precondition(resumed.state.onboarding == checkpoint && resumed.onboarding.state.needsPermissionSetup)
+        precondition(resumed.state.selection == [agent.id])
+        precondition(resumed.state.agentGrid == grid && resumed.state.draft == "Permission review restart keeps this draft")
+        precondition(resumed.onboarding.permissionChecksBusy && !resumed.onboarding.permissionSetupReady)
+        await resumed.onboarding.finishPermissionSetup()
+        precondition(resumed.state.onboarding == checkpoint, "Freshly relaunched controllers must not accept saved grants before checking current permissions")
+        await resumed.onboarding.refreshPermissions()
+        precondition(!resumed.onboarding.permissionChecksBusy && !resumed.onboarding.permissionSetupReady)
+        await resumed.onboarding.finishPermissionSetup()
+        precondition(resumed.state.onboarding == checkpoint, "Settled denied permissions must reject both saved approved sections")
+        resumed.onboarding.appPermissions.enableHostAccessibility(demo: true)
+        await resumed.onboarding.appPermissions.enableDriver(demo: true)
+        await resumed.onboarding.finishPermissionSetup()
+        precondition(resumed.onboarding.state.approvedPermissionSections == [.apps], "Granting one section must not replay the saved Messaging approval")
+        precondition(resumed.onboarding.state.selected == progress.selected && resumed.onboarding.state.currentStep == pendingStep)
+        resumed.state.onboarding = checkpoint
+        await resumed.onboarding.messagesPermissions.enableContacts(model: resumed)
+        await resumed.onboarding.refreshPermissions()
+        precondition(resumed.onboarding.permissionSetupReady)
+        await resumed.onboarding.finishPermissionSetup()
+        precondition(resumed.state.onboarding == progress, "Rechecking permissions must resume the exact selected/completed/skipped setup without restarting agent connections")
+        precondition(resumed.onboarding.state.currentStep == pendingStep && resumed.onboarding.state.stage == .connecting)
+        let savedResumedProgress = try resumed.local.load().onboarding
+        precondition(savedResumedProgress == progress)
+        print("PASS: actual OnboardingController checkpoints native/CLI/Messages setup through LocalStore, rejects unchecked grants after AppModel relaunch, and resumes the exact saved connection step after fresh simulated permission checks.")
+
+        var checklist = OnboardingState()
+        checklist.selected = [.chatgptApp, .dotsApp, .claudeApp, .geminiApp]
+        checklist.stage = .connecting
+        precondition(checklist.completePermissions(messaging: true, apps: true))
+        resumed.state.onboarding = checklist
+        try resumed.save()
+        precondition(resumed.onboarding.pendingDesktopSessions.count == 4)
+        resumed.onboarding.completeDesktopConnections(checked: [.chatgptApp], skipped: [])
+        precondition(resumed.state.onboarding == checklist, "An incomplete checklist cannot advance or discard unchecked apps")
+        for provider in [WebProvider.chatgptApp, .dotsApp, .claudeApp] {
+            let session = resumed.onboarding.session(for: provider)
+            resumed.onboarding.prepareDesktopConnection(session)
+            await session.connectDesktopConversation()
+            precondition(session.isReadyForOnboarding)
+            precondition(session.state.attempts.isEmpty, "A connection check must never submit a prompt")
+        }
+        resumed.state.onboarding?.approvedPermissionSections = [.messaging]
+        let unavailableAppAccess = resumed.onboarding.state
+        resumed.onboarding.completeDesktopConnections(checked: [.chatgptApp, .dotsApp, .claudeApp], skipped: [.geminiApp])
+        precondition(resumed.onboarding.state == unavailableAppAccess, "Earlier connection results cannot bypass missing App access after a permission change")
+        resumed.state.onboarding = checklist
+        resumed.onboarding.completeDesktopConnections(checked: [.chatgptApp, .dotsApp, .claudeApp], skipped: [.geminiApp])
+        let connected = resumed.onboarding.state
+        precondition(connected.stage == .feedback)
+        precondition(connected.completed == [.chatgptApp, .dotsApp, .claudeApp] && connected.skipped == [.geminiApp])
+        let savedChecklist = try resumed.local.load().onboarding
+        precondition(savedChecklist == connected, "The compact checklist must save connected and explicitly skipped agents together")
+        resumed.onboarding = OnboardingController(model: resumed, appPermissions: CuaPermissionsController(demoInitiallyAllowed: false))
+        await resumed.onboarding.refreshPermissions()
+        resumed.state.onboarding = connected
+        await resumed.onboarding.finish()
+        precondition(!resumed.onboarding.state.isFinished && resumed.onboarding.state.completed.isEmpty,
+                     "Final setup must reject earlier Ready results after App access is revoked, even while Messaging remains allowed")
+        precondition(resumed.onboarding.state.approvedPermissionSections == [.messaging])
+        resumed.onboarding = OnboardingController(model: resumed)
+        resumed.state.onboarding = progress
+        try resumed.save()
+        print("PASS: native connection checklist rejects partial completion, checks three selected apps without sending, and atomically saves verified or explicitly skipped choices.")
+
+        let denied = AppModel()
+        defer { denied.timer?.invalidate(); denied.telemetryTimer?.invalidate() }
+        denied.state.onboarding = progress
+        denied.onboarding = OnboardingController(model: denied, appPermissions: CuaPermissionsController(demoInitiallyAllowed: false))
+        let savedBytes = try Data(contentsOf: resumed.local.url)
+        let backup = resumed.local.url.appendingPathExtension("checkpoint-backup")
+        try FileManager.default.moveItem(at: resumed.local.url, to: backup)
+        try FileManager.default.createDirectory(at: resumed.local.url, withIntermediateDirectories: false)
+        defer {
+            try? FileManager.default.removeItem(at: resumed.local.url)
+            try? FileManager.default.moveItem(at: backup, to: resumed.local.url)
+        }
+        precondition(!resumed.onboarding.checkpointPermissionChange(), "A failed durable save must prevent the permission handoff")
+        precondition(resumed.state.onboarding == progress && resumed.onboarding.error != nil)
+        resumed.onboarding.reviewStats()
+        precondition(!resumed.reviewingSharingChoice && resumed.state.onboarding == progress, "A failed checkpoint must also prevent navigating away to the stats choice")
+        let preservedBytes = try Data(contentsOf: backup)
+        precondition(preservedBytes == savedBytes, "Storage failure must preserve the last durable setup")
+        await denied.onboarding.refreshPermissions()
+        precondition(!denied.onboarding.permissionChecksBusy && !denied.onboarding.permissionSetupReady)
+        precondition(denied.onboarding.state.needsPermissionSetup && denied.onboarding.state.approvedPermissionSections?.isEmpty == true)
+        let blocked = denied.onboarding.state
+        denied.onboarding.begin()
+        precondition(denied.onboarding.state == blocked && denied.onboarding.error != nil,
+                     "A failed revocation save must leave later stages blocked in memory")
+        let bytesAfterRevocationFailure = try Data(contentsOf: backup)
+        precondition(bytesAfterRevocationFailure == savedBytes)
+        print("PASS: actual controller rolls back permission checkpoints and blocks stats navigation when the isolated state path cannot be written; the last saved progress remains intact.")
     }
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared

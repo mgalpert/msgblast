@@ -7,35 +7,83 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview"]
         if contactsDenied { app.launchArguments.append("--contacts-access-preview") }
         app.launch()
-        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Allow access"].waitForExistence(timeout: 5))
         return app
     }
 
     @MainActor
     private func choose(_ connector: String, in app: XCUIApplication) {
-        app.buttons["Connect \(connector)"].click()
-        app.buttons["Continue setup"].click()
+        let next = app.buttons["continue-permissions"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
+        waitForExpectations(timeout: 5)
+        next.click()
+        XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
+        if connector == "Messages" { selectChoice("Fo", in: app) }
     }
 
     @MainActor
-    func testConnectorStartHasNoBackAndSeparatesAppsFromCLIs() {
+    private func revealChoice(_ name: String, in app: XCUIApplication) -> XCUIElement {
+        app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 10000)
+        let choice = app.buttons["Choose \(name)"]
+        for _ in 0..<16 where !choice.isHittable {
+            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -240)
+        }
+        XCTAssertTrue(choice.isHittable)
+        return choice
+    }
+
+    @MainActor
+    private func selectChoice(_ name: String, in app: XCUIApplication) {
+        revealChoice(name, in: app).click()
+    }
+
+    @MainActor
+    func testUnifiedPermissionsPrecedeAllAgentGroupsAndSelectionIsRequired() {
         let app = launch()
         defer { app.terminate() }
-        XCTAssertFalse(app.buttons["Back"].exists)
-        XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
-        choose("Apps", in: app)
-        XCTAssertTrue(app.staticTexts["Which apps do you use?"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Choose ChatGPT"].exists)
-        XCTAssertTrue(app.buttons["Choose Grok Bot"].exists)
-        XCTAssertFalse(app.buttons["Choose Codex CLI"].exists)
-        XCTAssertFalse(app.buttons["Choose Fo"].exists)
-        app.buttons["Back"].click()
-        choose("CLIs", in: app)
-        XCTAssertTrue(app.staticTexts["Which CLIs do you use?"].waitForExistence(timeout: 5))
-        for name in ["Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
-            XCTAssertTrue(app.buttons["Choose \(name)"].exists)
+        for identifier in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-driver", "cua-capture"] {
+            XCTAssertTrue(app.staticTexts["permission-status-\(identifier)"].exists)
         }
-        XCTAssertFalse(app.buttons["Choose ChatGPT"].exists)
+        XCTAssertFalse(app.buttons["Choose ChatGPT App"].exists)
+        choose("Apps", in: app)
+        XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
+        for name in ["Fo", "ChatGPT App", "ChatGPT", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
+            XCTAssertTrue(revealChoice(name, in: app).exists)
+        }
+        selectChoice("ChatGPT App", in: app)
+        XCTAssertTrue(app.buttons["Continue setup"].isEnabled)
+        app.buttons["Back"].click()
+        XCTAssertTrue(app.staticTexts["Allow access"].waitForExistence(timeout: 5))
+        choose("Apps", in: app)
+        XCTAssertEqual(app.buttons["Choose ChatGPT App"].value as? String, "Installed on this Mac. Selected")
+    }
+
+    @MainActor
+    func testPartialPermissionsCannotContinueUntilOneWholeSectionIsReady() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview", "--onboarding-permissions-preview", "--contacts-access-preview"]
+        app.launch()
+        defer { app.terminate() }
+        let next = app.buttons["continue-permissions"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        let host = app.buttons["enable-cua-host-permission"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: host)
+        waitForExpectations(timeout: 5)
+        XCTAssertFalse(next.isEnabled)
+        for _ in 0..<8 where !host.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -160) }
+        host.click()
+        XCTAssertEqual(app.staticTexts["permission-status-cua-host"].value as? String, "Allowed")
+        XCTAssertFalse(next.isEnabled, "One Accessibility grant does not complete App access")
+        let driver = app.buttons["enable-cua-driver-permission"]
+        for _ in 0..<8 where !driver.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -160) }
+        driver.click()
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
+        waitForExpectations(timeout: 5)
+        XCTAssertNotEqual(app.staticTexts["permission-status-messages-contacts"].value as? String, "Allowed")
+        next.click()
+        XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
+        XCTAssertTrue(revealChoice("ChatGPT App", in: app).isEnabled)
     }
 
     @MainActor
@@ -43,10 +91,11 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        app.buttons["Choose Gemini"].click()
+        selectChoice("Gemini", in: app)
         app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
-        let check = app.buttons["Check connection"]
+        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["permission-status-cua-host"].exists)
+        let check = app.buttons["Connect Gemini"]
         for _ in 0..<8 where !check.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         check.click()
         let models = app.popUpButtons["gemini-model-picker"]
@@ -81,17 +130,18 @@ final class OnboardingWorkflowTests: XCTestCase {
         choose("Apps", in: app)
         let wabi = app.buttons["Choose Wabi"]
         XCTAssertTrue(wabi.waitForExistence(timeout: 5))
-        wabi.click()
+        selectChoice("Wabi", in: app)
         expectation(for: NSPredicate(format: "value == %@", "Installed on this Mac. Selected"), evaluatedWith: wabi)
         waitForExpectations(timeout: 5)
         let next = app.buttons["Continue setup"]
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
         waitForExpectations(timeout: 5)
         next.click()
-        XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["permission-status-cua-host"].exists)
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
         XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists)
-        let check = app.buttons["Check connection"]
+        let check = app.buttons["Connect Wabi"]
         for _ in 0..<6 where !check.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         XCTAssertTrue(check.isHittable)
         check.click()
@@ -108,13 +158,13 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        app.buttons["Choose Grok Bot App"].click()
+        selectChoice("Grok Bot App", in: app)
         app.buttons["Continue setup"].click()
         let picker = app.popUpButtons["grok-bot-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         for _ in 0..<6 where !picker.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
-        XCTAssertFalse(app.buttons["Check connection"].exists)
+        XCTAssertTrue(app.buttons["Connect Grok Bot App"].exists)
         picker.click()
         app.menuItems["Research Bot"].click()
         XCTAssertTrue(app.staticTexts["Ready for your first prompt"].waitForExistence(timeout: 5))
@@ -124,7 +174,7 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
-    func testDesktopMuseOnboardingShowsCuaPermissionsAndConnectsWithoutBrowserImport() {
+    func testMuseChecksConnectionAfterGlobalPermissionsWithoutBrowserImport() {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
@@ -135,23 +185,19 @@ final class OnboardingWorkflowTests: XCTestCase {
             XCTAssertEqual(installedApp.value as? String, "Installed on this Mac. Not selected")
         }
         let muse = app.buttons["Choose Muse App"]
-        muse.click()
+        selectChoice("Muse App", in: app)
         expectation(for: NSPredicate(format: "value == %@", "Installed on this Mac. Selected"), evaluatedWith: muse)
         waitForExpectations(timeout: 5)
         let continueSetup = app.buttons["Continue setup"]
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: continueSetup)
         waitForExpectations(timeout: 5)
         continueSetup.click()
-        XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
-        for id in ["cua-host", "cua-driver", "cua-capture"] {
-            let status = app.staticTexts["permission-status-\(id)"]
-            XCTAssertTrue(status.waitForExistence(timeout: 5))
-            XCTAssertEqual(status.value as? String, "Allowed")
-        }
+        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["permission-status-cua-host"].exists)
         XCTAssertEqual(app.webViews.count, 0, "A desktop app must not open a website sign-in flow")
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
         XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists)
-        let connect = app.buttons["Check Muse connection"]
+        let connect = app.buttons["Connect Muse App"]
         for _ in 0..<6 where !connect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         XCTAssertTrue(connect.isHittable)
         connect.click()
@@ -162,10 +208,10 @@ final class OnboardingWorkflowTests: XCTestCase {
         waitForExpectations(timeout: 5)
         app.buttons["Back"].click()
         app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.staticTexts["desktop-onboarding-connection-required"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Continue"].isEnabled, "A saved binding still requires an explicit live check")
         XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists, "A cached check must not show a new confirmation")
-        let reconnect = app.buttons["Check Muse connection"]
+        let reconnect = app.buttons["Connect Muse App"]
         for _ in 0..<6 where !reconnect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         reconnect.click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
@@ -175,24 +221,42 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
-    func testMessagesChecklistRequiresPermissionsAndSupportsBack() {
+    func testNativeConnectionsShareOneChecklistAndContinueRequiresEveryRowResolved() {
+        let app = launch()
+        defer { app.terminate() }
+        choose("Apps", in: app)
+        for name in ["ChatGPT App", "Dots App", "Claude App"] { selectChoice(name, in: app) }
+        app.buttons["Continue setup"].click()
+        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        XCTAssertFalse(app.switches["Enable ChatGPT App"].exists)
+        app.buttons["Connect ChatGPT App"].click()
+        XCTAssertTrue(app.staticTexts["Ready for your first prompt"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Continue"].isEnabled, "One ready app must not bypass unresolved selected apps")
+        app.buttons["Skip Dots App"].click()
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        app.buttons["Connect Claude App"].click()
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
+        waitForExpectations(timeout: 5)
+        app.buttons["Continue"].click()
+        XCTAssertTrue(app.staticTexts["Help shape msgblast"].waitForExistence(timeout: 5), "Native apps complete in one batch")
+    }
+
+    @MainActor
+    func testIncompleteMessagingSectionLocksItsAgentsWhileAppsCanContinue() {
         let app = launch(contactsDenied: true)
         defer { app.terminate() }
-        choose("Messages", in: app)
-        XCTAssertTrue(app.staticTexts["Let’s get your Mac ready"].waitForExistence(timeout: 5))
-        for name in ["Messages access", "Contacts", "Sending Messages"] {
-            XCTAssertTrue(app.buttons[name].exists)
-        }
-        XCTAssertFalse(app.buttons["Continue setup"].exists)
-        app.buttons["Contacts"].click()
-        XCTAssertTrue(app.buttons["Continue setup"].waitForExistence(timeout: 5))
-        app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.staticTexts["Agents we found"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Deselect Fo"].waitForExistence(timeout: 5))
+        choose("Apps", in: app)
+        XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
+        XCTAssertTrue(app.buttons["Choose ChatGPT App"].isEnabled)
         app.buttons["Back"].click()
-        XCTAssertTrue(app.staticTexts["Let’s get your Mac ready"].waitForExistence(timeout: 5))
-        app.buttons["Set up Messages later"].click()
-        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
+        let contacts = app.buttons["enable-messages-contacts-permission"]
+        XCTAssertTrue(contacts.waitForExistence(timeout: 5))
+        contacts.click()
+        app.buttons["check-onboarding-permissions"].click()
+        choose("Apps", in: app)
+        XCTAssertTrue(app.buttons["Choose Fo"].isEnabled)
+        XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
     }
 
     @MainActor
@@ -209,12 +273,12 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.textFields["Find onboarding contact"].waitForExistence(timeout: 5))
         app.buttons["Cancel"].click()
         app.buttons["Add other agents"].click()
-        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
-        choose("Apps", in: app)
+        XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
         app.buttons["Back"].click()
-        choose("Messages", in: app)
+        XCTAssertTrue(app.staticTexts["Allow access"].waitForExistence(timeout: 5))
+        choose("Apps", in: app)
         app.buttons["Continue setup"].click()
-        XCTAssertTrue(app.buttons["Deselect Fo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5), "Permission review must retain completed agent setup")
     }
 
     @MainActor
@@ -235,14 +299,15 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Messages", in: app)
+        selectChoice("Instinct", in: app)
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.buttons["Deselect Fo"].waitForExistence(timeout: 5))
         app.buttons["Deselect Fo"].click()
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.buttons["Start chatting"].waitForExistence(timeout: 5))
         app.buttons["Back"].click()
-        XCTAssertTrue(app.staticTexts["Agents we found"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Select Fo"].exists)
+        XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["Choose Fo"].value as? String, "Not selected")
         app.buttons["Continue setup"].click()
         app.buttons["Start chatting"].click()
         XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 5))
@@ -273,8 +338,9 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo", "--onboarding-preview", "--business-messages-preview"]
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
-        choose("Messages", in: app)
+        XCTAssertTrue(app.staticTexts["Allow access"].waitForExistence(timeout: 5))
+        choose("Apps", in: app)
+        selectChoice("Poke", in: app)
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.buttons["Deselect Poke 🌴"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["Deselect Poke 🌴"].value as? String, "Connected · Business conversation")
@@ -293,12 +359,12 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        app.buttons["Choose ChatGPT"].click()
+        selectChoice("ChatGPT", in: app)
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.staticTexts["Use your existing logins"].waitForExistence(timeout: 5))
         app.buttons["Skip for now"].click()
         XCTAssertTrue(app.staticTexts["Let’s connect ChatGPT"].waitForExistence(timeout: 5))
         app.buttons["Back"].click()
-        XCTAssertTrue(app.staticTexts["Which apps do you use?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
     }
 }

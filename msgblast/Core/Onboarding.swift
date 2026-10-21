@@ -67,6 +67,43 @@ public enum OnboardingConnector: String, CaseIterable, Codable, Sendable {
     }
 }
 
+public enum OnboardingPermissionSection: String, Codable, Sendable, Hashable {
+    case messaging, apps
+}
+
+/// Current checks, not saved OS grants. A section is usable only when every requirement is ready.
+public struct OnboardingPermissionReadiness: Equatable, Sendable {
+    public var fullDiskAccess: Bool
+    public var contacts: Bool
+    public var automation: Bool
+    public var hostAccessibility: Bool
+    public var driverAccessibility: Bool
+    public var screenCapture: Bool
+    public var driverInstalled: Bool
+
+    public init(fullDiskAccess: Bool, contacts: Bool, automation: Bool,
+                hostAccessibility: Bool, driverAccessibility: Bool, screenCapture: Bool,
+                driverInstalled: Bool) {
+        self.fullDiskAccess = fullDiskAccess
+        self.contacts = contacts
+        self.automation = automation
+        self.hostAccessibility = hostAccessibility
+        self.driverAccessibility = driverAccessibility
+        self.screenCapture = screenCapture
+        self.driverInstalled = driverInstalled
+    }
+
+    public var messagingReady: Bool { fullDiskAccess && contacts && automation }
+    public var appsReady: Bool { hostAccessibility && driverAccessibility && screenCapture && driverInstalled }
+    public var canContinue: Bool { messagingReady || appsReady }
+    public var completedSections: Set<OnboardingPermissionSection> {
+        var sections: Set<OnboardingPermissionSection> = []
+        if messagingReady { sections.insert(.messaging) }
+        if appsReady { sections.insert(.apps) }
+        return sections
+    }
+}
+
 public enum OnboardingStep: Hashable, Sendable {
     case agent(WebProvider)
     case runtime(LocalAgentRuntime)
@@ -77,6 +114,8 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     public enum Stage: String, Codable, Sendable { case choosing, importing, connecting, feedback, finished }
 
     // Optional for compatibility: older saved setups continue at their existing step.
+    public var permissionsCompleted: Bool? = false
+    public var approvedPermissionSections: Set<OnboardingPermissionSection>?
     public var connectorStartCompleted: Bool? = false
     public var connector: OnboardingConnector?
     public var prerequisitesCompleted: Bool? = false
@@ -90,6 +129,30 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     public var stage: Stage = .choosing
 
     public init() {}
+
+    public var needsPermissionSetup: Bool { permissionsCompleted != true }
+
+    /// Save the permission-screen checkpoint before handing control to System Settings.
+    public mutating func preparePermissionChange() {
+        permissionsCompleted = false
+    }
+
+    @discardableResult
+    public mutating func completePermissions(messaging: Bool, apps: Bool) -> Bool {
+        guard messaging || apps else { return false }
+        var sections: Set<OnboardingPermissionSection> = []
+        if messaging { sections.insert(.messaging) }
+        if apps { sections.insert(.apps) }
+        approvedPermissionSections = sections
+        permissionsCompleted = true
+        connector = nil
+        connectorStartCompleted = true
+        prerequisitesCompleted = true
+        if stage == .choosing, messagesDiscoveryReviewed != true {
+            messagesDiscoveryReviewed = true
+        }
+        return true
+    }
 
     public mutating func chooseConnector(_ connector: OnboardingConnector) {
         self.connector = connector
@@ -223,6 +286,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         if stage == .feedback { stage = .connecting }
     }
     public mutating func resume() {
+        preparePermissionChange()
         skipped.removeAll()
         stage = .choosing
         connectorStartCompleted = false
