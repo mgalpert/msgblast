@@ -29,6 +29,12 @@ struct OnboardingPermissionsView: View {
                     Text("Allow access").font(.system(size: 28, weight: .semibold))
                 }
                 Divider()
+                HStack(spacing: 12) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
+                        .resizable().interpolation(.high).scaledToFit()
+                        .frame(width: 36, height: 36).accessibilityHidden(true)
+                    Text("msgblast").font(.headline)
+                }.padding(.vertical, 4)
                 VStack(spacing: 0) {
                     permissionRow("Full Disk Access", icon: "externaldrive", status: messages.history.title,
                                   allowed: messages.history == .allowed, identifier: "messages-history") {
