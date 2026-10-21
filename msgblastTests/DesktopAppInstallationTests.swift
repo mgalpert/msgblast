@@ -15,6 +15,173 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
+    private final class HeldGeminiRead: @unchecked Sendable {
+        private let condition = NSCondition()
+        private var released = false
+        private var reads = 0
+        let started: XCTestExpectation
+        let observation: GeminiAppObservation
+        let failFollowingRead: Bool
+        init(started: XCTestExpectation, failFollowingRead: Bool = false) throws {
+            self.started = started
+            self.failFollowingRead = failFollowingRead
+            observation = try GeminiAppObservation(root: .init(role: "AXWindow", label: "Gemini — New chat", children: [
+                .init(role: "AXSplitGroup", children: [.init(role: "AXGroup", children: [
+                    .init(role: "AXTextArea", label: "Ask Gemini", value: ""),
+                    .init(role: "AXButton", label: "Flash, Choose model"),
+                    .init(role: "AXButton", label: "Chat", id: "chat-input-mode-ask", selected: true)
+                ])])
+            ]))
+        }
+        var count: Int { condition.lock(); defer { condition.unlock() }; return reads }
+        func capture() throws -> GeminiAppObservation {
+            condition.lock()
+            reads += 1
+            let first = reads == 1
+            if first {
+                started.fulfill()
+                let deadline = Date().addingTimeInterval(5)
+                while !released {
+                    guard condition.wait(until: deadline) else {
+                        condition.unlock()
+                        throw DesktopAppError.unavailable("Fixture read was not released")
+                    }
+                }
+            }
+            condition.unlock()
+            if !first, failFollowingRead { throw DesktopAppError.unavailable("Fixture replacement requires sign-in") }
+            return observation
+        }
+        func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
+    }
+
+    private func readOnlyGeminiDriver(in directory: URL) throws -> URL {
+        let executable = directory.appendingPathComponent("driver")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("""
+        #!/usr/bin/env python3
+        import sys,json,pathlib,time
+        tool=sys.argv[2];args=json.loads(sys.argv[3])
+        with (pathlib.Path(__file__).parent/'calls').open('a') as f:f.write(tool+'\\n')
+        if tool=='list_apps':
+            assert args=={}
+            print(json.dumps({'apps':[{'bundle_id':'com.google.GeminiMacOS','pid':42,'running':True}]}))
+        elif tool=='list_windows':
+            assert args=={'pid':42}
+            print(json.dumps({'windows':[{'window_id':21,'title':'','is_on_screen':True,'bounds':{'width':1000,'height':900}}]}))
+        else: raise AssertionError('Unexpected mutation: '+tool)
+        sys.stdout.flush();time.sleep(.02)
+        """.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        return executable
+    }
+
+    func testReadinessRefreshCannotMarkReplacementComparisonReady() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = try readOnlyGeminiDriver(in: directory)
+        let held = try HeldGeminiRead(started: expectation(description: "Old comparison availability read held"))
+        defer { held.release() }
+        let apps = Apps()
+        apps.installation = .init(url: URL(fileURLWithPath: "/Fixture/Gemini.app"), processID: 42)
+        let session = WebAgentSession(provider: .geminiApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: .shared, desktopApps: apps.client, desktopDriver: DesktopAppConversation(executable: executable),
+                                      geminiApp: GeminiAppConversation(executable: executable, readNative: { _, _ in try held.capture() }))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Gemini"); $0.comparisonID = UUID() }
+        session.connect(automaticallyRefresh: false)
+        let refresh = Task { await session.refresh() }
+        await fulfillment(of: [held.started], timeout: 2)
+        let replacement = UUID()
+        session.updateState { $0.comparisonID = replacement }
+        session.updateState { $0.draft = "Replacement draft" }
+        held.release()
+        await refresh.value
+        XCTAssertEqual(held.count, 1)
+        XCTAssertEqual(session.state.comparisonID, replacement)
+        XCTAssertFalse(session.desktopReady, "A successful read from the previous comparison cannot authorize its replacement")
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertEqual(session.state.draft, "Replacement draft")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertTrue(apps.opened.isEmpty)
+    }
+
+    func testExplicitConversationStartWaitsForRefreshThenMakesItsOwnAvailabilityCheck() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = try readOnlyGeminiDriver(in: directory)
+        let held = try HeldGeminiRead(started: expectation(description: "Background availability read held"), failFollowingRead: true)
+        defer { held.release() }
+        let apps = Apps()
+        apps.installation = .init(url: URL(fileURLWithPath: "/Fixture/Gemini.app"), processID: 42)
+        let session = WebAgentSession(provider: .geminiApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: .shared, desktopApps: apps.client, desktopDriver: DesktopAppConversation(executable: executable),
+                                      geminiApp: GeminiAppConversation(executable: executable, readNative: { _, _ in try held.capture() }))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Gemini") }
+        session.connect(automaticallyRefresh: false)
+        let refresh = Task { await session.refresh() }
+        await fulfillment(of: [held.started], timeout: 2)
+        let comparison = UUID()
+        var openingFinished = false
+        let opening = Task {
+            let ready = await session.openComparison(comparison)
+            openingFinished = true
+            return ready
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        var passedLaunchCheck = false
+        while ContinuousClock.now < deadline {
+            let calls = (try? String(contentsOf: directory.appendingPathComponent("calls"), encoding: .utf8)) ?? ""
+            if calls.split(separator: "\n").count >= 4, !session.loading {
+                passedLaunchCheck = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(passedLaunchCheck, "The explicit start must reach the post-launch refresh boundary before releasing the old read")
+        XCTAssertFalse(openingFinished, "An in-flight availability read should delay preparation rather than falsely failing it")
+        XCTAssertEqual(held.count, 1, "The explicit start must not race the occupied native reader")
+        held.release()
+        await refresh.value
+        let ready = await opening.value
+        XCTAssertFalse(ready, "The new check intentionally reports that sign-in is required")
+        XCTAssertEqual(held.count, 2, "The explicit start must wait and make a fresh check instead of returning the old readiness snapshot")
+        XCTAssertTrue(session.desktopStatus.contains("Fixture replacement requires sign-in"), session.desktopStatus)
+        XCTAssertEqual(session.state.comparisonID, comparison)
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertTrue(apps.opened.isEmpty)
+    }
+
+    func testEveryNativeProviderLaunchesOnceFromAnExplicitConversationStart() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in WebProvider.desktopProviders {
+            let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + provider.rawValue + ".app")
+            apps.installation = .init(url: url, processID: nil)
+            apps.openAction = { _ in apps.installation = .init(url: url, processID: 42) }
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: apps.client)
+            session.setEnabled(true)
+            session.updateState { $0.desktopConversation = .init(name: provider == .grokBotApp ? "Demo Bot" : provider.name) }
+            XCTAssertTrue(session.canSubmitNativePrompt, "A configured closed app must keep its direct composer available")
+            await session.refresh()
+            XCTAssertTrue(apps.opened.isEmpty, "A background check must never open an app")
+            let id = UUID()
+            let ready = await session.openComparison(id)
+            XCTAssertTrue(ready, provider.name)
+            XCTAssertEqual(apps.opened, [url])
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            XCTAssertTrue(session.state.localConversations.isEmpty)
+            _ = await session.openComparison(UUID())
+            XCTAssertEqual(apps.opened, [url], "Reuse an existing running app")
+            session.beginShutdown()
+            XCTAssertFalse(session.canSubmitNativePrompt)
+        }
+    }
+
     func testStartingComparisonLaunchesInstalledAppOnceButReadOnlyChecksAndBlankSelectionDoNot() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-auto-open-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -129,6 +296,11 @@ final class DesktopAppInstallationTests: XCTestCase {
         let abandoned = UUID()
         let opening = Task { await session.openComparison(abandoned) }
         await fulfillment(of: [launched], timeout: 1)
+        XCTAssertTrue(session.loading)
+        XCTAssertFalse(session.canSubmitNativePrompt)
+        let duplicateOpen = await session.openComparison(abandoned)
+        XCTAssertFalse(duplicateOpen)
+        XCTAssertEqual(apps.opened, [appURL])
         let replacement = UUID()
         session.updateState { $0.comparisonID = replacement }
         session.updateState { $0.draft = "Replacement draft" }
@@ -164,8 +336,11 @@ final class DesktopAppInstallationTests: XCTestCase {
         let id = UUID()
         let first = Task { await agents.prepareComparison(id, for: [sessions[0]]) }
         await fulfillment(of: [started], timeout: 1)
+        let firstPreparation = agents.preparationID
         agents.toggle(sessions[1])
-        try await Task.sleep(for: .milliseconds(100))
+        for _ in 0..<100 where agents.preparationID == firstPreparation { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotEqual(agents.preparationID, firstPreparation, "The second request must enter the preparation queue before the launch is released")
+        XCTAssertNotNil(agents.preparationID)
         XCTAssertEqual(apps.opened.count, 1, "A quick second selection must wait for the existing shared-app preparation")
         release?.resume(); release = nil
         let ready = await first.value

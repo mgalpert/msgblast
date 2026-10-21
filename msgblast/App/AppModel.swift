@@ -512,7 +512,7 @@ final class AppModel: ObservableObject {
                 session.updateState { $0.selected = false }
                 return false
             }
-            guard await session.openComparison(comparisonID),
+            guard await webAgents.prepareComparison(comparisonID, for: [session]),
                   comparison(comparisonID)?.endedAt == nil else { return false }
             // Save membership before sending so an interrupted join is never automatically repeated.
             state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])

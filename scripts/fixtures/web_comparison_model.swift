@@ -276,6 +276,37 @@ import msgblastCore
         print("PASS: Send to offers only showcase agents plus saved members; unselected Muse can join a Messages comparison with simulated shared context, without adding hidden contacts.")
         showcase.webAgents.beginShutdown()
         await showcase.webAgents.cancelAndWait()
+        let nativeJoinModel = AppModel()
+        nativeJoinModel.timer?.invalidate()
+        var nativeJoinComparison = Comparison(prompt: "Native join original context", members: [])
+        nativeJoinComparison.sharedContext = [.init(text: "Shared follow-up before native join")]
+        nativeJoinModel.state.comparisons.insert(nativeJoinComparison, at: 0)
+        let expectedNativeContext = "Native join original context\n\nShared follow-up before native join"
+        for provider in [WebProvider.chatgptApp, .dotsApp, .claudeApp] {
+            let native = nativeJoinModel.webAgents.session(for: WebAgentID(provider: provider))!
+            native.setEnabled(true)
+            await native.connectDesktopConversation()
+            precondition(native.snapshot.ready, "The simulated native app connection must be ready before joining")
+            precondition(!nativeJoinModel.comparison(nativeJoinComparison.id)!.resolvedWebAgentIDs.contains(native.id))
+            let attemptsBeforeJoin = native.state.attempts.count
+            let nativeJoined = await nativeJoinModel.joinWebAgent(native, comparisonID: nativeJoinComparison.id)
+            precondition(nativeJoined, "A native app must join through the same recipient flow as a website")
+            precondition(nativeJoinModel.webAgents.comparisonID == nativeJoinComparison.id, "Joining must prepare the whole comparison, including its workspace identity")
+            precondition(native.state.comparisonID == nativeJoinComparison.id)
+            let attempts = native.state.attempts.filter { $0.comparisonID == nativeJoinComparison.id }
+            precondition(native.state.attempts.count == attemptsBeforeJoin + 1 && attempts.count == 1)
+            precondition(attempts[0].status == .observed && attempts[0].text == expectedNativeContext)
+            let outgoing = native.state.localConversations[nativeJoinComparison.id.uuidString]!.filter { $0.role == "user" }
+            precondition(outgoing.count == 1 && outgoing[0].text == expectedNativeContext, "Joining submits the accumulated shared context exactly once")
+            let savedNativeJoin = try nativeJoinModel.local.load().comparisons.first { $0.id == nativeJoinComparison.id }!
+            precondition(savedNativeJoin.resolvedWebAgentIDs.contains(native.id), "Successful native membership must survive a store reload")
+            let joinedAgain = await nativeJoinModel.joinWebAgent(native, comparisonID: nativeJoinComparison.id)
+            precondition(joinedAgain && native.state.attempts.count == attemptsBeforeJoin + 1, "Reopening an existing native recipient must not send its joining context again")
+        }
+        precondition(Set(nativeJoinModel.comparison(nativeJoinComparison.id)!.resolvedWebAgentIDs) == Set([WebAgentID(provider: .chatgptApp), .init(provider: .dotsApp), .init(provider: .claudeApp)]))
+        nativeJoinModel.webAgents.beginShutdown()
+        await nativeJoinModel.webAgents.cancelAndWait()
+        print("PASS: ChatGPT App, Dots App and Claude App join through actual AppModel preparation, preserve comparison membership on reload, and submit the full simulated shared context exactly once across repeated joins.")
         let onboardingModel = AppModel()
         let connectedContact = Agent(contactID: "fixture-connected-fo", name: "Fo", handles: ["fo@example.com"])
         onboardingModel.state.selection = []

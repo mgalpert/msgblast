@@ -20,6 +20,7 @@ public struct GeminiConversationBinding: Codable, Equatable, Sendable {
     public let mode: GeminiMode
     public var title: String?
     public var firstPrompt: String?
+    public var fallbackTitle: String?
     public init(comparisonID: UUID, mode: GeminiMode) { self.comparisonID = comparisonID; self.mode = mode }
     public var dedicatedTitle: String { "msgblast \(comparisonID.uuidString)" }
     func firstMessage(_ prompt: String) -> String { "[msgblast comparison \(comparisonID.uuidString)]\n\n\(prompt)" }

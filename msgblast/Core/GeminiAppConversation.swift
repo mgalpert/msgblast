@@ -57,13 +57,20 @@ actor GeminiAppConversation {
         var native = try await read(target)
         try empty(native)
         if let binding, let title = binding.title {
-            guard binding.mode == mode, title == binding.dedicatedTitle else { throw DesktopAppError.unavailable("Gemini’s saved conversation identity is invalid. It was preserved.") }
-            if native.title != title {
-                try await click(label: title, target: target, session: session)
+            guard binding.mode == mode, title == binding.dedicatedTitle,
+                  binding.fallbackTitle.map({ !$0.isEmpty }) ?? true else { throw DesktopAppError.unavailable("Gemini’s saved conversation identity is invalid. It was preserved.") }
+            let titles = [title, binding.fallbackTitle].compactMap { $0 }
+            if !titles.contains(native.title) {
+                let dedicated = native.nodes.filter { $0.role == "AXButton" && $0.label == title }
+                let fallback = native.nodes.filter { $0.role == "AXButton" && $0.label == binding.fallbackTitle }
+                let candidates = dedicated.isEmpty ? fallback : dedicated
+                guard candidates.count == 1 else { throw DesktopAppError.unavailable("Gemini’s saved conversation is missing or ambiguous. No replacement was created.") }
+                try await attemptActionOnce(control: candidates[0], target: target, session: session)
                 native = try await read(target)
             }
-            guard native.nodes.filter({ $0.role == "AXButton" && $0.label == title }).count == 1,
-                  native.title == title, let prompt = binding.firstPrompt,
+            guard native.nodes.filter({ $0.role == "AXButton" && $0.label == native.title }).count == 1,
+                  titles.contains(native.title), let prompt = binding.firstPrompt,
+                  prompt.hasPrefix("[msgblast comparison \(binding.comparisonID.uuidString)]\n\n"),
                   native.messages.first == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Open this comparison’s dedicated Gemini conversation and check again. No replacement was created.") }
             return native
         }
@@ -156,21 +163,25 @@ actor GeminiAppConversation {
         _ = try await open(binding, mode: preferences.mode, target: target, session: session)
         return try await configure(preferences, target: target, session: session)
     }
-    private func rename(_ binding: GeminiConversationBinding, target: DesktopAppConversation.Target, session: String) async throws {
+    private func rename(_ binding: GeminiConversationBinding, expected: GeminiAppObservation, target: DesktopAppConversation.Target, session: String) async throws {
         var native = try await read(target)
         try empty(native)
-        try await attemptActionOnce(control: native.control(id: "more_button"), target: target, session: session)
-        try await click(label: "Rename", role: "AXMenuItem", target: target, session: session)
+        guard native.sameConversation(as: expected), native.messages.first == .init(role: .user, text: binding.firstPrompt ?? "") else { throw DesktopAppError.unavailable("Gemini changed before its optional rename. No title was edited.") }
+        try await attemptActionOnce(control: native.control(id: "more_button"), target: target, session: session, expected: native)
+        native = try await read(target)
+        guard native.sameConversation(as: expected) else { throw DesktopAppError.unavailable("Gemini changed before Rename. No title was edited.") }
+        try await attemptActionOnce(control: native.control(label: "Rename", role: "AXMenuItem"), target: target, session: session, expected: native)
         native = try await read(target, rename: true)
         let sheets = native.nodes.filter { $0.role == "AXSheet" }
         let fields = sheets.flatMap(\.descendants).filter { $0.role == "AXTextField" }
-        guard sheets.count == 1, fields.count == 1, let value = fields[0].value, value == native.title, fields[0].selectedText == value,
+        guard native.sameConversation(as: expected), sheets.count == 1, fields.count == 1, let value = fields[0].value, value == native.title, fields[0].selectedText == value,
               sheets[0].descendants.filter({ $0.role == "AXButton" && $0.label == "Confirm" }).count == 1 else { throw DesktopAppError.unavailable("Gemini’s Rename field is not ready. No text was replaced.") }
-        try await attemptActionOnce("type_text", control: fields[0], text: binding.dedicatedTitle, target: target, session: session, rename: true)
+        try await attemptActionOnce("type_text", control: fields[0], text: binding.dedicatedTitle, target: target, session: session, rename: true, expected: native)
         native = try await read(target, rename: true)
-        guard native.nodes.filter({ $0.role == "AXTextField" }).compactMap(\.value) == [binding.dedicatedTitle] else { throw DesktopAppError.unavailable("Gemini’s dedicated title could not be verified.") }
-        try await click(label: "Confirm", target: target, session: session, rename: true)
-        guard try await read(target).title == binding.dedicatedTitle else { throw DesktopAppError.unavailable("Gemini did not save its dedicated conversation title.") }
+        guard native.sameConversation(as: expected), native.nodes.filter({ $0.role == "AXTextField" }).compactMap(\.value) == [binding.dedicatedTitle] else { throw DesktopAppError.unavailable("Gemini’s dedicated title could not be verified.") }
+        try await attemptActionOnce(control: native.control(label: "Confirm"), target: target, session: session, rename: true, expected: native)
+        let renamed = try await read(target)
+        guard renamed.title == binding.dedicatedTitle, renamed.messages.first == .init(role: .user, text: binding.firstPrompt ?? "") else { throw DesktopAppError.unavailable("Gemini did not save its dedicated conversation title.") }
     }
     func reply(_ text: String, binding: GeminiConversationBinding, preferences: GeminiPreferences,
                onPrepared: @Sendable (GeminiConversationBinding) async throws -> Void,
@@ -205,7 +216,7 @@ actor GeminiAppConversation {
                 try await Task.sleep(for: timing.pollInterval)
                 continue
             }
-            guard binding.title == nil || native.title == binding.title else { throw DesktopAppError.unavailable("Gemini navigated away from this comparison. No reply was attributed.") }
+            guard binding.title == nil || native.title == opened.title else { throw DesktopAppError.unavailable("Gemini navigated away from this comparison. No reply was attributed.") }
             guard native.draft.isEmpty || native.draft == prompt else { throw DesktopAppError.unavailable("Gemini’s draft changed while waiting. Review its conversation.") }
             let messages = native.messages
             guard messages.starts(with: baseline), messages.count <= baseline.count + 2 else { throw DesktopAppError.unavailable("Gemini’s conversation changed. No reply was attributed.") }
@@ -215,10 +226,21 @@ actor GeminiAppConversation {
             if messages.count == baseline.count + 2, let answer = messages.last, answer.role == .assistant, !native.generating, native.draft.isEmpty {
                 if stableText != answer.text { stableText = answer.text; stableSince = .now }
                 if ContinuousClock.now - stableSince >= timing.stableDuration {
-                    var saved = binding
-                    if saved.title == nil { try await rename(binding, target: target, session: session); saved.title = binding.dedicatedTitle }
-                    saved.firstPrompt = binding.firstPrompt ?? prompt
-                    try await onBinding(saved)
+                    var saved = pending
+                    if saved.title == nil {
+                        guard !native.title.isEmpty, !native.isNew else { throw DesktopAppError.unavailable("Gemini’s completed conversation title could not be read. Its reply was preserved in the native app.") }
+                        saved.title = binding.dedicatedTitle
+                        saved.fallbackTitle = native.title
+                        // The exact first prompt owns this chat even if cosmetic
+                        // renaming fails or the process stops during that edit.
+                        try await onBinding(saved)
+                        do { try await rename(saved, expected: native, target: target, session: session) }
+                        catch {
+                            try Task.checkCancellation()
+                            if error is CancellationError { throw error }
+                            return answer.text
+                        }
+                    } else { try await onBinding(saved) }
                     return answer.text
                 }
             } else { stableText = nil }

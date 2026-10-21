@@ -195,7 +195,8 @@ public struct WebWorkspaceState: Codable, Sendable {
     public func geminiBinding(for comparison: UUID) throws -> GeminiConversationBinding? {
         for (key, binding) in geminiConversations {
             guard key == binding.comparisonID.uuidString,
-                  binding.title == nil || binding.title == binding.dedicatedTitle else {
+                  binding.title == nil || binding.title == binding.dedicatedTitle,
+                  binding.fallbackTitle.map({ binding.title == binding.dedicatedTitle && binding.firstPrompt != nil && !$0.isEmpty }) ?? true else {
                 throw DesktopAppError.unavailable("Saved Gemini conversation ownership is inconsistent. The saved state was preserved.")
             }
         }
@@ -205,10 +206,14 @@ public struct WebWorkspaceState: Codable, Sendable {
         let previous = try geminiBinding(for: binding.comparisonID)
         guard previous == nil || (previous?.mode == binding.mode &&
               (previous?.title == nil || previous?.title == binding.title) &&
-              (previous?.firstPrompt == nil || previous?.firstPrompt == binding.firstPrompt)) else {
+              (previous?.firstPrompt == nil || previous?.firstPrompt == binding.firstPrompt) &&
+              (previous?.title == nil || previous?.fallbackTitle == binding.fallbackTitle)) else {
             throw DesktopAppError.unavailable("Gemini’s saved conversation changed. The original binding was preserved.")
         }
-        geminiConversations[binding.comparisonID.uuidString] = binding
+        var candidate = self
+        candidate.geminiConversations[binding.comparisonID.uuidString] = binding
+        _ = try candidate.geminiBinding(for: binding.comparisonID)
+        geminiConversations = candidate.geminiConversations
     }
     public func museAppBinding(for comparison: UUID) throws -> MuseSideChatBinding? {
         var owners: Set<UUID> = []

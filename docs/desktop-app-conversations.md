@@ -30,6 +30,12 @@ state files, histories, and execution paths.
    chat with the first real prompt. Wabi starts a dedicated AI chat per comparison;
    follow-ups return to that saved chat. Grok Bot opens the bot selected in msgblast.
 4. Select the agent and use the private or shared msgblast message box.
+   Starting a conversation opens its installed app automatically if it is closed,
+   waits for one main window, then performs the existing connection and chat checks.
+   Direct first prompts use the same launch step. Running apps with a usable main
+   window are reused; an explicit start reopens an unavailable window. Background connection checks and onboarding checks never launch apps.
+   A failed launch leaves the prompt intact and creates no send attempt; sign-in,
+   permissions, an existing draft, or an unavailable window still need attention.
 
 The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
 `/usr/local/bin`, or its inherited PATH and uses its public `call` JSON interface.
@@ -41,7 +47,8 @@ stale LaunchServices entry is insufficient. App removal or a process change clea
 the in-memory connection check. A valid running copy takes precedence over a
 registered path; its process ID is never attached to a different installed copy.
 Before a send, msgblast rechecks installation and
-running status. Saved conversations, drafts, and receipts remain intact if an app
+running status. Multiple running copies of the preferred app bundle are refused
+before any window is inspected or input is sent. Saved conversations, drafts, and receipts remain intact if an app
 is missing. Demo simulates installed apps and connection checks without contacting
 them.
 
@@ -155,7 +162,9 @@ com.openai.chat bundle is detected as installed, but its different native UI
 is not yet supported by this adapter. Connection checks refuse unsupported layouts.
 
 Starting or explicitly reopening a conversation opens a closed installed app
-once and waits for its main window. A direct first send follows the same path.
+once and waits for its main window. Shared Send displays a getting-ready state
+and pauses during launch; a configured closed app keeps its direct composer
+available. A direct first send follows the same path.
 Already running apps are reused when their main window is available; starting a
 conversation reopens an app whose window is closed or on another Space. Native
 app requests run in sequence so window launches do not compete for the active
@@ -212,11 +221,12 @@ comparison and verified before sending. Models without a thinking-level control
 use their native reasoning behavior; msgblast does not invent an effort setting.
 
 Gemini 1.131.4.1198 exposes no canonical chat address through its native
-accessibility tree. After a completed first response, msgblast renames its own
-conversation to `msgblast <comparison UUID>` and saves that title and the first
-outgoing message. The first prompt includes a comparison reference; the local
+accessibility tree. After a completed first response, msgblast saves its verified
+first outgoing message, observed title, and intended `msgblast <comparison UUID>`
+title before attempting the optional rename. A failed rename keeps the observed
+title as a resumable fallback and still returns the completed reply. The first prompt includes a comparison reference; the local
 transcript retains the original prompt. Resuming requires a unique sidebar
-button, the saved title, and the matching first message. A renamed or missing
+button, the saved dedicated or fallback title, and the matching first message. A renamed or missing
 conversation is refused rather than replaced. An interrupted first submission
 is saved after configuration succeeds, immediately before input, and blocks
 automatic replacement, including after restart. Known model-choice refusals stay
@@ -296,7 +306,8 @@ providers can issue later follow-ups. Cancellation stops local waiting, not work
 inside the provider app.
 
 An incomplete request blocks further desktop sends across comparisons until the
-user reviews and acknowledges it in its originating comparison. There is no
+user reviews and acknowledges it. Other comparisons identify the blocking
+request and offer explicit acknowledgement of that exact attempt. There is no
 automatic resend. Saved drafts, attempts, transcripts, and side-chat UUIDs survive
 restart. Desktop bindings never become CLI session IDs. A new UUID seen before
 its outgoing message is saved separately as an unconfirmed recovery address.

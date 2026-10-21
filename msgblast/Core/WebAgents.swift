@@ -8,7 +8,7 @@ public final class WebAgents: ObservableObject {
     private let directory: URL
     private var configurations: [WebAgentConfiguration] = []
     private var preparation: Task<Bool, Never>?
-    private var preparationID: UUID?
+    private(set) var preparationID: UUID?
     private var shuttingDown = false
     @Published public private(set) var configurationError: String?
     private var registryURL: URL { directory.appendingPathComponent("web-agent-instances.json") }

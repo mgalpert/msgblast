@@ -135,6 +135,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var isStorageAvailable: Bool { !storageFailed }
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
+    public var canSubmitNativePrompt: Bool {
+        guard isEnabled, !storageFailed, !loading, !isSending, !shuttingDown else { return false }
+        return snapshot.ready || (provider.desktopApp != nil && desktopInstallation.isInstalled &&
+            !desktopInstallation.isRunning && state.desktopConversation != nil &&
+            !hasIncompleteNativeRequest(for: state.comparisonID))
+    }
+
     public var isReadyForOnboarding: Bool {
         guard isEnabled, connected, !storageFailed, !loading else { return false }
         if provider.usesNativeConversation { return snapshot.ready }
@@ -219,6 +226,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             browserImportCookieBaseline = nil
             comparisonGeneration += 1
+            if provider.desktopApp != nil { desktopReady = false }
             if !provider.usesNativeConversation { selectPage(previous: previous) }
         }
         if provider.usesNativeConversation {
@@ -510,6 +518,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 catch is CancellationError { return false }
                 catch { self.error = error.localizedDescription; return false }
             }
+            while provider.desktopApp != nil && refreshing {
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { return false }
+                guard state.comparisonID == id, !shuttingDown else { return false }
+            }
+            guard state.comparisonID == id, !shuttingDown else { return false }
             await refresh()
             if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
             if snapshot.ready { await prepareAdditionalDesktopConversation() }
@@ -1375,6 +1388,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private func refreshDesktop() async {
         guard let app = provider.desktopApp, !loading, !refreshing, !shuttingDown else { return }
         refreshing = true
+        let generation = comparisonGeneration
         defer { refreshing = false }
         refreshDesktopInstallation()
         desktopReady = false
@@ -1398,6 +1412,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         if app == .claude { try await claudeApp.checkAvailable() }
                         else if let kind = chatgptKind { try await chatgptApp.checkAvailable(kind: kind) }
                     }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
                     desktopReady = true
                     desktopStatus = app == .dots ? "Your continuing dot is ready · background input" : "\(app.name) ready · dedicated chat · background input"
                     updateNativeSnapshot()
@@ -1412,6 +1427,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("Gemini’s saved history has no tracked conversation. Start a new comparison; its history was preserved.") }
                     }
                     if !fixture { try await geminiApp.checkAvailable() }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
                     desktopReady = true
                     desktopStatus = "Gemini ready · \(geminiPreferences.mode.name) · background input"
                     updateNativeSnapshot()
@@ -1427,10 +1443,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         let url: URL
                         if fixture { url = saved ?? URL(string: "wabi://app/threads/\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))")! }
                         else { url = try await wabiApp.prepare(savedURL: saved) }
-                        guard state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                        guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
                         try state.recordWabiConversation(url, for: comparison)
                         try save()
                     } else if !fixture { try await wabiApp.checkAvailable() }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
                     desktopReady = true
                     desktopStatus = state.comparisonID == nil ? "Connected to Wabi · each comparison gets its own AI chat" : "Dedicated Wabi chat ready · background input"
                     updateNativeSnapshot()
@@ -1450,12 +1467,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         else if saved?.threadID == nil, let pending, let candidate = pending.recoveryConversationURL {
                             prepared = try await museApp.recover(comparisonID: comparison, candidateURL: candidate, prompt: pending.text, requestID: pending.id)
                         } else { prepared = try await museApp.prepare(comparisonID: comparison, binding: saved) }
-                        guard state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                        guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
                         try state.recordMuseAppBinding(prepared)
                         if prepared.threadID != nil, saved?.threadID == nil, let pending {
                             try recordMuseAppSubmission(prepared, attemptID: pending.id)
                         } else { try save() }
                     } else if !fixture { try await museApp.checkAvailable() }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
                     desktopReady = true
                     desktopStatus = comparison == nil ? "Connected to Muse · each comparison gets its own side chat" : "Muse side chat ready · background input"
                     updateNativeSnapshot()
@@ -1463,9 +1481,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete request before changing bots.") }
                 if !fixture { try await desktopDriver.checkGrokBot(named: binding.name) }
+                guard generation == comparisonGeneration, !shuttingDown else { return }
                 desktopReady = true
                 desktopStatus = "Connected to \(binding.name) · background input"
-            } catch { desktopStatus = error.localizedDescription }
+            } catch {
+                guard generation == comparisonGeneration, !shuttingDown else { return }
+                desktopStatus = error.localizedDescription
+            }
         } else { desktopStatus = app == .grokBot ? "Choose your bot in msgblast." : "Open the intended conversation in \(app.name), then connect it here." }
         updateNativeSnapshot()
     }
@@ -1493,10 +1515,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if fresh != snapshot { snapshot = fresh }
     }
 
-    public func acknowledgeIncompleteRequest() {
+    public var incompleteDesktopAttempt: WebSendAttempt? {
+        guard provider.desktopApp != nil else { return nil }
+        return state.attempts.first { $0.status.isUnresolved }
+    }
+
+    public func acknowledgeIncompleteRequest(attemptID: UUID? = nil) {
         guard provider.usesNativeConversation, !isSending else { return }
         updateState { state in
-            for i in state.attempts.indices where state.attempts[i].comparisonID == state.comparisonID && [.waiting, .uncertain].contains(state.attempts[i].status) {
+            for i in state.attempts.indices where (attemptID.map { state.attempts[i].id == $0 } ?? (state.attempts[i].comparisonID == state.comparisonID)) && [.waiting, .uncertain].contains(state.attempts[i].status) {
                 state.attempts[i].status = .dismissed
             }
         }

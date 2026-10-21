@@ -336,8 +336,11 @@ actor DesktopAppConversation {
     }
     func target(_ app: DesktopAppProvider) async throws -> Target {
         let apps = try await call("list_apps", [:], as: AppList.self)
-        guard let live = app.bundleIDs.compactMap({ bundle in apps.apps.first { $0.bundle_id == bundle && $0.running } }).first else {
+        guard let matches = app.bundleIDs.map({ bundle in apps.apps.filter { $0.bundle_id == bundle && $0.running } }).first(where: { !$0.isEmpty }) else {
             throw DesktopAppError.unavailable(app == .grokBot ? "Open Grok Bot and sign in, then choose your bot in msgblast." : "Open \(app.name), sign in, and select its conversation first.")
+        }
+        guard matches.count == 1, let live = matches.first else {
+            throw DesktopAppError.unavailable("Quit extra copies of \(app.name) before connecting, so msgblast can use one account safely.")
         }
         let windows = try await call("list_windows", [:], numbers: ["pid": live.pid], as: WindowList.self)
         let candidates = windows.windows.filter { $0.bounds.width >= 400 && $0.bounds.height >= 400 && ([DesktopAppProvider.gemini, .chatgpt, .dots, .claude].contains(app) ? $0.is_on_screen == true : !($0.title ?? "").isEmpty) && $0.title != "Log in" }

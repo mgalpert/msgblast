@@ -243,6 +243,15 @@ final class DesktopAppConversationTests: XCTestCase {
         let attempt = await session.send("Different prompt", comparisonID: UUID())
         XCTAssertNil(attempt, "An unresolved request owns the shared app conversation across comparisons")
         XCTAssertEqual(session.state.attempts.count, 1)
+        XCTAssertEqual(session.incompleteDesktopAttempt?.id, earlier.id)
+        session.acknowledgeIncompleteRequest()
+        XCTAssertEqual(session.incompleteDesktopAttempt?.id, earlier.id, "Default recovery stays scoped to this comparison")
+        session.acknowledgeIncompleteRequest(attemptID: UUID())
+        XCTAssertEqual(session.incompleteDesktopAttempt?.id, earlier.id, "A stale control cannot clear a different attempt")
+        session.acknowledgeIncompleteRequest(attemptID: earlier.id)
+        XCTAssertNil(session.incompleteDesktopAttempt)
+        XCTAssertEqual(session.state.attempts.first?.status, .dismissed)
+        XCTAssertTrue(session.state.localConversations.isEmpty, "Acknowledgment never replays the prompt")
         session.beginShutdown()
     }
 
@@ -713,6 +722,19 @@ final class DesktopAppDriverTests: XCTestCase {
         return WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(2), callTimeout: 3)) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             return try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+        }
+    }
+
+    func testDuplicateRunningCopiesAreRejectedInEitherEnumerationOrder() async throws {
+        for pids in [[4242, 4343], [4343, 4242]] {
+            let fixture = try driver([step("list_apps", ["apps": pids.map {
+                ["bundle_id": DesktopAppProvider.grokBot.bundleID, "pid": $0, "running": true] as [String: Any]
+            }])])
+            defer { fixture.remove() }
+            let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+            XCTAssertTrue(error.contains("Quit extra copies"), error)
+            let calls = try await finishedCalls(fixture)
+            XCTAssertTrue(calls.allSatisfy { ["list_apps", "end_session"].contains($0.tool) }, "Ambiguity must stop before inspecting any account window")
         }
     }
 

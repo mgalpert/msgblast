@@ -235,7 +235,7 @@ final class GeminiAppDriverTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: actions).write(to: fixture.directory.appendingPathComponent("actions.json"))
         return .init(directory: fixture.directory, executable: fixture.executable, observations: try roots.map { try GeminiAppObservation(root: $0, allowingRename: true) })
     }
-    private func adapter(_ fixture: Fixture, navigateBeforeTyping: Bool = false, failReadAfterSendOnce: Bool = false, failRenameReadOnce: Bool = false) -> GeminiAppConversation {
+    private func adapter(_ fixture: Fixture, navigateBeforeTyping: Bool = false, failReadAfterSendOnce: Bool = false, failRenameReadOnce: Bool = false, failRenamePermanently: Bool = false, cancelDuringRename: Bool = false) -> GeminiAppConversation {
         let race = NavigationRace()
         let fault = NativeReadFault()
         return GeminiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(2), callTimeout: 3), readNative: { target, _ in
@@ -243,6 +243,8 @@ final class GeminiAppDriverTests: XCTestCase {
             let stage = Int((try? String(contentsOf: fixture.stage, encoding: .utf8)) ?? "0") ?? 0
             if failReadAfterSendOnce, fault.shouldFail(stage: stage, at: 6) { throw GeminiObservationError.transient("Gemini’s accessibility tree is incomplete.") }
             if failRenameReadOnce, fault.shouldFail(stage: stage, at: 8) { throw GeminiObservationError.transient("Gemini’s exact window is unavailable during the Rename transition.") }
+            if stage >= 7, failRenamePermanently { throw DesktopAppError.unavailable("Gemini's Rename is permanently unavailable") }
+            if stage >= 7, cancelDuringRename { throw CancellationError() }
             if navigateBeforeTyping, race.shouldNavigate(stage: stage) {
                 var root = fixture.observations[stage].root
                 root.label = "Gemini — Another conversation"
@@ -368,18 +370,21 @@ final class GeminiAppDriverTests: XCTestCase {
             return false
         }
     }
-    func testSavedConversationReopensAndFollowUpHasNoFirstMessageReference() async throws {
-        let base = try fixture(); defer { try? FileManager.default.removeItem(at: base.directory) }
-        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
-        var binding = GeminiConversationBinding(comparisonID: id, mode: .chat)
-        binding.firstPrompt = "[msgblast comparison \(id.uuidString)]\n\nEcho check"
-        binding.title = binding.dedicatedTitle
+    private func savedConversationScenario(_ binding: GeminiConversationBinding, foreignFirst: Bool = false) throws -> Fixture {
+        let base = try fixture()
         let menu = base.observations[1].nodes.first { $0.role == "AXPopover" }!
         let submit = try base.observations[5].control(id: "send_button")
         var roots: [GeminiAXNode] = []
         for stage in 0...5 {
             var root = base.observations[10].root
+            let visibleTitle = binding.fallbackTitle ?? binding.dedicatedTitle
+            root.label = "Gemini — \(visibleTitle)"
+            root.children[0].children[0].children[0].label = visibleTitle
             if stage == 0 { root.label = "Gemini — Another conversation" }
+            if foreignFirst {
+                let transcript = root.children[0].children[1].children.firstIndex { $0.role == "AXScrollArea" }!
+                root.children[0].children[1].children[transcript].children[0].children[0].children[0].children[0].children[0].label = "Foreign first prompt"
+            }
             if stage == 2 { root.children[0].children[1].children.append(menu) }
             if stage == 4 {
                 root.children[0].children[1].children[0].value = "Follow up"
@@ -393,19 +398,91 @@ final class GeminiAppDriverTests: XCTestCase {
             }
             roots.append(root)
         }
-        let f = try scenario(roots, actions: [
-            ["tool": "click", "role": "AXButton", "label": binding.dedicatedTitle],
+        return try scenario(roots, actions: [
+            ["tool": "click", "role": "AXButton", "label": binding.fallbackTitle ?? binding.dedicatedTitle],
             ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
             ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"],
             ["tool": "type_text", "role": "AXTextArea", "label": "Ask Gemini", "text": "Follow up"],
             ["tool": "click", "role": "AXButton", "label": "Submit"]
         ], in: base)
+    }
+    func testSavedConversationReopensAndFollowUpHasNoFirstMessageReference() async throws {
+        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
+        var binding = GeminiConversationBinding(comparisonID: id, mode: .chat)
+        binding.firstPrompt = binding.firstMessage("Echo check")
+        binding.title = binding.dedicatedTitle
+        let f = try savedConversationScenario(binding)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
         let saved = BindingRecorder()
         let answer = try await adapter(f).reply("Follow up", binding: binding, preferences: .init(model: "3.8 Flash, All-around help"), onPrepared: { await saved.record($0) }) { await saved.record($0) }
         XCTAssertEqual(answer, "FOLLOWUP-OK")
         let result = await saved.value
         XCTAssertEqual(result, binding)
         XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "type_text" }.compactMap { ($0["arguments"] as? [String: Any])?["text"] as? String }, ["Follow up"])
+    }
+    func testPermanentRenameFailureKeepsAnswerAndDurableFallbackForResume() async throws {
+        let first = try fixture(); defer { try? FileManager.default.removeItem(at: first.directory) }
+        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
+        let recorded = BindingRecorder()
+        let answer = try await adapter(first, failRenamePermanently: true).reply("Echo check", binding: .init(comparisonID: id, mode: .chat), preferences: .init(), onPrepared: { _ in }) { binding in
+            XCTAssertEqual(try String(contentsOf: first.stage, encoding: .utf8), "6", "Verified binding must be durable before Rename starts")
+            await recorded.record(binding)
+        }
+        XCTAssertEqual(answer, "ECHO-OK")
+        var state = WebWorkspaceState()
+        let recordedValue = await recorded.value
+        let saved = try XCTUnwrap(recordedValue)
+        XCTAssertEqual(saved.title, saved.dedicatedTitle)
+        XCTAssertEqual(saved.fallbackTitle, "Automatic title")
+        XCTAssertEqual(saved.firstPrompt, saved.firstMessage("Echo check"))
+        try state.recordGeminiBinding(saved)
+        var reassigned = saved
+        reassigned.fallbackTitle = "Another chat"
+        XCTAssertThrowsError(try state.recordGeminiBinding(reassigned))
+        XCTAssertEqual(try state.geminiBinding(for: id), saved)
+        let restored = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONEncoder().encode(state))
+        let binding = try XCTUnwrap(restored.geminiBinding(for: id))
+        XCTAssertEqual(binding, saved)
+        XCTAssertEqual(first.calls().filter { $0["tool"] as? String == "type_text" }.count, 1, "Only the first prompt was typed; a failed Rename was not replayed")
+        XCTAssertEqual(try String(contentsOf: first.stage, encoding: .utf8), "7")
+        let resumed = try savedConversationScenario(binding)
+        defer { try? FileManager.default.removeItem(at: resumed.directory) }
+        let reply = try await adapter(resumed).reply("Follow up", binding: binding, preferences: .init(model: "3.8 Flash, All-around help"), onPrepared: { _ in }) { _ in }
+        XCTAssertEqual(reply, "FOLLOWUP-OK")
+        XCTAssertEqual(resumed.calls().filter { $0["tool"] as? String == "type_text" }.compactMap { ($0["arguments"] as? [String: Any])?["text"] as? String }, ["Follow up"])
+    }
+    func testFallbackTitleCannotResumeForeignFirstPrompt() async throws {
+        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
+        var binding = GeminiConversationBinding(comparisonID: id, mode: .chat)
+        binding.title = binding.dedicatedTitle
+        binding.fallbackTitle = "Automatic title"
+        binding.firstPrompt = binding.firstMessage("Echo check")
+        let f = try savedConversationScenario(binding, foreignFirst: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await adapter(f).reply("Follow up", binding: binding, preferences: .init(), onPrepared: { _ in XCTFail("Wrong nonce cannot reserve") }) { _ in XCTFail("Wrong nonce cannot bind") }
+            XCTFail("A matching fallback title must never establish ownership")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("dedicated Gemini conversation")) }
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+    }
+    func testCompletedBindingStorageFailureIsNotSwallowedAsRenameFailure() async throws {
+        let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await adapter(f).reply("Echo check", binding: .init(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, mode: .chat), preferences: .init(), onPrepared: { _ in }) { _ in throw NSError(domain: "GeminiBindingStorage", code: 1) }
+            XCTFail("Storage failure must propagate")
+        } catch { XCTAssertEqual((error as NSError).domain, "GeminiBindingStorage") }
+        XCTAssertEqual(try String(contentsOf: f.stage, encoding: .utf8), "6", "Failed persistence must prevent optional Rename")
+    }
+    func testCancellationDuringOptionalRenameStillPropagates() async throws {
+        let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
+        let saved = BindingRecorder()
+        do {
+            _ = try await adapter(f, cancelDuringRename: true).reply("Echo check", binding: .init(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, mode: .chat), preferences: .init(), onPrepared: { _ in }) { await saved.record($0) }
+            XCTFail("Cancellation must propagate")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        let binding = await saved.value
+        XCTAssertEqual(binding?.fallbackTitle, "Automatic title")
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "type_text" }.count, 1)
     }
     private func thinkingScenario(unavailable: Bool = false) throws -> Fixture {
         let base = try fixture()
