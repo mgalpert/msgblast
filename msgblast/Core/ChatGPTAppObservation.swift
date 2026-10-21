@@ -160,14 +160,9 @@ struct ChatGPTAppObservation: Sendable {
 enum ChatGPTNativeReader {
     static func capture(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppObservation {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Allow msgblast Accessibility access to connect ChatGPT.") }
-        typealias WindowNumber = @convention(c) (AXUIElement, UnsafeMutablePointer<UInt32>) -> Int32
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else { throw DesktopAppError.unavailable("ChatGPT’s exact window cannot be verified.") }
-        let number = unsafeBitCast(symbol, to: WindowNumber.self)
         func attr(_ e: AXUIElement, _ key: String) -> CFTypeRef? { var value: CFTypeRef?; return AXUIElementCopyAttributeValue(e, key as CFString, &value) == .success ? value : nil }
         func string(_ e: AXUIElement, _ key: String) -> String { attr(e, key) as? String ?? "" }
-        let app = AXUIElementCreateApplication(pid_t(target.pid)); AXUIElementSetMessagingTimeout(app, 0.2)
-        let windows = (attr(app, "AXWindows") as? [AXUIElement] ?? []).filter { var value: UInt32 = 0; return number($0, &value) == AXError.success.rawValue && value == target.window }
-        guard windows.count == 1 else { throw ChatGPTObservationError.transient }
+        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw ChatGPTObservationError.transient }
         var count = 0
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         func walk(_ e: AXUIElement, depth: Int, insideWeb: Bool = false) throws -> ChatGPTAXNode {
@@ -189,6 +184,6 @@ enum ChatGPTNativeReader {
                          url: (url as? URL)?.absoluteString ?? (url as? String ?? ""), selectedText: attr(e, "AXSelectedText") as? String,
                          enabled: attr(e, "AXEnabled") as? Bool != false, focused: attr(e, "AXFocused") as? Bool == true, frame: frame, children: children)
         }
-        return try ChatGPTAppObservation(root: walk(windows[0], depth: 0))
+        return try ChatGPTAppObservation(root: walk(window, depth: 0))
     }
 }

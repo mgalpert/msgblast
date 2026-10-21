@@ -94,23 +94,12 @@ struct WabiAppReceipt {
 enum WabiNativeReader {
     static func capture(_ target: DesktopAppConversation.Target) throws -> WabiAppObservation {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Grant msgblast Accessibility permission to verify Wabi's dedicated chat.") }
-        typealias WindowNumber = @convention(c) (AXUIElement, UnsafeMutablePointer<UInt32>) -> Int32
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else {
-            throw DesktopAppError.unavailable("This macOS version cannot identify Wabi's exact window.")
-        }
-        let windowNumber = unsafeBitCast(symbol, to: WindowNumber.self)
         func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
             var value: CFTypeRef?
             return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
         }
         func string(_ element: AXUIElement, _ key: String) -> String { attribute(element, key) as? String ?? "" }
-        let app = AXUIElementCreateApplication(pid_t(target.pid))
-        AXUIElementSetMessagingTimeout(app, 0.2)
-        let windows = (attribute(app, "AXWindows") as? [AXUIElement] ?? []).filter {
-            var number: UInt32 = 0
-            return windowNumber($0, &number) == AXError.success.rawValue && number == target.window
-        }
-        guard windows.count == 1 else { throw DesktopAppError.unavailable("Wabi's exact window is unavailable. Dismiss dialogs and try again.") }
+        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw DesktopAppError.unavailable("Wabi's exact window is unavailable. Dismiss dialogs and try again.") }
         var webAreas: [AXUIElement] = [], composers: [AXUIElement] = [], links: [WabiAppObservation.Link] = []
         var initialURL: URL?
         var count = 0
@@ -129,7 +118,7 @@ enum WabiNativeReader {
             return WabiAXNode(role: role, label: label, value: string(element, "AXValue"),
                               classes: role == "AXGroup" ? attribute(element, "AXDOMClassList") as? [String] ?? [] : [], children: children)
         }
-        let tree = try walk(windows[0], depth: 0)
+        let tree = try walk(window, depth: 0)
         guard webAreas.count == 1, composers.count <= 1, let url = initialURL, WabiThread.isValid(url),
               attribute(webAreas[0], "AXURL") as? URL == url else { throw DesktopAppError.unavailable("Wabi's chat address could not be verified.") }
         let draft: String?

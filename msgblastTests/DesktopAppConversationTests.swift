@@ -2,11 +2,11 @@ import XCTest
 @testable import msgblastCore
 
 final class DesktopAppConversationTests: XCTestCase {
-    func testMuseWindowLookupFindsExactWindowWhenAXWindowsOmitsAnotherDesktop() throws {
+    func testNativeWindowLookupFindsExactWindowWhenAXWindowsOmitsAnotherDesktop() throws {
         struct Window { let role: String; let id: UInt32 }
         let expectedToken = Data([42, 0, 0, 0, 0, 0, 0, 0, 0x6f, 0x63, 0x6f, 0x63, 46, 0, 0, 0, 0, 0, 0, 0])
         var probes = [Data]()
-        let found: Window? = MuseNativeWindowLookup.find(pid: 42, windowID: 2872, listed: [],
+        let found: Window? = DesktopNativeWindowLookup.find(pid: 42, windowID: 2872, listed: [],
             ownerPID: { 42 }, number: { $0.id }, isWindow: { $0.role == "AXWindow" }, remote: { token in
                 probes.append(token)
                 if token == expectedToken { return Window(role: "AXWindow", id: 2872) }
@@ -16,30 +16,30 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertEqual(probes.last, expectedToken, "Only the exact AXWindow may be used; controls and other windows are not substitutes")
     }
 
-    func testMuseWindowLookupRejectsDifferentOrMissingWindowServerOwner() {
+    func testNativeWindowLookupRejectsDifferentOrMissingWindowServerOwner() {
         for owner in [43, nil] as [Int?] {
             var probes = 0
-            let found: UInt32? = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
+            let found: UInt32? = DesktopNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
                 ownerPID: { owner }, number: { $0 }, isWindow: { _ in true }, remote: { _ in probes += 1; return 31 })
             XCTAssertNil(found)
             XCTAssertEqual(probes, 0, "Never probe another process or a window that disappeared")
         }
     }
 
-    func testMuseWindowLookupUsesListedWindowAndRejectsAmbiguousIdentityWithoutProbing() {
+    func testNativeWindowLookupUsesListedWindowAndRejectsAmbiguousIdentityWithoutProbing() {
         for listed: [UInt32] in [[31], [31, 31]] {
             var probes = 0
-            let found = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: listed,
+            let found = DesktopNativeWindowLookup.find(pid: 42, windowID: 31, listed: listed,
                 ownerPID: { 42 }, number: { $0 }, isWindow: { _ in true }, remote: { _ in probes += 1; return 31 })
             XCTAssertEqual(found, listed.count == 1 ? 31 : nil)
             XCTAssertEqual(probes, 0)
         }
     }
 
-    func testMuseWindowLookupStopsWhenDeadlineExpiresOrCandidateLimitIsReached() {
+    func testNativeWindowLookupStopsWhenDeadlineExpiresOrCandidateLimitIsReached() {
         for timed in [true, false] {
             var probes = 0, tick: TimeInterval = 0
-            let found: UInt32? = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
+            let found: UInt32? = DesktopNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
                 ownerPID: { 42 }, number: { $0 }, isWindow: { _ in true }, remote: { _ in probes += 1; return nil },
                 now: { if timed { tick += 0.1 }; return tick })
             XCTAssertNil(found)
@@ -48,8 +48,8 @@ final class DesktopAppConversationTests: XCTestCase {
         }
     }
 
-    func testMuseWindowLookupFailsClosedWhenRemoteLookupIsUnavailable() {
-        let found: UInt32? = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
+    func testNativeWindowLookupFailsClosedWhenRemoteLookupIsUnavailable() {
+        let found: UInt32? = DesktopNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
             ownerPID: { 42 }, number: { $0 }, isWindow: { _ in true }, remote: nil)
         XCTAssertNil(found)
     }
@@ -369,6 +369,61 @@ final class DesktopAppConversationTests: XCTestCase {
 final class DesktopAppDriverTests: XCTestCase {
     private let prompt = "Fixture prompt"
     private let binding = DesktopConversationBinding(name: "Fixture Bot")
+
+    func testMuseFindsOtherDesktopAndRejectsAmbiguousMainWindows() async throws {
+        try await assertOtherDesktopTarget(.muse)
+    }
+
+    func testGrokBotFindsOtherDesktopAndRejectsAmbiguousMainWindows() async throws {
+        try await assertOtherDesktopTarget(.grokBot)
+    }
+
+    func testWabiFindsOtherDesktopAndRejectsAmbiguousMainWindows() async throws {
+        try await assertOtherDesktopTarget(.wabi)
+    }
+
+    func testGeminiFindsOtherDesktopAndRejectsAmbiguousMainWindows() async throws {
+        try await assertOtherDesktopTarget(.gemini)
+    }
+
+    func testChatGPTFindsOtherDesktopAndRejectsAmbiguousMainWindows() async throws {
+        try await assertOtherDesktopTarget(.chatgpt)
+    }
+
+    func testDotsFindsOtherDesktopAndRejectsAmbiguousMainWindows() async throws {
+        try await assertOtherDesktopTarget(.dots)
+    }
+
+    func testClaudeFindsOtherDesktopAndRejectsAmbiguousMainWindows() async throws {
+        try await assertOtherDesktopTarget(.claude)
+    }
+
+    private func assertOtherDesktopTarget(_ app: DesktopAppProvider) async throws {
+        func window(_ id: Int, onScreen: Bool, title: String = "Fixture chat", width: Int = 800) -> [String: Any] {
+            ["window_id": id, "title": title, "is_on_screen": onScreen, "on_current_space": onScreen,
+             "space_ids": [onScreen ? 3 : 1], "bounds": ["width": width, "height": 600]]
+        }
+        // An on-screen helper/login window must not hide the main window on another Space.
+        let main = window(101, onScreen: false, title: [.gemini, .chatgpt, .dots, .claude].contains(app) ? "" : "Fixture chat")
+        var hidden = window(11, onScreen: false, title: "")
+        hidden["space_ids"] = NSNull()
+        let fixture = try driver([apps(app), step("list_windows", ["windows": [
+            window(9, onScreen: true, width: 200), window(10, onScreen: true, title: "Log in"), hidden, main
+        ]])])
+        defer { fixture.remove() }
+        let target = try await adapter(fixture).target(app)
+        XCTAssertEqual(target, .init(pid: 4242, window: 101))
+        let calls = try fixture.calls()
+        XCTAssertEqual(calls.map(\.tool), ["list_apps", "list_windows"], "Discovery must not activate, move, or send input to an app")
+        for extraOnScreen in [true, false] {
+            let ambiguous = try driver([apps(app), step("list_windows", ["windows": [main, window(102, onScreen: extraOnScreen)]])])
+            defer { ambiguous.remove() }
+            let error = await failure { _ = try await self.adapter(ambiguous).target(app) }
+            XCTAssertTrue(error.contains("one main"), error)
+            let ambiguousCalls = try ambiguous.calls()
+            XCTAssertEqual(ambiguousCalls.map(\.tool), ["list_apps", "list_windows"], "Never prefer a visible window over another account/chat")
+        }
+    }
 
     func testBotDiscoveryIsReadOnlyAndSelectionOpensOnlyTheChosenBot() async throws {
         let initial = grok(name: "Other Bot", bots: ["Other Bot", "Fixture Bot"])
@@ -1552,7 +1607,7 @@ final class DesktopAppDriverTests: XCTestCase {
         step("list_apps", ["apps": [["bundle_id": app.bundleID, "pid": 4242, "running": true]]])
     }
     private func windows() -> [String: Any] {
-        step("list_windows", ["windows": [["window_id": 101, "title": "Fixture app", "bounds": ["width": 800, "height": 600]]]])
+        step("list_windows", ["windows": [["window_id": 101, "title": "Fixture app", "is_on_screen": false, "on_current_space": false, "space_ids": [1], "bounds": ["width": 800, "height": 600]]]])
     }
     private func snapshot(_ result: [String: Any], repeating: Bool = false) -> [String: Any] {
         var step = step("get_window_state", result)

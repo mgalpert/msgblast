@@ -201,7 +201,7 @@ final class GeminiAppDriverTests: XCTestCase {
         with (p/'calls.jsonl').open('a') as f:f.write(json.dumps({'tool':tool,'arguments':args})+'\\n')
         s=int((p/'stage').read_text()) if (p/'stage').exists() else 0
         if tool=='list_apps': print(json.dumps({'apps':[{'bundle_id':'com.google.GeminiMacOS','pid':42,'running':True}]}))
-        elif tool=='list_windows': print(json.dumps({'windows':[{'window_id':21,'title':'','is_on_screen':True,'bounds':{'width':1000,'height':900}}]}))
+        elif tool=='list_windows': print(json.dumps({'windows':[{'window_id':21,'title':'','is_on_screen':False,'on_current_space':False,'space_ids':[1],'bounds':{'width':1000,'height':900}}]}))
         elif tool=='get_window_state': print(json.dumps(json.loads((p/'snapshots.json').read_text())[s]))
         elif tool in ['click','type_text']:
             expected=json.loads((p/'actions.json').read_text())[s]

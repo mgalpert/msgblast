@@ -150,7 +150,7 @@ final class ChatGPTAppDriverTests: XCTestCase {
         tool=sys.argv[2];args=json.loads(sys.argv[3])
         with (p/'calls.jsonl').open('a') as f:f.write(json.dumps({'tool':tool,'arguments':args})+'\\n')
         if tool=='list_apps':print(json.dumps({'apps':[{'bundle_id':'com.openai.codex','pid':42,'running':True}]}))
-        elif tool=='list_windows':print(json.dumps({'windows':[{'window_id':21,'title':'Synthetic native chat','is_on_screen':True,'bounds':{'width':1000,'height':900}}]}))
+        elif tool=='list_windows':print(json.dumps({'windows':[{'window_id':21,'title':'Synthetic native chat','is_on_screen':False,'on_current_space':False,'space_ids':[1],'bounds':{'width':1000,'height':900}}]}))
         elif tool=='end_session':print('{}')
         else:raise AssertionError('Unexpected driver mutation or snapshot: '+tool)
         sys.stdout.flush();time.sleep(0.02)
@@ -387,7 +387,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         if tool=='list_apps':print(json.dumps({'apps':[{'bundle_id':'com.openai.codex','pid':42,'running':True}]}))
         elif tool=='list_windows':
             assert a['pid']==42
-            print(json.dumps({'windows':[{'window_id':21,'title':'Synthetic native chat','is_on_screen':True,'bounds':{'width':1000,'height':900}}]}))
+            print(json.dumps({'windows':[{'window_id':21,'title':'Synthetic native chat','is_on_screen':False,'on_current_space':False,'space_ids':[1],'bounds':{'width':1000,'height':900}}]}))
         elif tool=='get_window_state':
             assert a['pid']==42 and a['window_id']==21
             state=states[s]

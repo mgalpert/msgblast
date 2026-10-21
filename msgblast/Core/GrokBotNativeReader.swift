@@ -16,25 +16,12 @@ enum GrokBotNativeReader {
         guard AXIsProcessTrusted() else {
             throw DesktopAppError.unavailable("Allow msgblast Accessibility access to connect your Grok Bot.")
         }
-        typealias WindowNumber = @convention(c) (AXUIElement, UnsafeMutablePointer<UInt32>) -> Int32
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else {
-            throw DesktopAppError.unavailable("This macOS version cannot identify Grok Bot's window.")
-        }
-        let windowNumber = unsafeBitCast(symbol, to: WindowNumber.self)
         func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
             var value: CFTypeRef?
             return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
         }
         func string(_ element: AXUIElement, _ key: String) -> String { attribute(element, key) as? String ?? "" }
-        let app = AXUIElementCreateApplication(pid_t(target.pid))
-        AXUIElementSetMessagingTimeout(app, 0.2)
-        let windows = (attribute(app, "AXWindows") as? [AXUIElement] ?? []).filter {
-            var number: UInt32 = 0
-            return windowNumber($0, &number) == AXError.success.rawValue && number == target.window
-        }
-        guard windows.count == 1 else {
-            throw DesktopAppError.unavailable("Keep Grok Bot open on this desktop and dismiss any dialogs, then refresh the bots.")
-        }
+        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw DesktopAppError.unavailable("Grok Bot's window could not be read safely. Dismiss dialogs and refresh the bots.") }
         var headings: [AXUIElement] = [], composers: [AXUIElement] = []
         var count = 0
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -51,7 +38,7 @@ enum GrokBotNativeReader {
             if role == "AXTextArea", string(element, "AXDescription") == "Prompt" { composers.append(element) }
             for child in attribute(element, "AXChildren") as? [AXUIElement] ?? [] { try walk(child, depth: depth + 1) }
         }
-        try walk(windows[0], depth: 0)
+        try walk(window, depth: 0)
         guard headings.count == 1, composers.count == 1,
               let value = attribute(composers[0], "AXValue") as? String else {
             throw DesktopAppError.unavailable("Grok Bot's selected bot or draft could not be verified.")

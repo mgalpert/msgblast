@@ -222,7 +222,8 @@ respective owners’ property and are not covered by msgblast’s GPL license.
 
 CuaDriver off-Space accessibility window lookup
 https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs
-The bounded remote-token lookup is adapted in MuseAppObservation.swift.
+The bounded remote-token lookup is adapted in DesktopNativeWindowLookup.swift
+and shared by all native app readers.
 
 MIT License
 

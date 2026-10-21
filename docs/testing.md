@@ -79,16 +79,23 @@ minimal model substitute. It verifies checks without consent, explicit Enable
 requests, denied recovery, changed access, Messages launch failure, and demo
 isolation without reading user data or requesting a real OS grant.
 
-Muse's cross-desktop regression is covered by
-`DesktopAppConversationTests.testMuseWindowLookupFindsExactWindowWhenAXWindowsOmitsAnotherDesktop`.
-It simulates an empty macOS `AXWindows` list and exercises the production lookup,
-including exact process/window identity, wrong-window rejection, and bounded
-fallback discovery. `DesktopAppDriverTests.testMuseOnboardingCheckReadsComposerWithoutInputAndKeepsAnActionableFailure`
-checks onboarding with an off-screen window and verifies that checking sends no
-input and preserves drafts. Run both test classes when changing this path.
-These fixtures do not create or switch real macOS Spaces. For an authorized live
-check, leave Muse on another desktop and connect it from msgblast; verify that
-readiness succeeds while the active desktop and Muse's draft stay unchanged.
+All seven native integrations (Muse, Grok Bot, Wabi, Gemini, ChatGPT, Dots, and
+Claude) use `DesktopNativeWindowLookup`. Its tests in `DesktopAppConversationTests`
+simulate an empty macOS `AXWindows` list, verify exact process/window identity,
+reject wrong-window/control candidates, and bound fallback discovery. Each app
+has a named `FindsOtherDesktopAndRejectsAmbiguousMainWindows` regression in
+`DesktopAppDriverTests`: an off-screen main window is accepted, helper/login
+windows are ignored, and a second main window on either desktop blocks selection.
+The native adapter executable fixtures also enumerate windows on another Space,
+covering connection checks, saved chat identity, drafts, and submission receipts.
+Run both desktop classes plus the ChatGPT, Gemini, and Claude conversation/driver
+classes (including `ChatGPTAppSubmissionTests`) when changing this shared path.
+
+These fixtures do not create or switch real macOS Spaces and inject native
+observations; they cannot prove every installed app's current AX implementation.
+For an authorized live check, leave an app on another desktop and connect it from
+msgblast; verify readiness while the active desktop and existing draft stay
+unchanged. Do not send a prompt solely to validate window discovery.
 
 ## Native UI tests and manual checks
 

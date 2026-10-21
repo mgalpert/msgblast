@@ -153,21 +153,12 @@ enum ClaudeObservationError: LocalizedError {
 enum ClaudeNativeReader {
     static func capture(_ target: DesktopAppConversation.Target) throws -> ClaudeAppObservation {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Grant msgblast Accessibility permission to verify Claude's conversation.") }
-        typealias WindowNumber = @convention(c) (AXUIElement, UnsafeMutablePointer<UInt32>) -> Int32
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else { throw DesktopAppError.unavailable("This macOS version cannot identify Claude's exact window.") }
-        let windowNumber = unsafeBitCast(symbol, to: WindowNumber.self)
         func attr(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
             var value: CFTypeRef?
             return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
         }
         func string(_ element: AXUIElement, _ key: String) -> String { attr(element, key) as? String ?? "" }
-        let app = AXUIElementCreateApplication(pid_t(target.pid))
-        AXUIElementSetMessagingTimeout(app, 0.2)
-        let windows = (attr(app, "AXWindows") as? [AXUIElement] ?? []).filter {
-            var number: UInt32 = 0
-            return windowNumber($0, &number) == AXError.success.rawValue && number == target.window
-        }
-        guard windows.count == 1 else { throw DesktopAppError.unavailable("Claude's exact main window is unavailable. Open it and try again.") }
+        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw DesktopAppError.unavailable("Claude's exact main window is unavailable. Dismiss dialogs and try again.") }
         var count = 0
         var addresses: [(AXUIElement, URL)] = []
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -195,7 +186,7 @@ enum ClaudeNativeReader {
                                 value: attr(element, "AXValue") as? String, classes: attr(element, "AXDOMClassList") as? [String] ?? [], url: url, frame: frame, focused: attr(element, "AXFocused") as? Bool ?? false,
                                 children: try (attr(element, "AXChildren") as? [AXUIElement] ?? []).map { try walk($0, depth: depth + 1) })
         }
-        let observation = try ClaudeAppObservation(root: walk(windows[0], depth: 0))
+        let observation = try ClaudeAppObservation(root: walk(window, depth: 0))
         guard addresses.count == 1, attr(addresses[0].0, "AXURL") as? URL == observation.url else { throw DesktopAppError.unavailable("Claude navigated while reading its conversation.") }
         return observation
     }

@@ -242,7 +242,7 @@ actor DesktopAppConversation {
     struct Target: Sendable, Equatable { let pid: Int; let window: Int }
     private struct AppList: Decodable, Sendable { struct App: Decodable, Sendable { let bundle_id: String; let pid: Int; let running: Bool }; let apps: [App] }
     private struct WindowList: Decodable, Sendable {
-        struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; let bounds: Bounds }
+        struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; var space_ids: [UInt64]?; let bounds: Bounds }
         let windows: [Window]
     }
     func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
@@ -343,7 +343,14 @@ actor DesktopAppConversation {
             throw DesktopAppError.unavailable("Quit extra copies of \(app.name) before connecting, so msgblast can use one account safely.")
         }
         let windows = try await call("list_windows", [:], numbers: ["pid": live.pid], as: WindowList.self)
-        let candidates = windows.windows.filter { $0.bounds.width >= 400 && $0.bounds.height >= 400 && ([DesktopAppProvider.gemini, .chatgpt, .dots, .claude].contains(app) ? $0.is_on_screen == true : !($0.title ?? "").isEmpty) && $0.title != "Log in" }
+        // Off-screen windows with a Space belong to another desktop. Hidden
+        // application helpers have neither an on-screen surface nor a Space.
+        let candidates = windows.windows.filter {
+            $0.bounds.width >= 400 && $0.bounds.height >= 400 &&
+            ($0.is_on_screen != false || !($0.space_ids ?? []).isEmpty) &&
+            ([DesktopAppProvider.gemini, .chatgpt, .dots, .claude].contains(app) || !($0.title ?? "").isEmpty) &&
+            $0.title != "Log in"
+        }
         guard candidates.count == 1, let window = candidates.first else {
             throw DesktopAppError.unavailable("Keep one main \(app.name) window open and dismiss any dialogs before connecting.")
         }

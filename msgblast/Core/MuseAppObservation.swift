@@ -152,74 +152,18 @@ struct MuseAppReceipt {
     }
 }
 
-enum MuseNativeWindowLookup {
-    static func find<Element>(pid: Int, windowID: UInt32, listed: [Element],
-                              ownerPID: () -> Int?, number: (Element) -> UInt32?,
-                              isWindow: (Element) -> Bool, remote: ((Data) -> Element?)?,
-                              now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) -> Element? {
-        guard let process = Int32(exactly: pid), process > 0, windowID > 0, ownerPID() == pid else { return nil }
-        let matches = listed.filter { isWindow($0) && number($0) == windowID }
-        if !matches.isEmpty { return matches.count == 1 ? matches.first : nil }
-        guard let remote else { return nil }
-        let deadline = now() + 0.3
-        // macOS omits other Spaces from AXWindows. Resolve only this process's
-        // exact AXWindow, using the bounded remote-token lookup also used by
-        // CuaDriver (MIT; see ThirdPartyNotices.txt).
-        for elementID in UInt64(0)..<2_000 {
-            guard now() < deadline else { return nil }
-            var process = process, zero: UInt32 = 0, magic: UInt32 = 0x636f636f, identifier = elementID
-            var token = Data()
-            withUnsafeBytes(of: &process) { token.append(contentsOf: $0) }
-            withUnsafeBytes(of: &zero) { token.append(contentsOf: $0) }
-            withUnsafeBytes(of: &magic) { token.append(contentsOf: $0) }
-            withUnsafeBytes(of: &identifier) { token.append(contentsOf: $0) }
-            if let candidate = remote(token), isWindow(candidate), number(candidate) == windowID { return candidate }
-        }
-        return nil
-    }
-}
 
 enum MuseNativeReader {
     static func capture(_ target: DesktopAppConversation.Target) throws -> MuseAppObservation {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Grant msgblast Accessibility permission to read Muse's side-chat identity and draft.") }
-        // Correlate the native AX window with the driver's exact CGWindowID.
-        // This optional macOS SPI is read-only; absence fails closed.
-        typealias WindowNumber = @convention(c) (AXUIElement, UnsafeMutablePointer<UInt32>) -> Int32
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else {
-            throw DesktopAppError.unavailable("This macOS version cannot identify Muse's exact window.")
-        }
-        let windowNumber = unsafeBitCast(symbol, to: WindowNumber.self)
-        let app = AXUIElementCreateApplication(pid_t(target.pid))
-        AXUIElementSetMessagingTimeout(app, 0.2)
         func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
             var value: CFTypeRef?
             return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
         }
         func string(_ element: AXUIElement, _ key: String) -> String { attribute(element, key) as? String ?? "" }
-        guard let requestedWindow = UInt32(exactly: target.window), requestedWindow > 0 else {
-            throw DesktopAppError.unavailable("Muse's window identity is invalid. Connect Muse again.")
-        }
-        typealias RemoteWindow = @convention(c) (CFData) -> Unmanaged<AXUIElement>?
-        let remoteSymbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementCreateWithRemoteToken")
-        let remoteWindow = remoteSymbol.map { unsafeBitCast($0, to: RemoteWindow.self) }
-        let window = MuseNativeWindowLookup.find(pid: target.pid, windowID: requestedWindow,
-            listed: attribute(app, "AXWindows") as? [AXUIElement] ?? [], ownerPID: {
-                let rows = CGWindowListCopyWindowInfo(.optionIncludingWindow, requestedWindow) as? [[String: Any]] ?? []
-                return rows.first(where: { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == requestedWindow })?[kCGWindowOwnerPID as String] as? Int
-            }, number: { candidate in
-                var number: UInt32 = 0
-                return windowNumber(candidate, &number) == AXError.success.rawValue ? number : nil
-            }, isWindow: { string($0, "AXRole") == "AXWindow" }, remote: remoteWindow.map { create in
-                { token in
-                    guard let candidate = create(token as CFData)?.takeRetainedValue() else { return nil }
-                    AXUIElementSetMessagingTimeout(candidate, 0.05)
-                    return candidate
-                }
-            })
-        guard let window else {
+        guard let window = DesktopNativeWindowLookup.resolve(target) else {
             throw DesktopAppError.unavailable("Muse's window could not be read safely. Dismiss any dialogs and connect again; no message was sent.")
         }
-        AXUIElementSetMessagingTimeout(window, 0.2)
         func windowBounds() throws -> DesktopAppSnapshot.Bounds {
             guard let position = attribute(window, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
                   let size = attribute(window, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else {
@@ -279,6 +223,8 @@ enum MuseNativeReader {
             return parameter("AXStringForRange", rangeValue) as? String
         }
         guard try url() == before, try windowBounds() == initialBounds else { throw DesktopAppError.unavailable("Muse navigated or moved while its draft was being read.") }
+        let app = AXUIElementCreateApplication(pid_t(target.pid))
+        AXUIElementSetMessagingTimeout(app, 0.2)
         let focus = attribute(app, "AXFocusedUIElement")
         let nodes = tree.descendants
         let header = nodes.first { $0.role == "AXButton" && $0.label.contains("Open chat and side chats") }?.label

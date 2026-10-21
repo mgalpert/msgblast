@@ -139,21 +139,12 @@ struct GeminiAppObservation: Sendable {
 enum GeminiNativeReader {
     static func capture(_ target: DesktopAppConversation.Target, allowingRename: Bool = false) throws -> GeminiAppObservation {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Allow msgblast Accessibility access to connect Gemini.") }
-        typealias WindowNumber = @convention(c) (AXUIElement, UnsafeMutablePointer<UInt32>) -> Int32
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else { throw DesktopAppError.unavailable("Gemini’s exact window cannot be verified on this macOS version.") }
-        let number = unsafeBitCast(symbol, to: WindowNumber.self)
         func attr(_ e: AXUIElement, _ key: String) -> CFTypeRef? {
             var value: CFTypeRef?
             return AXUIElementCopyAttributeValue(e, key as CFString, &value) == .success ? value : nil
         }
         func string(_ e: AXUIElement, _ key: String) -> String { attr(e, key) as? String ?? "" }
-        let app = AXUIElementCreateApplication(pid_t(target.pid))
-        AXUIElementSetMessagingTimeout(app, 0.2)
-        let windows = (attr(app, "AXWindows") as? [AXUIElement] ?? []).filter {
-            var value: UInt32 = 0
-            return number($0, &value) == AXError.success.rawValue && value == target.window
-        }
-        guard windows.count == 1 else { throw GeminiObservationError.transient("Gemini’s exact window is unavailable for background control. Open its main window and check again.") }
+        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw GeminiObservationError.transient("Gemini’s exact window is unavailable for background control. Dismiss dialogs and check again.") }
         var count = 0
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         func walk(_ e: AXUIElement, depth: Int, parentRole: String = "") throws -> GeminiAXNode {
@@ -177,6 +168,6 @@ enum GeminiNativeReader {
                          id: string(e, "AXIdentifier"), selected: attr(e, "AXSelected") as? Bool == true,
                          enabled: attr(e, "AXEnabled") as? Bool != false, selectedText: attr(e, "AXSelectedText") as? String, frame: frame, children: children)
         }
-        return try GeminiAppObservation(root: walk(windows[0], depth: 0), allowingRename: allowingRename)
+        return try GeminiAppObservation(root: walk(window, depth: 0), allowingRename: allowingRename)
     }
 }

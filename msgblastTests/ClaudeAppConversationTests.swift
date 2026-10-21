@@ -195,7 +195,7 @@ final class ClaudeAppDriverTests: XCTestCase {
         if tool=='list_apps':print(json.dumps({'apps':[{'bundle_id':'com.anthropic.claudefordesktop','pid':42,'running':True}]}))
         elif tool=='list_windows':
             assert a['pid']==42
-            print(json.dumps({'windows':[{'window_id':21,'title':'Claude','is_on_screen':True,'bounds':{'width':1000,'height':900}}]}))
+            print(json.dumps({'windows':[{'window_id':21,'title':'Claude','is_on_screen':False,'on_current_space':False,'space_ids':[1],'bounds':{'width':1000,'height':900}}]}))
         elif tool=='launch_app':
             assert s==4
             assert a['bundle_id']=='com.anthropic.claudefordesktop'
