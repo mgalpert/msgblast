@@ -83,8 +83,9 @@ struct OnboardingPermissionsView: View {
                 if let message = messages.message ?? apps.message ?? guide.message {
                     Text(message).font(.caption).foregroundStyle(.orange).lineLimit(2)
                 }
-                Link("Open source", destination: URL(string: "https://github.com/mgalpert/msgblast")!)
-                    .font(.callout)
+                Text("msgblast is [open source](https://github.com/mgalpert/msgblast). Feel free to inspect how we use this information.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16).frame(maxWidth: 680, alignment: .leading)
             .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 16))
