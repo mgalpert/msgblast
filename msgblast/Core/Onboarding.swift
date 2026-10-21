@@ -148,6 +148,10 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         if apps { sections.insert(.apps) }
         approvedPermissionSections = sections
         permissionsCompleted = true
+        // This legacy picker is hidden now that Messages agents are discovered
+        // automatically. Without Messaging access it cannot remain an invisible
+        // selected prerequisite. Keep its saved agent identity and discovery data.
+        if !messaging { selected.remove(.otherMessages) }
         connector = nil
         connectorStartCompleted = true
         prerequisitesCompleted = true

@@ -2,6 +2,19 @@ import XCTest
 @testable import msgblastCore
 
 final class OnboardingTests: XCTestCase {
+    func testAppsOnlyPermissionSetupDropsHiddenLegacyMessagesChoiceWithoutDeletingAgents() throws {
+        let agentID = UUID()
+        var setup = OnboardingState()
+        setup.selected = [.wabi, .otherMessages]
+        setup.messageAgentIDs = ["otherMessages": agentID]
+        setup.discoveredMessageAgentIDs = [agentID]
+        XCTAssertTrue(setup.completePermissions(messaging: false, apps: true))
+        let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(setup))
+        XCTAssertEqual(restored.selected, [.wabi], "An invisible legacy choice must not disable Continue")
+        XCTAssertEqual(restored.messageAgentIDs["otherMessages"], agentID)
+        XCTAssertEqual(restored.discoveredMessageAgentIDs, [agentID])
+    }
+
     func testOnboardingOffersNativeAppsAndRetainsLegacyWebCheckpoints() throws {
         let offered = Set(OnboardingChoice.offeredChoices)
         for choice: OnboardingChoice in [.muse, .chatgpt, .claude, .dots, .grok] { XCTAssertFalse(offered.contains(choice)) }
