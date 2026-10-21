@@ -80,7 +80,12 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         return (Int(x), Int(y))
     }
 
-    var body: ArraySlice<Element> { elements.prefix { $0.role != "AXMenuBar" } }
+    var body: ArraySlice<Element> {
+        // The embedded driver can return the application menu before the exact
+        // window. Keep only that window's section, never menu controls.
+        let start = elements.firstIndex { $0.role == "AXWindow" } ?? elements.startIndex
+        return ArraySlice(elements[start...].prefix { $0.role != "AXMenuBar" })
+    }
     func checkReadable() throws {
         // 0.22 reports elements_complete=false even for an untruncated walk.
         // Require the returned-count contract and the app-specific sentinels instead.

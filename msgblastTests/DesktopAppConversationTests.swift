@@ -195,6 +195,29 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try snapshot.conversation(app: .grokBot))
     }
 
+    func testMenuFirstSnapshotKeepsWindowComposerAndExcludesMenuControls() throws {
+        let menu: [[String: Any]] = [
+            ["role": "AXMenuBar", "element_index": 0],
+            ["role": "AXTextArea", "label": "Prompt", "element_index": 1, "parent_index": 0],
+            ["role": "AXHeading", "label": "Wrong bot", "element_index": 2, "parent_index": 0]
+        ]
+        let window: [[String: Any]] = [
+            ["role": "AXWindow", "element_index": 11],
+            ["role": "AXHeading", "label": "Test Bot", "element_index": 12, "parent_index": 11],
+            ["role": "AXTextArea", "label": "Prompt", "element_token": "snapshot:13", "element_index": 13, "parent_index": 11]
+        ]
+        for elements in [menu + window, window + menu] {
+            let snapshot = try JSONDecoder().decode(DesktopAppSnapshot.self, from: JSONSerialization.data(withJSONObject: [
+                "elements": elements, "total_element_count": elements.count, "returned_element_count": elements.count
+            ]))
+            XCTAssertEqual(try snapshot.conversation(app: .grokBot), "Test Bot")
+            XCTAssertEqual(try snapshot.composer(app: .grokBot).element.element_token, "snapshot:13")
+            XCTAssertEqual(snapshot.body.first?.role, "AXWindow")
+        }
+        let menuOnly = try JSONDecoder().decode(DesktopAppSnapshot.self, from: JSONSerialization.data(withJSONObject: ["elements": menu]))
+        XCTAssertThrowsError(try menuOnly.checkReadable())
+    }
+
     func testWabiThreadOwnershipIsImmutableUniqueAndCompatibleWithOlderState() throws {
         let first = UUID(), second = UUID()
         let url = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
@@ -944,7 +967,7 @@ final class DesktopAppDriverTests: XCTestCase {
             let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", refusal)])
             defer { fixture.remove() }
             let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
-            XCTAssertTrue(error.contains("refused type_text"), error)
+            XCTAssertTrue(error.contains("App control refused this request"), error)
             let calls = try await finishedCalls(fixture)
             XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
             XCTAssertFalse(calls.contains { $0.tool == "click" })
