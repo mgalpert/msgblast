@@ -553,13 +553,11 @@ final class AppModel: ObservableObject {
         selectWorkspace(id)
         state.selection = Set(comparison.members.map(\.id))
         webAgents.restoreSelection(forAgentIDs: comparison.resolvedWebAgentIDs)
-        webAgents.connectSelected()
         if present { webComparisonRequest = UUID() }
-        for session in webAgents.selected {
-            Task {
-                guard webAgents.comparisonID == id else { return }
-                await session.openComparison(id)
-            }
+        let sessions = webAgents.selected
+        Task {
+            guard webAgents.comparisonID == id else { return }
+            await webAgents.prepareComparison(id, for: sessions)
         }
     }
     @discardableResult

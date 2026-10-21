@@ -10,7 +10,7 @@ struct CuaPermissionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Desktop app control").font(.headline)
-            Text("Cua lets you chat with Muse App, Grok Bot App, Wabi and Gemini in the background. These optional permissions are separate from Messages access.")
+            Text("Cua lets you chat with installed Mac apps in the background. These optional permissions are separate from Messages access.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Label(permissions.installed ? "Cua driver installed" : "Cua driver required", systemImage: permissions.installed ? "checkmark.circle" : "arrow.down.circle")
@@ -28,7 +28,7 @@ struct CuaPermissionsView: View {
                     if permissions.driverAccessibility == .allowed { permissions.openSettings("Privacy_Accessibility", demo: demo) }
                     else { Task { await permissions.enableDriver(demo: demo) } }
                 }
-                row("CuaDriver Screen Recording", benefit: "Capture Muse's window to reopen and focus saved side chats.", status: permissions.windowCapture, identifier: "cua-capture") {
+                row("CuaDriver Screen Recording", benefit: "Capture the selected app window to focus Muse, ChatGPT, Dots, and Claude message fields.", status: permissions.windowCapture, identifier: "cua-capture") {
                     if permissions.windowCapture == .allowed { permissions.openSettings("Privacy_ScreenCapture", demo: demo) }
                     else { Task { await permissions.enableDriver(demo: demo) } }
                 }

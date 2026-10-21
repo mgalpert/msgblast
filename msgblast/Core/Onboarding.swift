@@ -1,7 +1,7 @@
 import Foundation
 
 public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Sendable, Hashable {
-    case chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, geminiApp, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
+    case chatgptApp, dotsApp, claudeApp, chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, geminiApp, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
 
     public var id: String { rawValue }
     public var name: String {
@@ -18,6 +18,9 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
     }
     public var provider: WebProvider? {
         switch self {
+        case .chatgptApp: .chatgptApp
+        case .dotsApp: .dotsApp
+        case .claudeApp: .claudeApp
         case .chatgpt: .chatgpt
         case .claude: .claude
         case .grokbot: .grokbot

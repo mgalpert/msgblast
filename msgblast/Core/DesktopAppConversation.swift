@@ -2,9 +2,17 @@ import Foundation
 import ImageIO
 
 public enum DesktopAppProvider: String, Codable, Sendable {
-    case muse, grokBot, wabi, gemini
-    public var name: String { switch self { case .muse: "Muse"; case .grokBot: "Grok Bot"; case .wabi: "Wabi"; case .gemini: "Gemini" } }
-    var bundleID: String { switch self { case .muse: "com.meta.endo"; case .grokBot: "com.anysphere.sand"; case .wabi: "ai.wabi.desktop"; case .gemini: "com.google.GeminiMacOS" } }
+    case muse, grokBot, wabi, gemini, chatgpt, dots, claude
+    public var name: String { switch self { case .muse: "Muse"; case .grokBot: "Grok Bot"; case .wabi: "Wabi"; case .gemini: "Gemini"; case .chatgpt: "ChatGPT"; case .dots: "Dots"; case .claude: "Claude" } }
+    var bundleIDs: [String] { switch self {
+        case .muse: ["com.meta.endo"]
+        case .grokBot: ["com.anysphere.sand"]
+        case .wabi: ["ai.wabi.desktop"]
+        case .gemini: ["com.google.GeminiMacOS"]
+        case .chatgpt, .dots: ["com.openai.codex", "com.openai.chat"]
+        case .claude: ["com.anthropic.claudefordesktop"]
+    } }
+    var bundleID: String { bundleIDs[0] }
 }
 
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {
@@ -97,8 +105,8 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             if headers.count == 1, let name = headers[0].label, !name.isEmpty { return name }
             guard headings.count == 1 else { throw DesktopAppError.unavailable("Open one Grok Bot conversation before connecting.") }
             return headings[0]
-        case .gemini:
-            throw DesktopAppError.unavailable("Gemini requires its dedicated conversation adapter.")
+        case .gemini, .chatgpt, .dots, .claude:
+            throw DesktopAppError.unavailable("This app requires its dedicated conversation adapter.")
         case .muse:
             // The Muse heading is shared by its main chat and every side chat.
             throw DesktopAppError.unavailable("Muse requires a tracked side-chat binding. Connect Muse through its dedicated side-chat adapter.")
@@ -328,11 +336,11 @@ actor DesktopAppConversation {
     }
     func target(_ app: DesktopAppProvider) async throws -> Target {
         let apps = try await call("list_apps", [:], as: AppList.self)
-        guard let live = apps.apps.first(where: { $0.bundle_id == app.bundleID && $0.running }) else {
+        guard let live = app.bundleIDs.compactMap({ bundle in apps.apps.first { $0.bundle_id == bundle && $0.running } }).first else {
             throw DesktopAppError.unavailable(app == .grokBot ? "Open Grok Bot and sign in, then choose your bot in msgblast." : "Open \(app.name), sign in, and select its conversation first.")
         }
         let windows = try await call("list_windows", [:], numbers: ["pid": live.pid], as: WindowList.self)
-        let candidates = windows.windows.filter { $0.bounds.width >= 400 && $0.bounds.height >= 400 && (app == .gemini ? $0.is_on_screen == true : !($0.title ?? "").isEmpty) && $0.title != "Log in" }
+        let candidates = windows.windows.filter { $0.bounds.width >= 400 && $0.bounds.height >= 400 && ([DesktopAppProvider.gemini, .chatgpt, .dots, .claude].contains(app) ? $0.is_on_screen == true : !($0.title ?? "").isEmpty) && $0.title != "Log in" }
         guard candidates.count == 1, let window = candidates.first else {
             throw DesktopAppError.unavailable("Keep one main \(app.name) window open and dismiss any dialogs before connecting.")
         }
@@ -344,7 +352,7 @@ actor DesktopAppConversation {
         return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
     func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding) async throws -> String {
-        guard app != .wabi && app != .gemini else { throw DesktopAppError.unavailable("Wabi requires a dedicated chat for each comparison.") }
+        guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("Wabi requires a dedicated chat for each comparison.") }
         guard occupied.insert(app).inserted else { throw DesktopAppError.unavailable("\(app.name) is already handling a request.") }
         defer { occupied.remove(app) }
         let session = "msgblast-send-\(UUID().uuidString)"

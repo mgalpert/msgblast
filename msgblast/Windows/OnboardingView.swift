@@ -164,7 +164,7 @@ struct OnboardingView: View {
     }
 
     private func connectorArtwork(_ connector: OnboardingConnector) -> some View {
-        let choices: [OnboardingChoice] = connector == .messages ? [.fo, .instinct, .poke, .szn] : connector == .apps ? [.geminiApp, .museApp, .wabi, .grokBotApp] : [.codexCLI, .claudeCode, .openclaw, .hermes]
+        let choices: [OnboardingChoice] = connector == .messages ? [.fo, .instinct, .poke, .szn] : connector == .apps ? [.chatgptApp, .claudeApp, .dotsApp, .geminiApp] : [.codexCLI, .claudeCode, .openclaw, .hermes]
         return ZStack {
             Circle().stroke(.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4])).frame(width: 156, height: 156)
             if connector == .messages {
@@ -270,10 +270,13 @@ struct OnboardingView: View {
                         }
                     }
                 }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                    ForEach(OnboardingChoice.allCases.sorted { ($0.provider?.desktopApp != nil ? 0 : 1) < ($1.provider?.desktopApp != nil ? 0 : 1) }.filter { !$0.isMessages && (setup.state.connector?.includes($0) ?? true) }) { choice in
-                        choiceButton(choice)
-                    }
+                if setup.state.connector == .apps {
+                    Text("Mac apps").font(.headline)
+                    choiceGrid(OnboardingChoice.allCases.filter { $0.provider?.desktopApp != nil })
+                    Text("Websites").font(.headline)
+                    choiceGrid(OnboardingChoice.allCases.filter { OnboardingConnector.apps.includes($0) && $0.provider?.desktopApp == nil })
+                } else {
+                    choiceGrid(OnboardingChoice.allCases.filter { !$0.isMessages && (setup.state.connector?.includes($0) ?? true) })
                 }
                 Button("Add other agents") { setup.edit { $0.connectorStartCompleted = false } }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -282,6 +285,12 @@ struct OnboardingView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(28).frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func choiceGrid(_ choices: [OnboardingChoice]) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+            ForEach(choices) { choice in choiceButton(choice) }
+        }
     }
 
     private func choiceButton(_ choice: OnboardingChoice) -> some View {

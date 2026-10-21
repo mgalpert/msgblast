@@ -1,6 +1,6 @@
 # Desktop app conversations
 
-Muse App, Grok Bot App, Wabi, and Gemini are optional agents with msgblast's native
+Muse App, Grok Bot App, Wabi, Gemini, ChatGPT App, Dots App, and Claude App are optional agents with msgblast's native
 conversation pane. They use an independently installed `cua-driver` command.
 The Muse website, Grok Bot webhook, and CLI agents retain their own accounts,
 state files, histories, and execution paths.
@@ -16,10 +16,10 @@ state files, histories, and execution paths.
 2. Install the desktop app on this Mac and sign in. Onboarding labels each app
    **Installed on this Mac** or **Not installed** before it can be selected.
    Settings also checks installation before allowing an app to be enabled.
-   If it is installed but closed, **Open Muse**, **Open Grok Bot**, **Open Wabi**, or **Open Gemini**
+   If it is installed but closed, the app's **Open** button
    opens it normally. Keep one main window on the current desktop and dismiss
    dialogs. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
-3. Choose Muse App, Grok Bot App, Wabi or Gemini during **Apps** onboarding, or add it
+3. Choose a native app during **Apps** onboarding, or add it
    from **More agents**. Onboarding shows the same permission controls before
    connection. For Muse, choose **Check Muse connection**. For Wabi, choose
    **Check connection**. For Grok Bot App, choose a bot from the **Bot** menu in
@@ -145,6 +145,46 @@ adapter update after Wabi changes its UI.
 An old comparison with Wabi history but no saved thread stays preserved and
 blocked: start a new comparison to get a dedicated chat. Onboarding's check is
 read-only and never creates a chat or sends a test prompt.
+
+## ChatGPT, Dots, and Claude native apps
+
+ChatGPT App, Dots App, and Claude App use the installed Mac applications and
+separate saved state from their website accounts. The installed ChatGPT
+26.1013.40934 app (com.openai.codex) contains both ChatGPT and Dots. The older
+com.openai.chat bundle is detected as installed, but its different native UI
+is not yet supported by this adapter. Connection checks refuse unsupported layouts.
+
+Starting or explicitly reopening a conversation opens a closed installed app
+once and waits for its main window. A direct first send follows the same path.
+Already running apps are reused when their main window is available; starting a
+conversation reopens an app whose window is closed or on another Space. Native
+app requests run in sequence so window launches do not compete for the active
+desktop. Website requests can run in parallel. Polling, onboarding checks, and selecting a
+blank draft do not launch apps. First-time sign-in stays in the native app.
+If launch or readiness fails, no prompt is submitted and the draft stays saved.
+
+Each ChatGPT and Claude comparison gets a dedicated chat. The first native
+prompt includes a comparison reference while the local transcript keeps the
+original prompt. Pending ownership is saved before typing; an uncertain first
+send is never replayed or replaced automatically. ChatGPT saves the verified first
+message and native title before attempting its dedicated title. If renaming fails,
+the completed answer is retained and the original title can reopen the same chat.
+Reopening always verifies the comparison reference. Claude saves the canonical native chat address as soon as its outgoing
+message is observed and reopens it through Claude’s native URI handler. Both
+verify the saved first message before follow-ups.
+
+Dots continues the account’s existing dot. Its native app exposes no separate
+new-chat action. Each comparison’s first prompt carries a reference, and follow-ups
+require that reference in the observed dot history. msgblast never renames,
+reboots, deletes, or approves actions for the dot. An unavailable reference or
+changed dot identity blocks input until the saved context can be verified.
+
+Native controls select the intended chat; the native accessibility tree verifies
+sender boundaries, draft values, and ownership. Embedded browser tabs and app
+content are excluded from ChatGPT’s transcript. Screen Recording lets Cua focus
+these Electron message fields from fresh window geometry. Existing drafts and
+active replies are preserved. Model choices remain those selected in the native
+app. Unknown input outcomes are inspected without replaying the action.
 
 ## Gemini Chat and Task
 
@@ -292,12 +332,40 @@ The chooser exposed **Contacts on Wabi** rather than the earlier **Suggested**
 heading; contact suggestions do not identify the New chat action. These local
 checks used the current adapter source, not a distributed app build.
 
+On October 21, 2026, local checks of the actual adapters against ChatGPT
+26.1013.40934 (`com.openai.codex`) created a dedicated chat, observed the exact
+fixed response, saved its dedicated title, and reopened it from the Dots view for
+an unprefixed follow-up. Dots verified the account's existing dot, retained the
+first comparison reference, and observed a fixed-response follow-up. Its native
+rendered paragraphs require separate paragraph boundaries, and older history
+can load above the unchanged observed baseline after sending. Claude 3.1623.0
+created a dedicated conversation, saved its canonical address, and reopened it
+from a blank chat through its native URI handler before observing a follow-up.
+Foreground access was authorized for these checks; other-Space background access
+was not established. These were adapter harness checks using live native apps,
+not validation of a distributed msgblast build or fresh macOS permission grants.
+
 The driver's `elements_complete` flag was false even for full walks in 0.22.1.
 The adapter checks returned/total counts and app-specific sentinels instead.
 Demo simulates replies without starting the driver or contacting any app. Live
 probe captures include private account information and are not public PR media.
 
 ## Automated regression coverage
+
+`ChatGPTAppConversationTests` and `ChatGPTAppSubmissionTests` cover sender
+boundaries, semantic headings, native paragraph spacing, exact chunked input,
+transient observations, saved-title reopening (including zero-height sidebar
+rows), failed-rename recovery, immutable fallback ownership, and Dots history
+loading without accepting interleaved or extra new messages. `ClaudeAppConversationTests`
+and `ClaudeAppDriverTests` cover canonical URLs, native URI resume, rich draft
+refusal, paragraph boundaries, interrupted sends, and one-shot submission.
+`NativeDesktopStateTests` covers migration, separate provider state, immutable
+bindings, fixture reloads, shared ChatGPT/Dots installation reuse, and sequential
+native preparation. `DesktopAppInstallationTests` holds launches across quick
+selections and comparison changes to prove that abandoned work cannot reopen or
+submit into another comparison. Controller fixtures exercise the actual AppModel
+and LocalStore restoring all three native providers. These are simulated inputs;
+the live checks above establish compatibility only with the observed app versions.
 
 `GeminiAppConversationTests` covers native Chat/Task boundaries, progress and
 usage-notice exclusion, actual draft values, legacy state, immutable ownership,

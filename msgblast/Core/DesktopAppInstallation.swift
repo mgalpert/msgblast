@@ -13,7 +13,7 @@ public struct DesktopAppInstallation: Equatable, Sendable {
     }
 
     static func validatedURL(_ url: URL?, for app: DesktopAppProvider) -> URL? {
-        guard let url, let bundle = Bundle(url: url), bundle.bundleIdentifier == app.bundleID,
+        guard let url, let bundle = Bundle(url: url), bundle.bundleIdentifier.map(app.bundleIDs.contains) == true,
               let executable = bundle.executableURL, FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
         return url
     }
@@ -25,8 +25,9 @@ struct DesktopAppInstallationClient: Sendable {
 
     static var system: Self {
         .init(inspect: { app in
-            let running = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleID).first { !$0.isTerminated }
-            return .resolve(for: app, registeredURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleID),
+            let running = app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }.first { !$0.isTerminated }
+            let registered = app.bundleIDs.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first { DesktopAppInstallation.validatedURL($0, for: app) != nil }
+            return .resolve(for: app, registeredURL: registered,
                             runningURL: running?.bundleURL, processID: running?.processIdentifier)
         }, open: { url in
             let configuration = NSWorkspace.OpenConfiguration()

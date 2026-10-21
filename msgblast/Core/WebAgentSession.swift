@@ -96,6 +96,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
     private let museApp: MuseAppConversation
+    private let claudeApp: ClaudeAppConversation
+    private let chatgptApp: ChatGPTAppConversation
+    private var chatgptKind: ChatGPTAppKind? { provider == .chatgptApp ? .chatgpt : provider == .dotsApp ? .dots : nil }
     private let geminiApp: GeminiAppConversation
     @Published public private(set) var geminiOptions = GeminiOptions()
     private var geminiConfigurationError: String?
@@ -141,8 +144,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
         self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
     }
-    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation = .shared, geminiApp: GeminiAppConversation = .shared) {
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation = .shared, geminiApp: GeminiAppConversation = .shared, claudeApp: ClaudeAppConversation = .shared, chatgptApp: ChatGPTAppConversation = .shared) {
         self.museApp = museApp
+        self.claudeApp = claudeApp
+        self.chatgptApp = chatgptApp
         self.geminiApp = geminiApp
         self.wabiApp = wabiApp
         self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
@@ -475,6 +480,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider.desktopApp != nil {
             if fixture { return "Simulated desktop app · no app contacted" }
             switch provider {
+            case .chatgptApp: return "ChatGPT app · Dedicated chat"
+            case .claudeApp: return "Claude app · Dedicated chat"
+            case .dotsApp: return "ChatGPT app · Your continuing dot"
             case .museApp: return "Muse app · Side chat"
             case .geminiApp: return "Gemini · Dedicated \(geminiPreferences.mode.name.lowercased())"
             case .wabi: return "Wabi · Dedicated chat"
@@ -497,8 +505,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         connect(automaticallyRefresh: !provider.usesNativeConversation)
         if provider.usesNativeConversation {
+            if provider.desktopApp != nil, id != nil {
+                do { try await launchDesktopAppForConversation() }
+                catch is CancellationError { return false }
+                catch { self.error = error.localizedDescription; return false }
+            }
             await refresh()
             if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
+            if snapshot.ready { await prepareAdditionalDesktopConversation() }
             return snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
         }
         do {
@@ -1146,6 +1160,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public var desktopConnectionConfirmation: String? {
         guard isReadyForOnboarding, desktopReady, let app = provider.desktopApp, let binding = state.desktopConversation else { return nil }
+        if app == .dots { return "Your comparisons continue your existing dot in the ChatGPT Mac app. This check didn’t send a message." }
+        if app == .chatgpt || app == .claude { return "Each comparison gets its own \(app.name) chat. msgblast opens the installed app when a conversation starts. This check didn’t send a message." }
         if app == .gemini { return "Each comparison gets its own Gemini conversation. Choose Chat or Task, model, and available thinking level here. This check didn’t send a message." }
         if app == .wabi { return "Your first prompt in a new comparison starts a dedicated AI chat in Wabi. Follow-ups stay in that chat. This check didn’t send a message." }
         if app == .grokBot { return "Messages go to “\(binding.name)” in Grok Bot, using that bot’s existing chat. No message was sent." }
@@ -1211,6 +1227,93 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
     }
 
+    private func launchDesktopAppForConversation() async throws {
+        guard let app = provider.desktopApp else { return }
+        try Task.checkCancellation()
+        guard isEnabled, !storageFailed, !shuttingDown else { throw CancellationError() }
+        guard !loading else { throw WebSessionFailure.notReady("Wait for the app connection check to finish before starting a conversation.") }
+        refreshDesktopInstallation()
+        if desktopInstallation.isRunning, fixture { return }
+        guard let url = desktopInstallation.url else { throw WebSessionFailure.notReady(desktopStatus) }
+        let generation = comparisonGeneration
+        func checkCurrent() throws {
+            try Task.checkCancellation()
+            guard !shuttingDown, isEnabled, comparisonGeneration == generation else { throw CancellationError() }
+        }
+        loading = true
+        desktopStatus = "Opening \(app.name)…"
+        updateNativeSnapshot()
+        defer { loading = false }
+        do {
+            if desktopInstallation.isRunning {
+                do {
+                    _ = try await desktopDriver.target(app)
+                    try checkCurrent()
+                    return
+                } catch is CancellationError { throw CancellationError() }
+                catch { try checkCurrent() }
+            }
+            try await desktopApps.open(url)
+            try checkCurrent()
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            repeat {
+                refreshDesktopInstallation()
+                if desktopInstallation.isRunning {
+                    if fixture { return }
+                    do {
+                        _ = try await desktopDriver.target(app)
+                        try checkCurrent()
+                        return
+                    } catch is CancellationError { throw CancellationError() }
+                    catch { /* Window creation may lag behind the process launch. */ }
+                }
+                try checkCurrent()
+                guard ContinuousClock.now < deadline else { break }
+                try await Task.sleep(for: .milliseconds(200))
+            } while true
+            throw WebSessionFailure.notReady("\(app.name) opened, but its main window is not ready. Finish signing in or dismiss any dialogs, then try again.")
+        } catch {
+            try checkCurrent()
+            desktopStatus = error.localizedDescription
+            updateNativeSnapshot()
+            throw error
+        }
+    }
+
+    private func recordClaudeSubmission(_ binding: ClaudeConversationBinding) throws {
+        try state.recordClaudeBinding(binding)
+        try save()
+    }
+    private func recordChatGPTSubmission(_ binding: ChatGPTConversationBinding) throws {
+        try state.recordChatGPTBinding(binding)
+        try save()
+    }
+    private func prepareAdditionalDesktopConversation() async {
+        guard provider == .claudeApp || chatgptKind != nil, let comparison = state.comparisonID,
+              !loading, !shuttingDown else { return }
+        let generation = comparisonGeneration
+        loading = true
+        defer { loading = false }
+        do {
+            if provider == .claudeApp {
+                let saved = try state.claudeBinding(for: comparison)
+                let prepared = fixture ? saved ?? .init(comparisonID: comparison) : try await claudeApp.prepare(comparisonID: comparison, binding: saved)
+                guard !shuttingDown, comparisonGeneration == generation else { throw CancellationError() }
+                try recordClaudeSubmission(prepared)
+            } else if let kind = chatgptKind {
+                let saved = try state.chatgptBinding(for: comparison, kind: kind)
+                let prepared = fixture ? saved ?? .init(comparisonID: comparison, kind: kind) : try await chatgptApp.prepare(comparisonID: comparison, kind: kind, binding: saved)
+                guard !shuttingDown, comparisonGeneration == generation else { throw CancellationError() }
+                try recordChatGPTSubmission(prepared)
+            }
+        } catch {
+            desktopReady = false
+            desktopStatus = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+        updateNativeSnapshot()
+    }
+
     public func connectDesktopConversation(botName: String? = nil) async {
         guard let app = provider.desktopApp, !isSending, !storageFailed, !loading, !shuttingDown else { return }
         refreshDesktopInstallation()
@@ -1238,6 +1341,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if app == .muse {
                 if !fixture { try await museApp.checkAvailable() }
                 binding = DesktopConversationBinding(name: "Muse")
+            } else if app == .claude {
+                if !fixture { try await claudeApp.checkAvailable() }
+                binding = .init(name: "Claude")
+            } else if let kind = chatgptKind {
+                if !fixture { try await chatgptApp.checkAvailable(kind: kind) }
+                binding = .init(name: app.name)
             } else if app == .gemini {
                 if !fixture { try await geminiApp.checkAvailable() }
                 binding = .init(name: "Gemini")
@@ -1272,6 +1381,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard desktopInstallation.isRunning else { updateNativeSnapshot(); return }
         if let binding = state.desktopConversation {
             do {
+                if app == .claude || chatgptKind != nil {
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous native app request before continuing.") }
+                    if let comparison = state.comparisonID {
+                        if app == .claude {
+                            let saved = try state.claudeBinding(for: comparison)
+                            guard saved?.firstPrompt == nil || saved?.url != nil else { throw WebSessionFailure.notReady("Claude’s first submission was interrupted. Review it before starting a new comparison.") }
+                            guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("Claude’s history has no tracked native chat. Start a new comparison; its history was preserved.") }
+                        } else if let kind = chatgptKind {
+                            let saved = try state.chatgptBinding(for: comparison, kind: kind)
+                            guard saved?.firstPrompt == nil || saved?.title != nil else { throw WebSessionFailure.notReady("The first native ChatGPT submission was interrupted. Review it before starting a new comparison.") }
+                            guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("This history has no tracked native chat. Start a new comparison; its history was preserved.") }
+                        }
+                    }
+                    if !fixture {
+                        if app == .claude { try await claudeApp.checkAvailable() }
+                        else if let kind = chatgptKind { try await chatgptApp.checkAvailable(kind: kind) }
+                    }
+                    desktopReady = true
+                    desktopStatus = app == .dots ? "Your continuing dot is ready · background input" : "\(app.name) ready · dedicated chat · background input"
+                    updateNativeSnapshot()
+                    return
+                }
                 if app == .gemini {
                     if let geminiConfigurationError { throw WebSessionFailure.notReady(geminiConfigurationError) }
                     guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous Gemini request before navigating.") }
@@ -1397,11 +1528,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        if provider.desktopApp != nil {
-            guard !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
-            refreshDesktopInstallation()
-            guard desktopInstallation.isRunning else { error = desktopStatus; return nil }
-        }
+        guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: id) else {
             error = "An earlier request did not complete. Review it before explicitly allowing another request; usage may have been consumed."
@@ -1411,6 +1538,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         requestCancelled = false
         defer { nativeRequest = nil; isSending = false }
         error = nil
+        if provider.desktopApp != nil {
+            do {
+                try await launchDesktopAppForConversation()
+                guard !requestCancelled else { throw CancellationError() }
+            } catch is CancellationError { return nil }
+            catch { self.error = error.localizedDescription; return nil }
+        }
         var attempt = WebSendAttempt(text: text)
         attempt.comparisonID = id
         updateState { $0.comparisonID = id }
@@ -1438,12 +1572,25 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let museBinding = provider == .museApp ? try state.museAppBinding(for: id) : nil
             var geminiBinding: GeminiConversationBinding?
             let geminiPreferences = self.geminiPreferences
+            let claudeBinding = provider == .claudeApp ? try state.claudeBinding(for: id) ?? ClaudeConversationBinding(comparisonID: id) : nil
+            let nativeKind = chatgptKind
+            let chatgptBinding = try nativeKind.map { try state.chatgptBinding(for: id, kind: $0) ?? ChatGPTConversationBinding(comparisonID: id, kind: $0) }
             if provider == .geminiApp {
                 geminiBinding = try state.geminiBinding(for: id) ?? GeminiConversationBinding(comparisonID: id, mode: geminiPreferences.mode)
             }
-            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp] in
+            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
+                    if var saved = claudeBinding {
+                        saved.firstPrompt = saved.firstPrompt ?? saved.firstMessage(text)
+                        saved.url = saved.url ?? URL(string: "https://claude.ai/chat/\(UUID().uuidString.lowercased())")!
+                        try self.recordClaudeSubmission(saved)
+                    }
+                    if var saved = chatgptBinding {
+                        saved.firstPrompt = saved.firstPrompt ?? saved.firstMessage(text)
+                        saved.title = saved.title ?? (saved.kind == .dots ? "Simulated dot" : saved.dedicatedTitle)
+                        try self.recordChatGPTSubmission(saved)
+                    }
                     if provider == .museApp {
                         let simulated = MuseSideChatBinding(comparisonID: id, threadID: museBinding?.threadID ?? UUID(), title: "Simulated side chat")
                         try self.recordMuseAppSubmission(simulated, attemptID: attempt.id)
@@ -1482,6 +1629,26 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     }
                     return PersonalAgentReply(text: answer, sessionID: "Dedicated Gemini conversation")
                 }
+                if let saved = claudeBinding {
+                    let answer = try await claudeApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordClaudeSubmission(pending)
+                    }, onBinding: { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordClaudeSubmission(discovered)
+                    })
+                    return PersonalAgentReply(text: answer, sessionID: "Dedicated Claude chat")
+                }
+                if let saved = chatgptBinding {
+                    let answer = try await chatgptApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordChatGPTSubmission(pending)
+                    }, onBinding: { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordChatGPTSubmission(discovered)
+                    })
+                    return PersonalAgentReply(text: answer, sessionID: saved.kind == .dots ? "Your continuing dot" : "Dedicated ChatGPT chat")
+                }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
                     return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding), sessionID: binding.name)
@@ -1496,6 +1663,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider.desktopApp == nil { state.recordLocalSession(answer.sessionID, for: id) }
             if state.draft == text { state.draft = "" }
             state.localDrafts[id.uuidString] = state.draft
+            if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
                 attempt.recoveryConversationURL = state.attempts.first { $0.id == attempt.id }?.recoveryConversationURL
@@ -1504,6 +1672,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.detail = fixture ? "Simulated reply. No app, local CLI or provider was contacted." : provider.desktopApp != nil ? "Reply text observed in the background and stable for three seconds. The app may continue working." : "Completed reply from the local CLI."
             try store(attempt)
         } catch {
+            if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
                 attempt.recoveryConversationURL = state.attempts.first { $0.id == attempt.id }?.recoveryConversationURL

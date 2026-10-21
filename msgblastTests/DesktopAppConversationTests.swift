@@ -654,7 +654,7 @@ final class DesktopAppDriverTests: XCTestCase {
         defer { fixture.remove() }
         let file = fixture.directory.appendingPathComponent("state.json")
         let owner = UUID()
-        let session = WebAgentSession(provider: .wabi, storageURL: file, fixture: false, museApp: .shared, desktopApps: .demo, wabiApp: wabiAdapter(fixture))
+        let session = WebAgentSession(provider: .wabi, storageURL: file, fixture: false, museApp: .shared, desktopApps: .demo, wabiApp: wabiAdapter(fixture), desktopDriver: try readinessDriver(fixture, app: .wabi))
         session.setEnabled(true)
         session.updateState { $0.desktopConversation = .init(name: "Wabi") }
         let sending = Task { await session.send(prompt, comparisonID: owner) }
@@ -935,7 +935,7 @@ final class DesktopAppDriverTests: XCTestCase {
             let fixture = try driver([apps(.muse), window])
             defer { fixture.remove() }
             let session = WebAgentSession(provider: .museApp, storageURL: fixture.directory.appendingPathComponent("state.json"),
-                                          fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
+                                          fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
             session.setEnabled(true)
             await session.connectDesktopConversation()
             XCTAssertEqual(session.desktopReady, draft.isEmpty)
@@ -968,7 +968,7 @@ final class DesktopAppDriverTests: XCTestCase {
             let installed = InstalledApp()
             let client = DesktopAppInstallationClient(inspect: { _ in installed.installation }, open: { _ in XCTFail("A check must not launch the app") })
             let session = WebAgentSession(provider: .museApp, storageURL: fixture.directory.appendingPathComponent("state.json"),
-                                          fixture: false, museApp: museAdapter(fixture), desktopApps: client)
+                                          fixture: false, museApp: museAdapter(fixture), desktopApps: client, desktopDriver: try readinessDriver(fixture, app: .muse))
             session.setEnabled(true)
             let check = Task { await session.connectDesktopConversation() }
             try await waitForCall("list_windows", in: fixture)
@@ -995,7 +995,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
         try JSONEncoder().encode(saved).write(to: stateURL)
-        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, transientWindowFailure: true), desktopApps: .demo)
+        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, transientWindowFailure: true), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
         let sending = Task { await session.send(prompt, comparisonID: owner) }
         try await waitForCall("press_key", in: fixture)
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -1081,12 +1081,12 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
         try JSONEncoder().encode(saved).write(to: stateURL)
-        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo)
+        let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
         let result = await session.send(prompt, comparisonID: owner)
         XCTAssertEqual(result?.status, .uncertain)
         XCTAssertEqual(session.state.museAppConversations[owner.uuidString]?.threadID, thread)
         session.beginShutdown()
-        let reopened = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
+        let reopened = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
         reopened.updateState { $0.comparisonID = other }
         let blocked = await reopened.send("Other comparison", comparisonID: other)
         XCTAssertNil(blocked)
@@ -1113,7 +1113,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
-        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo)
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
         let sent = await session.send(prompt, comparisonID: owner)
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)
@@ -1122,7 +1122,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertNil(result.conversationURL)
         XCTAssertNil(session.state.museAppConversations[owner.uuidString]?.threadID)
         session.beginShutdown()
-        let reopened = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
+        let reopened = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
         reopened.acknowledgeIncompleteRequest()
         reopened.connect(automaticallyRefresh: false)
         try fixture.replacePlan([apps(.muse), windows()])
@@ -1157,7 +1157,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var saved = WebWorkspaceState()
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
-        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo)
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
         let sent = await session.send(prompt, comparisonID: owner)
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)
@@ -1572,6 +1572,26 @@ final class DesktopAppDriverTests: XCTestCase {
                 return DriverCall(tool: value["tool"] as! String, arguments: value["arguments"] as! [String: Any], pid: value["pid"] as! Int)
             }
         }
+    }
+    private func readinessDriver(_ fixture: DriverFixture, app: DesktopAppProvider) throws -> DesktopAppConversation {
+        // Session window readiness is separate from the adapter's ordered action plan.
+        let executable = fixture.directory.appendingPathComponent("readiness-driver")
+        try Data("""
+        #!/usr/bin/env python3
+        import json,sys,time
+        assert len(sys.argv)==4 and sys.argv[1]=='call'
+        tool=sys.argv[2];args=json.loads(sys.argv[3])
+        if tool=='list_apps':
+            assert args=={}
+            print(json.dumps({'apps':[{'bundle_id':'\(app.bundleID)','pid':42,'running':True}]}))
+        elif tool=='list_windows':
+            assert args=={'pid':42}
+            print(json.dumps({'windows':[{'window_id':101,'title':'Fixture app','is_on_screen':True,'bounds':{'width':800,'height':600}}]}))
+        else: raise AssertionError('Unexpected readiness action: '+tool)
+        sys.stdout.flush();time.sleep(.02)
+        """.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        return DesktopAppConversation(executable: executable)
     }
     private func driver(_ steps: [[String: Any]]) throws -> DriverFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-driver-test-\(UUID())")

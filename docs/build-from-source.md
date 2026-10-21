@@ -169,8 +169,8 @@ rabbit OS3 is available in onboarding and the featured grid. It continues the
 account's single conversation across comparisons, including earlier context.
 See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbot.md).
 
-Optional **Muse App**, **Grok Bot App**, **Wabi**, and **Gemini** entries appear under More
-agents. They use native msgblast conversation panes and an installed `cua-driver`
+Optional **ChatGPT App**, **Dots App**, **Claude App**, **Muse App**, **Grok Bot App**,
+**Wabi**, and **Gemini** entries appear under Mac apps in onboarding and More agents. They use native msgblast conversation panes and an installed `cua-driver`
 command, while authentication stays in the desktop app. Muse creates a side chat
 per comparison and needs msgblast Accessibility permission and driver window
 capture. Wabi creates a dedicated AI chat per comparison and needs msgblast
@@ -183,8 +183,8 @@ you choose Chat or Task, model, and available thinking levels; install it from
 Grok Bot App, choose your bot from the **Bot** menu in msgblast; the connection
 checks automatically and the saved bot reopens before sending. The check
 does not send a test prompt; it confirms readiness before your first real message.
-These entries keep separate state from the existing Muse website and Grok Bot
-webhook. See [desktop app conversations](desktop-app-conversations.md) for
+Native app entries keep separate saved state from their website and webhook
+counterparts; enabling one does not migrate an existing website account or history. See [desktop app conversations](desktop-app-conversations.md) for
 capabilities and limits.
 
 Dev needs its own Full Disk Access for Messages history, Contacts permission for

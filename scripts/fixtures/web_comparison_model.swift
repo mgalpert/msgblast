@@ -636,6 +636,32 @@ import msgblastCore
         instanceModel.webAgents.beginShutdown()
         await instanceModel.webAgents.cancelAndWait()
         print("PASS: actual AppModel + LocalStore + WebAgents preserve two ChatGPT identities in one comparison, separate chat URLs/private follow-ups, and exact restored membership. Local website fixtures only.")
+        let nativeModel = AppModel()
+        let nativeProviders: [WebProvider] = [.chatgptApp, .dotsApp, .claudeApp]
+        let nativeSessions = nativeProviders.map { nativeModel.webAgents.session(for: WebAgentID(provider: $0))! }
+        for session in nativeSessions {
+            session.setEnabled(true)
+            await session.connectDesktopConversation()
+        }
+        let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: nativeSessions.map(\.id))!
+        let nativeReplies = await WebAgents.send("Native comparison fixture", to: nativeSessions, comparisonID: nativeID)
+        precondition(nativeReplies.count == 3 && nativeReplies.values.allSatisfy { $0.status == .observed })
+        let savedBindings = nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] }
+        let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
+        nativeModel.webAgents.setComparison(nil)
+        nativeModel.openWebComparison(nativeID)
+        for _ in 0..<100 where !nativeSessions.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        precondition(nativeSessions.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
+        precondition(nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] } == savedBindings)
+        precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
+        precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(nativeSessions.map(\.id)))
+        let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
+        precondition(savedNativeComparison.resolvedWebAgentIDs == nativeSessions.map(\.id))
+        nativeModel.webAgents.beginShutdown()
+        await nativeModel.webAgents.cancelAndWait()
+        print("PASS: actual AppModel + LocalStore reopen the three native providers with the same owned bindings and exact membership. Demo simulation; no live apps or sends.")
         let choiceModel = AppModel()
         let businessAddress = "urn:biz:00000000-0000-0000-0000-000000000001"
         let businessChat = Chat(id: "iMessage;-;" + businessAddress, handle: businessAddress, lastActivity: 0, displayName: "Fixture Poke", businessConversation: true)

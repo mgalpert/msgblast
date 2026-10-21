@@ -314,7 +314,7 @@ final class GeminiAppDriverTests: XCTestCase {
         let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
         let id = UUID()
         let session = WebAgentSession(provider: .geminiApp, storageURL: f.directory.appendingPathComponent("session.json"), fixture: false,
-                                      museApp: .shared, desktopApps: .demo, geminiApp: adapter(f))
+                                      museApp: .shared, desktopApps: .demo, desktopDriver: DesktopAppConversation(executable: f.executable), geminiApp: adapter(f))
         session.setEnabled(true)
         session.updateState {
             $0.comparisonID = id
@@ -466,7 +466,7 @@ final class GeminiAppDriverTests: XCTestCase {
         var attempt = WebSendAttempt(text: "Original request", status: .attempting)
         attempt.comparisonID = id; state.attempts = [attempt]
         try JSONEncoder().encode(state).write(to: file)
-        let session = WebAgentSession(provider: .geminiApp, storageURL: file, fixture: false, museApp: .shared, desktopApps: .demo, geminiApp: adapter(f))
+        let session = WebAgentSession(provider: .geminiApp, storageURL: file, fixture: false, museApp: .shared, desktopApps: .demo, desktopDriver: DesktopAppConversation(executable: f.executable), geminiApp: adapter(f))
         XCTAssertEqual(session.state.attempts.first?.status, .uncertain)
         _ = await session.openComparison(UUID())
         session.acknowledgeIncompleteRequest()

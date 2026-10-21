@@ -212,3 +212,9 @@ Gemini: unmodified native icon from Gemini 1.131.4.1198
 app's Contents/Resources/AppIcon.icns. The icon identifies Gemini in msgblast.
 Artwork and trademarks remain Google's property and are not covered by
 msgblast's GPL license.
+
+ChatGPT and Claude: unmodified native icons from ChatGPT 26.1013.40934
+(com.openai.codex) and Claude 3.1623.0 (com.anthropic.claudefordesktop),
+retrieved October 21, 2026 from the installed Mac apps’
+Contents/Resources/electron.icns. Artwork and trademarks remain their
+respective owners’ property and are not covered by msgblast’s GPL license.

@@ -59,6 +59,8 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var savedAvatar: Data?
     public var grokBotRememberedConnection: Bool?
     public var desktopConversation: DesktopConversationBinding?
+    public var claudeConversations: [String: ClaudeConversationBinding] = [:]
+    public var chatgptConversations: [String: ChatGPTConversationBinding] = [:]
     public var geminiPreferences = GeminiPreferences()
     public var geminiComparisonPreferences: [String: GeminiPreferences] = [:]
     public var geminiConversations: [String: GeminiConversationBinding] = [:]
@@ -82,12 +84,14 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled)
         desktopConversation = try c.decodeIfPresent(DesktopConversationBinding.self, forKey: .desktopConversation)
+        claudeConversations = try c.decodeIfPresent([String: ClaudeConversationBinding].self, forKey: .claudeConversations) ?? [:]
+        chatgptConversations = try c.decodeIfPresent([String: ChatGPTConversationBinding].self, forKey: .chatgptConversations) ?? [:]
         geminiPreferences = try c.decodeIfPresent(GeminiPreferences.self, forKey: .geminiPreferences) ?? .init()
         geminiComparisonPreferences = try c.decodeIfPresent([String: GeminiPreferences].self, forKey: .geminiComparisonPreferences) ?? [:]
         geminiConversations = try c.decodeIfPresent([String: GeminiConversationBinding].self, forKey: .geminiConversations) ?? [:]
@@ -118,6 +122,8 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(providerIdentityVersion, forKey: .providerIdentityVersion)
         try c.encodeIfPresent(enabled, forKey: .enabled)
         try c.encodeIfPresent(desktopConversation, forKey: .desktopConversation)
+        try c.encode(claudeConversations, forKey: .claudeConversations)
+        try c.encode(chatgptConversations, forKey: .chatgptConversations)
         try c.encode(geminiPreferences, forKey: .geminiPreferences)
         try c.encode(geminiComparisonPreferences, forKey: .geminiComparisonPreferences)
         try c.encode(geminiConversations, forKey: .geminiConversations)
@@ -140,6 +146,51 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(localSessionPolicyVersions, forKey: .localSessionPolicyVersions)
         try c.encode(localConfiguredSessionIDs, forKey: .localConfiguredSessionIDs)
         try c.encode(localPreviousSessionIDs, forKey: .localPreviousSessionIDs)
+    }
+    public func claudeBinding(for comparison: UUID) throws -> ClaudeConversationBinding? {
+        var urls: Set<URL> = []
+        for (key, binding) in claudeConversations {
+            guard key == binding.comparisonID.uuidString,
+                  binding.url.map({ ClaudeChatURL.isChat($0) && urls.insert($0).inserted && binding.firstPrompt != nil }) ?? true,
+                  binding.firstPrompt.map({ $0.hasPrefix("[msgblast comparison \(binding.comparisonID.uuidString)]\n\n") }) ?? true else {
+                throw DesktopAppError.unavailable("Saved Claude conversation ownership is inconsistent. Its state was preserved.")
+            }
+        }
+        return claudeConversations[comparison.uuidString]
+    }
+    public mutating func recordClaudeBinding(_ binding: ClaudeConversationBinding) throws {
+        let previous = try claudeBinding(for: binding.comparisonID)
+        guard previous?.url == nil || previous?.url == binding.url,
+              previous?.firstPrompt == nil || previous?.firstPrompt == binding.firstPrompt else {
+            throw DesktopAppError.unavailable("Claude’s saved conversation changed. Its original binding was preserved.")
+        }
+        var candidate = self
+        candidate.claudeConversations[binding.comparisonID.uuidString] = binding
+        _ = try candidate.claudeBinding(for: binding.comparisonID)
+        claudeConversations = candidate.claudeConversations
+    }
+    public func chatgptBinding(for comparison: UUID, kind: ChatGPTAppKind) throws -> ChatGPTConversationBinding? {
+        for (key, binding) in chatgptConversations {
+            guard key == binding.comparisonID.uuidString, binding.kind == kind,
+                  binding.kind != .chatgpt || binding.title == nil || binding.title == binding.dedicatedTitle,
+                  binding.fallbackTitle.map({ binding.kind == .chatgpt && binding.title == binding.dedicatedTitle && binding.firstPrompt != nil && !$0.isEmpty }) ?? true,
+                  binding.firstPrompt.map({ $0.hasPrefix("[msgblast comparison \(binding.comparisonID.uuidString)]\n\n") }) ?? true else {
+                throw DesktopAppError.unavailable("Saved native ChatGPT conversation ownership is inconsistent. Its state was preserved.")
+            }
+        }
+        return chatgptConversations[comparison.uuidString]
+    }
+    public mutating func recordChatGPTBinding(_ binding: ChatGPTConversationBinding) throws {
+        let previous = try chatgptBinding(for: binding.comparisonID, kind: binding.kind)
+        guard previous?.title == nil || previous?.title == binding.title,
+              previous?.firstPrompt == nil || previous?.firstPrompt == binding.firstPrompt,
+              previous?.title == nil || previous?.fallbackTitle == binding.fallbackTitle else {
+            throw DesktopAppError.unavailable("The native ChatGPT conversation changed. Its original binding was preserved.")
+        }
+        var candidate = self
+        candidate.chatgptConversations[binding.comparisonID.uuidString] = binding
+        _ = try candidate.chatgptBinding(for: binding.comparisonID, kind: binding.kind)
+        chatgptConversations = candidate.chatgptConversations
     }
     public func geminiBinding(for comparison: UUID) throws -> GeminiConversationBinding? {
         for (key, binding) in geminiConversations {
