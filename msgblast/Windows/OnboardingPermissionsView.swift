@@ -8,6 +8,7 @@ struct OnboardingPermissionsView: View {
     @ObservedObject private var messages: AppPermissions
     @ObservedObject private var apps: CuaPermissionsController
     @ObservedObject private var guide: MessagesAccessGuide
+    @StateObject private var appGuide = MessagesAccessGuide(pendingKey: "appAccessHandoffPending")
     @State private var openedHistorySettings = false
 
     init(model: AppModel, setup: OnboardingController) {
@@ -50,25 +51,26 @@ struct OnboardingPermissionsView: View {
                 }
                 Divider()
                 VStack(spacing: 0) {
-                    permissionRow("Accessibility", icon: "accessibility", status: apps.hostAccessibility.title,
+                    permissionRow(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility", icon: "accessibility", status: apps.hostAccessibility.title,
                                   allowed: apps.hostAccessibility == .allowed, identifier: "cua-host") {
                         guard setup.checkpointPermissionChange() else { return }
                         if apps.hostAccessibility == .allowed { apps.openSettings("Privacy_Accessibility", demo: model.demo) }
-                        else { apps.enableHostAccessibility(demo: model.demo) }
-                    }
+                        else if model.demo { apps.enableHostAccessibility(demo: true) }
+                        else { showAppAccessGuide(helper: false, capture: false) }
+                    }.background(PermissionSourceAnchor(guide: appGuide))
                     Divider()
                     permissionRow("App control", icon: "accessibility", status: apps.driverAccessibility.title,
                                   allowed: apps.driverAccessibility == .allowed, identifier: "cua-driver", available: apps.installed) {
                         guard setup.checkpointPermissionChange() else { return }
                         if apps.driverAccessibility == .allowed { apps.openSettings("Privacy_Accessibility", demo: model.demo) }
-                        else { Task { await apps.enableDriver(demo: model.demo) } }
+                        else { showAppAccessGuide(helper: true, capture: false) }
                     }
                     Divider()
                     permissionRow("Screen Recording", icon: "display", status: apps.windowCapture.title,
                                   allowed: apps.windowCapture == .allowed, identifier: "cua-capture", available: apps.installed) {
                         guard setup.checkpointPermissionChange() else { return }
                         if apps.windowCapture == .allowed { apps.openSettings("Privacy_ScreenCapture", demo: model.demo) }
-                        else { Task { await apps.enableDriver(demo: model.demo) } }
+                        else { showAppAccessGuide(helper: true, capture: true) }
                     }
                 }
                 Text("macOS calls the app control helper “CuaDriver”.")
@@ -82,7 +84,7 @@ struct OnboardingPermissionsView: View {
                 if model.demo {
                     Text("Demo permissions are simulated. No system access is changed.").font(.caption).foregroundStyle(.secondary)
                 }
-                if let message = messages.message ?? apps.message ?? guide.message {
+                if let message = messages.message ?? apps.message ?? appGuide.message ?? guide.message {
                     Text(message).font(.caption).foregroundStyle(.orange).lineLimit(2)
                 }
                 Text("msgblast is [open source](https://github.com/mgalpert/msgblast). Feel free to inspect how we use this information.")
@@ -112,9 +114,29 @@ struct OnboardingPermissionsView: View {
             }.padding(20)
         }
         .task { await setup.refreshPermissions() }
+        .onDisappear { appGuide.cancel() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await setup.refreshPermissions() }
         }
+    }
+
+    private func showAppAccessGuide(helper: Bool, capture: Bool) {
+        if model.demo {
+            Task { await apps.enableDriver(demo: true) }
+            return
+        }
+        let appURL = helper ? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.trycua.driver") : Bundle.main.bundleURL
+        guard let appURL else {
+            Task { await apps.enableDriver(demo: false) }
+            return
+        }
+        appGuide.start(appURL: appURL, appName: helper ? "CuaDriver" : "msgblast",
+                       pane: capture ? "Privacy_ScreenCapture" : "Privacy_Accessibility",
+                       permissionName: capture ? "Screen Recording" : ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility") {
+            await apps.refresh(demo: false)
+            return capture ? apps.windowCapture == .allowed : helper ? apps.driverAccessibility == .allowed : apps.hostAccessibility == .allowed
+        }
+        if helper { Task { await apps.enableDriver(demo: false) } }
     }
 
     private func permissionRow(_ title: String, icon: String, status: String,

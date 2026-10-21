@@ -26,8 +26,8 @@ struct CuaPermissionDriver: Sendable {
         let result = try await run(["permissions", "status", "--json"], operation: "permission check", timeout: 10)
         return try JSONDecoder().decode(CuaDriverPermissionReport.self, from: Data(result.utf8))
     }
-    func setup() async throws { _ = try await run(["permissions", "grant"], operation: "permission setup", timeout: 120) }
-    private func run(_ arguments: [String], operation: String, timeout: TimeInterval) async throws -> String {
+    func setup(timeout: TimeInterval = 120) async throws { _ = try await run(["permissions", "grant"], operation: "permission setup", timeout: timeout, waitsForConsent: true) }
+    private func run(_ arguments: [String], operation: String, timeout: TimeInterval, waitsForConsent: Bool = false) async throws -> String {
         let cancellation = AgentCancellation()
         do {
             let result = try await withTaskCancellationHandler {
@@ -39,6 +39,9 @@ struct CuaPermissionDriver: Sendable {
             guard result.status == 0 else { throw DesktopAppError.unavailable("msgblast driver \(operation) could not finish. Use Set up app access to review its permissions.") }
             return result.stdout
         } catch PersonalAgentError.timedOut {
+            // Consent happens in Settings on the user's schedule. A process deadline
+            // is not a denied grant; the next status read determines readiness.
+            if waitsForConsent { return "" }
             throw DesktopAppError.unavailable("msgblast driver \(operation) timed out after \(Int(timeout)) seconds. Use Set up app access to review its permissions.")
         }
     }
@@ -61,6 +64,7 @@ public final class CuaPermissionsController: ObservableObject {
     @Published public private(set) var checking = false
     @Published public private(set) var message: String?
     private let client: CuaPermissionClient
+    private var setupInProgress = false
     private var pendingRefresh: Bool?
     private var demoHostAllowed: Bool
     private var demoDriverAllowed: Bool
@@ -88,18 +92,20 @@ public final class CuaPermissionsController: ObservableObject {
     }
 
     public func enableDriver(demo: Bool) async {
-        guard !checking else { return }
-        checking = true
-        defer { checking = false }
+        guard !setupInProgress else { return }
+        setupInProgress = true
+        defer { setupInProgress = false }
         message = nil
-        if demo { demoDriverAllowed = true; await checkAndDrain(demo: true); return }
+        if demo { demoDriverAllowed = true; await refresh(demo: true); return }
         if client.installed() {
             do { try await client.openDriverSetup() }
             catch { message = error.localizedDescription }
         }
         // A successful setup command is not a grant or capture receipt.
         // Independently refresh the daemon's permission identity and status.
-        await checkAndDrain(demo: false)
+        let setupMessage = message
+        await refresh(demo: false)
+        if let setupMessage { message = setupMessage }
     }
 
     public func openSettings(_ pane: String, demo: Bool) {

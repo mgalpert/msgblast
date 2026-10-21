@@ -23,7 +23,7 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            OnboardingBreadcrumbs(activeStep: setup.state.stage == .feedback ? 2 : 1)
+            OnboardingBreadcrumbs(activeStep: breadcrumbStep)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 28).padding(.top, 28)
             if setup.state.needsPermissionSetup {
@@ -96,6 +96,15 @@ struct OnboardingView: View {
             if telemetryScreen == .runtimeSetup, case .runtime(let runtime) = setup.state.currentStep { properties.provider = runtime.rawValue }
             model.recordTelemetry(.onboardingScreenViewed, properties: properties)
             previousTelemetryScreen = telemetryScreen
+        }
+    }
+
+    private var breadcrumbStep: Int {
+        if setup.state.needsPermissionSetup { return 1 }
+        switch setup.state.stage {
+        case .choosing: return 2
+        case .feedback, .finished: return 4
+        default: return 3
         }
     }
 
@@ -507,7 +516,7 @@ private struct OnboardingRuntimeView: View {
 
 private struct OnboardingBreadcrumbs: View {
     let activeStep: Int
-    private let titles = ["Connect agents", "Start chatting"]
+    private let titles = ["Allow access", "Choose agents", "Connect", "Start chatting"]
 
     var body: some View {
         HStack(spacing: 12) {

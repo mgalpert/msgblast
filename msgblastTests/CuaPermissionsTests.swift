@@ -203,6 +203,67 @@ final class CuaPermissionsTests: XCTestCase {
         XCTAssertFalse(controller.checking)
     }
 
+    private actor SuspendedSetup {
+        private var releaseSetup: CheckedContinuation<Void, Never>?
+        private var started: CheckedContinuation<Void, Never>?
+        func run() async {
+            await withCheckedContinuation { continuation in
+                releaseSetup = continuation
+                started?.resume(); started = nil
+            }
+        }
+        func waitUntilStarted() async {
+            if releaseSetup != nil { return }
+            await withCheckedContinuation { started = $0 }
+        }
+        func release() { releaseSetup?.resume(); releaseSetup = nil }
+    }
+
+    func testConsentWaitDoesNotBlockStatusRefreshOrDuplicateSetup() async {
+        let probe = Probe(), gate = SuspendedSetup()
+        var client = probe.client()
+        client.openDriverSetup = {
+            probe.change { $0.setupRequests += 1 }
+            await gate.run()
+        }
+        let controller = CuaPermissionsController(client: client)
+        let waiting = Task { await controller.enableDriver(demo: false) }
+        await gate.waitUntilStarted()
+        XCTAssertFalse(controller.checking, "Waiting for human consent must not disable onboarding")
+        probe.change { $0.report = .init(accessibility: true, screen_recording: false,
+            source: .init(attribution: "driver-daemon", bundle_id: "com.trycua.driver")) }
+        await controller.refresh(demo: false)
+        XCTAssertEqual(controller.driverAccessibility, .allowed)
+        XCTAssertEqual(controller.windowCapture, .off)
+        await controller.enableDriver(demo: false)
+        XCTAssertEqual(probe.state.setupRequests, 1)
+        await gate.release()
+        await waiting.value
+        XCTAssertNil(controller.message)
+        XCTAssertFalse(controller.checking)
+    }
+
+    func testConsentProcessDeadlineLeavesGrantsUnverifiedWithoutTimeoutError() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-consent-wait-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("cua-driver")
+        let script = #"""
+        #!/usr/bin/env python3
+        import json, sys, time
+        if sys.argv[1:] == ['permissions', 'grant']: time.sleep(60)
+        else: print(json.dumps({'accessibility':False,'screen_recording':False,'source':{'attribution':'driver-daemon','bundle_id':'com.trycua.driver'}}))
+        """#
+        try Data(script.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let driver = CuaPermissionDriver(executable: executable)
+        try await driver.setup(timeout: 0.1)
+        let report = try await driver.status()
+        XCTAssertTrue(report.identifiesDriver)
+        XCTAssertEqual(report.accessibility, false)
+        XCTAssertEqual(report.screen_recording, false)
+    }
+
     func testSuccessfulGrantReadCannotEraseASeparateSetupFailure() async {
         let probe = Probe()
         probe.change { $0.report = .init(accessibility: true, screen_recording: true,
