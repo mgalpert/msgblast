@@ -2,6 +2,58 @@ import XCTest
 @testable import msgblastCore
 
 final class DesktopAppConversationTests: XCTestCase {
+    func testMuseWindowLookupFindsExactWindowWhenAXWindowsOmitsAnotherDesktop() throws {
+        struct Window { let role: String; let id: UInt32 }
+        let expectedToken = Data([42, 0, 0, 0, 0, 0, 0, 0, 0x6f, 0x63, 0x6f, 0x63, 46, 0, 0, 0, 0, 0, 0, 0])
+        var probes = [Data]()
+        let found: Window? = MuseNativeWindowLookup.find(pid: 42, windowID: 2872, listed: [],
+            ownerPID: { 42 }, number: { $0.id }, isWindow: { $0.role == "AXWindow" }, remote: { token in
+                probes.append(token)
+                if token == expectedToken { return Window(role: "AXWindow", id: 2872) }
+                return Window(role: probes.count == 1 ? "AXButton" : "AXWindow", id: probes.count == 1 ? 2872 : 2866)
+            })
+        XCTAssertEqual(try XCTUnwrap(found).id, 2872, "A window on another desktop must not require activation or an AXWindows entry")
+        XCTAssertEqual(probes.last, expectedToken, "Only the exact AXWindow may be used; controls and other windows are not substitutes")
+    }
+
+    func testMuseWindowLookupRejectsDifferentOrMissingWindowServerOwner() {
+        for owner in [43, nil] as [Int?] {
+            var probes = 0
+            let found: UInt32? = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
+                ownerPID: { owner }, number: { $0 }, isWindow: { _ in true }, remote: { _ in probes += 1; return 31 })
+            XCTAssertNil(found)
+            XCTAssertEqual(probes, 0, "Never probe another process or a window that disappeared")
+        }
+    }
+
+    func testMuseWindowLookupUsesListedWindowAndRejectsAmbiguousIdentityWithoutProbing() {
+        for listed: [UInt32] in [[31], [31, 31]] {
+            var probes = 0
+            let found = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: listed,
+                ownerPID: { 42 }, number: { $0 }, isWindow: { _ in true }, remote: { _ in probes += 1; return 31 })
+            XCTAssertEqual(found, listed.count == 1 ? 31 : nil)
+            XCTAssertEqual(probes, 0)
+        }
+    }
+
+    func testMuseWindowLookupStopsWhenDeadlineExpiresOrCandidateLimitIsReached() {
+        for timed in [true, false] {
+            var probes = 0, tick: TimeInterval = 0
+            let found: UInt32? = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
+                ownerPID: { 42 }, number: { $0 }, isWindow: { _ in true }, remote: { _ in probes += 1; return nil },
+                now: { if timed { tick += 0.1 }; return tick })
+            XCTAssertNil(found)
+            if timed { XCTAssertGreaterThan(probes, 0); XCTAssertLessThanOrEqual(probes, 3) }
+            else { XCTAssertEqual(probes, 2_000) }
+        }
+    }
+
+    func testMuseWindowLookupFailsClosedWhenRemoteLookupIsUnavailable() {
+        let found: UInt32? = MuseNativeWindowLookup.find(pid: 42, windowID: 31, listed: [],
+            ownerPID: { 42 }, number: { $0 }, isWindow: { _ in true }, remote: nil)
+        XCTAssertNil(found)
+    }
+
     func testDesktopAgentsRemainSeparateFromExistingAccounts() {
         XCTAssertTrue(WebProvider.museApp.usesNativeConversation)
         XCTAssertTrue(WebProvider.grokBotApp.usesNativeConversation)
@@ -953,6 +1005,13 @@ final class DesktopAppDriverTests: XCTestCase {
     func testMuseOnboardingCheckReadsComposerWithoutInputAndKeepsAnActionableFailure() async throws {
         for draft in ["", "Unsent Muse draft"] {
             var window = windows()
+            var result = window["result"] as! [String: Any]
+            var records = result["windows"] as! [[String: Any]]
+            records[0]["is_on_screen"] = false
+            records[0]["on_current_space"] = false
+            records[0]["space_ids"] = [1]
+            result["windows"] = records
+            window["result"] = result
             window["native"] = try object(museObservation(draft: draft))
             let fixture = try driver([apps(.muse), window])
             defer { fixture.remove() }

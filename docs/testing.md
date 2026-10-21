@@ -79,6 +79,17 @@ minimal model substitute. It verifies checks without consent, explicit Enable
 requests, denied recovery, changed access, Messages launch failure, and demo
 isolation without reading user data or requesting a real OS grant.
 
+Muse's cross-desktop regression is covered by
+`DesktopAppConversationTests.testMuseWindowLookupFindsExactWindowWhenAXWindowsOmitsAnotherDesktop`.
+It simulates an empty macOS `AXWindows` list and exercises the production lookup,
+including exact process/window identity, wrong-window rejection, and bounded
+fallback discovery. `DesktopAppDriverTests.testMuseOnboardingCheckReadsComposerWithoutInputAndKeepsAnActionableFailure`
+checks onboarding with an off-screen window and verifies that checking sends no
+input and preserves drafts. Run both test classes when changing this path.
+These fixtures do not create or switch real macOS Spaces. For an authorized live
+check, leave Muse on another desktop and connect it from msgblast; verify that
+readiness succeeds while the active desktop and Muse's draft stay unchanged.
+
 ## Native UI tests and manual checks
 
 Use an authorized Mac with an interactive desktop and native runner permissions.
