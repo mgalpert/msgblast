@@ -23,7 +23,7 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Contacts and permission UI | `msgblast/Contacts/`, `msgblast/Permissions/`, `Core/PermissionHandoff.swift` | Contacts lookup and explicit macOS permission handoff |
 | Provider sessions | `msgblast/Core/WebAgents.swift`, `WebServices.swift`, `WebAgentSession.swift` | WebKit/CLI session state, identity migration, comparison membership, and receipts |
 | Website adaptation | `msgblast/Core/WebPageScript.swift`, `MusePageScript.swift` | Page interaction, sign-in detection, composer preparation, and submission checks |
-| Desktop app conversations | `msgblast/Core/DesktopAppConversation.swift`, `MuseAppConversation.swift`, `MuseAppObservation.swift` | Exact-window background cua-driver calls, per-comparison Muse UUIDs, native AX draft reads, and reply observations |
+| Desktop app conversations | `msgblast/Core/EmbeddedCuaDriver.swift`, `DesktopAppConversation.swift`, `MuseAppConversation.swift`, `MuseAppObservation.swift` | Private host-owned embedded runtime, exact-window background calls, per-comparison Muse UUIDs, native AX draft reads, and reply observations |
 | Local CLI execution | `msgblast/Core/LocalPersonalAgent.swift`, `LocalAgentDetection.swift` | Executable/account detection, conversation adapters, restricted reports, and process cleanup |
 | Grok Bot | `msgblast/Core/GrokBot*.swift` | Webhook requests, secure storage, loopback replies, and bundled tunnel process |
 | Feedback | `Core/DiagnosticReport.swift`, `FeedbackSubmission.swift`, `Windows/FeedbackView.swift` under `msgblast/` | Explicit feedback note, allowed diagnostics, and private intake submission |

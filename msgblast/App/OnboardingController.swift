@@ -55,7 +55,6 @@ final class OnboardingController: ObservableObject {
               contacts: messagesPermissions.contacts == .allowed,
               automation: messagesPermissions.sending == .allowed,
               hostAccessibility: appPermissions.hostAccessibility == .allowed,
-              driverAccessibility: appPermissions.driverAccessibility == .allowed,
               screenCapture: appPermissions.windowCapture == .allowed,
               driverInstalled: appPermissions.installed)
     }
@@ -63,7 +62,7 @@ final class OnboardingController: ObservableObject {
     var permissionChecksBusy: Bool {
         checkingPermissions || messagesPermissions.checkingSending || messagesPermissions.requestingContacts || appPermissions.checking ||
         messagesPermissions.history == .checking || messagesPermissions.contacts == .checking || messagesPermissions.sending == .checking ||
-        appPermissions.hostAccessibility == .checking || appPermissions.driverAccessibility == .checking || appPermissions.windowCapture == .checking
+        appPermissions.hostAccessibility == .checking || appPermissions.windowCapture == .checking
     }
 
     func refreshPermissions() async {

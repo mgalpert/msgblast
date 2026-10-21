@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Combine
+import CoreGraphics
 import Foundation
 
 public enum CuaPermissionStatus: Sendable {
@@ -10,153 +11,73 @@ public enum CuaPermissionStatus: Sendable {
     }
 }
 
-struct CuaDriverPermissionReport: Decodable, Sendable {
-    struct Source: Decodable, Sendable { let attribution: String?; let bundle_id: String? }
-    let accessibility: Bool?
-    let screen_recording: Bool?
-    let source: Source?
-    var identifiesDriver: Bool { source?.attribution == "driver-daemon" && source?.bundle_id == "com.trycua.driver" }
-}
-
-// Status does not start a daemon or raise consent. Only the explicit setup
-// command enters CuaDriver's own LaunchServices-based permission flow.
-struct CuaPermissionDriver: Sendable {
-    let executable: URL
-    func status() async throws -> CuaDriverPermissionReport {
-        let result = try await run(["permissions", "status", "--json"], operation: "permission check", timeout: 10)
-        return try JSONDecoder().decode(CuaDriverPermissionReport.self, from: Data(result.utf8))
-    }
-    func setup(timeout: TimeInterval = 120) async throws { _ = try await run(["permissions", "grant"], operation: "permission setup", timeout: timeout, waitsForConsent: true) }
-    private func run(_ arguments: [String], operation: String, timeout: TimeInterval, waitsForConsent: Bool = false) async throws -> String {
-        let cancellation = AgentCancellation()
-        do {
-            let result = try await withTaskCancellationHandler {
-                try await Task.detached {
-                    try AgentProcess.run(executable: executable, arguments: arguments, input: "", environment: ProcessInfo.processInfo.environment,
-                                         timeout: timeout, cancellation: cancellation)
-                }.value
-            } onCancel: { cancellation.cancel() }
-            guard result.status == 0 else { throw DesktopAppError.unavailable("msgblast driver \(operation) could not finish. Use Set up app access to review its permissions.") }
-            return result.stdout
-        } catch PersonalAgentError.timedOut {
-            // Consent happens in Settings on the user's schedule. A process deadline
-            // is not a denied grant; the next status read determines readiness.
-            if waitsForConsent { return "" }
-            throw DesktopAppError.unavailable("msgblast driver \(operation) timed out after \(Int(timeout)) seconds. Use Set up app access to review its permissions.")
-        }
-    }
-}
-
+// Embedded CuaDriver inherits msgblast's permission identity. Query the host
+// directly: starting an external daemon must never determine onboarding access.
 struct CuaPermissionClient: Sendable {
     var installed: @Sendable () -> Bool
     var hostAccessibility: @MainActor @Sendable (Bool) -> Bool
-    var driverPermissions: @Sendable () async throws -> CuaDriverPermissionReport
-    var openDriverSetup: @Sendable () async throws -> Void
+    var hostScreenCapture: @MainActor @Sendable (Bool) -> Bool
     var openSettings: @MainActor @Sendable (String) -> Bool
 }
 
 @MainActor
 public final class CuaPermissionsController: ObservableObject {
     @Published public private(set) var hostAccessibility = CuaPermissionStatus.checking
-    @Published public private(set) var driverAccessibility = CuaPermissionStatus.checking
     @Published public private(set) var windowCapture = CuaPermissionStatus.checking
     @Published public private(set) var installed = false
     @Published public private(set) var checking = false
     @Published public private(set) var message: String?
     private let client: CuaPermissionClient
-    private var setupInProgress = false
-    private var pendingRefresh: Bool?
     private var demoHostAllowed: Bool
-    private var demoDriverAllowed: Bool
+    private var demoCaptureAllowed: Bool
 
     public convenience init(demoInitiallyAllowed: Bool = true) { self.init(client: Self.systemClient(), demoInitiallyAllowed: demoInitiallyAllowed) }
     init(client: CuaPermissionClient, demoInitiallyAllowed: Bool = true) {
         self.client = client
         demoHostAllowed = demoInitiallyAllowed
-        demoDriverAllowed = demoInitiallyAllowed
+        demoCaptureAllowed = demoInitiallyAllowed
     }
 
     public func refresh(demo: Bool) async {
-        guard !checking else { pendingRefresh = demo; return }
         checking = true
         defer { checking = false }
         message = nil
-        await checkAndDrain(demo: demo)
+        if demo {
+            installed = true
+            hostAccessibility = demoHostAllowed ? .allowed : .off
+            windowCapture = demoCaptureAllowed ? .allowed : .off
+        } else {
+            installed = client.installed()
+            hostAccessibility = client.hostAccessibility(false) ? .allowed : .off
+            windowCapture = client.hostScreenCapture(false) ? .allowed : .off
+            if !installed { message = "App control is missing from this copy of msgblast. Update or reinstall msgblast to connect Mac apps." }
+        }
     }
 
     public func enableHostAccessibility(demo: Bool) {
-        guard !checking else { return }
         if demo { demoHostAllowed = true; hostAccessibility = .allowed; return }
         hostAccessibility = client.hostAccessibility(true) ? .allowed : .off
-        if hostAccessibility != .allowed { openSettings("Privacy_Accessibility", demo: demo) }
+        if hostAccessibility != .allowed { openSettings("Privacy_Accessibility", demo: false) }
     }
 
-    public func enableDriver(demo: Bool) async {
-        guard !setupInProgress else { return }
-        setupInProgress = true
-        defer { setupInProgress = false }
-        message = nil
-        if demo { demoDriverAllowed = true; await refresh(demo: true); return }
-        if client.installed() {
-            do { try await client.openDriverSetup() }
-            catch { message = error.localizedDescription }
-        }
-        // A successful setup command is not a grant or capture receipt.
-        // Independently refresh the daemon's permission identity and status.
-        let setupMessage = message
-        await refresh(demo: false)
-        if let setupMessage { message = setupMessage }
+    public func enableScreenCapture(demo: Bool) {
+        if demo { demoCaptureAllowed = true; windowCapture = .allowed; return }
+        windowCapture = client.hostScreenCapture(true) ? .allowed : .off
+        if windowCapture != .allowed { openSettings("Privacy_ScreenCapture", demo: false) }
     }
 
     public func openSettings(_ pane: String, demo: Bool) {
         guard !demo else { return }
-        if !client.openSettings(pane) { message = "Open System Settings → Privacy & Security to manage access." }
-    }
-
-    private func checkAndDrain(demo: Bool) async {
-        await check(demo: demo)
-        while let queuedDemo = pendingRefresh {
-            pendingRefresh = nil
-            await check(demo: queuedDemo)
-        }
-    }
-
-    private func check(demo: Bool) async {
-        if demo {
-            installed = true
-            hostAccessibility = demoHostAllowed ? .allowed : .off
-            driverAccessibility = demoDriverAllowed ? .allowed : .off
-            windowCapture = demoDriverAllowed ? .allowed : .off
-            return
-        }
-        hostAccessibility = client.hostAccessibility(false) ? .allowed : .off
-        installed = client.installed()
-        guard installed else { driverAccessibility = .notInstalled; windowCapture = .notInstalled; return }
-        do {
-            let report = try await client.driverPermissions()
-            guard report.identifiesDriver else {
-                driverAccessibility = .unknown; windowCapture = .unknown
-                message = "The msgblast driver’s permission status is unavailable. Use Set up app access to reconnect."
-                return
-            }
-            func status(_ grant: Bool?) -> CuaPermissionStatus { grant.map { $0 ? .allowed : .off } ?? .unknown }
-            driverAccessibility = status(report.accessibility)
-            windowCapture = status(report.screen_recording)
-        } catch {
-            driverAccessibility = .unknown; windowCapture = .unknown
-            message = error.localizedDescription
-        }
+        if !client.openSettings(pane) { message = "Open System Settings → Privacy & Security to manage msgblast access." }
     }
 
     private static func systemClient() -> CuaPermissionClient {
-        @Sendable func driver() throws -> CuaPermissionDriver {
-            guard let executable = DesktopAppConversation.findDriver() else { throw DesktopAppError.unavailable("Set up the msgblast driver before connecting Mac apps.") }
-            return CuaPermissionDriver(executable: executable)
-        }
-        return CuaPermissionClient(installed: { DesktopAppConversation.findDriver() != nil }, hostAccessibility: { prompt in
+        CuaPermissionClient(installed: { DesktopAppConversation.findDriver() != nil }, hostAccessibility: { prompt in
             if prompt { return AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary) }
             return AXIsProcessTrusted()
-        }, driverPermissions: { try await driver().status() }, openDriverSetup: { try await driver().setup() }, openSettings: { pane in
+        }, hostScreenCapture: { prompt in
+            prompt ? CGRequestScreenCaptureAccess() : CGPreflightScreenCaptureAccess()
+        }, openSettings: { pane in
             guard let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)") else { return false }
             return NSWorkspace.shared.open(url)
         })

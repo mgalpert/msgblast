@@ -65,45 +65,14 @@ struct OnboardingPermissionsView: View {
                         guard setup.checkpointPermissionChange() else { return }
                         if apps.hostAccessibility == .allowed { apps.openSettings("Privacy_Accessibility", demo: model.demo) }
                         else if model.demo { apps.enableHostAccessibility(demo: true) }
-                        else { showAppAccessGuide(helper: false, capture: false) }
+                        else { showAppAccessGuide(capture: false) }
                     }.background(PermissionSourceAnchor(guide: appGuide))
-                }
-                Divider()
-                HStack(alignment: .center, spacing: 12) {
-                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.trycua.driver") {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                            .resizable().interpolation(.high).scaledToFit()
-                            .frame(width: 36, height: 36).accessibilityHidden(true)
-                    } else {
-                        Image(systemName: "app.dashed").font(.system(size: 28))
-                            .frame(width: 36, height: 36).accessibilityHidden(true)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("CuaDriver").font(.headline)
-                        Text("We use the open-source CuaDriver to run agent apps on your Mac.")
-                            .font(.callout).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }.padding(.vertical, 4)
-                VStack(spacing: 0) {
-                    permissionRow(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility", icon: "accessibility", status: apps.driverAccessibility.title,
-                                  allowed: apps.driverAccessibility == .allowed, identifier: "cua-driver", available: apps.installed) {
-                        guard setup.checkpointPermissionChange() else { return }
-                        if apps.driverAccessibility == .allowed { apps.openSettings("Privacy_Accessibility", demo: model.demo) }
-                        else { showAppAccessGuide(helper: true, capture: false) }
-                    }
                     Divider()
                     permissionRow("Screen Recording", icon: "display", status: apps.windowCapture.title,
                                   allowed: apps.windowCapture == .allowed, identifier: "cua-capture", available: apps.installed) {
                         guard setup.checkpointPermissionChange() else { return }
                         if apps.windowCapture == .allowed { apps.openSettings("Privacy_ScreenCapture", demo: model.demo) }
-                        else { showAppAccessGuide(helper: true, capture: true) }
-                    }
-                }
-                if !apps.installed {
-                    HStack {
-                        Text("Set up app access to connect Mac apps.").font(.callout).foregroundStyle(.secondary)
-                        Link("Set up app access", destination: URL(string: "https://cua.ai/docs/cua-driver")!)
+                        else { showAppAccessGuide(capture: true) }
                     }
                 }
                 if model.demo {
@@ -142,23 +111,18 @@ struct OnboardingPermissionsView: View {
         }
     }
 
-    private func showAppAccessGuide(helper: Bool, capture: Bool) {
+    private func showAppAccessGuide(capture: Bool) {
         if model.demo {
-            Task { await apps.enableDriver(demo: true) }
+            if capture { apps.enableScreenCapture(demo: true) }
+            else { apps.enableHostAccessibility(demo: true) }
             return
         }
-        let appURL = helper ? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.trycua.driver") : Bundle.main.bundleURL
-        guard let appURL else {
-            Task { await apps.enableDriver(demo: false) }
-            return
-        }
-        appGuide.start(appURL: appURL, appName: helper ? "CuaDriver" : "msgblast",
+        appGuide.start(appURL: Bundle.main.bundleURL, appName: "msgblast",
                        pane: capture ? "Privacy_ScreenCapture" : "Privacy_Accessibility",
                        permissionName: capture ? "Screen Recording" : ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility") {
             await apps.refresh(demo: false)
-            return capture ? apps.windowCapture == .allowed : helper ? apps.driverAccessibility == .allowed : apps.hostAccessibility == .allowed
+            return capture ? apps.windowCapture == .allowed : apps.hostAccessibility == .allowed
         }
-        if helper { Task { await apps.enableDriver(demo: false) } }
     }
 
     private func permissionRow(_ title: String, icon: String, status: String,

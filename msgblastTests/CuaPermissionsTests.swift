@@ -4,297 +4,128 @@ import XCTest
 @MainActor
 final class CuaPermissionsTests: XCTestCase {
     final class Probe: @unchecked Sendable {
-        private let lock = NSLock()
-        struct State {
-            var installed = true
-            var host = false
-            var hostRequests: [Bool] = []
-            var driverRequests = 0
-            var setupRequests = 0
-            var settings: [String] = []
-            var failure = false
-            var report = CuaDriverPermissionReport(accessibility: false, screen_recording: false,
-                source: .init(attribution: "driver-daemon", bundle_id: "com.trycua.driver"))
-        }
-        private var value = State()
-        func change(_ body: (inout State) -> Void) { lock.withLock { body(&value) } }
-        var state: State { lock.withLock { value } }
+        var installed = true
+        var control = false
+        var capture = false
+        var controlRequests: [Bool] = []
+        var captureRequests: [Bool] = []
+        var settings: [String] = []
+        var opensSettings = true
         func client() -> CuaPermissionClient {
-            CuaPermissionClient(installed: { self.state.installed }, hostAccessibility: { prompt in
-                self.change { $0.hostRequests.append(prompt) }; return self.state.host
-            }, driverPermissions: {
-                self.change { $0.driverRequests += 1 }
-                if self.state.failure { throw CocoaError(.fileReadUnknown) }
-                return self.state.report
-            }, openDriverSetup: {
-                self.change { $0.setupRequests += 1 }
-                if self.state.failure { throw CocoaError(.fileReadUnknown) }
-            }, openSettings: { pane in self.change { $0.settings.append(pane) }; return true })
+            CuaPermissionClient(installed: { self.installed }, hostAccessibility: { prompt in
+                self.controlRequests.append(prompt); return self.control
+            }, hostScreenCapture: { prompt in
+                self.captureRequests.append(prompt); return self.capture
+            }, openSettings: { pane in
+                self.settings.append(pane); return self.opensSettings
+            })
         }
     }
 
-    func testDemoPartialGrantsPersistAcrossRefreshWithoutNativeRequests() async {
+    func testRefreshChecksOnlyHostWithoutRequestingConsentOrOpeningSettings() async {
         let probe = Probe()
-        let checked = CuaPermissionsController(client: probe.client(), demoInitiallyAllowed: false)
-        await checked.refresh(demo: true)
-        XCTAssertEqual(checked.hostAccessibility, .off)
-        XCTAssertEqual(checked.driverAccessibility, .off)
-        XCTAssertEqual(checked.windowCapture, .off)
-        checked.enableHostAccessibility(demo: true)
-        await checked.refresh(demo: true)
-        XCTAssertEqual(checked.hostAccessibility, .allowed)
-        XCTAssertEqual(checked.driverAccessibility, .off)
-        await checked.enableDriver(demo: true)
-        await checked.refresh(demo: true)
-        XCTAssertEqual(checked.hostAccessibility, .allowed)
-        XCTAssertEqual(checked.driverAccessibility, .allowed)
-        XCTAssertEqual(checked.windowCapture, .allowed)
-        XCTAssertTrue(probe.state.hostRequests.isEmpty)
-        XCTAssertEqual(probe.state.driverRequests, 0)
-        XCTAssertEqual(probe.state.setupRequests, 0)
-        XCTAssertTrue(probe.state.settings.isEmpty)
-    }
-
-    func testRefreshChecksBothOwnersWithoutPromptingOrCapturing() async {
-        let probe = Probe()
+        XCTAssertTrue(probe.controlRequests.isEmpty)
         let checked = CuaPermissionsController(client: probe.client())
-        XCTAssertTrue(probe.state.hostRequests.isEmpty)
-        XCTAssertEqual(probe.state.driverRequests, 0)
+        XCTAssertEqual(checked.hostAccessibility, .checking)
         await checked.refresh(demo: false)
         await checked.refresh(demo: false)
         XCTAssertEqual(checked.hostAccessibility, .off)
-        XCTAssertEqual(checked.driverAccessibility, .off)
         XCTAssertEqual(checked.windowCapture, .off)
-        XCTAssertEqual(probe.state.hostRequests, [false, false])
-        XCTAssertEqual(probe.state.driverRequests, 2)
-        XCTAssertEqual(probe.state.setupRequests, 0)
-        XCTAssertTrue(probe.state.settings.isEmpty)
+        XCTAssertEqual(probe.controlRequests, [false, false])
+        XCTAssertEqual(probe.captureRequests, [false, false])
+        XCTAssertTrue(probe.settings.isEmpty)
     }
 
-    func testExplicitSetupRefreshesGrantsAndRevocationDoesNotTrustSetupExit() async {
+    func testIndependentHostConsentAndRevocationNeverInventGrants() async {
         let probe = Probe(), controller = CuaPermissionsController(client: probe.client())
-        await controller.refresh(demo: false)
         controller.enableHostAccessibility(demo: false)
-        XCTAssertEqual(probe.state.hostRequests, [false, true])
-        await controller.enableDriver(demo: false)
-        XCTAssertEqual(probe.state.setupRequests, 1)
-        XCTAssertEqual(probe.state.driverRequests, 2)
-        XCTAssertEqual(controller.driverAccessibility, .off, "Setup success cannot invent an OS grant")
-        probe.change { state in
-            state.host = true
-            state.report = .init(accessibility: true, screen_recording: true,
-                source: .init(attribution: "driver-daemon", bundle_id: "com.trycua.driver"))
-        }
+        XCTAssertEqual(controller.hostAccessibility, .off)
+        XCTAssertEqual(probe.controlRequests, [true])
+        XCTAssertTrue(probe.captureRequests.isEmpty, "Device Control must not request Screen Recording")
+        controller.enableScreenCapture(demo: false)
+        XCTAssertEqual(controller.windowCapture, .off, "A returned request cannot invent an OS grant")
+        XCTAssertEqual(probe.captureRequests, [true])
+        XCTAssertEqual(probe.settings, ["Privacy_Accessibility", "Privacy_ScreenCapture"])
+        probe.control = true
         await controller.refresh(demo: false)
         XCTAssertEqual(controller.hostAccessibility, .allowed)
-        XCTAssertEqual(controller.driverAccessibility, .allowed)
+        XCTAssertEqual(controller.windowCapture, .off)
+        probe.capture = true
+        await controller.refresh(demo: false)
         XCTAssertEqual(controller.windowCapture, .allowed)
-        probe.change { $0.report = .init(accessibility: false, screen_recording: false,
-            source: .init(attribution: "driver-daemon", bundle_id: "com.trycua.driver")) }
+        probe.control = false
+        probe.capture = false
         await controller.refresh(demo: false)
-        XCTAssertEqual(controller.driverAccessibility, .off)
+        XCTAssertEqual(controller.hostAccessibility, .off)
         XCTAssertEqual(controller.windowCapture, .off)
-        XCTAssertEqual(probe.state.setupRequests, 1)
+        XCTAssertEqual(probe.controlRequests.filter { $0 }.count, 1)
+        XCTAssertEqual(probe.captureRequests.filter { $0 }.count, 1)
     }
 
-    func testMissingDriverFailureAndWrongPermissionOwnerNeverClaimAllowed() async {
-        let probe = Probe(), controller = CuaPermissionsController(client: probe.client())
-        probe.change { $0.installed = false }
-        await controller.refresh(demo: false)
-        await controller.enableDriver(demo: false)
-        XCTAssertEqual(controller.driverAccessibility, .notInstalled)
-        XCTAssertEqual(probe.state.driverRequests, 0)
-        probe.change { $0.installed = true; $0.failure = true }
-        await controller.refresh(demo: false)
-        XCTAssertEqual(controller.driverAccessibility, .unknown)
-        probe.change { $0.failure = false; $0.report = .init(accessibility: true, screen_recording: true,
-            source: .init(attribution: "host", bundle_id: "com.example.terminal")) }
-        await controller.refresh(demo: false)
-        XCTAssertEqual(controller.driverAccessibility, .unknown)
-        XCTAssertEqual(controller.windowCapture, .unknown)
-        XCTAssertNotNil(controller.message)
-    }
-
-    func testDemoActionsNeverTouchNativePermissionsOrSettings() async {
-        let probe = Probe(), controller = CuaPermissionsController(client: probe.client())
-        await controller.refresh(demo: true)
-        controller.enableHostAccessibility(demo: true)
-        await controller.enableDriver(demo: true)
-        controller.openSettings("Privacy_Accessibility", demo: true)
-        XCTAssertEqual(controller.hostAccessibility, .allowed)
-        XCTAssertEqual(controller.driverAccessibility, .allowed)
-        XCTAssertEqual(controller.windowCapture, .allowed)
-        XCTAssertTrue(probe.state.hostRequests.isEmpty)
-        XCTAssertEqual(probe.state.driverRequests, 0)
-        XCTAssertTrue(probe.state.settings.isEmpty)
-        XCTAssertEqual(probe.state.setupRequests, 0)
-    }
-
-    func testDriverStatusUsesReadOnlyCLIAndSetupUsesTheSupportedGrantCommand() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-cua-permissions-\(UUID())")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let executable = directory.appendingPathComponent("cua-driver")
-        let script = #"""
-        #!/usr/bin/env python3
-        import json,pathlib,sys
-        root=pathlib.Path(__file__).parent
-        with (root/'calls.jsonl').open('a') as log: log.write(json.dumps(sys.argv[1:])+'\n')
-        if sys.argv[1:]==['permissions','status','--json']:
-            print(json.dumps({'accessibility':True,'screen_recording':False,'source':{'attribution':'driver-daemon','bundle_id':'com.trycua.driver'}}))
-        elif sys.argv[1:]==['permissions','grant']:
-            print('Permission setup closed; this output is not a grant receipt')
-        else: raise SystemExit(91)
-        """#
-        try Data(script.utf8).write(to: executable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        let driver = CuaPermissionDriver(executable: executable)
-        let first = try await driver.status()
-        XCTAssertEqual(first.accessibility, true)
-        XCTAssertEqual(first.screen_recording, false)
-        try await driver.setup()
-        let after = try await driver.status()
-        XCTAssertEqual(after.screen_recording, false)
-        let lines = try String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8).split(separator: "\n")
-        let calls = try lines.map { try JSONDecoder().decode([String].self, from: Data($0.utf8)) }
-        XCTAssertEqual(calls, [["permissions", "status", "--json"], ["permissions", "grant"], ["permissions", "status", "--json"]])
-    }
-
-    private actor SuspendedStatus {
-        private var permit: CheckedContinuation<Void, Never>?
-        private var started: [CheckedContinuation<Void, Never>] = []
-        private(set) var reads = 0
-        func read() async -> CuaDriverPermissionReport {
-            reads += 1
-            let oldGrant = reads == 1
-            if oldGrant {
-                await withCheckedContinuation { continuation in
-                    permit = continuation
-                    started.forEach { $0.resume() }; started.removeAll()
-                }
-            }
-            return .init(accessibility: oldGrant, screen_recording: oldGrant,
-                         source: .init(attribution: "driver-daemon", bundle_id: "com.trycua.driver"))
-        }
-        func waitUntilStarted() async {
-            if permit != nil { return }
-            await withCheckedContinuation { started.append($0) }
-        }
-        func release() { permit?.resume(); permit = nil }
-    }
-
-    func testActivationDuringAnOldStatusReadQueuesOneFreshReadWithoutConsent() async {
-        let probe = Probe(), gate = SuspendedStatus()
-        var client = probe.client()
-        client.driverPermissions = { await gate.read() }
-        let controller = CuaPermissionsController(client: client)
-        let original = Task { await controller.refresh(demo: false) }
-        await gate.waitUntilStarted()
-        await controller.refresh(demo: false)
-        await controller.refresh(demo: false)
-        await gate.release()
-        await original.value
-        let reads = await gate.reads
-        XCTAssertEqual(reads, 2, "Activation checks must coalesce behind the old in-flight result")
-        XCTAssertEqual(controller.driverAccessibility, .off)
-        XCTAssertEqual(controller.windowCapture, .off)
-        XCTAssertEqual(probe.state.hostRequests, [false, false])
-        XCTAssertEqual(probe.state.setupRequests, 0)
-        XCTAssertFalse(controller.checking)
-    }
-
-    private actor SuspendedSetup {
-        private var releaseSetup: CheckedContinuation<Void, Never>?
-        private var started: CheckedContinuation<Void, Never>?
-        func run() async {
-            await withCheckedContinuation { continuation in
-                releaseSetup = continuation
-                started?.resume(); started = nil
-            }
-        }
-        func waitUntilStarted() async {
-            if releaseSetup != nil { return }
-            await withCheckedContinuation { started = $0 }
-        }
-        func release() { releaseSetup?.resume(); releaseSetup = nil }
-    }
-
-    func testConsentWaitDoesNotBlockStatusRefreshOrDuplicateSetup() async {
-        let probe = Probe(), gate = SuspendedSetup()
-        var client = probe.client()
-        client.openDriverSetup = {
-            probe.change { $0.setupRequests += 1 }
-            await gate.run()
-        }
-        let controller = CuaPermissionsController(client: client)
-        let waiting = Task { await controller.enableDriver(demo: false) }
-        await gate.waitUntilStarted()
-        XCTAssertFalse(controller.checking, "Waiting for human consent must not disable onboarding")
-        probe.change { $0.report = .init(accessibility: true, screen_recording: false,
-            source: .init(attribution: "driver-daemon", bundle_id: "com.trycua.driver")) }
-        await controller.refresh(demo: false)
-        XCTAssertEqual(controller.driverAccessibility, .allowed)
-        XCTAssertEqual(controller.windowCapture, .off)
-        await controller.enableDriver(demo: false)
-        XCTAssertEqual(probe.state.setupRequests, 1)
-        await gate.release()
-        await waiting.value
-        XCTAssertNil(controller.message)
-        XCTAssertFalse(controller.checking)
-    }
-
-    func testConsentProcessDeadlineLeavesGrantsUnverifiedWithoutTimeoutError() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-consent-wait-\(UUID())")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let executable = directory.appendingPathComponent("cua-driver")
-        let script = #"""
-        #!/usr/bin/env python3
-        import json, sys, time
-        if sys.argv[1:] == ['permissions', 'grant']: time.sleep(60)
-        else: print(json.dumps({'accessibility':False,'screen_recording':False,'source':{'attribution':'driver-daemon','bundle_id':'com.trycua.driver'}}))
-        """#
-        try Data(script.utf8).write(to: executable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        let driver = CuaPermissionDriver(executable: executable)
-        try await driver.setup(timeout: 0.1)
-        let report = try await driver.status()
-        XCTAssertTrue(report.identifiesDriver)
-        XCTAssertEqual(report.accessibility, false)
-        XCTAssertEqual(report.screen_recording, false)
-    }
-
-    func testSuccessfulGrantReadCannotEraseASeparateSetupFailure() async {
+    func testMissingBundledHelperDoesNotConfuseHostGrantsOrOfferStandaloneInstall() async {
         let probe = Probe()
-        probe.change { $0.report = .init(accessibility: true, screen_recording: true,
-            source: .init(attribution: "driver-daemon", bundle_id: "com.trycua.driver")) }
-        var client = probe.client()
-        client.openDriverSetup = { throw DesktopAppError.unavailable("Capture verification did not finish") }
-        let controller = CuaPermissionsController(client: client)
-        await controller.enableDriver(demo: false)
+        probe.installed = false
+        probe.control = true
+        probe.capture = true
+        let controller = CuaPermissionsController(client: probe.client())
+        await controller.refresh(demo: false)
+        XCTAssertFalse(controller.installed)
+        XCTAssertEqual(controller.hostAccessibility, .allowed)
         XCTAssertEqual(controller.windowCapture, .allowed)
-        XCTAssertEqual(controller.message, "Capture verification did not finish")
+        XCTAssertTrue(controller.message?.contains("Update or reinstall msgblast") == true)
+        let readiness = OnboardingPermissionReadiness(fullDiskAccess: false, contacts: false, automation: false,
+            hostAccessibility: controller.hostAccessibility == .allowed, screenCapture: controller.windowCapture == .allowed,
+            driverInstalled: controller.installed)
+        XCTAssertFalse(readiness.canContinue, "Host grants cannot mask a broken app bundle")
+        probe.installed = true
+        await controller.refresh(demo: false)
+        XCTAssertTrue(controller.installed)
+        XCTAssertNil(controller.message)
     }
 
-    func testPermissionErrorsDescribeTheOperationAndActualStatusDeadline() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-cua-errors-\(UUID())")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let executable = directory.appendingPathComponent("cua-driver")
-        try Data("#!/usr/bin/env python3\nraise SystemExit(3)\n".utf8).write(to: executable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        let driver = CuaPermissionDriver(executable: executable)
-        do { _ = try await driver.status(); XCTFail("Expected a failed status command") }
-        catch { XCTAssertTrue(error.localizedDescription.contains("permission check")); XCTAssertFalse(error.localizedDescription.contains("setup")) }
-        do { try await driver.setup(); XCTFail("Expected a failed setup command") }
-        catch { XCTAssertTrue(error.localizedDescription.contains("permission setup")) }
-        try Data("#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n".utf8).write(to: executable)
-        do { _ = try await driver.status(); XCTFail("Expected the real status deadline") }
-        catch {
-            XCTAssertTrue(error.localizedDescription.contains("10 seconds"))
-            XCTAssertFalse(error.localizedDescription.contains("personal agent"))
-            XCTAssertFalse(error.localizedDescription.contains("three minutes"))
-        }
+    func testDemoGrantsAreIndependentPersistAcrossRefreshAndNeverTouchSystem() async {
+        let probe = Probe(), controller = CuaPermissionsController(client: probe.client(), demoInitiallyAllowed: false)
+        await controller.refresh(demo: true)
+        XCTAssertEqual(controller.hostAccessibility, .off)
+        XCTAssertEqual(controller.windowCapture, .off)
+        controller.enableHostAccessibility(demo: true)
+        await controller.refresh(demo: true)
+        XCTAssertEqual(controller.hostAccessibility, .allowed)
+        XCTAssertEqual(controller.windowCapture, .off)
+        controller.enableScreenCapture(demo: true)
+        await controller.refresh(demo: true)
+        XCTAssertEqual(controller.windowCapture, .allowed)
+        controller.openSettings("Privacy_Accessibility", demo: true)
+        XCTAssertTrue(probe.controlRequests.isEmpty)
+        XCTAssertTrue(probe.captureRequests.isEmpty)
+        XCTAssertTrue(probe.settings.isEmpty)
+        XCTAssertTrue(controller.installed)
+    }
+
+    func testDemoCaptureDoesNotEnableControlOrContaminateLiveStatus() async {
+        let probe = Probe(), controller = CuaPermissionsController(client: probe.client(), demoInitiallyAllowed: false)
+        controller.enableScreenCapture(demo: true)
+        await controller.refresh(demo: true)
+        XCTAssertEqual(controller.windowCapture, .allowed)
+        XCTAssertEqual(controller.hostAccessibility, .off)
+        await controller.refresh(demo: false)
+        XCTAssertEqual(controller.windowCapture, .off)
+        XCTAssertEqual(controller.hostAccessibility, .off)
+    }
+
+    func testSettingsFailureProvidesHostRecoveryAndSuccessfulGrantDoesNotOpenSettings() async {
+        let probe = Probe(), controller = CuaPermissionsController(client: probe.client())
+        probe.opensSettings = false
+        controller.enableScreenCapture(demo: false)
+        XCTAssertTrue(controller.message?.contains("msgblast access") == true)
+        probe.control = true
+        probe.capture = true
+        let settingsCount = probe.settings.count
+        controller.enableHostAccessibility(demo: false)
+        controller.enableScreenCapture(demo: false)
+        XCTAssertEqual(probe.settings.count, settingsCount)
+        XCTAssertEqual(controller.hostAccessibility, .allowed)
+        XCTAssertEqual(controller.windowCapture, .allowed)
     }
 
     func testDesktopOnboardingUsesNativeConnectionsWithoutBrowserImportOrCLISetup() throws {

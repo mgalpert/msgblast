@@ -98,7 +98,7 @@ import msgblastCore
         await resumed.onboarding.finishPermissionSetup()
         precondition(resumed.state.onboarding == checkpoint, "Settled denied permissions must reject both saved approved sections")
         resumed.onboarding.appPermissions.enableHostAccessibility(demo: true)
-        await resumed.onboarding.appPermissions.enableDriver(demo: true)
+        resumed.onboarding.appPermissions.enableScreenCapture(demo: true)
         await resumed.onboarding.finishPermissionSetup()
         precondition(resumed.onboarding.state.approvedPermissionSections == [.apps], "Granting one section must not replay the saved Messaging approval")
         precondition(resumed.onboarding.state.selected == progress.selected && resumed.onboarding.state.currentStep == pendingStep)
@@ -236,6 +236,7 @@ import msgblastCore
         lifecycleModel.coordinator?.open(lifecycleID)
         precondition(window.windowNumber == originalNumber && window.frame == originalFrame && window.isVisible)
         precondition(lifecycleModel.comparison(lifecycleID)!.members.count == 2)
+        lifecycleModel.webAgents.setEnabled(true, for: .chatgpt)
         let lifecycleWeb = lifecycleModel.webAgents.session(for: .chatgpt)!
         lifecycleModel.coordinator?.prepareJoiningWebAgent(lifecycleID)
         lifecycleWeb.updateState { $0.selected = true }
@@ -374,6 +375,8 @@ import msgblastCore
         let showcase = AppModel()
         let shown = showcase.state.agents[0]
         let hidden = showcase.state.agents[1]
+        showcase.webAgents.setEnabled(true, for: .muse)
+        showcase.webAgents.setEnabled(true, for: .chatgpt)
         let original = showcase.webAgents.session(for: WebAgentID.chatgpt)!
         let copy = try showcase.webAgents.duplicate(original, name: "Hidden website copy")
         showcase.state.agentGrid = AgentGridLayout(visibleIDs: [.web(.muse), showcase.gridID(for: shown)])
@@ -509,6 +512,7 @@ import msgblastCore
         onboardingModel.onboarding.edit { $0.finish() }
         precondition(onboardingModel.state.agentGrid?.visibleIDs == [.featuredMessages(.fo), .web(.claude), .web(.chatgpt)])
         onboardingModel.state.selection = [connectedContact.id]
+        onboardingModel.webAgents.setEnabled(true, for: .chatgpt)
         let optedIn = onboardingModel.webAgents.session(for: .chatgpt)!
         optedIn.updateState { $0.selected = true }
         onboardingModel.onboarding.edit { _ in }
@@ -536,6 +540,7 @@ import msgblastCore
         photoModel.state.agents[photoModel.state.agents.count - 1] = instinct
         precondition(displayedInstinctPhoto() == currentPhoto, "A saved contact without a photo must use featured artwork")
         print("PASS: Instinct's legacy cached placeholder upgrades to current artwork; custom contact photos retain priority and absent photos fall back.")
+        gridModel.webAgents.setEnabled(true, for: .chatgpt)
         let hiddenContact = gridModel.state.agents[0]
         let draftBeforeGrid = gridModel.state.draft
         var grid = gridModel.agentGridLayout
@@ -572,6 +577,7 @@ import msgblastCore
         precondition(quickModel.state.selection == [quickContact.id])
         precondition(quickModel.webAgents.selected.isEmpty)
         precondition(quickModel.isVisibleInAgentGrid(.messages(quickContact.id)))
+        quickModel.webAgents.setEnabled(true, for: .chatgpt)
         let quickWeb = quickModel.webAgents.session(for: WebAgentID(provider: .chatgpt))!
         quickWeb.connect()
         try await waitUntil { quickWeb.isReadyForOnboarding }
@@ -614,7 +620,7 @@ import msgblastCore
         var comparisonSessions: [WebAgentSession] {
             model.webAgents.availableSessions.filter { $0.provider.supportsSharedSubmissions }
         }
-        WebProvider.optionalProviders.forEach { model.webAgents.setEnabled(true, for: $0) }
+        (WebProvider.webDefaults + WebProvider.optionalProviders).forEach { model.webAgents.setEnabled(true, for: $0) }
         let first = await model.prepareWebComparison("First comparison", recipientIDs: [recipient.id], agents: (WebProvider.webDefaults + WebProvider.optionalProviders).map { WebAgentID(provider: $0) })!
         let muse = model.webAgents.sessions.first { $0.provider == .muse }!
         precondition(muse.fixture)
@@ -815,6 +821,7 @@ import msgblastCore
         precondition(model.transcript(safe, member: safeMember).filter(\.outgoing).map(\.text) == ["Delayed broadcast original", "Delayed shared ask"])
         print("PASS: deterministic delayed web completion preserves the exact broadcast UUID; private send is blocked with draft retained, injected later private ledger remains unmarked, and a new agent receives only Original + Shared. Actual AgentBroadcast + AppModel with simulated transport.")
         let instanceModel = AppModel()
+        instanceModel.webAgents.setEnabled(true, for: .chatgpt)
         let originalWeb = instanceModel.webAgents.session(for: WebAgentID.chatgpt)!
         let copiedWeb = try instanceModel.webAgents.duplicate(originalWeb, name: "ChatGPT fixture copy")
         let unusedWeb = try instanceModel.webAgents.duplicate(originalWeb, name: "Unselected fixture copy")

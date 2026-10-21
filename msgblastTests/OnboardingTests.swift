@@ -34,14 +34,13 @@ final class OnboardingTests: XCTestCase {
 
     func testPermissionGateRequiresOneCompleteSection() {
         // Cover all combinations: grants split across incomplete sections must not unlock setup.
-        for mask in 0..<128 {
-            let granted = (0..<7).map { mask & (1 << $0) != 0 }
+        for mask in 0..<64 {
+            let granted = (0..<6).map { mask & (1 << $0) != 0 }
             let readiness = OnboardingPermissionReadiness(
                 fullDiskAccess: granted[0], contacts: granted[1], automation: granted[2],
-                hostAccessibility: granted[3], driverAccessibility: granted[4],
-                screenCapture: granted[5], driverInstalled: granted[6])
+                hostAccessibility: granted[3], screenCapture: granted[4], driverInstalled: granted[5])
             let messagingReady = mask & 0b0000111 == 0b0000111
-            let appsReady = mask & 0b1111000 == 0b1111000
+            let appsReady = mask & 0b111000 == 0b111000
             XCTAssertEqual(readiness.messagingReady, messagingReady, "Grants mask: \(mask)")
             XCTAssertEqual(readiness.appsReady, appsReady, "Grants mask: \(mask)")
             XCTAssertEqual(readiness.canContinue, messagingReady || appsReady, "Grants mask: \(mask)")

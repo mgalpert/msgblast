@@ -81,24 +81,22 @@ public struct OnboardingPermissionReadiness: Equatable, Sendable {
     public var contacts: Bool
     public var automation: Bool
     public var hostAccessibility: Bool
-    public var driverAccessibility: Bool
     public var screenCapture: Bool
     public var driverInstalled: Bool
 
     public init(fullDiskAccess: Bool, contacts: Bool, automation: Bool,
-                hostAccessibility: Bool, driverAccessibility: Bool, screenCapture: Bool,
+                hostAccessibility: Bool, screenCapture: Bool,
                 driverInstalled: Bool) {
         self.fullDiskAccess = fullDiskAccess
         self.contacts = contacts
         self.automation = automation
         self.hostAccessibility = hostAccessibility
-        self.driverAccessibility = driverAccessibility
         self.screenCapture = screenCapture
         self.driverInstalled = driverInstalled
     }
 
     public var messagingReady: Bool { fullDiskAccess && contacts && automation }
-    public var appsReady: Bool { hostAccessibility && driverAccessibility && screenCapture && driverInstalled }
+    public var appsReady: Bool { hostAccessibility && screenCapture && driverInstalled }
     public var canContinue: Bool { messagingReady || appsReady }
     public var completedSections: Set<OnboardingPermissionSection> {
         var sections: Set<OnboardingPermissionSection> = []

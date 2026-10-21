@@ -78,11 +78,12 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["check-onboarding-permissions"].exists)
         XCTAssertEqual(app.scrollViews.count, 0, "Permission setup fits without scrolling")
         XCTAssertFalse(app.staticTexts["System Settings · Privacy & Security"].exists)
-        XCTAssertTrue(app.switches["enable-cua-driver-permission"].exists)
+        XCTAssertFalse(app.switches["enable-cua-driver-permission"].exists)
+        XCTAssertFalse(app.staticTexts["CuaDriver"].exists)
         XCTAssertFalse(app.buttons["Manage"].exists)
         XCTAssertFalse(app.staticTexts["Messaging agents"].exists)
         XCTAssertFalse(app.staticTexts["App agents"].exists)
-        for identifier in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-driver", "cua-capture"] {
+        for identifier in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-capture"] {
             XCTAssertTrue(app.switches["enable-\(identifier)-permission"].exists)
         }
         XCTAssertFalse(app.buttons["Choose ChatGPT App"].exists)
@@ -116,13 +117,16 @@ final class OnboardingWorkflowTests: XCTestCase {
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: host)
         waitForExpectations(timeout: 5)
         XCTAssertFalse(next.isEnabled)
+        XCTAssertEqual(app.scrollViews.count, 0)
+        XCTAssertFalse(app.switches["enable-cua-driver-permission"].exists)
+        XCTAssertFalse(app.staticTexts["CuaDriver"].exists)
         XCTAssertTrue(host.isHittable)
         host.click()
         XCTAssertEqual((app.switches["enable-cua-host-permission"].value as? NSNumber)?.boolValue, true)
         XCTAssertFalse(next.isEnabled, "One Accessibility grant does not complete App access")
-        let driver = app.switches["enable-cua-driver-permission"]
-        XCTAssertTrue(driver.isHittable)
-        driver.click()
+        let capture = app.switches["enable-cua-capture-permission"]
+        XCTAssertTrue(capture.isHittable)
+        capture.click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
         waitForExpectations(timeout: 5)
         XCTAssertEqual((app.switches["enable-messages-contacts-permission"].value as? NSNumber)?.boolValue, false)

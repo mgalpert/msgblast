@@ -12,37 +12,28 @@ struct CuaPermissionsView: View {
             Text("Desktop app control").font(.headline)
             Text("msgblast connects to installed Mac apps. These optional permissions are separate from Messages access.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Label(permissions.installed ? "msgblast driver installed" : "msgblast driver required", systemImage: permissions.installed ? "checkmark.circle" : "arrow.down.circle")
-                Spacer()
-                if !permissions.installed {
-                    Link("Installation guide", destination: URL(string: "https://cua.ai/docs/cua-driver")!).disabled(demo)
-                }
-            }.font(.callout)
+            if !permissions.installed {
+                Text("App control is missing from this copy of msgblast. Update or reinstall msgblast to connect Mac apps.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                row("msgblast Accessibility", benefit: "Verify the selected chat and preserve unsent drafts in connected apps.", status: permissions.hostAccessibility, identifier: "cua-host") {
+                row(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility", benefit: "Verify the selected chat and preserve unsent drafts in connected apps.", status: permissions.hostAccessibility, identifier: "cua-host") {
                     if permissions.hostAccessibility == .allowed { permissions.openSettings("Privacy_Accessibility", demo: demo) }
                     else { permissions.enableHostAccessibility(demo: demo) }
                 }
-                row("msgblast driver Accessibility", benefit: "Read and operate the selected app's controls.", status: permissions.driverAccessibility, identifier: "cua-driver") {
-                    if permissions.driverAccessibility == .allowed { permissions.openSettings("Privacy_Accessibility", demo: demo) }
-                    else { Task { await permissions.enableDriver(demo: demo) } }
-                }
-                row("msgblast driver Screen Recording", benefit: "Capture the selected app window to focus Muse, ChatGPT, Dots, and Claude message fields.", status: permissions.windowCapture, identifier: "cua-capture") {
+                row("Screen Recording", benefit: "Capture the selected app window to focus Muse, ChatGPT, Dots, and Claude message fields.", status: permissions.windowCapture, identifier: "cua-capture") {
                     if permissions.windowCapture == .allowed { permissions.openSettings("Privacy_ScreenCapture", demo: demo) }
-                    else { Task { await permissions.enableDriver(demo: demo) } }
+                    else { permissions.enableScreenCapture(demo: demo) }
                 }
             }
-            Text("Enable access for msgblast and its driver when macOS asks. Full Disk Access does not grant app control or screen capture.")
+            Text("Enable access for msgblast when macOS asks. Full Disk Access does not grant app control or screen capture.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button("Set up app access…") { Task { await permissions.enableDriver(demo: demo) } }
-                    .disabled(!permissions.installed).accessibilityIdentifier("setup-cua-permissions")
                 Button("Check again") { Task { await permissions.refresh(demo: demo) } }
                     .accessibilityIdentifier("check-cua-permissions")
                 if permissions.checking { ProgressView().controlSize(.small) }
             }.controlSize(.small)
-            Text(demo ? "App permissions are simulated. No system access is changed." : "Set up app access to verify capture. Follow any restart instructions from macOS; access refreshes when you return.")
+            Text(demo ? "App permissions are simulated. No system access is changed." : "Follow any restart instructions from macOS; access refreshes when you return.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let message = permissions.message { Text(message).font(.caption).foregroundStyle(.orange) }
         }

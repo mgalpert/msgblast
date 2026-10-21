@@ -193,11 +193,6 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         guard let model else { return .terminateNow }
         switch termination.request(isBusy: model.busy || model.webBroadcastBusy, persist: { try model.saveForTermination() }) {
         case .allowed:
-            guard !model.personalAgent.running.isEmpty || model.webAgents.hasNativeRequests || model.webAgents.hasConnectedWebSessions else {
-                model.personalAgent.beginShutdown()
-                model.webAgents.beginShutdown()
-                return .terminateNow
-            }
             replyToTermination(sender, allowed: true)
             return .terminateLater
         case .deferred: return .terminateLater
@@ -225,6 +220,7 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
             model.webAgents.beginShutdown()
             await model.personalAgent.cancelAndWait()
             await model.webAgents.cancelAndWait()
+            await EmbeddedCuaDriver.shared.stop()
             completeTerminationReply(sender, allowed: true)
         }
     }

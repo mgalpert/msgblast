@@ -104,6 +104,31 @@ and preservation of existing website identity/history. The Demo UI regression
 `OnboardingWorkflowTests.testNativeChoicesReplaceWebAlternativesInOnboarding`
 checks the actual chooser.
 
+## Embedded app-control runtime
+
+`EmbeddedCuaDriverTests` exercises private daemon startup, shared concurrent
+connections, observed host identity rejection, shutdown during startup, socket
+cleanup, host-grant generation changes, startup grant races, and missing-helper/
+timeout failures without using a global driver.
+`CuaPermissionsTests` checks host-only grants and revocation without requesting
+real OS access; `OnboardingTests` covers complete permission-group readiness.
+
+After a Debug build, this read-only integration check uses the actual bundled
+helper and a temporary ad-hoc signed host app:
+
+```sh
+bash scripts/test_embedded_cua_runtime.sh build/contributor-tests
+```
+
+It verifies the driver's observed parent application and PID, exercises the default
+native adapter's private-socket routing and permission-response decoding, and checks
+shutdown cleanup. A second, explicitly simulated run verifies that the default
+adapter requests `tree_format=elements` and decodes its structured snapshot.
+Neither run requests permissions, starts provider apps, or sends messages.
+It proves runtime attribution metadata, not approval retention across signed
+updates or live provider delivery. Packaging/release checks are available with
+`python3 -m unittest scripts.tests.test_bundle_cua_driver scripts.tests.test_release`.
+
 ## Native UI tests and manual checks
 
 Use an authorized Mac with an interactive desktop and native runner permissions.

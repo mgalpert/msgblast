@@ -63,7 +63,7 @@ The script copies the working tree to a temporary workspace, selects preview
 artwork there, builds both apps, ad-hoc signs them, verifies signatures and
 compiled icons, and creates ZIPs plus `preview-manifest.json`. It does not publish,
 use Apple credentials, read release secrets, or change the committed green icon.
-The first run needs network access for pinned Sparkle and cloudflared assets.
+The first run needs network access for pinned Sparkle, cloudflared, and CuaDriver assets.
 It builds both variants by default; `--variant development` or `--variant demo`
 builds just one.
 
@@ -148,6 +148,13 @@ Info.plist, entitlements, frameworks, resources, and helper.
   in `scripts/cloudflared.json`, checks SHA-256, and embeds the matching executable.
   It caches assets in derived data. No Homebrew cloudflared or running tunnel is
   needed to build; the app starts its helper only for Grok Bot setup.
+- The build runs `scripts/bundle_cua_driver.py` and verifies the official upstream
+  **CuaDriver 0.38.0** asset against `scripts/cua-driver.json`. It extracts only
+  the exact regular executable, verifies its architecture, selects the requested
+  architecture(s), and signs `Contents/Helpers/cua-driver` with the app's build
+  identity. No separate CuaDriver app or SDK dylib is bundled. The pinned manifest
+  and upstream license/third-party notices ship in Resources. The first build
+  needs network access; checksum-verified archives are cached in derived data.
 - Usual app/preview builds use Python's standard library. Installer DMG tooling
   additionally needs `scripts/installer-requirements.txt`; see the release guide.
 - After adding/removing Swift files or changing targets, resources, or settings,
@@ -170,10 +177,11 @@ account's single conversation across comparisons, including earlier context.
 See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbot.md).
 
 Optional **ChatGPT App**, **Dots App**, **Claude App**, **Muse App**, **Grok Bot App**,
-**Wabi**, and **Gemini** entries appear under Mac apps in onboarding and More agents. They use native msgblast conversation panes and an installed `cua-driver`
-command, while authentication stays in the desktop app. Muse creates a side chat
-per comparison and needs msgblast Accessibility permission and driver window
-capture. Wabi creates a dedicated AI chat per comparison and needs msgblast
+**Wabi**, and **Gemini** entries appear under Mac apps in onboarding and More agents. They use native msgblast conversation panes and the bundled CuaDriver
+executable in private embedded mode, while authentication stays in the desktop
+app. No separate CuaDriver installation is needed. Device Control and Data Access
+(or Accessibility on older macOS) and Screen Recording are approved for msgblast. Muse creates a side chat
+per comparison and uses msgblast app-control permission and window capture. Wabi creates a dedicated AI chat per comparison and needs msgblast
 Accessibility to verify its thread address and draft. Grok Bot also needs msgblast
 Accessibility to verify the selected bot and preserve drafts. Installed apps are
 detected before they can be enabled or selected in onboarding. Enable the agent

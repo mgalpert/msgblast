@@ -246,3 +246,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Embedded CuaDriver
+The bundled CuaDriver executable is provided by trycua/cua. Its pinned version, upstream source revision, and archive checksums are in cua-driver.json. See CuaDriverNotices.txt for its license and third-party notices.

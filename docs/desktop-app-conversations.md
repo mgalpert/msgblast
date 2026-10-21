@@ -1,21 +1,23 @@
 # Desktop app conversations
 
 Muse App, Grok Bot App, Wabi, Gemini, ChatGPT App, Dots App, and Claude App are optional agents with msgblast's native
-conversation pane. They use an independently installed `cua-driver` command.
+conversation pane. They use the pinned CuaDriver executable bundled in msgblast, running as a
+private embedded helper. No separate driver installation or CuaDriver app is
+required.
 The Muse website, Grok Bot webhook, and CLI agents retain their own accounts,
 state files, histories, and execution paths.
 
 ## Setup
 
 Onboarding starts with **Stats → Allow access → Choose your agents**. The access
-screen shows switches for Full Disk Access, Contacts, Automation, msgblast
-Accessibility, msgblast driver Accessibility and Screen Recording. It has no
-section headings, manual check button, or scrolling. Continue requires every permission in at least one section; partial
-grants from different sections cannot be combined. The agent picker enables
-Messages or native apps according to the completed sections, and checks native
-app installation separately. Websites and CLIs remain available after the gate. Permissions refresh automatically when the app returns from macOS settings.
-Switches display the live grants; switching opens the required OS handoff rather
-than changing a cached approval.
+screen shows msgblast permissions for Full Disk Access, Contacts, Automation,
+Device Control and Data Access (Accessibility on older macOS), and Screen
+Recording. App control has one permission owner: msgblast. The embedded helper
+inherits the host's permission identity; users do not approve a separate
+CuaDriver app. Full Disk Access does not grant app control. The page has no
+manual check button or scrolling. Continue requires complete Messaging access
+or complete app access. Permissions refresh automatically when returning from
+macOS settings; saved progress never substitutes for a current grant.
 
 With complete Messaging access, existing routable agents are added automatically
 and selected in the chooser. Users can deselect them there; their opt-outs survive
@@ -31,20 +33,15 @@ progress never substitutes for live permission checks. A failed checkpoint save
 prevents opening permission controls. Back returns to Stats with the user's
 sharing choices intact.
 
-1. Install cua-driver using its official instructions. In msgblast, open
-   **Settings → Permissions → Desktop app control**. Enable **msgblast
-   Accessibility** for the apps' independent draft/identity checks. Enable the
-   **msgblast driver** rows to open the helper’s Accessibility, Screen Recording and
-   window-capture setup. macOS owns the grant decisions; nothing is enabled by
-   opening Settings alone. The app calls this component the msgblast driver; macOS
-   still lists the independently installed helper under its registered name,
-   **CuaDriver**. It is not bundled or renamed by this UI change.
+1. In msgblast, use **Allow access** during onboarding or **Settings → Permissions**.
+   Enable msgblast app control and Screen Recording for native app agents.
+   macOS owns the grant decisions; opening Settings alone grants no access.
 2. Install the desktop app on this Mac and sign in. Onboarding labels each app
    **Installed on this Mac** or **Not installed** before it can be selected.
    Settings also checks installation before allowing an app to be enabled.
    If it is installed but closed, the app's **Open** button
-   opens it normally. Keep one main window on the current desktop and dismiss
-   dialogs. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
+   opens it normally. Keep one main window available and dismiss dialogs. The window can be on
+   another desktop; users do not need to move it. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
 3. Choose your agents after completing the access screen. Native apps share one
    compact connection checklist: choose **Connect** beside each app, or explicitly
    skip it for now. Continue stays disabled until every row is connected or
@@ -66,10 +63,18 @@ sharing choices intact.
    available. An existing conversation that loses its connection shows a compact
    reconnect action instead of the setup panel.
 
-The adapter finds cua-driver in `~/.local/bin`, `/opt/homebrew/bin`,
-`/usr/local/bin`, or its inherited PATH and uses its public `call` JSON interface.
-Full Disk Access does not grant Accessibility permission. This prototype neither
-bundles the driver nor copies provider authentication into msgblast.
+The build embeds the official CuaDriver **0.38.0** executable at
+`Contents/Helpers/cua-driver`, pinned by URL and SHA-256 in `scripts/cua-driver.json`.
+Only the exact regular executable is extracted; the standalone app, SDK library,
+and Node runtime are excluded. Build signing includes this nested executable.
+The app launches the helper directly with `serve --embedded`, keeping it in
+msgblast's responsibility chain. Provider authentication remains in each app.
+The driver is not downloaded or discovered from PATH at runtime. Before reusing
+a daemon, msgblast checks the host's current Accessibility and Screen Recording
+grants. An observed grant or revocation starts a fresh private generation; calls
+already in flight retain the old socket and are never replayed. A grant change
+during startup fails closed before app control. Follow any host-restart
+instructions from macOS.
 
 Installation discovery validates the app's bundle identifier and executable; a
 stale LaunchServices entry is insufficient. App removal or a process change clears
@@ -83,31 +88,18 @@ them.
 
 ## Permission checks and consent
 
-Settings and the unified onboarding access screen use the same permission controllers. The app rows
-separate msgblast's Accessibility access from CuaDriver's Accessibility and
-Screen Recording grants. Full Disk Access for Messages cannot satisfy them.
-Permission requests remain explicit. Completing Messaging access also allows website and CLI setup without granting Cua access. Entering or reactivating
-onboarding reads permission and installation status without
-opening an app or inspecting its conversation. Even a saved connection
-requires an explicit connection check before Continue is enabled;
-cached readiness cannot advance setup automatically.
+Settings and onboarding use the same msgblast permission checks. App reading
+and control share msgblast's Device Control and Data Access grant; Screen
+Recording remains a separate msgblast grant. Full Disk Access for Messages
+cannot satisfy these permissions. Consent remains explicit, and status checks
+never request grants. Entering onboarding does not open a provider app or inspect
+its conversations. A saved connection still requires a fresh explicit check
+before Continue is enabled.
 
-In the permission controls, Refresh and **Check again** run
-`cua-driver permissions status --json`; this
-read-only command does not start a daemon or show permission prompts. Grants
-are accepted only when the report identifies the standalone CuaDriver daemon
-(`com.trycua.driver`). Missing drivers, failed checks, and reports from another
-permission owner remain unverified rather than showing Allowed.
-**Check installation** only refreshes native installation discovery.
-
-Only **Enable** or **Cua setup & capture check…** runs the supported
-`cua-driver permissions grant` consent flow. Public `check_permissions` calls
-cannot request grants. The setup command's exit does not establish access:
-msgblast independently refreshes permission status afterwards. Allowed means a
-macOS grant, not proof of current window capture; Cua's setup performs its own
-capture check. Follow any macOS restart instruction, then check again. Demo
-simulates every permission action and never invokes Cua, requests OS access, or
-opens privacy settings.
+The embedded helper is owned by the app process and is not attached to an
+unrelated globally running driver. Missing or failed permission checks remain
+unverified. Demo simulates permission actions and never requests OS access or
+opens privacy settings. Fixture tests do not prove real macOS attribution.
 
 ## Muse side chats
 
@@ -227,8 +219,7 @@ app. Unknown input outcomes are inspected without replaying the action.
 ## Gemini Chat and Task
 
 Install the native Mac app from [Google’s Gemini download](https://gemini.google/mac)
-and sign in there. Gemini uses the same msgblast and CuaDriver Accessibility
-permissions. Its native controls do not require window screenshots for input.
+and sign in there. Gemini uses the same msgblast app-control permission. Its native controls do not require window screenshots for input.
 The Apps chooser puts native apps first and prevents selecting missing apps;
 existing website accounts remain separate.
 

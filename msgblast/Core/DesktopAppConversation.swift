@@ -227,17 +227,17 @@ actor DesktopAppConversation {
         var callTimeout: TimeInterval = 30
     }
     private let executable: URL?
+    private let embedded: Bool
     private let timing: Timing
     private let readGrok: @Sendable (Target) throws -> GrokBotNativeState
     init(executable: URL? = nil, timing: Timing = Timing(), readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotNativeReader.capture) {
         self.executable = executable ?? Self.findDriver()
+        self.embedded = executable == nil
         self.timing = timing
         self.readGrok = readGrok
     }
     static func findDriver() -> URL? {
-        let paths = [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
-                     "/opt/homebrew/bin", "/usr/local/bin"] + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        return paths.map { URL(fileURLWithPath: $0).appendingPathComponent("cua-driver") }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        EmbeddedCuaDriver.bundledExecutable()
     }
     struct Target: Sendable, Equatable { let pid: Int; let window: Int }
     private struct AppList: Decodable, Sendable { struct App: Decodable, Sendable { let bundle_id: String; let pid: Int; let running: Bool }; let apps: [App] }
@@ -246,26 +246,31 @@ actor DesktopAppConversation {
         let windows: [Window]
     }
     func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
-        guard let executable else { throw DesktopAppError.unavailable("Set up the msgblast driver and allow Accessibility before connecting Mac apps.") }
+        guard let executable else { throw DesktopAppError.unavailable("App control is missing from this copy of msgblast. Reinstall msgblast.") }
         var object: [String: Any] = arguments
         for (key, value) in numbers { object[key] = value }
         for (key, value) in booleans { object[key] = value }
         for (key, value) in arrays { object[key] = value }
+        let connection = embedded ? try await EmbeddedCuaDriver.shared.connection() : nil
+        try Task.checkCancellation()
+        if embedded && tool == "get_window_state" { object["tree_format"] = "elements" }
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        let callArguments = connection?.arguments(tool: tool, payload: payload) ?? ["call", tool, payload]
+        let environment = connection?.environment ?? ProcessInfo.processInfo.environment
         let cancellation = AgentCancellation()
         let callTimeout = timing.callTimeout
         let result = try await withTaskCancellationHandler {
             try await Task.detached {
-                try AgentProcess.run(executable: executable, arguments: ["call", tool, payload], input: "",
-                                     environment: ProcessInfo.processInfo.environment, timeout: callTimeout, cancellation: cancellation)
+                try AgentProcess.run(executable: executable, arguments: callArguments, input: "",
+                                     environment: environment, timeout: callTimeout, cancellation: cancellation)
             }.value
         } onCancel: { cancellation.cancel() }
         guard result.status == 0, let data = result.stdout.data(using: .utf8) else {
-            throw DesktopAppError.unavailable("The msgblast driver could not complete \(tool). Check its service and permissions; nothing will be retried automatically.")
+            throw DesktopAppError.unavailable("App control could not complete this request. Review msgblast permissions; nothing will be retried automatically.")
         }
         let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         if envelope?["refusal"] != nil || envelope?["status"] as? String == "refused" || envelope?["effect"] as? String == "refused" || envelope?["isError"] as? Bool == true || envelope?["error"] != nil {
-            throw DesktopAppError.unavailable("The msgblast driver refused \(tool). Review the app and driver permissions; foreground control is never automatic.")
+            throw DesktopAppError.unavailable("App control refused this request. Review the app and msgblast permissions; foreground control is never automatic.")
         }
         return try JSONDecoder().decode(type, from: data)
     }

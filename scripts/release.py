@@ -306,7 +306,9 @@ def verify_bundle(options):
             raise ReleaseError(f"Exported app is missing {name}.framework")
     if not (app / "Contents/Helpers/cloudflared").is_file():
         raise ReleaseError("Exported app is missing its bundled cloudflared helper")
-    for name in ("cloudflared.json", "CloudflaredNotices.txt"):
+    if not (app / "Contents/Helpers/cua-driver").is_file():
+        raise ReleaseError("Exported app is missing its embedded CuaDriver helper")
+    for name in ("cloudflared.json", "CloudflaredNotices.txt", "cua-driver.json", "CuaDriverNotices.txt"):
         if not (app / "Contents/Resources" / name).is_file():
             raise ReleaseError(f"Exported app is missing {name}")
 
