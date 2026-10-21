@@ -57,7 +57,7 @@ struct OnboardingPermissionsView: View {
                         else { apps.enableHostAccessibility(demo: model.demo) }
                     }
                     Divider()
-                    permissionRow("msgblast driver", icon: "accessibility", status: apps.driverAccessibility.title,
+                    permissionRow("App control", icon: "accessibility", status: apps.driverAccessibility.title,
                                   allowed: apps.driverAccessibility == .allowed, identifier: "cua-driver", available: apps.installed) {
                         guard setup.checkpointPermissionChange() else { return }
                         if apps.driverAccessibility == .allowed { apps.openSettings("Privacy_Accessibility", demo: model.demo) }
@@ -71,9 +71,11 @@ struct OnboardingPermissionsView: View {
                         else { Task { await apps.enableDriver(demo: model.demo) } }
                     }
                 }
+                Text("macOS calls the app control helper “CuaDriver”.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if !apps.installed {
                     HStack {
-                        Text("Set up the msgblast driver to connect Mac apps.").font(.callout).foregroundStyle(.secondary)
+                        Text("Set up app access to connect Mac apps.").font(.callout).foregroundStyle(.secondary)
                         Link("Set up app access", destination: URL(string: "https://cua.ai/docs/cua-driver")!)
                     }
                 }
