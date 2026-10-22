@@ -145,6 +145,31 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertEqual(try snapshot.grokBots().map(\.name), ["Main", "Research"])
     }
 
+    func testGrokUnreadMainBotDoesNotRequireItsReplacedIcon() throws {
+        let snapshot = try JSONDecoder().decode(DesktopAppSnapshot.self, from: JSONSerialization.data(withJSONObject: ["elements": [
+            ["role": "AXButton", "label": "chief, Main Bot, Unread activity", "element_index": 1, "element_token": "main"],
+            ["role": "AXGroup", "label": "Unread activity", "parent_index": 1],
+            ["role": "AXList", "element_index": 3],
+            ["role": "AXButton", "label": "Research, Main Bot", "element_index": 4, "parent_index": 3, "element_token": "research"],
+            ["role": "AXButton", "label": "New Bot", "element_index": 5, "element_token": "new"],
+            ["role": "AXSplitter", "label": "Resize sidebar"]
+        ]]))
+        XCTAssertEqual(try snapshot.grokBots().map(\.name), ["chief", "Research, Main Bot"])
+    }
+
+    func testGrokRenderedMultilinePromptTracksFreshOccurrenceWithoutAcceptingChangedWords() throws {
+        let text = "First line\nSecond line"
+        let snapshot = try decode([
+            element("AXHeading", "Test Bot"), element("AXStaticText", "You"), element("AXStaticText", "First line Second line"),
+            element("AXStaticText", "Test Bot"), element("AXStaticText", "Old answer"),
+            element("AXStaticText", "You"), element("AXStaticText", "First line Second line"),
+            element("AXStaticText", "Test Bot"), element("AXStaticText", "Fresh answer"), element("AXTextArea", "Prompt", value: "Message Test Bot")
+        ])
+        XCTAssertEqual(try snapshot.outgoingCount(text, app: .grokBot), 2)
+        XCTAssertEqual(try snapshot.reply(after: text, app: .grokBot, outgoingOccurrence: 2), "Fresh answer")
+        XCTAssertNil(try snapshot.reply(after: "First line\nChanged line", app: .grokBot))
+    }
+
     func testSidebarPromptPreviewCannotBeUsedAsOutgoingMessage() throws {
         let snapshot = try decode([
             element("AXStaticText", "Background test"),
@@ -1112,7 +1137,7 @@ final class DesktopAppDriverTests: XCTestCase {
             snapshot(grok(draft: chunk)), step("type_text", [:], arguments: ["text": String(repeating: "😀", count: 44)]), snapshot(grok(draft: first)),
             snapshot(grok(draft: first)), step("press_key", [:], arguments: ["key": "return"]), snapshot(grok(draft: first + "\n")),
             snapshot(grok(draft: first + "\n")), step("type_text", [:], arguments: ["text": "Next"]), snapshot(grok(draft: text)),
-            step("click", [:]), snapshot(grok(reply: "Complete", outgoingPrompt: text), repeating: true)
+            step("click", [:]), snapshot(grok(reply: "Complete", outgoingPrompt: text.replacingOccurrences(of: "\n", with: " ")), repeating: true)
         ])
         defer { fixture.remove() }
         let answer = try await adapter(fixture).reply(text, app: .grokBot, binding: binding)
@@ -1187,6 +1212,22 @@ final class DesktopAppDriverTests: XCTestCase {
         defer { fixture.remove() }
         let answer = try await adapter(fixture).reply(text, app: .grokBot, binding: binding)
         XCTAssertEqual(answer, "Literal label accepted")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testGrokUnreadBadgeAfterSendKeepsTheChosenBotAndNeverResends() async throws {
+        var replied = grok(reply: "Answer")
+        var elements = replied["elements"] as! [[String: Any]]
+        let index = try XCTUnwrap(elements.firstIndex { $0["element_token"] as? String == "s00000001:bot0" })
+        elements[index]["label"] = "Fixture Bot, Main Bot, Unread activity"
+        elements[index].removeValue(forKey: "parent_index")
+        replied["elements"] = elements
+        let fixture = try driver(sendSteps() + [snapshot(replied, repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Answer")
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)

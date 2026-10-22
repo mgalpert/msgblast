@@ -129,10 +129,12 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         return sidebar.compactMap { button in
             guard button.role == "AXButton", let index = button.element_index,
                   button.enabled != false, button.element_token != nil, var name = button.label else { return nil }
-            let main = mainBotIndexes.contains(index)
             let listed = button.parent_index.map { listIndexes.contains($0) } == true
-            guard main || listed else { return nil }
             if name.hasSuffix(", Unread activity") { name.removeLast(", Unread activity".count) }
+            // The unread badge replaces the main-bot image. Its pinned button
+            // retains the accessible Main Bot suffix outside the regular list.
+            let main = mainBotIndexes.contains(index) || (!listed && name.hasSuffix(", Main Bot"))
+            guard main || listed else { return nil }
             if main, name.hasSuffix(", Main Bot") { name.removeLast(", Main Bot".count) }
             return name.isEmpty ? nil : (name, button)
         }
@@ -177,15 +179,20 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             return text == ["What can I do for you?"]
         }
     }
+    private static func renderedTextMatches(_ value: String, _ expected: String, app: DesktopAppProvider) -> Bool {
+        // Grok flattens whitespace when rendering outgoing message text. The
+        // native composer was verified exactly before Send; words stay exact.
+        app == .grokBot ? value.split(whereSeparator: \.isWhitespace) == expected.split(whereSeparator: \.isWhitespace) : value == expected
+    }
     func outgoingCount(_ prompt: String, app: DesktopAppProvider) throws -> Int {
         let text = app == .muse ? "User message: \(prompt)" : prompt
-        return try transcript(app: app).filter { $0.role == "AXStaticText" && $0.text == text }.count
+        return try transcript(app: app).filter { $0.role == "AXStaticText" && Self.renderedTextMatches($0.text, text, app: app) }.count
     }
     func reply(after prompt: String, app: DesktopAppProvider, outgoingOccurrence: Int = 1) throws -> String? {
         let name = app == .wabi ? "Wabi" : try conversation(app: app)
         let transcript = try transcript(app: app)
         let outgoing = app == .muse ? "User message: \(prompt)" : prompt
-        let matches = transcript.indices.filter { transcript[$0].role == "AXStaticText" && transcript[$0].text == outgoing }
+        let matches = transcript.indices.filter { transcript[$0].role == "AXStaticText" && Self.renderedTextMatches(transcript[$0].text, outgoing, app: app) }
         guard outgoingOccurrence > 0, matches.count >= outgoingOccurrence else { return nil }
         let sent = matches[outgoingOccurrence - 1]
         if app == .muse {
