@@ -184,8 +184,8 @@ app. No separate CuaDriver installation is needed. Device Control and Data Acces
 per comparison and uses msgblast app-control permission and window capture. Wabi creates a dedicated AI chat per comparison and needs msgblast
 Accessibility to verify its thread address and draft. Grok Bot also needs msgblast
 Accessibility to verify the selected bot and preserve drafts. Installed apps are
-detected before they can be enabled or selected in onboarding. Enable the agent
-and choose **Check Muse connection**. For Wabi and Gemini, choose **Check connection**. Gemini’s native pane also lets
+detected before they can be selected in onboarding. Select an installed agent
+and choose its **Connect** action on the connection screen. Gemini’s native pane also lets
 you choose Chat or Task, model, and available thinking levels; install it from
 [Google’s Mac download](https://gemini.google/mac). For
 Grok Bot App, choose your bot from the **Bot** menu in msgblast; the connection
