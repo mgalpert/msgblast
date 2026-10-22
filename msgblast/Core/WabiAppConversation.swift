@@ -128,7 +128,15 @@ enum WabiNativeReader {
             draft = value
         } else { draft = nil }
         guard attribute(webAreas[0], "AXURL") as? URL == url else { throw DesktopAppError.unavailable("Wabi navigated while reading its draft.") }
-        let focused = composers.first.map { attribute($0, "AXFocused") as? Bool == true } ?? false
+        let app = AXUIElementCreateApplication(pid_t(target.pid))
+        AXUIElementSetMessagingTimeout(app, 0.2)
+        let currentFocus = attribute(app, "AXFocusedUIElement")
+        let focused = composers.first.map { composer in
+            if let currentFocus, CFGetTypeID(currentFocus) == AXUIElementGetTypeID() {
+                return CFEqual(currentFocus, composer)
+            }
+            return attribute(composer, "AXFocused") as? Bool == true
+        } ?? false
         return .init(url: url, draft: draft, links: links, messages: try WabiNativeMessages.read(tree), composerFocused: focused)
     }
 }
