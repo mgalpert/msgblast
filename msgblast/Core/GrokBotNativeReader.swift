@@ -2,9 +2,10 @@ import ApplicationServices
 import Darwin
 import Foundation
 
-struct GrokBotNativeState: Codable, Sendable {
+struct GrokBotNativeState: Codable, Equatable, Sendable {
     let name: String
     let draft: String
+    var composerFocused: Bool? = nil
 }
 
 enum GrokBotNativeReader {
@@ -52,6 +53,9 @@ enum GrokBotNativeReader {
         let children = attribute(composers[0], "AXChildren") as? [AXUIElement] ?? []
         let emptyEditor = children.count == 1 && Set(attribute(children[0], "AXDOMClassList") as? [String] ?? []).isSuperset(of: ["is-empty", "is-editor-empty"])
             && (attribute(children[0], "AXChildren") as? [AXUIElement] ?? []).isEmpty
-        return .init(name: name, draft: draftValue(value, emptyEditor: emptyEditor))
+        let focused = attribute(AXUIElementCreateApplication(pid_t(target.pid)), kAXFocusedUIElementAttribute)
+        let composerFocused = focused.map { CFEqual($0, composers[0]) }
+            ?? (attribute(composers[0], kAXFocusedAttribute) as? Bool)
+        return .init(name: name, draft: draftValue(value, emptyEditor: emptyEditor), composerFocused: composerFocused)
     }
 }

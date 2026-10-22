@@ -112,7 +112,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             guard headings.count == 1 else { throw DesktopAppError.unavailable("Open one Grok Bot conversation before connecting.") }
             return headings[0]
         case .gemini, .chatgpt, .dots, .claude:
-            throw DesktopAppError.unavailable("This app requires its dedicated conversation adapter.")
+            throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.")
         case .muse:
             // The Muse heading is shared by its main chat and every side chat.
             throw DesktopAppError.unavailable("Muse requires a tracked side-chat binding. Connect Muse through its dedicated side-chat adapter.")
@@ -166,6 +166,9 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             throw DesktopAppError.unavailable("The app's conversation cannot be separated from its sidebar. Nothing will be sent automatically.")
         }
         return Array(content.dropFirst(sidebar + 1))
+    }
+    func historyText(app: DesktopAppProvider) throws -> [String] {
+        try transcript(app: app).filter { $0.role == "AXStaticText" }.map(\.text)
     }
     var wabiIsBlankAIChat: Bool {
         get throws {
@@ -318,14 +321,14 @@ actor DesktopAppConversation {
         let state = try await snapshot(target, session: session)
         _ = try await checkedGrokBot(name, state: state, target: target)
     }
-    private func openGrokBot(_ name: String, state initial: DesktopAppSnapshot, target: Target, session: String) async throws -> DesktopAppSnapshot {
+    private func openGrokBot(_ name: String, state initial: DesktopAppSnapshot, target: Target, session: String, screenshotURL: URL? = nil) async throws -> DesktopAppSnapshot {
         var state = initial
         let checked = try await checkedGrokBot(name, state: state, target: target)
         if checked.native.name == name { return state }
         _ = try await call("click", ["element_token": checked.element.element_token!, "session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
-            state = try await snapshot(target, session: session)
+            state = try await snapshot(target, session: session, screenshotURL: screenshotURL)
             let opened = try await grokState(state, target: target)
             if opened.name == name {
                 guard opened.draft.isEmpty, !state.isGenerating else { throw DesktopAppError.unavailable("Grok Bot has an unsent draft or active response. It was preserved.") }
@@ -372,27 +375,86 @@ actor DesktopAppConversation {
         if let screenshotURL { arguments["screenshot_out_file"] = screenshotURL.path }
         return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
+    private func grokDraftAgrees(_ value: String?, with draft: String) -> Bool {
+        value == draft || value == draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private func typeGrokDraft(_ prompt: String, initial: DesktopAppSnapshot, target: Target,
+                               session: String, binding: DesktopConversationBinding, image: URL) async throws -> DesktopAppSnapshot {
+        enum Input { case text(String), newline }
+        var inputs: [Input] = []
+        let lines = prompt.split(separator: "\n", omittingEmptySubsequences: false)
+        for (index, line) in lines.enumerated() {
+            let characters = Array(line)
+            for offset in stride(from: 0, to: characters.count, by: 256) {
+                inputs.append(.text(String(characters[offset..<min(offset + 256, characters.count)])))
+            }
+            if index < lines.count - 1 { inputs.append(.newline) }
+        }
+        let history = try initial.historyText(app: .grokBot)
+        var state = initial, prefix = ""
+        for (index, input) in inputs.enumerated() {
+            if index > 0 { state = try await snapshot(target, session: session, screenshotURL: image) }
+            try validate(state, app: .grokBot, binding: binding)
+            let native = try await grokState(state, target: target)
+            let field = try state.composer(app: .grokBot)
+            guard native.draft == prefix, grokDraftAgrees(field.element.value, with: prefix),
+                  try state.historyText(app: .grokBot) == history, !state.isGenerating,
+                  prefix.isEmpty || native.composerFocused == true else {
+                throw DesktopAppError.unavailable("Grok Bot's draft, focus, or history changed. Nothing was submitted; review the preserved text.")
+            }
+            let point = try state.pixelCenter(of: field.element, target: target, imageURL: image, appName: "Grok Bot")
+            switch input {
+            case .text(let text):
+                var numbers = ["pid": target.pid, "window_id": target.window, "delay_ms": 0]
+                // One capture-bound focus, then disjoint append-only chunks.
+                if prefix.isEmpty { numbers["x"] = point.x; numbers["y"] = point.y }
+                _ = try await call("type_text", ["session": session, "text": text, "delivery_mode": "background"], numbers: numbers, as: Action.self)
+                prefix += text
+            case .newline:
+                if native.composerFocused != true {
+                    _ = try await call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: Action.self)
+                    let focused = try await grokState(state, target: target)
+                    guard focused.name == binding.name, focused.draft == prefix, focused.composerFocused == true else {
+                        throw DesktopAppError.unavailable("Grok Bot's empty composer did not retain focus. Nothing was submitted.")
+                    }
+                }
+                _ = try await call("press_key", ["session": session, "key": "return", "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], arrays: ["modifiers": ["shift"]], as: Action.self)
+                prefix += "\n"
+            }
+            state = try await snapshot(target, session: session)
+            try validate(state, app: .grokBot, binding: binding)
+            let prepared = try await grokState(state, target: target)
+            guard prepared.draft == prefix, prepared.composerFocused == true,
+                  try grokDraftAgrees(state.composer(app: .grokBot).element.value, with: prefix),
+                  try state.historyText(app: .grokBot) == history, !state.isGenerating else {
+                throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
+            }
+        }
+        return state
+    }
     func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding) async throws -> String {
-        guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("Wabi requires a dedicated chat for each comparison.") }
+        guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !prompt.unicodeScalars.contains(where: { ($0.value < 32 && $0.value != 10) || $0.value == 127 }) else {
+            throw DesktopAppError.unavailable("Use plain text and newlines for the prompt. Nothing was typed.")
+        }
         guard occupied.insert(app).inserted else { throw DesktopAppError.unavailable("\(app.name) is already handling a request.") }
         defer { occupied.remove(app) }
         let session = "msgblast-send-\(UUID().uuidString)"
         defer { Task { await endSession(session) } }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-grok-capture-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let image = directory.appendingPathComponent("window.png")
         let target = try await target(app)
-        var state = try await snapshot(target, session: session)
-        if app == .grokBot { state = try await openGrokBot(binding.name, state: state, target: target, session: session) }
+        var state = try await snapshot(target, session: session, screenshotURL: app == .grokBot ? image : nil)
+        if app == .grokBot { state = try await openGrokBot(binding.name, state: state, target: target, session: session, screenshotURL: image) }
         try validate(state, app: app, binding: binding)
         let previousPromptCount = try state.outgoingCount(prompt, app: app)
         let field = try state.composer(app: app)
         let draft = app == .grokBot ? try await grokState(state, target: target).draft : field.draft
         guard draft.isEmpty else { throw DesktopAppError.unavailable("\(app.name) has an unsent draft. It was preserved.") }
-        _ = try await call("type_text", ["session": session, "element_token": field.element.element_token!, "text": prompt, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
-        state = try await snapshot(target, session: session)
-        try validate(state, app: app, binding: binding)
-        let prepared = app == .grokBot ? try await grokState(state, target: target).draft : try state.composer(app: app).draft
-        guard prepared == prompt, try state.composer(app: app).element.value == prompt else {
-            throw DesktopAppError.unavailable("The app did not confirm the prepared draft. Check it before trying again; Send was not clicked.")
-        }
+        state = try await typeGrokDraft(prompt, initial: state, target: target, session: session, binding: binding, image: image)
         let button = try state.sendButton(app: app)
         _ = try await call("click", ["session": session, "element_token": button.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
         let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
@@ -417,6 +479,11 @@ actor DesktopAppConversation {
     private func validate(_ state: DesktopAppSnapshot, app: DesktopAppProvider, binding: DesktopConversationBinding) throws {
         guard try state.conversation(app: app) == binding.name else {
             throw DesktopAppError.unavailable("The open \(app.name) conversation changed. Open the connected conversation or reconnect; no automatic resend.")
+        }
+        if app == .grokBot {
+            guard try state.grokBots().filter({ $0.name == binding.name }).count == 1 else {
+                throw DesktopAppError.unavailable("The selected Grok Bot is missing or now has a duplicate name. Nothing was retried.")
+            }
         }
     }
 }

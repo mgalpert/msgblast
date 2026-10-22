@@ -505,7 +505,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let fixture = try driver([apps(), windows(), snapshot(initial),
                                   step("click", [:], arguments: ["element_token": "s00000001:bot1"]),
                                   snapshot(grok(token: "s00000002")),
-                                  step("type_text", [:], arguments: ["element_token": "s00000002:composer"]),
+                                  step("type_text", [:], arguments: ["text": prompt]),
                                   snapshot(grok(draft: prompt, token: "s00000003")),
                                   step("click", [:], arguments: ["element_token": "s00000003:send"]),
                                   snapshot(grok(reply: "Chosen bot answer", token: "s00000004"), repeating: true)])
@@ -681,7 +681,7 @@ final class DesktopAppDriverTests: XCTestCase {
         ] {
             let fixture = try driver([
                 apps(), windows(), snapshot(grok()),
-                step("type_text", diagnostic, arguments: ["element_token": "s00000001:composer", "text": prompt]),
+                step("type_text", diagnostic, arguments: ["text": prompt]),
                 snapshot(grok(draft: prompt, token: "s00000002")),
                 step("click", ["effect": "unverifiable"], arguments: ["element_token": "s00000002:send"]),
                 snapshot(grok(reply: "Observed answer", token: "s00000003"), repeating: true)
@@ -1075,6 +1075,84 @@ final class DesktopAppDriverTests: XCTestCase {
         assertNoInput(try await finishedCalls(fixture))
     }
 
+    func testGrokUsesCaptureBoundPixelTypingInsteadOfRefusedElectronAXInput() async throws {
+        let fixture = try driver(sendSteps() + [snapshot(grok(reply: "Answer", token: "s00000003"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Answer")
+        let calls = try await finishedCalls(fixture)
+        let input = try XCTUnwrap(calls.first { $0.tool == "type_text" })
+        XCTAssertNil(input.arguments["element_token"])
+        XCTAssertEqual(input.arguments["x"] as? Int, 540)
+        XCTAssertEqual(input.arguments["y"] as? Int, 780)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        assertBackgroundTargets(calls)
+    }
+
+    func testGrokMultilineChunksUseShiftReturnWithoutRefocusingAndKeepNativeNewlinesExact() async throws {
+        let first = String(repeating: "😀", count: 300)
+        let text = first + "\nNext"
+        let chunk = String(repeating: "😀", count: 256)
+        let fixture = try driver([
+            apps(), windows(), snapshot(grok()),
+            step("type_text", [:], arguments: ["text": chunk]), snapshot(grok(draft: chunk)),
+            snapshot(grok(draft: chunk)), step("type_text", [:], arguments: ["text": String(repeating: "😀", count: 44)]), snapshot(grok(draft: first)),
+            snapshot(grok(draft: first)), step("press_key", [:], arguments: ["key": "return"]), snapshot(grok(draft: first + "\n")),
+            snapshot(grok(draft: first + "\n")), step("type_text", [:], arguments: ["text": "Next"]), snapshot(grok(draft: text)),
+            step("click", [:]), snapshot(grok(reply: "Complete", outgoingPrompt: text), repeating: true)
+        ])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(text, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Complete")
+        let calls = try await finishedCalls(fixture)
+        let typing = calls.filter { $0.tool == "type_text" }
+        XCTAssertEqual(typing.compactMap { ($0.arguments["text"] as? String)?.count }, [256, 44, 4])
+        XCTAssertTrue(typing.allSatisfy { $0.arguments["element_token"] == nil })
+        XCTAssertNotNil(typing.first?.arguments["x"])
+        XCTAssertTrue(typing.dropFirst().allSatisfy { $0.arguments["x"] == nil })
+        let newline = try XCTUnwrap(calls.first { $0.tool == "press_key" })
+        XCTAssertEqual(newline.arguments["modifiers"] as? [String], ["shift"])
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Only the final Send may be clicked")
+        for path in calls.compactMap({ $0.arguments["screenshot_out_file"] as? String }) {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).deletingLastPathComponent().path))
+        }
+    }
+
+    func testGrokInvalidCaptureOrLostFocusPreservesTextWithoutSubmitting() async throws {
+        var invalid = snapshot(grok()); invalid["capture"] = "missing"
+        let noCapture = try driver([apps(), windows(), invalid])
+        defer { noCapture.remove() }
+        _ = await failure { try await self.adapter(noCapture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+        assertNoInput(try await finishedCalls(noCapture))
+        let lostFocus = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(grok(draft: "First", focused: false))])
+        defer { lostFocus.remove() }
+        _ = await failure { try await self.adapter(lostFocus).reply("First\nSecond", app: .grokBot, binding: self.binding) }
+        let calls = try await finishedCalls(lostFocus)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertFalse(calls.contains { ["press_key", "click"].contains($0.tool) })
+    }
+
+    func testGrokBotListOrHistoryChangeAfterTypingNeverSubmits() async throws {
+        for changed in [grok(draft: prompt, bots: ["Fixture Bot", "Fixture Bot"]),
+                        grok(draft: prompt, reply: "An unrelated message arrived")] {
+            let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(changed)])
+            defer { fixture.remove() }
+            _ = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+            XCTAssertFalse(calls.contains { $0.tool == "click" || $0.tool == "press_key" })
+        }
+    }
+
+    func testGrokNavigationAndSubmitControlCharactersAreRejectedBeforeAnyDriverCall() async throws {
+        for text in ["A\rB", "A\tB", "A\u{1b}B", "A\u{7f}B", "\n"] {
+            let fixture = try driver([])
+            defer { fixture.remove() }
+            _ = await failure { try await self.adapter(fixture).reply(text, app: .grokBot, binding: self.binding) }
+            XCTAssertTrue(try fixture.calls().isEmpty)
+        }
+    }
+
     func testPartialOrChangedDraftNeverClicksSendOrRetriesTyping() async throws {
         for draft in ["Fixture", "Fixture prompt plus someone else's edit", ""] {
             let fixture = try driver([
@@ -1146,7 +1224,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var disabled = button; disabled["enabled"] = false
         let variants = [Array(elements.dropLast()), Array(elements.dropLast()) + [disabled], elements + [button]]
         for variant in variants {
-            let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(["elements": variant, "_grok_native": ["name": "Fixture Bot", "draft": prompt]])])
+            let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(["elements": variant, "_grok_native": ["name": "Fixture Bot", "draft": prompt, "composerFocused": true]])])
             defer { fixture.remove() }
             let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
             XCTAssertTrue(error.contains("Send control"), error)
@@ -1857,7 +1935,7 @@ final class DesktopAppDriverTests: XCTestCase {
     private func snapshot(_ result: [String: Any], repeating: Bool = false) -> [String: Any] {
         var step = step("get_window_state", result)
         step["repeat"] = repeating
-        if let native = result["_grok_native"] { step["grok_native"] = native }
+        if let native = result["_grok_native"] { step["grok_native"] = native; step["capture"] = "valid" }
         return step
     }
     private func element(_ role: String, _ label: String, value: String? = nil, token: String = "s00000001:item") -> [String: Any] {
@@ -1877,7 +1955,7 @@ final class DesktopAppDriverTests: XCTestCase {
         body += [composer, element("AXButton", "Send", token: "\(token):send")]
         return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count]
     }
-    private func grok(draft: String = "", reply: String? = nil, name: String = "Fixture Bot", token: String = "s00000001", previousReply: String? = nil, generating: Bool = false, bots: [String]? = nil) -> [String: Any] {
+    private func grok(draft: String = "", reply: String? = nil, name: String = "Fixture Bot", token: String = "s00000001", previousReply: String? = nil, generating: Bool = false, bots: [String]? = nil, focused: Bool = true, outgoingPrompt: String? = nil) -> [String: Any] {
         var list = element("AXList", ""); list["element_index"] = 1
         var body = [list]
         for (index, bot) in (bots ?? [name]).enumerated() {
@@ -1889,16 +1967,20 @@ final class DesktopAppDriverTests: XCTestCase {
         var details = element("AXButton", "View conversation details"); details["parent_index"] = 100
         body += [element("AXSplitter", "Resize sidebar"), heading, details]
         if let previousReply {
-            body += [element("AXStaticText", "You"), element("AXStaticText", prompt), element("AXStaticText", name), element("AXStaticText", previousReply)]
+            body += [element("AXStaticText", "You"), element("AXStaticText", outgoingPrompt ?? prompt), element("AXStaticText", name), element("AXStaticText", previousReply)]
         }
         if let reply {
-            body += [element("AXStaticText", "You"), element("AXStaticText", prompt), element("AXStaticText", name), element("AXStaticText", reply)]
+            body += [element("AXStaticText", "You"), element("AXStaticText", outgoingPrompt ?? prompt), element("AXStaticText", name), element("AXStaticText", reply)]
         }
-        body += [element("AXTextArea", "Prompt", value: draft, token: "\(token):composer"),
-                 element("AXButton", "Send message", token: "\(token):send")]
+        var composer = element("AXTextArea", "Prompt", value: draft.trimmingCharacters(in: .whitespacesAndNewlines), token: "\(token):composer")
+        composer["frame"] = ["x": 240, "y": 600, "w": 640, "h": 40]
+        body += [composer, element("AXButton", "Send message", token: "\(token):send")]
         if generating { body.append(element("AXButton", "Stop generating")) }
         return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count,
-                "_grok_native": ["name": name, "draft": draft]]
+                "_grok_native": ["name": name, "draft": draft, "composerFocused": focused],
+                "pid": 4242, "window_id": 101,
+                "window_bounds": ["x": 200, "y": 100, "width": 800, "height": 600],
+                "screenshot_frame_valid": true, "screenshot_width": 1200, "screenshot_height": 900]
     }
     private func failure<T>(_ operation: () async throws -> T) async -> String {
         do { _ = try await operation(); XCTFail("Expected the adapter to refuse this workflow"); return "" }
