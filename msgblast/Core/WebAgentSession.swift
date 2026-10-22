@@ -144,7 +144,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var canSubmitNativePrompt: Bool {
         guard isEnabled, !storageFailed, !loading, !isSending, !shuttingDown else { return false }
         return snapshot.ready || (provider.desktopApp != nil && desktopInstallation.isInstalled &&
-            !desktopInstallation.isRunning && state.desktopConversation != nil &&
+            state.desktopConversation != nil &&
             !hasIncompleteNativeRequest(for: state.comparisonID))
     }
 
@@ -510,8 +510,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return provider == .dots ? "\(host) · Your dot" : provider == .muse && webView.url.map(provider.isChatURL) == true ? "\(host) · Side chat" : host
     }
 
+    /// Only an explicit first submission may launch an app without a comparison ID.
     @discardableResult
-    public func openComparison(_ id: UUID?) async -> Bool {
+    public func openComparison(_ id: UUID?, startNativeApp: Bool = false) async -> Bool {
         guard !isSending else { return false }
         if state.comparisonID != id {
             if provider == .geminiApp { geminiConfigurationError = nil; geminiOptions = .init() }
@@ -519,7 +520,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         connect(automaticallyRefresh: !provider.usesNativeConversation)
         if provider.usesNativeConversation {
-            if provider.desktopApp != nil, id != nil {
+            // An explicit first shared prompt is prepared before it has a
+            // comparison ID. Passive blank selection must remain read-only.
+            if provider.desktopApp != nil, id != nil || startNativeApp {
                 do { try await launchDesktopAppForConversation() }
                 catch is CancellationError { return false }
                 catch { self.error = error.localizedDescription; return false }

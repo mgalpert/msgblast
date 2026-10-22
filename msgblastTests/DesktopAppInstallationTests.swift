@@ -156,6 +156,36 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertTrue(apps.opened.isEmpty)
     }
 
+    func testExplicitFirstPromptCanPrepareClosedAndRunningNativeAppsBeforeComparisonExists() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let web = WebAgents(directory: directory.appendingPathComponent("agents"), fixture: true)
+        defer { web.beginShutdown() }
+        for running in [false, true] {
+            for provider in WebProvider.desktopProviders {
+                let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + provider.rawValue + ".app")
+                apps.installation = .init(url: url, processID: running ? 42 : nil)
+                apps.openAction = { _ in apps.installation = .init(url: url, processID: 42) }
+                let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(UUID().uuidString), fixture: true, museApp: .shared, desktopApps: apps.client)
+                defer { session.beginShutdown() }
+                session.setEnabled(true)
+                session.updateState { $0.desktopConversation = .init(name: provider == .grokBotApp ? "Demo Bot" : provider.name) }
+                XCTAssertFalse(session.snapshot.ready)
+                XCTAssertTrue(session.canSubmitNativePrompt, "A configured app must allow an explicit connection attempt after restart, even if already running")
+                let ready = await web.prepareComparison(nil, for: [session], startNativeApps: true)
+                XCTAssertTrue(ready, provider.name)
+                XCTAssertEqual(apps.opened, running ? [] : [url])
+                XCTAssertNil(session.state.comparisonID)
+                XCTAssertTrue(session.state.attempts.isEmpty, "Preparing the explicit first prompt must not submit it")
+                XCTAssertTrue(session.state.localConversations.isEmpty)
+                var pending = WebSendAttempt(text: "Prior unresolved prompt", status: .uncertain)
+                pending.comparisonID = UUID()
+                session.updateState { $0.attempts = [pending] }
+                XCTAssertFalse(session.canSubmitNativePrompt, "Restart recovery must retain the no-resend guard")
+            }
+        }
+    }
+
     func testEveryNativeProviderLaunchesOnceFromAnExplicitConversationStart() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

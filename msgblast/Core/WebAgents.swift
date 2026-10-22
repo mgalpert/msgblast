@@ -177,7 +177,7 @@ public final class WebAgents: ObservableObject {
         }
         return groups
     }
-    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession]) async -> Bool {
+    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false) async -> Bool {
         guard !shuttingDown else { return false }
         // Muse stores the workspace identity even when it is deselected.
         setComparison(id)
@@ -190,7 +190,7 @@ public final class WebAgents: ObservableObject {
                 var ready = true
                 for session in group {
                     guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return false }
-                    if !(await session.openComparison(id)) { ready = false }
+                    if !(await session.openComparison(id, startNativeApp: startNativeApps)) { ready = false }
                 }
                 return ready
             } }

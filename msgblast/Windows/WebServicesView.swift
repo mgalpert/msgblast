@@ -310,7 +310,7 @@ struct AgentsWorkspaceView: View {
                 showingConnectionIntro = true
                 return
             }
-            guard await web.prepareComparison(existingID, for: sessions),
+            guard await web.prepareComparison(existingID, for: sessions, startNativeApps: true),
                   existingID.flatMap({ model.comparison($0)?.endedAt }) == nil else { return }
             let comparisonID: UUID
             if let existingID { comparisonID = existingID }
