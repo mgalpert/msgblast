@@ -114,8 +114,21 @@ final class DesktopAppConversationTests: XCTestCase {
     func testGrokEmptyParagraphRequiresNativeEmptyEditorEvidence() {
         XCTAssertEqual(GrokBotNativeReader.draftValue("\n", emptyEditor: true), "")
         XCTAssertEqual(GrokBotNativeReader.draftValue("\n", emptyEditor: false), "\n")
-        for text in ["Message Test Bot", "Type your answer, or talk about something else", "Keep this draft", "\n\n"] {
+        for text in ["Message Test Bot", "Type your answer, or talk about something else", "Keep this draft"] {
             XCTAssertEqual(GrokBotNativeReader.draftValue(text, emptyEditor: true), text)
+        }
+    }
+
+    func testGrokTrailingHardBreakReadbackRemovesOnlyTheNativePaddingCharacter() {
+        for (raw, expected) in [
+            ("\n\n", "\n"),
+            ("First\n\n", "First\n"),
+            ("First\n\n\n", "First\n\n"),
+            ("\nFirst\n\n\n", "\nFirst\n\n"),
+            ("First\nSecond", "First\nSecond"),
+            ("First\n\nSecond", "First\n\nSecond")
+        ] {
+            XCTAssertEqual(GrokBotNativeReader.draftValue(raw, emptyEditor: false), expected)
         }
     }
 
@@ -1189,7 +1202,7 @@ final class DesktopAppDriverTests: XCTestCase {
     }
 
     func testPartialOrChangedDraftNeverClicksSendOrRetriesTyping() async throws {
-        for draft in ["Fixture", "Fixture prompt plus someone else's edit", ""] {
+        for draft in ["Fixture", "Fixture prompt plus someone else's edit", "", prompt + "\n"] {
             let fixture = try driver([
                 apps(), windows(), snapshot(grok()),
                 step("type_text", ["effect": "partial", "delivered_chars": 7]),
@@ -1952,7 +1965,12 @@ final class DesktopAppDriverTests: XCTestCase {
         let file = fixture.directory.appendingPathComponent("grok-native.json")
         return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout)) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
-            return try JSONDecoder().decode(GrokBotNativeState.self, from: Data(contentsOf: file))
+            let data = try Data(contentsOf: file)
+            let raw = try JSONDecoder().decode(GrokBotNativeState.self, from: data)
+            if let empty = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["emptyEditor"] as? Bool {
+                return .init(name: raw.name, draft: GrokBotNativeReader.draftValue(raw.draft, emptyEditor: empty), composerFocused: raw.composerFocused)
+            }
+            return raw
         }
     }
     private func sendSteps() -> [[String: Any]] {
@@ -2012,7 +2030,7 @@ final class DesktopAppDriverTests: XCTestCase {
         body += [composer, element("AXButton", "Send message", token: "\(token):send")]
         if generating { body.append(element("AXButton", "Stop generating")) }
         return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count,
-                "_grok_native": ["name": name, "draft": draft, "composerFocused": focused],
+                "_grok_native": ["name": name, "draft": draft.isEmpty ? "\n" : draft.hasSuffix("\n") ? draft + "\n" : draft, "emptyEditor": draft.isEmpty, "composerFocused": focused],
                 "pid": 4242, "window_id": 101,
                 "window_bounds": ["x": 200, "y": 100, "width": 800, "height": 600],
                 "screenshot_frame_valid": true, "screenshot_width": 1200, "screenshot_height": 900]

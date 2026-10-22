@@ -10,7 +10,10 @@ struct GrokBotNativeState: Codable, Equatable, Sendable {
 
 enum GrokBotNativeReader {
     static func draftValue(_ value: String, emptyEditor: Bool) -> String {
-        value == "\n" && emptyEditor ? "" : value
+        if value == "\n", emptyEditor { return "" }
+        // Grok's editor exposes one extra AX newline after a trailing hard
+        // break. Remove that one padding character, preserving real blank lines.
+        return value.hasSuffix("\n\n") ? String(value.dropLast()) : value
     }
 
     static func capture(_ target: DesktopAppConversation.Target) throws -> GrokBotNativeState {
