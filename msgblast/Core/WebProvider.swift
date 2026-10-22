@@ -17,7 +17,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self { case .codexCLI: .codex; case .claudeCode: .claude; default: nil }
     }
     public var name: String {
-        switch self { case .muse: "Muse"; case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .grok: "Grok"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3"; case .hark: "Hark"; case .museApp: "Muse App"; case .grokBotApp: "Grok Bot App"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT App"; case .dotsApp: "Dots App"; case .claudeApp: "Claude App" }
+        switch self { case .muse: "Muse"; case .chatgpt: "ChatGPT"; case .claude: "Claude"; case .grok: "Grok"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3"; case .hark: "Hark"; case .museApp: "Muse"; case .grokBotApp: "Grok Bot"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT"; case .dotsApp: "Dots"; case .claudeApp: "Claude" }
     }
     public var homeURL: URL {
         switch self {

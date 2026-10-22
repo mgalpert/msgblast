@@ -212,7 +212,19 @@ struct OnboardingView: View {
                 if setup.checking { ProgressView("Adding your Messages agents…").controlSize(.small) }
                 choiceGrid(OnboardingChoice.offeredChoices.filter { $0.isMessages && $0 != .otherMessages })
             } else {
-                permissionNote("Messages access is off")
+                HStack(spacing: 16) {
+                    HStack(spacing: 10) {
+                        ForEach(OnboardingChoice.offeredChoices.filter { $0.isMessages && $0 != .otherMessages }) { choice in
+                            AgentAvatar(agent: nil, name: choice.name, size: 36)
+                                .saturation(0).opacity(0.45)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("\(choice.name), permission required")
+                                .accessibilityAddTraits(.isImage)
+                                .accessibilityIdentifier("locked-message-avatar-\(choice.rawValue)")
+                        }
+                    }
+                    permissionNote("To access the Messaging Agents,", actionTitle: "Enable permissions")
+                }
             }
             Text("Mac apps").font(.headline)
             if (setup.state.approvedPermissionSections ?? []).contains(.apps) {
@@ -231,10 +243,10 @@ struct OnboardingView: View {
         }.padding(28).frame(maxHeight: .infinity, alignment: .top)
     }
 
-    private func permissionNote(_ text: String) -> some View {
+    private func permissionNote(_ text: String, actionTitle: String = "Review permissions") -> some View {
         HStack {
             Text(text).font(.callout).foregroundStyle(.secondary)
-            Button("Review permissions") { setup.reviewPermissions() }.buttonStyle(.link)
+            Button(actionTitle) { setup.reviewPermissions() }.buttonStyle(.link)
         }
     }
 
@@ -261,7 +273,14 @@ struct OnboardingView: View {
         let desktop = choice.provider.flatMap { $0.desktopApp == nil ? nil : $0 }
         let installed = desktop.map { setup.desktopInstallations[$0]?.isInstalled == true } ?? true
         let available = choiceAvailable(choice)
-        return Button { setup.toggleChoice(choice) } label: {
+        let canInstall = desktop.map { !installed && setup.desktopInstallations[$0] != nil } ?? false
+        return Button {
+            if canInstall, let desktop {
+                if !model.demo { NSWorkspace.shared.open(desktop.homeURL) }
+            } else {
+                setup.toggleChoice(choice)
+            }
+        } label: {
             HStack(spacing: 14) {
                 if let provider = choice.provider {
                     AgentAvatar(agent: AgentArtwork.agent(for: setup.session(for: provider)), name: choice.name, size: 44)
@@ -277,8 +296,8 @@ struct OnboardingView: View {
                     Text(choice == .otherMessages ? "Another Messages agent" : choice.name)
                         .font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
                     if let desktop {
-                        Text(setup.desktopInstallations[desktop] == nil ? "Checking this Mac…" : installed ? "Installed on this Mac" : "Not installed")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text(setup.desktopInstallations[desktop] == nil ? "Checking…" : installed ? "Installed" : "Install")
+                            .font(.caption).foregroundStyle(canInstall ? Color.blue : .secondary)
                             .accessibilityIdentifier("desktop-installation-\(desktop.rawValue)")
                     } else if choice.isMessages {
                         Text(available ? "Added from Messages" : "Not found in Messages")
@@ -286,16 +305,17 @@ struct OnboardingView: View {
                     }
                 }
                 Spacer(minLength: 6)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: canInstall ? "arrow.down.circle" : selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22)).foregroundStyle(selected ? Color.blue : .secondary)
             }
             .padding(12).frame(maxWidth: .infinity, minHeight: 74, maxHeight: 74, alignment: .leading)
             .background(selected ? Color.blue.opacity(0.12) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.blue : Color.primary.opacity(0.14), lineWidth: selected ? 1.5 : 1))
             .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain).accessibilityLabel("Choose \(choice.name)")
-            .accessibilityValue(!installed ? "Not installed" : !available && choice.isMessages && (setup.state.approvedPermissionSections ?? []).contains(.messaging) ? "Not found in Messages. \(selectionStatus)" : !available ? "Permission required. \(selectionStatus)" : desktop != nil ? "Installed on this Mac. \(selectionStatus)" : selectionStatus)
-            .disabled(!available && !selected)
+        }.buttonStyle(.plain).accessibilityLabel(canInstall ? "Install \(choice.name)" : "Choose \(choice.name)")
+            .accessibilityIdentifier("onboarding-choice-\(choice.rawValue)")
+            .accessibilityValue(!installed ? "Not installed" : !available && choice.isMessages && (setup.state.approvedPermissionSections ?? []).contains(.messaging) ? "Not found in Messages. \(selectionStatus)" : !available ? "Permission required. \(selectionStatus)" : desktop != nil ? "Installed. \(selectionStatus)" : selectionStatus)
+            .disabled(!available && !selected && !canInstall)
     }
 
 }

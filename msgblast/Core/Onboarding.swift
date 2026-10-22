@@ -4,7 +4,7 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
     case chatgptApp, dotsApp, claudeApp, chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, geminiApp, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
 
     public static var offeredChoices: [Self] { allCases.filter { choice in
-        choice.provider.map { !WebProvider.settingsOnlyWebProviders.contains($0) } ?? true
+        choice != .grokbot && (choice.provider.map { !WebProvider.settingsOnlyWebProviders.contains($0) } ?? true)
     } }
 
     public var id: String { rawValue }

@@ -71,10 +71,10 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        for name in ["Muse", "ChatGPT", "Claude", "Dots", "Grok"] {
-            XCTAssertFalse(app.buttons["Choose \(name)"].exists)
+        for provider in ["muse", "chatgpt", "claude", "dots", "grok", "grokbot"] {
+            XCTAssertFalse(app.buttons["onboarding-choice-\(provider)"].exists)
         }
-        for name in ["Muse App", "ChatGPT App", "Claude App", "Dots App", "Grok Bot App", "Wabi", "Gemini"] {
+        for name in ["Muse", "ChatGPT", "Claude", "Dots", "Grok Bot", "Wabi", "Gemini"] {
             XCTAssertTrue(app.buttons["Choose \(name)"].exists)
         }
     }
@@ -94,23 +94,26 @@ final class OnboardingWorkflowTests: XCTestCase {
         for identifier in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-capture"] {
             XCTAssertTrue(app.switches["enable-\(identifier)-permission"].exists)
         }
-        XCTAssertFalse(app.buttons["Choose ChatGPT App"].exists)
+        XCTAssertFalse(app.buttons["Choose ChatGPT"].exists)
         choose("Apps", in: app)
         XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
         XCTAssertFalse(app.buttons["Choose Fo"].exists)
-        XCTAssertTrue(app.staticTexts["Messages access is off"].exists)
-        for name in ["ChatGPT App", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
+        for provider in ["instinct", "fo", "szn", "poke"] {
+            XCTAssertTrue(app.images["locked-message-avatar-\(provider)"].exists)
+        }
+        XCTAssertTrue(app.links["Enable permissions"].exists)
+        for name in ["ChatGPT", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
             XCTAssertTrue(revealChoice(name, in: app).exists)
         }
-        for name in ["Muse", "ChatGPT", "Claude", "Dots", "Grok"] {
-            XCTAssertFalse(app.buttons["Choose \(name)"].exists, "Web alternatives are enabled in Settings")
+        for provider in ["muse", "chatgpt", "claude", "dots", "grok", "grokbot"] {
+            XCTAssertFalse(app.buttons["onboarding-choice-\(provider)"].exists, "Web alternatives are enabled in Settings")
         }
-        selectChoice("ChatGPT App", in: app)
+        selectChoice("ChatGPT", in: app)
         XCTAssertTrue(app.buttons["Continue setup"].isEnabled)
         app.buttons["Back"].click()
         XCTAssertTrue(app.staticTexts["Allow access"].waitForExistence(timeout: 5))
         choose("Apps", in: app)
-        XCTAssertEqual(app.buttons["Choose ChatGPT App"].value as? String, "Installed on this Mac. Selected")
+        XCTAssertEqual(app.buttons["Choose ChatGPT"].value as? String, "Installed. Selected")
     }
 
     @MainActor
@@ -143,10 +146,13 @@ final class OnboardingWorkflowTests: XCTestCase {
         next.click()
         XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Choose Fo"].exists)
-        XCTAssertTrue(app.staticTexts["Messages access is off"].exists)
+        for provider in ["instinct", "fo", "szn", "poke"] {
+            XCTAssertTrue(app.images["locked-message-avatar-\(provider)"].exists)
+        }
+        XCTAssertTrue(app.links["Enable permissions"].exists)
         XCTAssertFalse(app.staticTexts["Agents from your existing Messages conversations have been added. You can deselect any you don’t want."].exists)
         attachScreenshot("Apps enabled and Messages unavailable", in: app)
-        XCTAssertTrue(revealChoice("ChatGPT App", in: app).isEnabled)
+        XCTAssertTrue(revealChoice("ChatGPT", in: app).isEnabled)
     }
 
     @MainActor
@@ -194,7 +200,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         let wabi = app.buttons["Choose Wabi"]
         XCTAssertTrue(wabi.waitForExistence(timeout: 5))
         selectChoice("Wabi", in: app)
-        expectation(for: NSPredicate(format: "value == %@", "Installed on this Mac. Selected"), evaluatedWith: wabi)
+        expectation(for: NSPredicate(format: "value == %@", "Installed. Selected"), evaluatedWith: wabi)
         waitForExpectations(timeout: 5)
         let next = app.buttons["Continue setup"]
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
@@ -221,13 +227,13 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        selectChoice("Grok Bot App", in: app)
+        selectChoice("Grok Bot", in: app)
         app.buttons["Continue setup"].click()
         let picker = app.popUpButtons["grok-bot-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         for _ in 0..<6 where !picker.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
-        XCTAssertTrue(app.buttons["Connect Grok Bot App"].exists)
+        XCTAssertTrue(app.buttons["Connect Grok Bot"].exists)
         picker.click()
         app.menuItems["Research Bot"].click()
         XCTAssertTrue(app.staticTexts["Ready for your first prompt"].waitForExistence(timeout: 5))
@@ -241,15 +247,15 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        for name in ["Muse App", "Grok Bot App", "Wabi"] {
+        for name in ["Muse", "Grok Bot", "Wabi"] {
             let installedApp = app.buttons["Choose \(name)"]
             XCTAssertTrue(installedApp.waitForExistence(timeout: 5))
             XCTAssertTrue(installedApp.isEnabled)
-            XCTAssertEqual(installedApp.value as? String, "Installed on this Mac. Not selected")
+            XCTAssertEqual(installedApp.value as? String, "Installed. Not selected")
         }
-        let muse = app.buttons["Choose Muse App"]
-        selectChoice("Muse App", in: app)
-        expectation(for: NSPredicate(format: "value == %@", "Installed on this Mac. Selected"), evaluatedWith: muse)
+        let muse = app.buttons["Choose Muse"]
+        selectChoice("Muse", in: app)
+        expectation(for: NSPredicate(format: "value == %@", "Installed. Selected"), evaluatedWith: muse)
         waitForExpectations(timeout: 5)
         let continueSetup = app.buttons["Continue setup"]
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: continueSetup)
@@ -260,7 +266,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertEqual(app.webViews.count, 0, "A desktop app must not open a website sign-in flow")
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
         XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists)
-        let connect = app.buttons["Connect Muse App"]
+        let connect = app.buttons["Connect Muse"]
         for _ in 0..<6 where !connect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         XCTAssertTrue(connect.isHittable)
         connect.click()
@@ -274,7 +280,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Continue"].isEnabled, "A saved binding still requires an explicit live check")
         XCTAssertFalse(app.staticTexts["Ready for your first prompt"].exists, "A cached check must not show a new confirmation")
-        let reconnect = app.buttons["Connect Muse App"]
+        let reconnect = app.buttons["Connect Muse"]
         for _ in 0..<6 where !reconnect.isHittable { app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -200) }
         reconnect.click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
@@ -288,34 +294,34 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         choose("Apps", in: app)
-        for name in ["ChatGPT App", "Dots App", "Claude App"] { selectChoice(name, in: app) }
+        for name in ["ChatGPT", "Dots", "Claude"] { selectChoice(name, in: app) }
         app.buttons["Continue setup"].click()
         XCTAssertTrue(app.staticTexts["Connect your agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
-        XCTAssertFalse(app.switches["Enable ChatGPT App"].exists)
-        app.buttons["Connect ChatGPT App"].click()
+        XCTAssertFalse(app.switches["Enable ChatGPT"].exists)
+        app.buttons["Connect ChatGPT"].click()
         XCTAssertTrue(app.staticTexts["Ready for your first prompt"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Continue"].isEnabled, "One ready app must not bypass unresolved selected apps")
-        app.buttons["Skip Dots App"].click()
+        app.buttons["Skip Dots"].click()
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
-        app.buttons["Connect Claude App"].click()
+        app.buttons["Connect Claude"].click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
         waitForExpectations(timeout: 5)
         app.buttons["Continue"].click()
         XCTAssertTrue(app.staticTexts["Help shape msgblast"].waitForExistence(timeout: 5), "Native apps complete in one batch")
         app.buttons["Start chatting"].click()
-        XCTAssertTrue(app.buttons["ChatGPT App"].waitForExistence(timeout: 5))
-        app.buttons["ChatGPT App"].click()
-        app.buttons["Claude App"].click()
+        XCTAssertTrue(app.buttons["ChatGPT"].waitForExistence(timeout: 5))
+        app.buttons["ChatGPT"].click()
+        app.buttons["Claude"].click()
         let prompt = app.textViews["Shared prompt"]
         prompt.click(); prompt.typeText("Clean native conversation fixture")
         app.buttons["Send & compare"].click()
-        XCTAssertTrue(app.textViews["Message ChatGPT App"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textViews["Message ChatGPT"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["desktop-app-installation"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["desktop-connection-confirmation"].exists)
-        XCTAssertFalse(app.switches["Enable ChatGPT App"].exists)
+        XCTAssertFalse(app.switches["Enable ChatGPT"].exists)
         XCTAssertFalse(app.buttons["Check installation"].exists)
-        app.buttons["ChatGPT App options"].click()
+        app.buttons["ChatGPT options"].click()
         XCTAssertTrue(app.staticTexts["desktop-app-installation"].waitForExistence(timeout: 5))
         app.buttons["Done"].click()
         XCTAssertFalse(app.staticTexts["desktop-app-installation"].exists)
@@ -327,7 +333,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         defer { app.terminate() }
         choose("Apps", in: app)
         XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
-        XCTAssertTrue(app.buttons["Choose ChatGPT App"].isEnabled)
+        XCTAssertTrue(app.buttons["Choose ChatGPT"].isEnabled)
         app.buttons["Back"].click()
         let contacts = app.switches["enable-messages-contacts-permission"]
         XCTAssertTrue(contacts.waitForExistence(timeout: 5))
