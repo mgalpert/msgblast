@@ -28,7 +28,11 @@ struct AgentGridView: View {
         let entries = catalog
         let byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
         let layout = previewLayout ?? model.agentGridLayout
-        let shown = layout.visibleIDs.compactMap { byID[$0] }
+        let availableMessages = Set(entries.filter {
+            model.databaseAvailable && model.messageAgent(for: $0.id).flatMap(model.route) != nil
+        }.map(\.id))
+        let shown = layout.shown(in: entries.map(\.id), availableMessages: editing ? nil : availableMessages)
+            .compactMap { byID[$0] }
         let shownIDs = Set(layout.visibleIDs)
         let available = entries.filter {
             !shownIDs.contains($0.id) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query))

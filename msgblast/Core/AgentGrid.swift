@@ -48,9 +48,15 @@ public struct AgentGridLayout: Codable, Equatable, Sendable {
         self.init(visibleIDs: choices + (onboarding.discoveredMessageAgentIDs ?? []).filter { !excluded.contains($0) }.map { messageGridIDs[$0] ?? .messages($0) })
     }
 
-    public func shown(in catalog: [AgentGridID]) -> [AgentGridID] {
+    public func shown(in catalog: [AgentGridID], availableMessages: Set<AgentGridID>? = nil) -> [AgentGridID] {
         let available = Set(catalog)
-        return visibleIDs.filter { available.contains($0) }
+        return visibleIDs.filter { id in
+            guard available.contains(id) else { return false }
+            switch id {
+            case .messages, .featuredMessages: return availableMessages?.contains(id) ?? true
+            default: return true
+            }
+        }
     }
 
     public func available(in catalog: [AgentGridID]) -> [AgentGridID] {

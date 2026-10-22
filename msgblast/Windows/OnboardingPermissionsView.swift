@@ -144,24 +144,3 @@ struct OnboardingPermissionsView: View {
         .padding(.vertical, 8).frame(minHeight: 42)
     }
 }
-
-private struct PermissionSwitchStyle: ToggleStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack {
-            configuration.label
-            Button { configuration.isOn.toggle() } label: {
-                Capsule()
-                    .fill(configuration.isOn ? Color.green : Color.red)
-                    .frame(width: 40, height: 24)
-                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                        Circle().fill(.white).frame(width: 20, height: 20).padding(2)
-                    }
-            }
-            .buttonStyle(.plain)
-        }
-        .accessibilityRepresentation {
-            Toggle(isOn: configuration.$isOn) { configuration.label }
-                .toggleStyle(.switch)
-        }
-    }
-}

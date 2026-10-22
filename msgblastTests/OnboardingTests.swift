@@ -208,6 +208,18 @@ final class OnboardingTests: XCTestCase {
         XCTAssertTrue(setup.unresolvedMessageAgents(in: [fo, tiny], chats: chats + [Chat(id: "tiny-chat", handle: tiny.handles[0], lastActivity: 2)]).isEmpty)
     }
 
+    func testOldSkippedChoicesDoNotRemindAboutUnselectedRecipients() {
+        let tiny = Agent(contactID: "tiny", name: "tinyNature", handles: ["tiny@example.test"])
+        var setup = OnboardingState()
+        setup.selected = [.geminiApp, .otherMessages]
+        setup.skipped = setup.selected
+        setup.discoveredMessageAgentIDs = [tiny.id]
+        XCTAssertTrue(setup.connectionReminderChoices(selectedProviders: []).isEmpty)
+        XCTAssertEqual(setup.connectionReminderChoices(selectedProviders: [.geminiApp]), [.geminiApp])
+        XCTAssertTrue(setup.unresolvedMessageAgents(in: [tiny], chats: [], selectedIDs: []).isEmpty)
+        XCTAssertEqual(setup.unresolvedMessageAgents(in: [tiny], chats: [], selectedIDs: [tiny.id]).map(\.name), ["tinyNature"])
+    }
+
     func testDeselectingRepresentativeKeepsOnlySameCategoryReplacement() throws {
         let first = Agent(contactID: "first", name: "Fo", handles: ["first@example.test"])
         let second = Agent(contactID: "second", name: "Fo", handles: ["second@example.test"])

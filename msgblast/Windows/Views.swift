@@ -316,7 +316,7 @@ private struct MessagesAccessBanner: View {
     init(model: AppModel) { self.model = model; guide = model.accessGuide }
     var body: some View {
         if !model.databaseAvailable || guide.flow.isActive || guide.flow.stage == .verified {
-            MessagesAccessRow(guide: guide, check: { model.refresh() }).padding(18).help(model.databaseStatus)
+            MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable).padding(18).help(model.databaseStatus)
             if model.permissionGuidePreview {
                 Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
             }

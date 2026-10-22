@@ -189,13 +189,16 @@ final class OnboardingController: ObservableObject {
         edit { $0.resume() }
     }
 
-    var unresolvedMessageAgents: [Agent] { state.unresolvedMessageAgents(in: model.state.agents, chats: model.chats) }
+    var unresolvedMessageAgents: [Agent] {
+        guard model.databaseAvailable else { return [] }
+        return state.unresolvedMessageAgents(in: model.state.agents, chats: model.chats,
+                                             selectedIDs: model.state.selection)
+    }
     var setupReminderNames: [String] {
-        let other = state.skipped.intersection(state.selected).filter { choice in
-            if choice.isMessages { return candidate(for: choice) == nil }
-            if let provider = choice.provider { return !isReady(session(for: provider)) }
-            return true
-        }.map { $0 == .otherMessages ? "Messages contact" : $0.name }
+        let selectedProviders = Set(model.webAgents.sessions.filter {
+            $0.isEnabled && $0.state.selected && model.isVisibleInAgentGrid($0.id.gridID) && !isReady($0)
+        }.map(\.provider))
+        let other = state.connectionReminderChoices(selectedProviders: selectedProviders).map(\.name)
         return Array(Set(unresolvedMessageAgents.map(\.name) + other)).sorted()
     }
 

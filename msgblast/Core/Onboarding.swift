@@ -193,8 +193,13 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         Set(selected.filter(\.isMessages).compactMap { messageAgentIDs[$0.rawValue] } + (discoveredMessageAgentIDs ?? []))
             .subtracting(excludedDiscoveredMessageAgentIDs ?? [])
     }
-    public func unresolvedMessageAgents(in agents: [Agent], chats: [Chat]) -> [Agent] {
-        agents.filter { selectedMessageAgentIDs.contains($0.id) && ChatResolver.resolve(agent: $0, chats: chats) == nil }
+    public func connectionReminderChoices(selectedProviders: Set<WebProvider>) -> Set<OnboardingChoice> {
+        skipped.intersection(selected).filter { choice in
+            choice.provider.map { selectedProviders.contains($0) } == true
+        }
+    }
+    public func unresolvedMessageAgents(in agents: [Agent], chats: [Chat], selectedIDs: Set<UUID>? = nil) -> [Agent] {
+        agents.filter { selectedMessageAgentIDs.contains($0.id) && (selectedIDs?.contains($0.id) ?? true) && ChatResolver.resolve(agent: $0, chats: chats) == nil }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
     public mutating func excludeDiscoveredMessageAgent(_ id: UUID, agents: [Agent], availableIDs: Set<UUID>) {

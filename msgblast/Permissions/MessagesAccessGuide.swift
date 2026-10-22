@@ -281,36 +281,29 @@ struct MessagesAccessRow: View {
     @ObservedObject var guide: MessagesAccessGuide
     let check: () -> Void
     var isOnboarding = false
+    var accessAllowed = false
     var body: some View {
         let handedOff = guide.flow.stage == .guiding || guide.flow.stage == .waitingForAccess
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: guide.flow.stage == .verified ? "checkmark.circle.fill" : "lock.fill")
                     .font(.title2).foregroundStyle(guide.flow.stage == .verified ? .green : .secondary)
-                if handedOff {
-                    Text("Complete in System Settings").foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Check again", action: check)
-                } else {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(isOnboarding ? "Chat with the agents you text on Messages" : "Connect Messages").font(.headline)
-                        if isOnboarding {
-                            Text("Your messages are yours. You choose what to share.")
-                                .font(.callout).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
-                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    Spacer()
-                    if guide.flow.stage == .verified {
-                        Label("Done", systemImage: "checkmark").foregroundStyle(.green)
-                        Button("Continue") { guide.dismissCompletion() }
-                    } else {
-                        Button("Open Settings") { guide.start() }.buttonStyle(.borderedProminent).disabled(guide.flow.isActive)
-                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isOnboarding ? "Chat with the agents you text on Messages" : "Connect Messages").font(.headline)
+                    Text(isOnboarding ? "Your messages are yours. You choose what to share." : "Find the agents you text in Messages.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer()
+                Toggle("Full Disk Access", isOn: Binding(get: { accessAllowed }, set: { _ in
+                    if accessAllowed {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } else { guide.start() }
+                }))
+                .labelsHidden().toggleStyle(PermissionSwitchStyle())
+                .accessibilityLabel("Full Disk Access")
+                .accessibilityIdentifier("enable-messages-history-permission")
             }.padding(14).frame(minHeight: 72)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
                 .overlay { if handedOff { RoundedRectangle(cornerRadius: 12).stroke(.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5, 4])) } }
@@ -404,4 +397,25 @@ private final class AppBundleDragView: NSView, NSDraggingSource {
     }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { dragging = false; down = nil; onEnd(!operation.isEmpty) }
+}
+
+struct PermissionSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            configuration.label
+            Button { configuration.isOn.toggle() } label: {
+                Capsule()
+                    .fill(configuration.isOn ? Color.green : Color.red)
+                    .frame(width: 40, height: 24)
+                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
+                        Circle().fill(.white).frame(width: 20, height: 20).padding(2)
+                    }
+            }
+            .buttonStyle(.plain)
+        }
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.switch)
+        }
+    }
 }
