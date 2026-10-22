@@ -684,6 +684,13 @@ final class DesktopAppDriverTests: XCTestCase {
     }
 
     func testWabiMultilineUsesVerifiedChunksAndShiftReturnWithoutRefocusingText() async throws {
+        try await runWabiMultiline(driverTrimsWhitespace: false)
+    }
+    func testWabiNativeExactNewlineRemainsValidWhenDriverTrimsItsSnapshot() async throws {
+        try await runWabiMultiline(driverTrimsWhitespace: true)
+    }
+    private func runWabiMultiline(driverTrimsWhitespace: Bool) async throws {
+        let newlineDraft = driverTrimsWhitespace ? "One" : "One\n"
         let text = "One\nTwo 👩‍💻"
         var initial = windows(); initial["native"] = wabiNative(focused: false)
         func typing(_ tool: String, _ draft: String, arguments: [String: Any]) -> [String: Any] {
@@ -695,8 +702,8 @@ final class DesktopAppDriverTests: XCTestCase {
         var send = step("click", [:]); send["native"] = wabiNative(messages: [.init(role: .user, text: text), .init(role: .assistant, text: "Multiline observed")])
         let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()),
             typing("type_text", "One", arguments: ["text": "One", "x": 540, "y": 780]), snapshot(wabi(draft: "One")),
-            capturedNavigation(wabi(draft: "One")), typing("press_key", "One\n", arguments: ["key": "return", "modifiers": ["shift"]]), snapshot(wabi(draft: "One\n")),
-            capturedNavigation(wabi(draft: "One\n")), typing("type_text", text, arguments: ["text": "Two 👩‍💻"]), snapshot(wabi(draft: text)),
+            capturedNavigation(wabi(draft: "One")), typing("press_key", "One\n", arguments: ["key": "return", "modifiers": ["shift"]]), snapshot(wabi(draft: newlineDraft)),
+            capturedNavigation(wabi(draft: newlineDraft)), typing("type_text", text, arguments: ["text": "Two 👩‍💻"]), snapshot(wabi(draft: text)),
             send, snapshot(wabi(reply: "Multiline observed"), repeating: true)])
         defer { fixture.remove() }
         let result = try await wabiAdapter(fixture).reply(text, in: wabiURL)
@@ -712,6 +719,18 @@ final class DesktopAppDriverTests: XCTestCase {
         }
         assertBackgroundTargets(calls)
     }
+    func testWabiNativeDraftMustStayExactWhenDriverTrimsUnexpectedWhitespace() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt + " ")
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt))])
+        defer { fixture.remove() }
+        let error = await failure { try await self.wabiAdapter(fixture).reply(self.prompt, in: self.wabiURL) }
+        XCTAssertTrue(error.contains("Send was not pressed"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertFalse(calls.contains { $0.tool == "click" || $0.tool == "press_key" }, "Exact native draft verification must not be replaced with trimming")
+    }
+
     func testWabiLostFocusAfterFirstChunkStopsBeforeNewlineOrSend() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: "One", focused: false)

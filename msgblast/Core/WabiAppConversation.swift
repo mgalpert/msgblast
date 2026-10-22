@@ -163,6 +163,12 @@ actor WabiAppConversation {
               screenshotURL == nil || (before.messages == after.messages && before.composerFocused == after.composerFocused) else { throw DesktopAppError.unavailable("Wabi changed while checking its chat. Nothing was retried.") }
         return (state, after)
     }
+    private func driverDraftAgrees(_ field: DesktopAppSnapshot.Element, with exact: String) -> Bool {
+        // Structured driver values can trim surrounding whitespace. The
+        // independent native read must still match every character exactly.
+        let value = field.value ?? ""
+        return value == exact || value == exact.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     private func empty(_ state: DesktopAppSnapshot, _ native: WabiAppObservation) throws {
         guard native.draft == "", try state.composer(app: .wabi).draft.isEmpty, !state.isGenerating else {
             throw DesktopAppError.unavailable("Wabi has an unsent draft or an active response. It was preserved.")
@@ -273,7 +279,7 @@ actor WabiAppConversation {
         for (index, input) in inputs.enumerated() {
             if index > 0 { (state, native) = try await observe(target, session: session, screenshotURL: image) }
             let field = try state.composer(app: .wabi)
-            guard native.url == url, native.draft == prefix, field.draft == prefix,
+            guard native.url == url, native.draft == prefix, driverDraftAgrees(field.element, with: prefix),
                   receipt.unchanged(native.messages), !state.isGenerating,
                   prefix.isEmpty || native.composerFocused == true else {
                 throw DesktopAppError.unavailable("Wabi's draft, focus, or chat changed. Send was not pressed; review the preserved text.")
@@ -291,7 +297,7 @@ actor WabiAppConversation {
                 if native.composerFocused != true {
                     _ = try await driver.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
                     let (focusedState, focused) = try await observe(target, session: session)
-                    guard focused.url == url, focused.draft == prefix, try focusedState.composer(app: .wabi).draft == prefix,
+                    guard focused.url == url, focused.draft == prefix, try driverDraftAgrees(focusedState.composer(app: .wabi).element, with: prefix),
                           focused.composerFocused == true, receipt.unchanged(focused.messages), !focusedState.isGenerating else {
                         throw DesktopAppError.unavailable("Wabi did not retain focus in its empty composer. Nothing was submitted.")
                     }
@@ -300,7 +306,7 @@ actor WabiAppConversation {
                 prefix += "\n"
             }
             (state, native) = try await observe(target, session: session)
-            guard native.url == url, native.draft == prefix, try state.composer(app: .wabi).draft == prefix,
+            guard native.url == url, native.draft == prefix, try driverDraftAgrees(state.composer(app: .wabi).element, with: prefix),
                   native.composerFocused == true, receipt.unchanged(native.messages), !state.isGenerating else {
                 throw DesktopAppError.unavailable("Wabi's prepared draft, focus, or chat changed. Send was not pressed; review the preserved text.")
             }
