@@ -128,7 +128,7 @@ final class AgentGridWorkflowTests: XCTestCase {
         XCTAssertTrue(access.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Open Settings"].exists)
         XCTAssertFalse(app.buttons["Cedar"].exists, "Saved Messages contacts stay hidden until history is available")
-        XCTAssertTrue(app.buttons["ChatGPT"].exists)
+        XCTAssertTrue(app.buttons["Add ChatGPT"].exists, "Native apps remain available while Messages access is off")
         capture(app, name: "Messages access toggle with unavailable contacts hidden — isolated fixture")
     }
 
