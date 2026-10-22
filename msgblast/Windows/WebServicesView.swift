@@ -715,9 +715,9 @@ private struct WebAgentPane: View {
                 Text("Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
                     .font(.caption).foregroundStyle(.secondary)
             } else if let app = session.provider.desktopApp, !connected,
-                      !session.desktopInstallation.isInstalled || !session.snapshot.messages.isEmpty {
+                      let recovery = session.desktopRecoveryMessage {
                 HStack {
-                    Text(session.desktopInstallation.isInstalled ? "Reconnect to continue this conversation." : "Install \(app.name) to continue.")
+                    Text(recovery)
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     if session.desktopInstallation.isInstalled {

@@ -116,6 +116,29 @@ final class NativeDesktopStateTests: XCTestCase {
         }
     }
 
+    func testFailedFirstConversationShowsRecoveryWithoutLosingDraftOrSubmitting() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let reason = "The app could not open its chat window."
+        let client = DesktopAppInstallationClient(inspect: { app in
+            .init(url: URL(fileURLWithPath: "/Fixture/\(app.name).app"), processID: nil)
+        }, open: { _ in throw NSError(domain: "FixtureLaunch", code: 1, userInfo: [NSLocalizedDescriptionKey: reason]) })
+        for provider in WebProvider.desktopProviders {
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: client)
+            defer { session.beginShutdown() }
+            session.setEnabled(true)
+            session.updateState { $0.draft = "Keep my first prompt" }
+            XCTAssertNil(session.desktopRecoveryMessage, "A fresh empty pane should stay uncluttered")
+            let ready = await session.openComparison(UUID())
+            XCTAssertFalse(ready)
+            XCTAssertEqual(session.error, reason)
+            XCTAssertEqual(session.desktopRecoveryMessage, reason, "The empty conversation must explain the failed preparation and offer recovery")
+            XCTAssertEqual(session.state.draft, "Keep my first prompt")
+            XCTAssertTrue(session.state.attempts.isEmpty, "Opening a conversation must never submit or retry a prompt")
+            XCTAssertTrue(session.snapshot.messages.isEmpty)
+        }
+    }
+
     func testChatGPTAndDotsShareOneAppLaunchDuringBroadcastPreparation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

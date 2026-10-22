@@ -89,6 +89,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if avatar != page.avatar { avatar = page.avatar }
     }
     @Published public private(set) var desktopReady = false
+    public var desktopRecoveryMessage: String? {
+        guard let app = provider.desktopApp, isEnabled, !desktopReady else { return nil }
+        if !desktopInstallation.isInstalled { return "Install \(app.name) to continue." }
+        if let error, !error.isEmpty { return error }
+        return snapshot.messages.isEmpty ? nil : "Reconnect to continue this conversation."
+    }
     @Published public private(set) var desktopStatus = "Connect an open app conversation."
     @Published public private(set) var desktopInstallation = DesktopAppInstallation(url: nil, processID: nil)
     @Published public private(set) var grokBotNames: [String] = []
