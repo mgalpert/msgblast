@@ -25,6 +25,11 @@ struct WabiAXNode: Sendable {
     var descendants: [WabiAXNode] { [self] + children.flatMap(\.descendants) }
 }
 
+enum WabiObservationError: LocalizedError, Sendable {
+    case transient(String)
+    var errorDescription: String? { switch self { case .transient(let message): message } }
+}
+
 enum WabiNativeMessages {
     static func read(_ root: WabiAXNode) throws -> [WabiAppMessage] {
         let nodes = root.descendants
@@ -34,18 +39,19 @@ enum WabiNativeMessages {
         let frameClasses: Set<String> = ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e"]
         let frames = nodes.filter { $0.role == "AXGroup" && frameClasses.isSubset(of: Set($0.classes)) }
         guard !frames.isEmpty, frames.count == nodes.filter({ $0.role == "AXPopUpButton" && $0.label == "Add reaction" }).count else {
-            throw DesktopAppError.unavailable("Wabi's message layout is unsupported. No sender or reply was inferred.")
+            throw WabiObservationError.transient("Wabi's messages are still updating. No sender or reply was inferred.")
         }
         return try frames.map { frame in
             let own = frame.classes.contains("xpvyfi4"), other = frame.classes.contains("xqcrz7y")
             var text = frame.descendants.filter { $0.role == "AXStaticText" }.map(\.value)
-            guard own != other, text.count >= 2, let timestamp = text.last,
+            guard own != other else { throw DesktopAppError.unavailable("Wabi's message sender is unavailable. No reply was attributed.") }
+            guard text.count >= 2, let timestamp = text.last,
                   timestamp.range(of: #"^\d{1,2}:\d{2}\s*[AP]M$"#, options: .regularExpression) != nil else {
-                throw DesktopAppError.unavailable("Wabi's message sender or boundary is unavailable. No reply was attributed.")
+                throw WabiObservationError.transient("Wabi's message boundary is still updating. No reply was attributed.")
             }
             text.removeLast()
             let body = text.joined(separator: "\n\n")
-            guard !body.isEmpty else { throw DesktopAppError.unavailable("Wabi exposed an empty message body.") }
+            guard !body.isEmpty else { throw WabiObservationError.transient("Wabi's message body is still updating. No reply was attributed.") }
             return WabiAppMessage(role: own ? .user : .assistant, text: body)
         }
     }
@@ -152,22 +158,34 @@ actor WabiAppConversation {
         driver = DesktopAppConversation(executable: executable, timing: timing)
         self.timing = timing; self.readNative = readNative
     }
+    private func native(_ target: DesktopAppConversation.Target) async throws -> WabiAppObservation {
+        let read = readNative
+        var retries = 2
+        while true {
+            try Task.checkCancellation()
+            do { return try await Task.detached { try read(target) }.value }
+            catch WabiObservationError.transient where retries > 0 {
+                retries -= 1
+                try await Task.sleep(for: timing.pollInterval)
+            }
+        }
+    }
     private func observe(_ target: DesktopAppConversation.Target, session: String, screenshotURL: URL? = nil) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
         try Task.checkCancellation()
-        let read = readNative
-        let before = try await Task.detached { try read(target) }.value
+        let before = try await native(target)
         let state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL)
         try state.checkReadable()
-        let after = try await Task.detached { try read(target) }.value
+        let after = try await native(target)
         guard before.url == after.url, before.draft == after.draft,
               screenshotURL == nil || (before.messages == after.messages && before.composerFocused == after.composerFocused) else { throw DesktopAppError.unavailable("Wabi changed while checking its chat. Nothing was retried.") }
         return (state, after)
     }
-    private func driverDraftAgrees(_ field: DesktopAppSnapshot.Element, with exact: String) -> Bool {
-        // Structured driver values can trim surrounding whitespace. The
-        // independent native read must still match every character exactly.
-        let value = field.value ?? ""
-        return value == exact || value == exact.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func driverDraftAgrees(_ composer: (element: DesktopAppSnapshot.Element, draft: String), with exact: String) -> Bool {
+        // Structured values can trim whitespace or echo the empty editor's
+        // placeholder. The independent native draft must still match exactly.
+        let value = composer.element.value ?? ""
+        let trimmed = exact.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value == exact || value == trimmed || (trimmed.isEmpty && composer.draft.isEmpty)
     }
     private func empty(_ state: DesktopAppSnapshot, _ native: WabiAppObservation) throws {
         guard native.draft == "", try state.composer(app: .wabi).draft.isEmpty, !state.isGenerating else {
@@ -185,8 +203,10 @@ actor WabiAppConversation {
     private func settled(_ target: DesktopAppConversation.Target, session: String, expected: (DesktopAppSnapshot, WabiAppObservation) throws -> Bool) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
-            let (state, native) = try await observe(target, session: session)
-            if try expected(state, native) { return (state, native) }
+            do {
+                let (state, native) = try await observe(target, session: session)
+                if try expected(state, native) { return (state, native) }
+            } catch WabiObservationError.transient { }
             guard ContinuousClock.now < deadline else { throw DesktopAppError.unavailable("Wabi did not open the expected chat. Nothing was sent or retried.") }
             try await Task.sleep(for: timing.pollInterval)
         }
@@ -279,7 +299,7 @@ actor WabiAppConversation {
         for (index, input) in inputs.enumerated() {
             if index > 0 { (state, native) = try await observe(target, session: session, screenshotURL: image) }
             let field = try state.composer(app: .wabi)
-            guard native.url == url, native.draft == prefix, driverDraftAgrees(field.element, with: prefix),
+            guard native.url == url, native.draft == prefix, driverDraftAgrees(field, with: prefix),
                   receipt.unchanged(native.messages), !state.isGenerating,
                   prefix.isEmpty || native.composerFocused == true else {
                 throw DesktopAppError.unavailable("Wabi's draft, focus, or chat changed. Send was not pressed; review the preserved text.")
@@ -297,7 +317,7 @@ actor WabiAppConversation {
                 if native.composerFocused != true {
                     _ = try await driver.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
                     let (focusedState, focused) = try await observe(target, session: session)
-                    guard focused.url == url, focused.draft == prefix, try driverDraftAgrees(focusedState.composer(app: .wabi).element, with: prefix),
+                    guard focused.url == url, focused.draft == prefix, try driverDraftAgrees(focusedState.composer(app: .wabi), with: prefix),
                           focused.composerFocused == true, receipt.unchanged(focused.messages), !focusedState.isGenerating else {
                         throw DesktopAppError.unavailable("Wabi did not retain focus in its empty composer. Nothing was submitted.")
                     }
@@ -306,7 +326,7 @@ actor WabiAppConversation {
                 prefix += "\n"
             }
             (state, native) = try await observe(target, session: session)
-            guard native.url == url, native.draft == prefix, try driverDraftAgrees(state.composer(app: .wabi).element, with: prefix),
+            guard native.url == url, native.draft == prefix, try driverDraftAgrees(state.composer(app: .wabi), with: prefix),
                   native.composerFocused == true, receipt.unchanged(native.messages), !state.isGenerating else {
                 throw DesktopAppError.unavailable("Wabi's prepared draft, focus, or chat changed. Send was not pressed; review the preserved text.")
             }
@@ -317,7 +337,8 @@ actor WabiAppConversation {
         var stableSince = ContinuousClock.now
         while ContinuousClock.now < deadline {
             try await Task.sleep(for: timing.pollInterval)
-            (state, native) = try await observe(target, session: session)
+            do { (state, native) = try await observe(target, session: session) }
+            catch WabiObservationError.transient { previous = nil; stableSince = .now; continue }
             guard native.url == url else { throw DesktopAppError.unavailable("Wabi switched chats while waiting. No automatic resend.") }
             let candidate = native.draft == "" ? try receipt.reply(in: native.messages) : nil
             if candidate != previous || state.isGenerating { previous = candidate; stableSince = .now }

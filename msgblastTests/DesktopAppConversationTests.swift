@@ -260,6 +260,23 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [.init(role: "AXPopUpButton", label: "Add reaction")])))
     }
 
+    func testWabiIncompleteIncomingFrameHasNoAttributedBodyUntilLayoutSettles() throws {
+        func frame(_ sender: String, _ text: String, timestamp: Bool = true) -> WabiAXNode {
+            var children: [WabiAXNode] = [.init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction")]
+            if timestamp { children.append(.init(role: "AXStaticText", value: "5:13 PM")) }
+            return .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: children)
+        }
+        let greeting = frame("xqcrz7y", "What can I do for you?")
+        let question = frame("xpvyfi4", "Question")
+        for incomplete in [WabiAXNode(role: "AXPopUpButton", label: "Add reaction"), frame("xqcrz7y", "Answer", timestamp: false)] {
+            XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [greeting, question, incomplete]))) { error in
+                guard case WabiObservationError.transient = error else { return XCTFail("Incomplete rendering must be observable as a transient read, got \(error)") }
+            }
+        }
+        let complete = WabiAXNode(role: "AXWebArea", children: [greeting, question, frame("xqcrz7y", "Answer")])
+        XCTAssertEqual(try WabiNativeMessages.read(complete), [.init(role: .assistant, text: "What can I do for you?"), .init(role: .user, text: "Question"), .init(role: .assistant, text: "Answer")])
+    }
+
     @MainActor
     func testLegacyWabiTranscriptIsPreservedWithoutAdoptingAnExistingChat() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("wabi-legacy-\(UUID())")
@@ -719,6 +736,20 @@ final class DesktopAppDriverTests: XCTestCase {
         }
         assertBackgroundTargets(calls)
     }
+    func testWabiLiteralComposerLabelIsConfirmedAsTextInsteadOfAnEmptyPlaceholder() async throws {
+        let text = "Message"
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: text)
+        var sent = step("click", [:]); sent["native"] = wabiNative(messages: [.init(role: .user, text: text), .init(role: .assistant, text: "Literal text received")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: text)), sent, snapshot(wabi(reply: "Literal text received"), repeating: true)])
+        defer { fixture.remove() }
+        let result = try await wabiAdapter(fixture).reply(text, in: wabiURL)
+        XCTAssertEqual(result, "Literal text received")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.first?.arguments["text"] as? String, text)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
     func testWabiNativeDraftMustStayExactWhenDriverTrimsUnexpectedWhitespace() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt + " ")
@@ -763,6 +794,32 @@ final class DesktopAppDriverTests: XCTestCase {
             XCTAssertTrue(error.contains("control characters"), error)
             XCTAssertTrue(try fixture.calls().isEmpty)
         }
+    }
+
+    func testWabiTransientMessageLayoutAfterSendWaitsWithoutResending() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt)
+        var sent = step("click", [:]); sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Completed after layout settled")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent, snapshot(wabi(reply: "Completed after layout settled"), repeating: true)])
+        defer { fixture.remove() }
+        let result = try await wabiAdapter(fixture, transientAfterSend: true).reply(prompt, in: wabiURL)
+        XCTAssertEqual(result, "Completed after layout settled")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiIncompleteLayoutDeadlineNeverResendsOrClaimsAReply() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt)
+        var sent = step("click", [:]); sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Unverified reply")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent])
+        defer { fixture.remove() }
+        let error = await failure { try await self.wabiAdapter(fixture, neverSettlesAfterSend: true).reply(self.prompt, in: self.wabiURL) }
+        XCTAssertTrue(error.contains("No stable Wabi reply"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
     }
 
     func testWabiReplyMayFinishDuringReadbackWithoutReplayingInput() async throws {
@@ -965,11 +1022,16 @@ final class DesktopAppDriverTests: XCTestCase {
         state["elements"] = body; state["returned_element_count"] = body.count; state["total_element_count"] = body.count
         return state
     }
-    private func wabiAdapter(_ fixture: DriverFixture) -> WabiAppConversation {
+    private func wabiAdapter(_ fixture: DriverFixture, transientAfterSend: Bool = false, neverSettlesAfterSend: Bool = false) -> WabiAppConversation {
+        let fault = MuseReadFault()
         let file = fixture.directory.appendingPathComponent("native.json")
         return WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(2), callTimeout: 3)) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
-            return try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+            let observation = try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+            if observation.messages.contains(where: { $0.role == .user }), neverSettlesAfterSend || (transientAfterSend && fault.shouldFail()) {
+                throw WabiObservationError.transient("Wabi's messages are still updating. No sender or reply was inferred.")
+            }
+            return observation
         }
     }
 
@@ -1794,7 +1856,7 @@ final class DesktopAppDriverTests: XCTestCase {
                      element("AXStaticText", "1:41 PM"), element("AXStaticText", "Read"),
                      element("AXStaticText", reply), element("AXPopUpButton", "Add reaction")]
         }
-        var composer = element("AXTextArea", "Message", value: draft, token: "\(token):composer")
+        var composer = element("AXTextArea", "Message", value: draft.isEmpty ? "Say something…" : draft, token: "\(token):composer")
         composer["frame"] = ["x": 240, "y": 600, "w": 640, "h": 40]
         body += [composer, element("AXButton", "Send", token: "\(token):send")]
         return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count]
