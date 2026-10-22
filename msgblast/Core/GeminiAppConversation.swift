@@ -5,11 +5,12 @@ actor GeminiAppConversation {
     typealias NativeRead = @Sendable (DesktopAppConversation.Target, Bool) throws -> GeminiAppObservation
     private let driver: DesktopAppConversation
     private let timing: DesktopAppConversation.Timing
+    private let taskReplyTimeout: Duration
     private let readNative: NativeRead
     private var occupied = false
-    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = { try GeminiNativeReader.capture($0, allowingRename: $1) }) {
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), taskReplyTimeout: Duration = .seconds(30 * 60), readNative: @escaping NativeRead = { try GeminiNativeReader.capture($0, allowingRename: $1) }) {
         driver = DesktopAppConversation(executable: executable, timing: timing)
-        self.timing = timing; self.readNative = readNative
+        self.timing = timing; self.taskReplyTimeout = taskReplyTimeout; self.readNative = readNative
     }
     private func read(_ target: DesktopAppConversation.Target, rename: Bool = false) async throws -> GeminiAppObservation {
         let read = readNative
@@ -286,7 +287,7 @@ actor GeminiAppConversation {
         let prepared = try await read(target)
         guard prepared.draft == prompt, prepared.messages == baseline, prepared.title == native.title, prepared.model == native.model else { throw DesktopAppError.unavailable("Gemini’s prepared prompt changed. It was not sent or retried.") }
         try await attemptActionOnce(control: prepared.control(id: "send_button"), target: target, session: session, expected: prepared)
-        let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
+        let deadline = ContinuousClock.now.advanced(by: binding.mode == .task ? taskReplyTimeout : timing.replyTimeout)
         var stableText: String?, stableSince = ContinuousClock.now
         while ContinuousClock.now < deadline {
             do { native = try await read(target) }

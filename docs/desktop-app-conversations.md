@@ -323,7 +323,10 @@ history; another outgoing request invalidates attribution. Known generation
 controls defer completion. Otherwise reply text must stay stable for three
 seconds. This is an observation, not proof that all provider work has finished;
 providers can issue later follow-ups. Cancellation stops local waiting, not work
-inside the provider app.
+inside the provider app. Gemini Chat waits up to three minutes; Task waits up to
+30 minutes so a longer reasoning task can finish without another submission.
+Both modes keep Cancel available. Cancelling preserves an unconfirmed receipt
+and the draft rather than treating the request as unsent.
 
 An incomplete request blocks further desktop sends across comparisons until the
 user reviews and acknowledges it. Other comparisons identify the blocking
@@ -335,6 +338,12 @@ After acknowledgement, recovery reopens that address and requires the matching
 request reference before binding it. A missing or mismatched reference blocks
 further input without creating a replacement or resending. If interrupted before
 any new UUID is observed, the attempt stays uncertain without inventing an identity.
+
+### Earlier live checks
+
+The following checks predate the embedded runtime and exact-window lookup across
+desktops. Their stated app versions, revisions, and limitations describe those
+runs, rather than the current validation status.
 
 Live checks on October 19, 2026 used Muse 8.0 and cua-driver 0.22.1. Minimal
 background prompts and exact replies were observed in all three apps. The Muse
@@ -357,8 +366,8 @@ A follow-up in that same saved thread produced `WABI-RESUME-OK-1019`. Switching
 Spaces made the native window tree unavailable during observation; with approved
 brief foreground access, the final sender-aware reader verified the existing
 user/assistant pair without another submission. The prior app was restored.
-Background use therefore requires Wabi's window to remain on the current desktop;
-off-Space reads are not supported by this adapter.
+At that revision, background use required Wabi's window to remain on the current
+desktop; off-Space reads were not supported.
 The chooser exposed **Contacts on Wabi** rather than the earlier **Suggested**
 heading; contact suggestions do not identify the New chat action. These local
 checks used the current adapter source, not a distributed app build.
@@ -404,7 +413,9 @@ and comparison-specific preferences. `GeminiAppDriverTests` exercises the real
 adapter through a temporary driver process: exact targets, one submission with
 an unknown click result, dedicated-title persistence, foreign outgoing refusal,
 interrupted-first-send protection, session reload, saved-chat follow-ups, and
-select/reopen/verify of thinking choices. The driver fixture requires the exact
+select/reopen/verify of thinking choices. It also checks saved sidebar-row
+navigation, rejection of duplicate titles or foreign first prompts, and Task
+completion after the Chat wait limit with only one submission. The driver fixture requires the exact
 action, target and text before advancing. These inputs are synthetic and do not
 contact Gemini.
 

@@ -268,7 +268,7 @@ final class GeminiAppDriverTests: XCTestCase {
         let race = NavigationRace()
         let fault = NativeReadFault()
         let modelDelay = NativeReadFault()
-        return GeminiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(2), callTimeout: 3), readNative: { target, _ in
+        return GeminiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(2), callTimeout: 3), taskReplyTimeout: .seconds(2), readNative: { target, _ in
             guard target == .init(pid: 42, window: 21) else { throw DesktopAppError.unavailable("Wrong exact window") }
             let stage = Int((try? String(contentsOf: fixture.stage, encoding: .utf8)) ?? "0") ?? 0
             if delayModelPopoverOnce, modelDelay.shouldFail(stage: stage, at: 1) { return fixture.observations[0] }
@@ -593,6 +593,48 @@ final class GeminiAppDriverTests: XCTestCase {
             XCTFail("Duplicate rows cannot establish a saved destination")
         } catch { XCTAssertTrue(error.localizedDescription.contains("ambiguous")) }
         XCTAssertFalse(f.calls().contains { ["type_text", "click"].contains($0["tool"] as? String ?? "") })
+    }
+
+    private final class DelayedReply: @unchecked Sendable {
+        private let lock = NSLock()
+        private var started: ContinuousClock.Instant?
+        func waiting() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if started == nil { started = .now }
+            return ContinuousClock.now - started! < .milliseconds(200)
+        }
+    }
+
+    func testTaskReplyCanFinishAfterTheChatWaitLimitWithoutAnotherSubmission() async throws {
+        for mode in [GeminiMode.chat, .task] {
+            var binding = GeminiConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, mode: mode)
+            binding.firstPrompt = binding.firstMessage("Echo check"); binding.title = binding.dedicatedTitle
+            let f = try savedConversationScenario(binding)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let delay = DelayedReply()
+            let conversation = GeminiAppConversation(executable: f.executable,
+                timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .milliseconds(80), callTimeout: 3), taskReplyTimeout: .seconds(2), readNative: { target, _ in
+                    guard target == .init(pid: 42, window: 21) else { throw DesktopAppError.unavailable("Wrong window") }
+                    let stage = Int((try? String(contentsOf: f.stage, encoding: .utf8)) ?? "0") ?? 0
+                    var root = f.observations[stage].root
+                    if stage == 5, delay.waiting() {
+                        let transcript = root.children[0].children[1].children.firstIndex { $0.role == "AXScrollArea" }!
+                        root.children[0].children[1].children[transcript].children[0].children.removeLast()
+                        root.children[0].children[1].children[transcript].children[0].children.append(.init(role: "AXRow", children: [.init(role: "AXCell", children: [.init(role: "AXGroup", children: [.init(role: "AXHeading", label: "Thinking it through")])])]))
+                    }
+                    return try GeminiAppObservation(root: root)
+                })
+            do {
+                let answer = try await conversation.reply("Follow up", binding: binding, preferences: .init(mode: mode, model: "3.8 Flash, All-around help"), onPrepared: { _ in }) { _ in }
+                XCTAssertEqual(mode, .task)
+                XCTAssertEqual(answer, "FOLLOWUP-OK")
+            } catch {
+                XCTAssertEqual(mode, .chat, error.localizedDescription)
+                XCTAssertTrue(error.localizedDescription.contains("not completed"))
+            }
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "type_text" }.count, 1)
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 4)
+        }
     }
 
     func testPermanentRenameFailureKeepsAnswerAndDurableFallbackForResume() async throws {
