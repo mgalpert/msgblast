@@ -201,9 +201,10 @@ actor MuseAppConversation {
         guard buttons.count == 1 else { throw DesktopAppError.unavailable("Muse's New side chat control is ambiguous.") }
         preparedNew = nil
         try await click(buttons[0], target: target, session: session)
-        let created = try await settled(target) { $0.url == MuseSideChatBinding.newURL && $0.messages.isEmpty && $0.composerFocused }
-        preparedNew = NewChat(comparison: comparisonID, target: target, composer: created.composerIdentity)
-        return MuseSideChatBinding(comparisonID: comparisonID, threadID: nil, title: created.title)
+        let created = try await settled(target) { $0.url == MuseSideChatBinding.newURL && $0.messages.isEmpty }
+        let focused = try await focusComposer(target, session: session, at: created.url)
+        preparedNew = NewChat(comparison: comparisonID, target: target, composer: focused.composerIdentity)
+        return MuseSideChatBinding(comparisonID: comparisonID, threadID: nil, title: focused.title)
     }
 
     func reply(_ prompt: String, binding: MuseSideChatBinding, requestID: UUID = UUID(),

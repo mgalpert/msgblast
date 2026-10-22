@@ -1529,6 +1529,32 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testMuseNewSideChatFocusesItsCompoundComposerBeforeTyping() async throws {
+        var initial = windows()
+        var main = museObservation(); main.url = URL(string: "https://muse.ai/")!
+        initial["native"] = try object(main)
+        let button = element("AXButton", "New side chat", token: "s00000001:new")
+        let state: [String: Any] = ["elements": [button]]
+        var blank = museObservation(); blank.composerFocused = false
+        let open = try museStep("click", observation: blank, token: "s00000001:new")
+        var composer = element("AXButton", "Message Attach file Dictate a message Send", token: "s00000002:composer")
+        composer["frame"] = ["x": 300, "y": 600, "w": 600, "h": 50]
+        var focus = try museStep("click", observation: museObservation())
+        focus["arguments"] = ["x": 600, "y": 788]
+        let fixture = try driver([apps(.muse), initial, snapshot(state), open,
+                                  capturedNavigation(["elements": [composer]]), focus])
+        defer { fixture.remove() }
+        let prepared = try await museAdapter(fixture).prepare(comparisonID: UUID(), binding: nil)
+        XCTAssertNil(prepared.threadID)
+        let calls = try await finishedCalls(fixture)
+        let clicks = calls.filter { $0.tool == "click" }
+        XCTAssertEqual(clicks.count, 2, "Create once, then focus the composer")
+        XCTAssertEqual(clicks.first?.arguments["element_token"] as? String, "s00000001:new")
+        XCTAssertNil(clicks.last?.arguments["element_token"], "AXPress on the compound composer opens attachments")
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" || $0.tool == "press_key" })
+        assertMuseBackground(calls)
+    }
+
     private func capturedNavigation(_ state: [String: Any]) -> [String: Any] {
         var result = state
         var index = 0
