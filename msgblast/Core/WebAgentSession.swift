@@ -93,7 +93,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let app = provider.desktopApp, isEnabled, !desktopReady else { return nil }
         if !desktopInstallation.isInstalled { return "Install \(app.name) to continue." }
         if let error, !error.isEmpty { return error }
-        return snapshot.messages.isEmpty ? nil : "Reconnect to continue this conversation."
+        // A saved chat reconnects during the next explicit send. Only an
+        // observed failure needs a recovery action; stale readiness is normal.
+        return nil
     }
     @Published public private(set) var desktopStatus = "Connect an open app conversation."
     @Published public private(set) var desktopInstallation = DesktopAppInstallation(url: nil, processID: nil)
@@ -1717,8 +1719,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
             }
             attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
-            attempt.detail = error.localizedDescription
-            self.error = error.localizedDescription
+            let detail = error is CancellationError
+                ? started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
+                : error.localizedDescription
+            attempt.detail = detail
+            self.error = detail
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
         }
         updateNativeSnapshot()

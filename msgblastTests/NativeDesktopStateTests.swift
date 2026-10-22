@@ -116,6 +116,63 @@ final class NativeDesktopStateTests: XCTestCase {
         }
     }
 
+    func testNativeCancellationExplainsRecoveryAndRetainsTheUncertainReceiptAcrossRestart() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in WebProvider.desktopProviders {
+            let file = directory.appendingPathComponent(provider.storageFilename), id = UUID()
+            let session = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            session.setEnabled(true)
+            if provider == .grokBotApp { await session.refreshGrokBots() }
+            await session.connectDesktopConversation(botName: provider == .grokBotApp ? "Demo Bot" : nil)
+            _ = await session.openComparison(id)
+            session.updateState { $0.draft = "Keep this cancelled request" }
+            let sending = Task { await session.send("Keep this cancelled request", comparisonID: id) }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while session.state.attempts.first?.status != .attempting && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            XCTAssertEqual(session.state.attempts.first?.status, .attempting, provider.name)
+            session.cancelNativeRequest()
+            let attempt = await sending.value
+            XCTAssertEqual(attempt?.status, .uncertain, provider.name)
+            XCTAssertEqual(attempt?.detail, "Stopped waiting for a reply. Check \(provider.name) before sending again.")
+            XCTAssertEqual(session.error, attempt?.detail)
+            XCTAssertEqual(session.state.draft, "Keep this cancelled request")
+            XCTAssertTrue(session.snapshot.messages.isEmpty)
+            session.beginShutdown()
+            let restored = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            XCTAssertEqual(restored.state.attempts.first?.id, attempt?.id)
+            XCTAssertEqual(restored.state.attempts.first?.status, .uncertain)
+            XCTAssertEqual(restored.state.attempts.first?.detail, attempt?.detail)
+            let blocked = await restored.send("Do not retry", comparisonID: id)
+            XCTAssertNil(blocked)
+            XCTAssertEqual(restored.state.attempts.count, 1)
+            restored.beginShutdown()
+        }
+    }
+
+    func testInstalledNativeHistoryDoesNotClaimAReconnectIsRequiredBeforeAnExplicitSend() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in WebProvider.desktopProviders {
+            let file = directory.appendingPathComponent(provider.storageFilename), id = UUID()
+            let session = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            session.setEnabled(true)
+            session.updateState {
+                $0.comparisonID = id
+                $0.localConversations[id.uuidString] = [.init(role: "user", text: "Saved question"), .init(role: "assistant", text: "Saved answer")]
+            }
+            session.beginShutdown()
+            let restored = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            XCTAssertFalse(restored.desktopReady)
+            XCTAssertEqual(restored.snapshot.messages.count, 2)
+            XCTAssertNil(restored.desktopRecoveryMessage, provider.name)
+            XCTAssertTrue(restored.state.attempts.isEmpty)
+            restored.beginShutdown()
+        }
+    }
+
     func testFailedFirstConversationShowsRecoveryWithoutLosingDraftOrSubmitting() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
