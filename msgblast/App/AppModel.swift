@@ -30,6 +30,13 @@ final class AppModel: ObservableObject {
         false
         #endif
     }
+    var onboardingPermissionsPreview: Bool {
+        #if DEBUG
+        demo && (ProcessInfo.processInfo.arguments.contains("--onboarding-permissions-preview") || Bundle.main.object(forInfoDictionaryKey: "msgblastOnboardingPermissionsPreview") as? Bool == true)
+        #else
+        false
+        #endif
+    }
     @Published var reviewingSharingChoice = false
     var onboardingRestartRequested = false
     var needsOnboarding: Bool { state.onboarding.map { !$0.isFinished } ?? false }

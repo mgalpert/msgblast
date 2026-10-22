@@ -104,6 +104,15 @@ and preservation of existing website identity/history. The Demo UI regression
 `OnboardingWorkflowTests.testNativeChoicesReplaceWebAlternativesInOnboarding`
 checks the actual chooser.
 
+For manual Demo capture without command-line launch arguments, Debug Demo builds
+also recognize `msgblastOnboardingPreview`, `msgblastIsolatedDemo`, and
+`msgblastOnboardingPermissionsPreview` Boolean bundle settings. The last setting
+starts simulated app-control and capture access off. Combined with the existing
+`msgblastPermissionGuidePreview`, Messages history is also simulated unavailable,
+so Continue stays blocked until a complete permission group is enabled. These
+settings never change macOS access and are ignored for live app-control grants.
+Label captures as simulated and retain the compiled source revision.
+
 ## Embedded app-control runtime
 
 `EmbeddedCuaDriverTests` exercises private daemon startup, shared concurrent

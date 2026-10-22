@@ -20,7 +20,7 @@ final class OnboardingController: ObservableObject {
 
     init(model: AppModel, appPermissions: CuaPermissionsController? = nil) {
         self.model = model
-        self.appPermissions = appPermissions ?? CuaPermissionsController(demoInitiallyAllowed: !(model.demo && ProcessInfo.processInfo.arguments.contains("--onboarding-permissions-preview")))
+        self.appPermissions = appPermissions ?? CuaPermissionsController(demoInitiallyAllowed: !model.onboardingPermissionsPreview)
     }
     var state: OnboardingState { model.state.onboarding ?? OnboardingState() }
 
