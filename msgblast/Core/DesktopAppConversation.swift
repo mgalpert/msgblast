@@ -475,7 +475,13 @@ actor DesktopAppConversation {
         while ContinuousClock.now < deadline {
             try await Task.sleep(for: timing.pollInterval)
             state = try await snapshot(target, session: session)
-            try validate(state, app: app, binding: binding)
+            try validate(state, app: app, binding: binding, verifyBotList: false)
+            if app == .grokBot, (try? state.grokBots().filter { $0.name == binding.name }.count) != 1 {
+                // A working bot can temporarily disappear from the selectable
+                // sidebar. Observe only until its unique identity returns.
+                previous = nil; stableSince = .now
+                continue
+            }
             let promptCount = try state.outgoingCount(prompt, app: app)
             let composerCleared = app == .grokBot ? try await grokState(state, target: target).draft.isEmpty : try state.composer(app: app).draft.isEmpty
             let candidate = composerCleared && promptCount > previousPromptCount
@@ -488,11 +494,11 @@ actor DesktopAppConversation {
     func endSession(_ session: String) async {
         _ = try? await call("end_session", ["session": session], as: Action.self)
     }
-    private func validate(_ state: DesktopAppSnapshot, app: DesktopAppProvider, binding: DesktopConversationBinding) throws {
+    private func validate(_ state: DesktopAppSnapshot, app: DesktopAppProvider, binding: DesktopConversationBinding, verifyBotList: Bool = true) throws {
         guard try state.conversation(app: app) == binding.name else {
             throw DesktopAppError.unavailable("The open \(app.name) conversation changed. Open the connected conversation or reconnect; no automatic resend.")
         }
-        if app == .grokBot {
+        if app == .grokBot, verifyBotList {
             guard try state.grokBots().filter({ $0.name == binding.name }).count == 1 else {
                 throw DesktopAppError.unavailable("The selected Grok Bot is missing or now has a duplicate name. Nothing was retried.")
             }

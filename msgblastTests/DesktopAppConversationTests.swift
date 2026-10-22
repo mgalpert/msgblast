@@ -1233,6 +1233,31 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
     }
 
+    func testGrokTransientBotListWhileReplyingWaitsForStableIdentityWithoutResending() async throws {
+        var busy = grok(generating: true)
+        var elements = busy["elements"] as! [[String: Any]]
+        let bot = try XCTUnwrap(elements.firstIndex { $0["element_token"] as? String == "s00000001:bot0" })
+        elements[bot]["enabled"] = false; busy["elements"] = elements
+        let ambiguous = grok(reply: "Unverified early answer", bots: ["Fixture Bot", "Fixture Bot"])
+        let fixture = try driver(sendSteps() + [snapshot(busy), snapshot(ambiguous), snapshot(grok(reply: "Verified final answer"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Verified final answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testGrokPersistentlyAmbiguousBotAfterSendCannotClaimAReplyOrResend() async throws {
+        let fixture = try driver(sendSteps() + [snapshot(grok(reply: "Unverified answer", bots: ["Fixture Bot", "Fixture Bot"]), repeating: true)])
+        defer { fixture.remove() }
+        let error = await failure { try await self.adapter(fixture, replyTimeout: .milliseconds(200)).reply(self.prompt, app: .grokBot, binding: self.binding) }
+        XCTAssertTrue(error.contains("No stable reply"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
     func testGrokNavigationAndSubmitControlCharactersAreRejectedBeforeAnyDriverCall() async throws {
         for text in ["A\rB", "A\tB", "A\u{1b}B", "A\u{7f}B", "\n"] {
             let fixture = try driver([])
