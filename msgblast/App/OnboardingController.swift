@@ -153,7 +153,13 @@ final class OnboardingController: ObservableObject {
         error = nil
         browserImportNotice = nil
         invalidateCheck()
-        edit { $0.begin() }
+        // Saved completion survives permission restarts; live readiness does not.
+        // Return only stale app checks to the connection step.
+        let stale = Set(state.completed.intersection(state.selected).filter { choice in
+            guard let provider = choice.provider, provider.desktopApp != nil else { return false }
+            return !isReady(session(for: provider))
+        })
+        edit { $0.completed.subtract(stale); $0.begin() }
     }
 
     func back() {

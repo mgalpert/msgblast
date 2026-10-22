@@ -155,6 +155,24 @@ import msgblastCore
         let connected = resumed.onboarding.state
         precondition(connected.stage == .feedback)
         precondition(connected.completed == [.chatgptApp, .dotsApp, .claudeApp] && connected.skipped == [.geminiApp])
+        // Saved completion is not a fresh process's live app connection.
+        resumed.onboarding.session(for: .chatgptApp).updateState { $0.comparisonID = UUID() }
+        precondition(!resumed.onboarding.session(for: .chatgptApp).desktopReady)
+        var reviewConnections = connected
+        reviewConnections.chooseAgain()
+        resumed.state.onboarding = reviewConnections
+        await resumed.onboarding.refreshPermissions()
+        resumed.onboarding.begin()
+        precondition(resumed.onboarding.state.stage == .connecting &&
+                     resumed.onboarding.state.pendingChoices == [.chatgptApp],
+                     "A saved Ready result without a current connection must return to that app's connection check, not skip to final setup")
+        precondition(resumed.onboarding.state.completed == [.dotsApp, .claudeApp] &&
+                     resumed.onboarding.state.skipped == [.geminiApp],
+                     "Rechecking a stale connection must retain the other completed and explicitly skipped choices")
+        precondition(resumed.onboarding.session(for: .chatgptApp).state.attempts.isEmpty,
+                     "Recovering setup must not send a prompt")
+        resumed.state.onboarding = connected
+        try resumed.save()
         let savedChecklist = try resumed.local.load().onboarding
         precondition(savedChecklist == connected, "The compact checklist must save connected and explicitly skipped agents together")
         resumed.onboarding = OnboardingController(model: resumed, appPermissions: CuaPermissionsController(demoInitiallyAllowed: false))

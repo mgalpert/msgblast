@@ -98,6 +98,20 @@ struct DesktopAppSetupView: View {
                         }
                     }.disabled(busy || session.loading || session.isSending || !session.desktopInstallation.isRunning)
                 }
+                if compact, let attempt = session.incompleteDesktopAttempt {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Review this request in \(app.name) before connecting again.")
+                            .font(.callout)
+                        Text(attempt.text).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(3).textSelection(.enabled)
+                        Text("Acknowledging keeps its history and won’t resend it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("I reviewed this request") {
+                            session.acknowledgeIncompleteRequest(attemptID: attempt.id)
+                        }.disabled(busy || session.loading || session.isSending)
+                            .accessibilityIdentifier("review-incomplete-desktop-request")
+                    }
+                }
                 HStack {
                     if !installed { Link("Get \(app.name)", destination: session.provider.homeURL) }
                     if compact, installed, !showConnectionConfirmation {
