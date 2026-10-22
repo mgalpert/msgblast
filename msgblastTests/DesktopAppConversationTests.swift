@@ -234,6 +234,22 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertNil(try reopened.wabiConversation(for: second))
     }
 
+    func testWabiReceiptAcceptsRenderedWhitespaceButRejectsChangedWordsAndSender() throws {
+        let old: [WabiAppMessage] = [.init(role: .assistant, text: "What can I do for you?")]
+        let receipt = WabiAppReceipt(baseline: old, prompt: "Integration check.\nReply only WABI-OK\nDo not use tools.")
+        let rendered = WabiAppMessage(role: .user, text: "Integration check. Reply only WABI-OK Do not use tools.")
+        let answer = WabiAppMessage(role: .assistant, text: "WABI-OK")
+        XCTAssertNil(try receipt.reply(in: old + [rendered]))
+        XCTAssertEqual(try receipt.reply(in: old + [rendered, answer]), "WABI-OK")
+        XCTAssertEqual(try receipt.reply(in: (old + [rendered, answer]).reversed()), "WABI-OK")
+        for changed in [
+            WabiAppMessage(role: .user, text: "Integration check. Reply only WABI-OTHER Do not use tools."),
+            WabiAppMessage(role: .assistant, text: rendered.text),
+            WabiAppMessage(role: .user, text: "Integration check. Reply only WABI-OK Do use tools.")
+        ] { XCTAssertThrowsError(try receipt.reply(in: old + [changed, answer])) }
+        XCTAssertThrowsError(try receipt.reply(in: [.init(role: .assistant, text: "Changed history"), rendered, answer]))
+    }
+
     func testWabiReceiptRejectsChangedHistoryAndForeignOutgoingMessages() throws {
         let old: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier answer")]
         let prompt = WabiAppMessage(role: .user, text: "New question")

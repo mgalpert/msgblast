@@ -78,13 +78,15 @@ struct WabiAppReceipt {
             throw DesktopAppError.unavailable("Wabi's message history changed or another message arrived. Review the saved chat; no reply was attributed.")
         }
         // Wabi can reverse its accessible message order when reopening a chat.
-        // Require the old history intact, with the exact new prompt beside it.
+        // Keep history and sender exact. Wabi flattens outgoing line breaks in
+        // its rendered history; the pre-send native draft was checked exactly.
         var candidates: Set<String> = []
         var waiting = false
         for ordered in [messages, Array(messages.reversed())] {
             for old in [baseline, Array(baseline.reversed())] where ordered.starts(with: old) {
                 let added = ordered.dropFirst(old.count)
-                guard added.first == WabiAppMessage(role: .user, text: prompt) else { continue }
+                guard let outgoing = added.first, outgoing.role == .user,
+                      outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
                 if added.count == 1 { waiting = true }
                 else if let answer = added.last, answer.role == .assistant { candidates.insert(answer.text) }
             }
