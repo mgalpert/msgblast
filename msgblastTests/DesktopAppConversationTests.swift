@@ -1144,6 +1144,41 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testGrokEmptyEditorNewlineIsRecognizedButUnknownPlaceholderIsRefused() async throws {
+        for value in ["", "\n", "Unknown composer value"] {
+            var initial = grok()
+            var elements = initial["elements"] as! [[String: Any]]
+            let index = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+            elements[index]["value"] = value; initial["elements"] = elements
+            let plan = [apps(), windows(), snapshot(initial)] + (value == "Unknown composer value" ? [] : Array(sendSteps().dropFirst(3)) + [snapshot(grok(reply: "Answer"), repeating: true)])
+            let fixture = try driver(plan)
+            defer { fixture.remove() }
+            if value == "Unknown composer value" {
+                _ = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+                assertNoInput(try await finishedCalls(fixture))
+            } else {
+                let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+                XCTAssertEqual(answer, "Answer")
+                let calls = try await finishedCalls(fixture)
+                XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+                XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+            }
+        }
+    }
+
+    func testGrokLiteralPlaceholderIsVerifiedAsTextWithExactNativeDraft() async throws {
+        let text = "Message Fixture Bot"
+        let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:], arguments: ["text": text]),
+                                  snapshot(grok(draft: text)), step("click", [:]),
+                                  snapshot(grok(reply: "Literal label accepted", outgoingPrompt: text), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(text, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Literal label accepted")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
     func testGrokNavigationAndSubmitControlCharactersAreRejectedBeforeAnyDriverCall() async throws {
         for text in ["A\rB", "A\tB", "A\u{1b}B", "A\u{7f}B", "\n"] {
             let fixture = try driver([])
@@ -1972,7 +2007,7 @@ final class DesktopAppDriverTests: XCTestCase {
         if let reply {
             body += [element("AXStaticText", "You"), element("AXStaticText", outgoingPrompt ?? prompt), element("AXStaticText", name), element("AXStaticText", reply)]
         }
-        var composer = element("AXTextArea", "Prompt", value: draft.trimmingCharacters(in: .whitespacesAndNewlines), token: "\(token):composer")
+        var composer = element("AXTextArea", "Prompt", value: draft.isEmpty ? "Message \(name)" : draft.trimmingCharacters(in: .whitespacesAndNewlines), token: "\(token):composer")
         composer["frame"] = ["x": 240, "y": 600, "w": 640, "h": 40]
         body += [composer, element("AXButton", "Send message", token: "\(token):send")]
         if generating { body.append(element("AXButton", "Stop generating")) }

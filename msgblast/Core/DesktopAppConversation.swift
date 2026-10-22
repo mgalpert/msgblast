@@ -375,8 +375,13 @@ actor DesktopAppConversation {
         if let screenshotURL { arguments["screenshot_out_file"] = screenshotURL.path }
         return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
-    private func grokDraftAgrees(_ value: String?, with draft: String) -> Bool {
-        value == draft || value == draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func grokDraftAgrees(_ composer: (element: DesktopAppSnapshot.Element, draft: String), with draft: String) -> Bool {
+        let value = composer.element.value ?? ""
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The driver can echo a placeholder or the empty editor's newline.
+        // The independent native draft must still equal the expected prefix.
+        return value == draft || value == trimmed || (trimmed.isEmpty && composer.draft.isEmpty) ||
+            (draft.isEmpty && value == "\n")
     }
     private func typeGrokDraft(_ prompt: String, initial: DesktopAppSnapshot, target: Target,
                                session: String, binding: DesktopConversationBinding, image: URL) async throws -> DesktopAppSnapshot {
@@ -397,7 +402,7 @@ actor DesktopAppConversation {
             try validate(state, app: .grokBot, binding: binding)
             let native = try await grokState(state, target: target)
             let field = try state.composer(app: .grokBot)
-            guard native.draft == prefix, grokDraftAgrees(field.element.value, with: prefix),
+            guard native.draft == prefix, grokDraftAgrees(field, with: prefix),
                   try state.historyText(app: .grokBot) == history, !state.isGenerating,
                   prefix.isEmpty || native.composerFocused == true else {
                 throw DesktopAppError.unavailable("Grok Bot's draft, focus, or history changed. Nothing was submitted; review the preserved text.")
@@ -425,7 +430,7 @@ actor DesktopAppConversation {
             try validate(state, app: .grokBot, binding: binding)
             let prepared = try await grokState(state, target: target)
             guard prepared.draft == prefix, prepared.composerFocused == true,
-                  try grokDraftAgrees(state.composer(app: .grokBot).element.value, with: prefix),
+                  try grokDraftAgrees(state.composer(app: .grokBot), with: prefix),
                   try state.historyText(app: .grokBot) == history, !state.isGenerating else {
                 throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
             }
