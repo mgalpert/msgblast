@@ -123,6 +123,17 @@ struct GeminiAppObservation: Sendable {
     static func isComposer(_ node: GeminiAXNode) -> Bool {
         node.role == "AXTextArea" && ["Ask Gemini", "Assign a task", "What’s next?"].contains(node.label)
     }
+    func savedChatControls(titled title: String) -> [GeminiAXNode] {
+        let sidebars = nodes.filter { $0.role == "AXSplitGroup" }.flatMap(\.children)
+            .filter { !$0.descendants.contains(where: Self.isComposer) }
+        func matches(_ node: GeminiAXNode) -> [GeminiAXNode] {
+            // Newer Gemini releases expose sidebar chats as rows. Count a
+            // matching row once even when it wraps a same-labelled button.
+            if ["AXRow", "AXButton"].contains(node.role), node.label == title { return node.enabled ? [node] : [] }
+            return node.children.flatMap(matches)
+        }
+        return sidebars.flatMap(matches)
+    }
     func composer() throws -> GeminiAXNode { try unique(nodes.filter(Self.isComposer)) }
     func control(id: String) throws -> GeminiAXNode { try unique(nodes.filter { $0.id == id && $0.enabled }) }
     func control(label: String, role: String = "AXButton") throws -> GeminiAXNode {

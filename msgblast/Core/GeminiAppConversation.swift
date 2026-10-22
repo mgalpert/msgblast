@@ -61,8 +61,8 @@ actor GeminiAppConversation {
                   binding.fallbackTitle.map({ !$0.isEmpty }) ?? true else { throw DesktopAppError.unavailable("Gemini’s saved conversation identity is invalid. It was preserved.") }
             let titles = [title, binding.fallbackTitle].compactMap { $0 }
             if !titles.contains(native.title) {
-                let dedicated = native.nodes.filter { $0.role == "AXButton" && $0.label == title }
-                let fallback = native.nodes.filter { $0.role == "AXButton" && $0.label == binding.fallbackTitle }
+                let dedicated = native.savedChatControls(titled: title)
+                let fallback = binding.fallbackTitle.map { native.savedChatControls(titled: $0) } ?? []
                 let candidates = dedicated.isEmpty ? fallback : dedicated
                 guard candidates.count == 1 else { throw DesktopAppError.unavailable("Gemini’s saved conversation is missing or ambiguous. No replacement was created.") }
                 try await attemptActionOnce(control: candidates[0], target: target, session: session)

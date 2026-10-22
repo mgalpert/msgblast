@@ -18,6 +18,20 @@ final class GeminiAppConversationTests: XCTestCase {
             .init(role: "AXGroup", children: controls)
         ])])
     }
+    func testSavedChatLookupStaysInSidebarAndCountsEachSelectableRowOnce() throws {
+        let title = "msgblast dedicated chat"
+        var root = tree()
+        root.children[0].children[0].children = [
+            .init(role: "AXRow", label: title, children: [.init(role: "AXButton", label: title)]),
+            .init(role: "AXRow", label: title, enabled: false, children: [.init(role: "AXButton", label: title)])
+        ]
+        root.children[0].children[1].children.append(.init(role: "AXButton", label: title))
+        let observed = try GeminiAppObservation(root: root)
+        let matches = observed.savedChatControls(titled: title)
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.role, "AXRow")
+        XCTAssertTrue(observed.savedChatControls(titled: "Missing chat").isEmpty)
+    }
     func testTaskProgressAndSidebarAreNotAnswers() throws {
         let outgoing = row([.init(role: "AXHeading", label: "Echo this")])
         let progress = row([.init(role: "AXHeading", label: "Thinking it through")])
@@ -455,7 +469,7 @@ final class GeminiAppDriverTests: XCTestCase {
             return false
         }
     }
-    private func savedConversationScenario(_ binding: GeminiConversationBinding, foreignFirst: Bool = false) throws -> Fixture {
+    private func savedConversationScenario(_ binding: GeminiConversationBinding, foreignFirst: Bool = false, sidebarRole: String = "AXButton", duplicate: Bool = false) throws -> Fixture {
         let base = try fixture()
         let menu = base.observations[1].nodes.first { $0.role == "AXPopover" }!
         let submit = try base.observations[5].control(id: "send_button")
@@ -465,6 +479,8 @@ final class GeminiAppDriverTests: XCTestCase {
             let visibleTitle = binding.fallbackTitle ?? binding.dedicatedTitle
             root.label = "Gemini — \(visibleTitle)"
             root.children[0].children[0].children[0].label = visibleTitle
+            root.children[0].children[0].children[0].role = sidebarRole
+            if duplicate { root.children[0].children[0].children.append(root.children[0].children[0].children[0]) }
             if stage == 0 { root.label = "Gemini — Another conversation" }
             if foreignFirst {
                 let transcript = root.children[0].children[1].children.firstIndex { $0.role == "AXScrollArea" }!
@@ -484,7 +500,7 @@ final class GeminiAppDriverTests: XCTestCase {
             roots.append(root)
         }
         return try scenario(roots, actions: [
-            ["tool": "click", "role": "AXButton", "label": binding.fallbackTitle ?? binding.dedicatedTitle],
+            ["tool": "click", "role": sidebarRole, "label": binding.fallbackTitle ?? binding.dedicatedTitle],
             ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
             ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"],
             ["tool": "type_text", "role": "AXTextArea", "label": "Ask Gemini", "text": "Follow up"],
@@ -547,6 +563,38 @@ final class GeminiAppDriverTests: XCTestCase {
         XCTAssertEqual(result, binding)
         XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "type_text" }.compactMap { ($0["arguments"] as? [String: Any])?["text"] as? String }, ["Follow up"])
     }
+    func testSavedSidebarRowReopensBeforeFollowUpAndStillRequiresItsFirstPrompt() async throws {
+        for foreign in [false, true] {
+            var binding = GeminiConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, mode: .chat)
+            binding.firstPrompt = binding.firstMessage("Echo check")
+            binding.title = binding.dedicatedTitle
+            let f = try savedConversationScenario(binding, foreignFirst: foreign, sidebarRole: "AXRow")
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            do {
+                let answer = try await adapter(f).reply("Follow up", binding: binding, preferences: .init(model: "3.8 Flash, All-around help"), onPrepared: { _ in }) { _ in }
+                XCTAssertFalse(foreign)
+                XCTAssertEqual(answer, "FOLLOWUP-OK")
+            } catch {
+                XCTAssertTrue(foreign, error.localizedDescription)
+                XCTAssertTrue(error.localizedDescription.contains("dedicated Gemini conversation"))
+            }
+            let typing = f.calls().filter { $0["tool"] as? String == "type_text" }
+            XCTAssertEqual(typing.count, foreign ? 0 : 1)
+        }
+    }
+
+    func testDuplicateSavedSidebarRowsNeverNavigateOrSend() async throws {
+        var binding = GeminiConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, mode: .chat)
+        binding.firstPrompt = binding.firstMessage("Echo check"); binding.title = binding.dedicatedTitle
+        let f = try savedConversationScenario(binding, sidebarRole: "AXRow", duplicate: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await adapter(f).prepare(binding: binding, preferences: .init())
+            XCTFail("Duplicate rows cannot establish a saved destination")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("ambiguous")) }
+        XCTAssertFalse(f.calls().contains { ["type_text", "click"].contains($0["tool"] as? String ?? "") })
+    }
+
     func testPermanentRenameFailureKeepsAnswerAndDurableFallbackForResume() async throws {
         let first = try fixture(); defer { try? FileManager.default.removeItem(at: first.directory) }
         let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
