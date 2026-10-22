@@ -219,7 +219,10 @@ final class GeminiAppDriverTests: XCTestCase {
             assert len(candidates)==1
             assert tool==expected['tool']
             if 'element_token' in args: assert args['element_token']==candidates[0]['element_token']
-            else: assert s==0 and args['x']==65 and args['y']==20
+            else:
+                frame=candidates[0]['frame']
+                assert args['x']==int(frame['x']+frame['w']/2) and args['y']==int(frame['y']+frame['h']/2)
+                assert args['capture_id']=='capture-model'
             assert args['pid']==42 and args['window_id']==21 and args['delivery_mode']=='background'
             if tool=='type_text':assert args['text']==expected['text']
             if not (\(modelPressNoop ? "True" : "False") and s==0 and 'element_token' in args): (p/'stage').write_text(str(expected.get('next_stage',s+1)))
@@ -594,6 +597,58 @@ final class GeminiAppDriverTests: XCTestCase {
             ["tool": "click", "role": "AXButton", "label": high]
         ], in: base)
     }
+    private func closingThinkingPicker(validCapture: Bool = true) throws -> Fixture {
+        let base = try fixture(validCapture: validCapture)
+        let model = "4 Argon, Complex tasks", high = "High, Extra thorough"
+        var roots: [GeminiAXNode] = []
+        for stage in 0...5 {
+            var root = base.observations[0].root
+            root.children[0].children[1].children[1].label = "Argon, Choose model"
+            if [1, 3, 4].contains(stage) {
+                var thinking = GeminiAXNode(role: "AXButton", label: "Thinking level", frame: .init(x: 200, y: 10, w: 30, h: 20))
+                if stage == 4 {
+                    thinking.children = [.init(role: "AXPopover", children: [
+                        .init(role: "AXButton", label: "Low, Quick and efficient", frame: .init(x: 230, y: 10, w: 30, h: 20)),
+                        .init(role: "AXButton", label: high, selected: true, frame: .init(x: 260, y: 10, w: 30, h: 20))
+                    ])]
+                }
+                root.children[0].children[1].children.append(.init(role: "AXPopover", children: [
+                    .init(role: "AXButton", label: model, selected: true, frame: .init(x: 80, y: 10, w: 30, h: 20)), thinking
+                ]))
+            }
+            roots.append(root)
+        }
+        return try scenario(roots, actions: [
+            ["tool": "click", "role": "AXButton", "label": "Argon, Choose model"],
+            ["tool": "click", "role": "AXButton", "label": "Thinking level"],
+            ["tool": "click", "role": "AXButton", "label": "Argon, Choose model"],
+            ["tool": "click", "role": "AXButton", "label": "Thinking level"],
+            ["tool": "click", "role": "AXButton", "label": high]
+        ], in: base)
+    }
+    func testThinkingPickerClosedByAXPressReopensWithVerifiedBackgroundPixelInput() async throws {
+        let f = try closingThinkingPicker()
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let (selected, options) = try await adapter(f).prepare(binding: nil, preferences: .init(model: "4 Argon, Complex tasks", thinking: "High, Extra thorough"))
+        XCTAssertEqual(selected.thinking, "High, Extra thorough")
+        XCTAssertEqual(options.thinkingLevels, ["Low, Quick and efficient", "High, Extra thorough"])
+        let pixels = f.calls().filter { ($0["arguments"] as? [String: Any])?["x"] != nil }
+        XCTAssertEqual(pixels.count, 1)
+        XCTAssertEqual((pixels.first?["arguments"] as? [String: Any])?["capture_id"] as? String, "capture-model")
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+        XCTAssertEqual(try String(contentsOf: f.stage, encoding: .utf8), "5", "The selected thinking option closes both popovers")
+    }
+    func testThinkingPickerRecoveryRefusesInvalidCaptureBeforePixelInput() async throws {
+        let f = try closingThinkingPicker(validCapture: false)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await adapter(f).prepare(binding: nil, preferences: .init(model: "4 Argon, Complex tasks", thinking: "High, Extra thorough"))
+            XCTFail("Invalid capture must prevent pixel input")
+        } catch { }
+        XCTAssertFalse(f.calls().contains { ($0["arguments"] as? [String: Any])?["x"] != nil })
+        XCTAssertEqual(try String(contentsOf: f.stage, encoding: .utf8), "3", "Recovery reopened only the model picker and did not click an unverified target")
+    }
+
     func testThinkingSelectionIsAppliedReopenedAndVerifiedWithoutSending() async throws {
         let f = try thinkingScenario(); defer { try? FileManager.default.removeItem(at: f.directory) }
         let (selected, options) = try await adapter(f).prepare(binding: nil, preferences: .init(model: "4 Argon, Complex tasks", thinking: "High, Extra thorough"))
