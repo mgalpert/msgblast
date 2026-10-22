@@ -97,8 +97,8 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["Choose ChatGPT App"].exists)
         choose("Apps", in: app)
         XCTAssertFalse(app.buttons["Continue setup"].isEnabled)
-        XCTAssertTrue(app.buttons["Choose Fo"].exists)
-        XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
+        XCTAssertFalse(app.buttons["Choose Fo"].exists)
+        XCTAssertTrue(app.staticTexts["Messages access is off"].exists)
         for name in ["ChatGPT App", "Codex CLI", "Claude Code", "OpenClaw", "Hermes"] {
             XCTAssertTrue(revealChoice(name, in: app).exists)
         }
@@ -142,7 +142,9 @@ final class OnboardingWorkflowTests: XCTestCase {
         attachScreenshot("Host app permissions complete — Continue enabled", in: app)
         next.click()
         XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
+        XCTAssertFalse(app.buttons["Choose Fo"].exists)
+        XCTAssertTrue(app.staticTexts["Messages access is off"].exists)
+        XCTAssertFalse(app.staticTexts["Agents from your existing Messages conversations have been added. You can deselect any you don’t want."].exists)
         attachScreenshot("Apps enabled and Messages unavailable", in: app)
         XCTAssertTrue(revealChoice("ChatGPT App", in: app).isEnabled)
     }

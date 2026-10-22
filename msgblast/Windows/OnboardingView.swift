@@ -207,23 +207,19 @@ struct OnboardingView: View {
     private var chooser: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Choose your agents").font(.system(size: 28, weight: .bold))
-            Text("Add the agents you want in msgblast. You can change these later.")
-                .foregroundStyle(.secondary)
             Text("Messaging agents").font(.headline)
-            if !(setup.state.approvedPermissionSections ?? []).contains(.messaging) {
-                permissionNote("Enable Messaging access to add Messages agents.")
+            if (setup.state.approvedPermissionSections ?? []).contains(.messaging) {
+                if setup.checking { ProgressView("Adding your Messages agents…").controlSize(.small) }
+                choiceGrid(OnboardingChoice.offeredChoices.filter { $0.isMessages && $0 != .otherMessages })
+            } else {
+                permissionNote("Messages access is off")
             }
-            if setup.checking { ProgressView("Adding your Messages agents…").controlSize(.small) }
-            else if !(setup.state.discoveredMessageAgentIDs ?? []).isEmpty {
-                Text("Agents from your existing Messages conversations have been added. You can deselect any you don’t want.")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            choiceGrid(OnboardingChoice.offeredChoices.filter { $0.isMessages && $0 != .otherMessages })
             Text("Mac apps").font(.headline)
-            if !(setup.state.approvedPermissionSections ?? []).contains(.apps) {
-                permissionNote("Enable App access to connect installed Mac apps.")
+            if (setup.state.approvedPermissionSections ?? []).contains(.apps) {
+                choiceGrid(OnboardingChoice.offeredChoices.filter { $0.provider?.desktopApp != nil })
+            } else {
+                permissionNote("App access is off")
             }
-            choiceGrid(OnboardingChoice.offeredChoices.filter { $0.provider?.desktopApp != nil })
             Text("Websites").font(.headline)
             choiceGrid(OnboardingChoice.offeredChoices.filter { OnboardingConnector.apps.includes($0) && $0.provider?.desktopApp == nil })
             Text("CLIs").font(.headline)
