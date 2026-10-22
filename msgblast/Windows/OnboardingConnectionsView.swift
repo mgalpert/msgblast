@@ -8,7 +8,6 @@ struct OnboardingConnectionsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var setup: OnboardingController
     @State private var checked: Set<WebProvider> = []
-    @State private var skipped: Set<WebProvider> = []
     @State private var sessionRevision = 0
 
     private var appAccessReady: Bool { (setup.state.approvedPermissionSections ?? []).contains(.apps) }
@@ -19,7 +18,7 @@ struct OnboardingConnectionsView: View {
     }
     private var canContinue: Bool {
         !busy && !sessions.isEmpty && sessions.allSatisfy {
-            skipped.contains($0.provider) || (appAccessReady && checked.contains($0.provider) && setup.isReady($0))
+            appAccessReady && checked.contains($0.provider) && setup.isReady($0)
         }
     }
 
@@ -28,7 +27,7 @@ struct OnboardingConnectionsView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Connect your agents").font(.system(size: 28, weight: .bold))
-                Text("Connect each app, or skip it for now. These checks don’t send messages.")
+                Text("Connect your apps. These checks don’t send messages.")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("desktop-onboarding-connection-required")
                 if model.demo {
@@ -37,7 +36,7 @@ struct OnboardingConnectionsView: View {
                 }
                 if !appAccessReady {
                     HStack {
-                        Text("App access needs attention. Review permissions or skip these apps.").font(.callout)
+                        Text("App access is off.").font(.callout)
                         Button("Review permissions") { setup.reviewPermissions() }.buttonStyle(.link)
                     }
                 }
@@ -47,15 +46,8 @@ struct OnboardingConnectionsView: View {
                     ForEach(sessions, id: \.provider) { session in
                         OnboardingConnectionRow(session: session, busy: busy, accessReady: appAccessReady,
                                                 checked: checked.contains(session.provider),
-                                                skipped: skipped.contains(session.provider),
                                                 onConnected: {
                             checked.insert(session.provider)
-                            skipped.remove(session.provider)
-                        }, onSkip: {
-                            checked.remove(session.provider)
-                            skipped.insert(session.provider)
-                        }, onRetry: {
-                            skipped.remove(session.provider)
                         }, onStateChange: { sessionRevision += 1 })
                     }
                 }.padding(.horizontal, 28).padding(.bottom, 24)
@@ -64,7 +56,7 @@ struct OnboardingConnectionsView: View {
             HStack {
                 Button("Back") { setup.back() }.disabled(busy)
                 Spacer()
-                Button("Continue") { setup.completeDesktopConnections(checked: checked, skipped: skipped) }
+                Button("Continue") { setup.completeDesktopConnections(checked: checked, skipped: []) }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled(!canContinue)
             }.padding(24)
@@ -80,10 +72,7 @@ private struct OnboardingConnectionRow: View {
     var busy: Bool
     var accessReady: Bool
     var checked: Bool
-    var skipped: Bool
     var onConnected: () -> Void
-    var onSkip: () -> Void
-    var onRetry: () -> Void
     var onStateChange: () -> Void
     private var ready: Bool { accessReady && checked && session.isReadyForOnboarding }
 
@@ -93,18 +82,10 @@ private struct OnboardingConnectionRow: View {
                 AgentAvatar(agent: AgentArtwork.agent(for: session), name: session.provider.name, size: 36)
                 Text(session.provider.name).font(.headline)
                 Spacer()
-                if skipped {
-                    Text("Skipped").font(.callout).foregroundStyle(.secondary)
-                    Button("Connect instead", action: onRetry).disabled(busy)
-                        .accessibilityLabel("Connect \(session.provider.name) instead")
-                } else {
-                    Label(ready ? "Ready" : "Not connected", systemImage: ready ? "checkmark.circle.fill" : "circle")
-                        .font(.callout).foregroundStyle(ready ? .green : .secondary)
-                    Button("Skip", action: onSkip).buttonStyle(.link).disabled(busy)
-                        .accessibilityLabel("Skip \(session.provider.name)")
-                }
+                Label(ready ? "Ready" : "Not connected", systemImage: ready ? "checkmark.circle.fill" : "circle")
+                    .font(.callout).foregroundStyle(ready ? .green : .secondary)
             }
-            if !skipped && accessReady {
+            if accessReady {
                 DesktopAppSetupView(session: session, busy: busy, compact: true,
                                     showConnectionConfirmation: ready, onConnected: onConnected)
             }

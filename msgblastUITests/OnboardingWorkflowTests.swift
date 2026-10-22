@@ -302,7 +302,10 @@ final class OnboardingWorkflowTests: XCTestCase {
         app.buttons["Connect ChatGPT"].click()
         XCTAssertTrue(app.staticTexts["Ready for your first prompt"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Continue"].isEnabled, "One ready app must not bypass unresolved selected apps")
-        app.buttons["Skip Dots"].click()
+        for name in ["ChatGPT", "Dots", "Claude"] {
+            XCTAssertFalse(app.buttons["Skip \(name)"].exists)
+        }
+        app.buttons["Connect Dots"].click()
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
         app.buttons["Connect Claude"].click()
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Continue"])
