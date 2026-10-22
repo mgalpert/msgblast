@@ -1,5 +1,5 @@
-Source: 5b7702e55956173dff1967a1715a19825a500c9f
+Source 82623634893ca5efbdd8c66847dda33614e710f0
 
-Exact native Demo screenshots. Permissions and app installations are simulated. No OS access changed, no provider messages sent. UI tests compiled; automated UI execution remains unavailable because the runner cannot initialize automation mode. Manual computer use verified hidden Messages cards, no misleading added-agents copy, Wabi selection enabling Continue, selection surviving permission review, and automatic Messages selection when access is enabled.
+Exact native Demo screenshots. Permissions, app installations and connections are simulated. No provider sends or OS grants. Manual checks verified greyed permission-required logos; shorter app names and Installed labels; no Grok Bot webhook in Websites; Wabi selected, Continue blocked before connection and enabled when Ready, with no Skip action. 50 focused native tests passed at b5b3813 (unchanged core in8262363); UI tests compiled at8262363. Automated UI runner remains unavailable.
 
-Video: 15-second edited screenshot sequence, opening disclosure, three seconds per state, no audio. Not a continuous recording.
+Video is a15-second edited screenshot sequence with an opening disclosure, three seconds per state, no audio, not a continuous recording.
