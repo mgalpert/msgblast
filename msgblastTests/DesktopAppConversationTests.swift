@@ -663,15 +663,114 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testWabiUsesCapturedPixelTypingInsteadOfRefusedElectronAXTarget() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", ["effect": "unverifiable"])
+        typed["arguments"] = ["text": prompt, "x": 540, "y": 780]
+        typed["native"] = wabiNative(draft: prompt)
+        var sent = step("click", [:], arguments: ["element_token": "s00000002:send"])
+        sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Pixel input observed")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed,
+            snapshot(wabi(draft: prompt, token: "s00000002")), sent, snapshot(wabi(reply: "Pixel input observed"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await wabiAdapter(fixture).reply(prompt, in: wabiURL)
+        XCTAssertEqual(answer, "Pixel input observed")
+        let calls = try await finishedCalls(fixture)
+        let typing = try XCTUnwrap(calls.first { $0.tool == "type_text" })
+        XCTAssertNil(typing.arguments["element_token"], "0.38 refuses background Electron typing with an AX target")
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Only the verified Send is clicked separately")
+        assertBackgroundTargets(calls)
+    }
+
+    func testWabiMultilineUsesVerifiedChunksAndShiftReturnWithoutRefocusingText() async throws {
+        let text = "One\nTwo 👩‍💻"
+        var initial = windows(); initial["native"] = wabiNative(focused: false)
+        func typing(_ tool: String, _ draft: String, arguments: [String: Any]) -> [String: Any] {
+            var call = step(tool, ["effect": "unverifiable"])
+            call["arguments"] = arguments
+            call["native"] = wabiNative(draft: draft)
+            return call
+        }
+        var send = step("click", [:]); send["native"] = wabiNative(messages: [.init(role: .user, text: text), .init(role: .assistant, text: "Multiline observed")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()),
+            typing("type_text", "One", arguments: ["text": "One", "x": 540, "y": 780]), snapshot(wabi(draft: "One")),
+            capturedNavigation(wabi(draft: "One")), typing("press_key", "One\n", arguments: ["key": "return", "modifiers": ["shift"]]), snapshot(wabi(draft: "One\n")),
+            capturedNavigation(wabi(draft: "One\n")), typing("type_text", text, arguments: ["text": "Two 👩‍💻"]), snapshot(wabi(draft: text)),
+            send, snapshot(wabi(reply: "Multiline observed"), repeating: true)])
+        defer { fixture.remove() }
+        let result = try await wabiAdapter(fixture).reply(text, in: wabiURL)
+        XCTAssertEqual(result, "Multiline observed")
+        let calls = try await finishedCalls(fixture)
+        let typingCalls = calls.filter { $0.tool == "type_text" }
+        XCTAssertEqual(typingCalls.compactMap { $0.arguments["text"] as? String }, ["One", "Two 👩‍💻"])
+        XCTAssertNil(typingCalls.last?.arguments["x"], "Refocusing a nonempty draft could move its insertion point")
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Only Send is clicked separately")
+        for call in calls where call.arguments["screenshot_out_file"] != nil {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: call.arguments["screenshot_out_file"] as! String), "Private captures must be removed")
+        }
+        assertBackgroundTargets(calls)
+    }
+    func testWabiLostFocusAfterFirstChunkStopsBeforeNewlineOrSend() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: "One", focused: false)
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: "One"))])
+        defer { fixture.remove() }
+        let error = await failure { try await self.wabiAdapter(fixture).reply("One\nTwo", in: self.wabiURL) }
+        XCTAssertTrue(error.contains("focus"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertFalse(calls.contains { ["press_key", "click"].contains($0.tool) })
+    }
+    func testWabiInvalidOrChangedCapturePreventsTyping() async throws {
+        for changed in [false, true] {
+            var initial = windows(); initial["native"] = wabiNative()
+            var capture = capturedNavigation(wabi())
+            if changed { capture["native"] = wabiNative(url: otherWabiURL) }
+            else { capture["capture"] = "missing" }
+            let fixture = try driver([apps(.wabi), initial, capture])
+            defer { fixture.remove() }
+            let error = await failure { try await self.wabiAdapter(fixture).reply(self.prompt, in: self.wabiURL) }
+            XCTAssertFalse(error.isEmpty)
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+    func testWabiRejectsSubmitAndNavigationControlCharactersBeforeDriverInput() async throws {
+        for text in ["One\rTwo", "One\tTwo", "One\u{7f}Two"] {
+            let fixture = try driver([])
+            defer { fixture.remove() }
+            let error = await failure { try await self.wabiAdapter(fixture).reply(text, in: self.wabiURL) }
+            XCTAssertTrue(error.contains("control characters"), error)
+            XCTAssertTrue(try fixture.calls().isEmpty)
+        }
+    }
+
+    func testWabiReplyMayFinishDuringReadbackWithoutReplayingInput() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt)
+        let outgoing = WabiAppMessage(role: .user, text: prompt)
+        var sent = step("click", [:]); sent["native"] = wabiNative(messages: [outgoing])
+        var completed = snapshot(wabi(reply: "Finished during readback"), repeating: true)
+        completed["native"] = wabiNative(messages: [outgoing, .init(role: .assistant, text: "Finished during readback")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent, completed])
+        defer { fixture.remove() }
+        let result = try await wabiAdapter(fixture).reply(prompt, in: wabiURL)
+        XCTAssertEqual(result, "Finished during readback")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
     func testWabiUsesSavedThreadIdentityAndFreshSendControl() async throws {
         var initial = windows(); initial["native"] = wabiNative()
-        var typed = step("type_text", ["effect": "unverifiable"], arguments: ["element_token": "s00000001:composer"])
+        var typed = step("type_text", ["effect": "unverifiable"])
         typed["native"] = wabiNative(draft: prompt)
         var sent = step("click", [:], arguments: ["element_token": "s00000002:send"])
         sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Wabi fixture answer")])
         var renamed = wabi(reply: "Wabi fixture answer", token: "s00000003")
         var body = renamed["elements"] as! [[String: Any]]; body[0]["label"] = "Renamed by Wabi"; renamed["elements"] = body
-        let fixture = try driver([apps(.wabi), initial, snapshot(wabi()), typed,
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed,
                                   snapshot(wabi(draft: prompt, token: "s00000002")), sent, snapshot(renamed, repeating: true)])
         defer { fixture.remove() }
         let answer = try await wabiAdapter(fixture).reply(prompt, in: wabiURL)
@@ -703,7 +802,7 @@ final class DesktopAppDriverTests: XCTestCase {
             var initial = windows(); initial["native"] = wabiNative(messages: before)
             var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt, messages: before)
             var sent = step("click", [:]); sent["native"] = wabiNative(messages: observed)
-            let fixture = try driver([apps(.wabi), initial, snapshot(wabiMessages([welcome])), typed,
+            let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabiMessages([welcome])), typed,
                                       snapshot(wabiMessages([welcome], draft: prompt)), sent,
                                       snapshot(wabiMessages(messages), repeating: true)])
             defer { fixture.remove() }
@@ -763,7 +862,7 @@ final class DesktopAppDriverTests: XCTestCase {
             var typed = step("type_text", [:])
             typed["native"] = wabiNative(url: changedHistory ? wabiURL : otherWabiURL, draft: prompt,
                                          messages: changedHistory ? [.init(role: .user, text: "Another outgoing question")] : [])
-            let fixture = try driver([apps(.wabi), initial, snapshot(wabi()), typed, snapshot(wabi(draft: prompt))])
+            let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt))])
             defer { fixture.remove() }
             let error = await failure { try await self.wabiAdapter(fixture).reply(self.prompt, in: self.wabiURL) }
             XCTAssertTrue(error.contains("Send was not pressed"), error)
@@ -789,7 +888,7 @@ final class DesktopAppDriverTests: XCTestCase {
     func testWabiSavesCreatedDestinationBeforeTypingAndKeepsItAfterCancellation() async throws {
         var ready = windows(); ready["native"] = wabiNative(url: otherWabiURL)
         var blocked = step("type_text", [:]); blocked["wait_for_release"] = true
-        let fixture = try driver(wabiCreationSteps() + [apps(.wabi), ready, snapshot(wabi()), blocked])
+        let fixture = try driver(wabiCreationSteps() + [apps(.wabi), ready, capturedNavigation(wabi()), blocked])
         defer { fixture.remove() }
         let file = fixture.directory.appendingPathComponent("state.json")
         let owner = UUID()
@@ -836,8 +935,8 @@ final class DesktopAppDriverTests: XCTestCase {
 
     private var wabiURL: URL { URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")! }
     private var otherWabiURL: URL { URL(string: "wabi://app/threads/bbbbbbbbbbbbbbbbbbbbbbbb")! }
-    private func wabiNative(url: URL? = nil, draft: String? = "", links: [[String: String]] = [], messages: [WabiAppMessage] = []) -> [String: Any] {
-        var result: [String: Any] = ["url": (url ?? wabiURL).absoluteString, "links": links, "messages": messages.map { ["role": $0.role.rawValue, "text": $0.text] }]
+    private func wabiNative(url: URL? = nil, draft: String? = "", links: [[String: String]] = [], messages: [WabiAppMessage] = [], focused: Bool = true) -> [String: Any] {
+        var result: [String: Any] = ["url": (url ?? wabiURL).absoluteString, "links": links, "composerFocused": focused, "messages": messages.map { ["role": $0.role.rawValue, "text": $0.text] }]
         if let draft { result["draft"] = draft }
         return result
     }
@@ -1676,7 +1775,9 @@ final class DesktopAppDriverTests: XCTestCase {
                      element("AXStaticText", "1:41 PM"), element("AXStaticText", "Read"),
                      element("AXStaticText", reply), element("AXPopUpButton", "Add reaction")]
         }
-        body += [element("AXTextArea", "Message", value: draft, token: "\(token):composer"), element("AXButton", "Send", token: "\(token):send")]
+        var composer = element("AXTextArea", "Message", value: draft, token: "\(token):composer")
+        composer["frame"] = ["x": 240, "y": 600, "w": 640, "h": 40]
+        body += [composer, element("AXButton", "Send", token: "\(token):send")]
         return ["elements": body, "returned_element_count": body.count, "total_element_count": body.count]
     }
     private func grok(draft: String = "", reply: String? = nil, name: String = "Fixture Bot", token: String = "s00000001", previousReply: String? = nil, generating: Bool = false, bots: [String]? = nil) -> [String: Any] {
@@ -1824,7 +1925,7 @@ final class DesktopAppDriverTests: XCTestCase {
         while not (root / "release").exists() and time.monotonic() < deadline:
             time.sleep(0.01)
     result = expected["result"]
-    if "capture" in expected:
+    if "capture" in expected and "screenshot_out_file" in arguments:
         capture_path = pathlib.Path(arguments["screenshot_out_file"])
         result["screenshot_file_path"] = str(capture_path.resolve() if expected["capture"] != "wrong_path" else capture_path.parent / "other.png")
         if expected["capture"] != "missing":

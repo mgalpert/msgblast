@@ -57,6 +57,7 @@ struct WabiAppObservation: Codable, Sendable {
     let draft: String?
     let links: [Link]
     let messages: [WabiAppMessage]
+    var composerFocused: Bool? = nil
 }
 
 struct WabiAppReceipt {
@@ -127,7 +128,8 @@ enum WabiNativeReader {
             draft = value
         } else { draft = nil }
         guard attribute(webAreas[0], "AXURL") as? URL == url else { throw DesktopAppError.unavailable("Wabi navigated while reading its draft.") }
-        return .init(url: url, draft: draft, links: links, messages: try WabiNativeMessages.read(tree))
+        let focused = composers.first.map { attribute($0, "AXFocused") as? Bool == true } ?? false
+        return .init(url: url, draft: draft, links: links, messages: try WabiNativeMessages.read(tree), composerFocused: focused)
     }
 }
 
@@ -142,14 +144,15 @@ actor WabiAppConversation {
         driver = DesktopAppConversation(executable: executable, timing: timing)
         self.timing = timing; self.readNative = readNative
     }
-    private func observe(_ target: DesktopAppConversation.Target, session: String) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
+    private func observe(_ target: DesktopAppConversation.Target, session: String, screenshotURL: URL? = nil) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
         try Task.checkCancellation()
         let read = readNative
         let before = try await Task.detached { try read(target) }.value
-        let state = try await driver.snapshot(target, session: session)
+        let state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL)
         try state.checkReadable()
         let after = try await Task.detached { try read(target) }.value
-        guard before.url == after.url, before.draft == after.draft else { throw DesktopAppError.unavailable("Wabi changed while checking its chat. Nothing was retried.") }
+        guard before.url == after.url, before.draft == after.draft,
+              screenshotURL == nil || (before.messages == after.messages && before.composerFocused == after.composerFocused) else { throw DesktopAppError.unavailable("Wabi changed while checking its chat. Nothing was retried.") }
         return (state, after)
     }
     private func empty(_ state: DesktopAppSnapshot, _ native: WabiAppObservation) throws {
@@ -232,19 +235,68 @@ actor WabiAppConversation {
         occupied = true
         defer { occupied = false }
         guard WabiThread.isValid(url), !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw DesktopAppError.unavailable("Prepare this comparison's dedicated Wabi chat first.") }
+        guard !prompt.unicodeScalars.contains(where: { ($0.value < 0x20 && $0.value != 0x0a) || $0.value == 0x7f }) else {
+            throw DesktopAppError.unavailable("Wabi cannot safely type control characters such as tabs. Replace them with spaces; your prompt was preserved.")
+        }
         let session = "msgblast-wabi-send-\(UUID())"
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.wabi)
-        var (state, native) = try await observe(target, session: session)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-wabi-input-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let image = directory.appendingPathComponent("window.png")
+        var (state, native) = try await observe(target, session: session, screenshotURL: image)
         guard native.url == url else { throw DesktopAppError.unavailable("Wabi's selected chat changed. Nothing was sent.") }
         try empty(state, native)
         let receipt = WabiAppReceipt(baseline: native.messages, prompt: prompt)
-        let field = try state.composer(app: .wabi).element
-        _ = try await driver.call("type_text", ["session": session, "element_token": field.element_token!, "text": prompt, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
-        (state, native) = try await observe(target, session: session)
-        guard native.url == url, native.draft == prompt, try state.composer(app: .wabi).draft == prompt,
-              receipt.unchanged(native.messages),
-              !state.isGenerating else { throw DesktopAppError.unavailable("Wabi's prepared draft or chat changed. Send was not pressed; review the preserved text.") }
+        // Literal Return is a submit key in Electron. Confirm disjoint text
+        // chunks and explicit Shift-Return line breaks before advancing.
+        enum Input { case text(String), newline }
+        var inputs: [Input] = []
+        let lines = prompt.split(separator: "\n", omittingEmptySubsequences: false)
+        for (index, line) in lines.enumerated() {
+            let characters = Array(line)
+            for offset in stride(from: 0, to: characters.count, by: 256) {
+                inputs.append(.text(String(characters[offset..<min(offset + 256, characters.count)])))
+            }
+            if index < lines.count - 1 { inputs.append(.newline) }
+        }
+        var prefix = ""
+        for (index, input) in inputs.enumerated() {
+            if index > 0 { (state, native) = try await observe(target, session: session, screenshotURL: image) }
+            let field = try state.composer(app: .wabi)
+            guard native.url == url, native.draft == prefix, field.draft == prefix,
+                  receipt.unchanged(native.messages), !state.isGenerating,
+                  prefix.isEmpty || native.composerFocused == true else {
+                throw DesktopAppError.unavailable("Wabi's draft, focus, or chat changed. Send was not pressed; review the preserved text.")
+            }
+            let point = try state.pixelCenter(of: field.element, target: target, imageURL: image, appName: "Wabi")
+            switch input {
+            case .text(let chunk):
+                var numbers = ["pid": target.pid, "window_id": target.window, "delay_ms": 0]
+                // Focus once; clicking again could move the insertion point
+                // into a previously verified prefix.
+                if prefix.isEmpty { numbers["x"] = point.x; numbers["y"] = point.y }
+                _ = try await driver.call("type_text", ["session": session, "text": chunk, "delivery_mode": "background"], numbers: numbers, as: DesktopAppConversation.Action.self)
+                prefix += chunk
+            case .newline:
+                if native.composerFocused != true {
+                    _ = try await driver.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
+                    let (focusedState, focused) = try await observe(target, session: session)
+                    guard focused.url == url, focused.draft == prefix, try focusedState.composer(app: .wabi).draft == prefix,
+                          focused.composerFocused == true, receipt.unchanged(focused.messages), !focusedState.isGenerating else {
+                        throw DesktopAppError.unavailable("Wabi did not retain focus in its empty composer. Nothing was submitted.")
+                    }
+                }
+                _ = try await driver.call("press_key", ["session": session, "key": "return", "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], arrays: ["modifiers": ["shift"]], as: DesktopAppConversation.Action.self)
+                prefix += "\n"
+            }
+            (state, native) = try await observe(target, session: session)
+            guard native.url == url, native.draft == prefix, try state.composer(app: .wabi).draft == prefix,
+                  native.composerFocused == true, receipt.unchanged(native.messages), !state.isGenerating else {
+                throw DesktopAppError.unavailable("Wabi's prepared draft, focus, or chat changed. Send was not pressed; review the preserved text.")
+            }
+        }
         try await click(state.sendButton(app: .wabi), target, session: session)
         let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
         var previous: String?
