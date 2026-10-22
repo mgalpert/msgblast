@@ -68,8 +68,10 @@ actor GeminiAppConversation {
                 try await attemptActionOnce(control: candidates[0], target: target, session: session)
                 native = try await read(target)
             }
-            guard native.nodes.filter({ $0.role == "AXButton" && $0.label == native.title }).count == 1,
-                  titles.contains(native.title), let prompt = binding.firstPrompt,
+            // The current transcript's saved nonce proves ownership even if
+            // Gemini renders duplicate automatic titles as sidebar rows.
+            // Navigation above still requires one unambiguous saved target.
+            guard titles.contains(native.title), let prompt = binding.firstPrompt,
                   prompt.hasPrefix("[msgblast comparison \(binding.comparisonID.uuidString)]\n\n"),
                   native.messages.first == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Open this comparison’s dedicated Gemini conversation and check again. No replacement was created.") }
             return native

@@ -491,6 +491,48 @@ final class GeminiAppDriverTests: XCTestCase {
             ["tool": "click", "role": "AXButton", "label": "Submit"]
         ], in: base)
     }
+    private func alreadyOpenFallback(foreignFirst: Bool = false) throws -> (Fixture, GeminiConversationBinding) {
+        let base = try fixture()
+        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
+        var binding = GeminiConversationBinding(comparisonID: id, mode: .chat)
+        binding.firstPrompt = binding.firstMessage("Echo check")
+        binding.title = binding.dedicatedTitle
+        binding.fallbackTitle = "Automatic title"
+        var root = base.observations[6].root
+        root.children[0].children[0].children = [
+            .init(role: "AXRow", label: "Automatic title", selected: true),
+            .init(role: "AXRow", label: "Automatic title")
+        ]
+        if foreignFirst {
+            let transcript = root.children[0].children[1].children.firstIndex { $0.role == "AXScrollArea" }!
+            root.children[0].children[1].children[transcript].children[0].children[0].children[0].children[0].children[0].label = "Foreign first prompt"
+        }
+        var opened = root
+        opened.children[0].children[1].children.append(base.observations[1].nodes.first { $0.role == "AXPopover" }!)
+        let f = try scenario([root, opened, root], actions: [
+            ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
+            ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"]
+        ], in: base)
+        return (f, binding)
+    }
+    func testAlreadyOpenSavedConversationUsesNonceDespiteDuplicateSidebarRowTitles() async throws {
+        let (f, binding) = try alreadyOpenFallback()
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let (_, options) = try await adapter(f).prepare(binding: binding, preferences: .init())
+        XCTAssertEqual(options.models, ["3.8 Flash, All-around help"])
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 2, "Only model controls are clicked; the already-owned chat needs no sidebar navigation")
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+    }
+    func testDuplicateSidebarTitlesNeverAuthorizeAForeignFirstPrompt() async throws {
+        let (f, binding) = try alreadyOpenFallback(foreignFirst: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await adapter(f).prepare(binding: binding, preferences: .init())
+            XCTFail("The saved nonce must match before configuring or typing")
+        } catch { }
+        XCTAssertFalse(f.calls().contains { ["type_text", "click"].contains($0["tool"] as? String ?? "") })
+    }
+
     func testSavedConversationReopensAndFollowUpHasNoFirstMessageReference() async throws {
         let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
         var binding = GeminiConversationBinding(comparisonID: id, mode: .chat)
