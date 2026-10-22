@@ -1,9 +1,5 @@
-# Native onboarding evidence
+Source: 5b7702e55956173dff1967a1715a19825a500c9f
 
-Source: 4d2eca4d93a0ce0b47763468c08549efac1581f6
+Exact native Demo screenshots. Permissions and app installations are simulated. No OS access changed, no provider messages sent. UI tests compiled; automated UI execution remains unavailable because the runner cannot initialize automation mode. Manual computer use verified hidden Messages cards, no misleading added-agents copy, Wabi selection enabling Continue, selection surviving permission review, and automatic Messages selection when access is enabled.
 
-Exact native msgblast Demo screenshots captured through computer use. The isolated Demo uses supported onboarding preview bundle flags. Permissions, app installations, accounts, connections and replies are simulated. No real provider sends, Contacts changes or OS permission grants were performed for these captures.
-
-The MP4 is an edited sequence of these screenshots, three seconds per state, with an opening simulation disclosure. It is not a continuous desktop recording and has no audio. It shows the actual states after manually verified interactions: incomplete permission group, one app grant, both app grants, agent chooser, connection checks, ready checklist and fixture comparison. Native macOS only; no mobile layout applies.
-
-The Xcode UI runner could not start automation mode. Manual Demo interaction supplied this evidence. Live TCC behavior and individual provider validation are documented separately in the PR.
+Video: 15-second edited screenshot sequence, opening disclosure, three seconds per state, no audio. Not a continuous recording.
