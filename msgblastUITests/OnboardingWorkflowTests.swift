@@ -12,7 +12,7 @@ final class OnboardingWorkflowTests: XCTestCase {
     }
 
     @MainActor
-    private func capture(_ name: String, in app: XCUIApplication) {
+    private func attachScreenshot(_ name: String, in app: XCUIApplication) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -129,7 +129,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertFalse(app.switches["enable-cua-driver-permission"].exists)
         XCTAssertFalse(app.staticTexts["CuaDriver"].exists)
         XCTAssertTrue(host.isHittable)
-        capture("Host permissions incomplete — Continue disabled", in: app)
+        attachScreenshot("Host permissions incomplete — Continue disabled", in: app)
         host.click()
         XCTAssertEqual((app.switches["enable-cua-host-permission"].value as? NSNumber)?.boolValue, true)
         XCTAssertFalse(next.isEnabled, "One Accessibility grant does not complete App access")
@@ -139,11 +139,11 @@ final class OnboardingWorkflowTests: XCTestCase {
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: next)
         waitForExpectations(timeout: 5)
         XCTAssertEqual((app.switches["enable-messages-contacts-permission"].value as? NSNumber)?.boolValue, false)
-        capture("Host app permissions complete — Continue enabled", in: app)
+        attachScreenshot("Host app permissions complete — Continue enabled", in: app)
         next.click()
         XCTAssertTrue(app.staticTexts["Choose your agents"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Choose Fo"].isEnabled)
-        capture("Apps enabled and Messages unavailable", in: app)
+        attachScreenshot("Apps enabled and Messages unavailable", in: app)
         XCTAssertTrue(revealChoice("ChatGPT App", in: app).isEnabled)
     }
 
