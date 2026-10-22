@@ -93,7 +93,7 @@ final class DesktopAppConversationTests: XCTestCase {
         ])
         XCTAssertEqual(try snapshot.reply(after: "Background test", app: .grokBot), "GROK-OK")
         let interrupted = try decode([
-            element("AXHeading", "Test Bot"), element("AXStaticText", "Background test"),
+            element("AXHeading", "Test Bot"), element("AXStaticText", "You"), element("AXStaticText", "Background test"),
             element("AXStaticText", "You"), element("AXStaticText", "Unrelated user message"),
             element("AXTextArea", "Prompt", value: "Message Test Bot")
         ])
@@ -168,6 +168,36 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertEqual(try snapshot.outgoingCount(text, app: .grokBot), 2)
         XCTAssertEqual(try snapshot.reply(after: text, app: .grokBot, outgoingOccurrence: 2), "Fresh answer")
         XCTAssertNil(try snapshot.reply(after: "First line\nChanged line", app: .grokBot))
+    }
+
+    func testGrokSplitPromptFragmentsTrackOnlyTheFreshUserMessage() throws {
+        let prompt = "First line\nSecond line"
+        let snapshot = try decode([
+            element("AXHeading", "Test Bot"),
+            element("AXStaticText", "You"), element("AXStaticText", "First line"), element("AXStaticText", "Second line"),
+            element("AXStaticText", "12:10 PM"), element("AXStaticText", "Test Bot"), element("AXStaticText", "Old answer"), element("AXStaticText", "12:11 PM"),
+            element("AXStaticText", "You"), element("AXStaticText", "First line"), element("AXStaticText", "Second line"),
+            element("AXStaticText", "12:12 PM"), element("AXStaticText", "Test Bot"), element("AXStaticText", "Fresh answer"), element("AXStaticText", "12:13 PM"),
+            element("AXTextArea", "Prompt", value: "Message Test Bot")
+        ])
+        XCTAssertEqual(try snapshot.outgoingCount(prompt, app: .grokBot), 2)
+        XCTAssertEqual(try snapshot.reply(after: prompt, app: .grokBot, outgoingOccurrence: 2), "Fresh answer")
+        for changed in ["First line\nChanged line", "First line", "Second line"] {
+            XCTAssertEqual(try snapshot.outgoingCount(changed, app: .grokBot), 0)
+        }
+    }
+
+    func testGrokFragmentMatchingCannotJoinAcrossSpeakersOrAcceptAnEcho() throws {
+        let snapshot = try decode([
+            element("AXHeading", "Test Bot"),
+            element("AXStaticText", "You"), element("AXStaticText", "First line"), element("AXStaticText", "12:12 PM"),
+            element("AXStaticText", "Test Bot"), element("AXStaticText", "Second line"), element("AXStaticText", "12:13 PM"),
+            element("AXStaticText", "Test Bot"), element("AXStaticText", "First line Second line"), element("AXStaticText", "12:14 PM"),
+            element("AXTextArea", "Prompt", value: "Message Test Bot")
+        ])
+        XCTAssertEqual(try snapshot.outgoingCount("First line\nSecond line", app: .grokBot), 0)
+        XCTAssertNil(try snapshot.reply(after: "First line\nSecond line", app: .grokBot))
+        XCTAssertEqual(try snapshot.outgoingCount("Second line", app: .grokBot), 0)
     }
 
     func testSidebarPromptPreviewCannotBeUsedAsOutgoingMessage() throws {
@@ -1131,13 +1161,20 @@ final class DesktopAppDriverTests: XCTestCase {
         let first = String(repeating: "😀", count: 300)
         let text = first + "\nNext"
         let chunk = String(repeating: "😀", count: 256)
+        var observed = grok(reply: "Complete", outgoingPrompt: text)
+        var elements = observed["elements"] as! [[String: Any]]
+        let outgoing = try XCTUnwrap(elements.firstIndex { $0["label"] as? String == text })
+        elements.replaceSubrange(outgoing...outgoing, with: [element("AXStaticText", first), element("AXStaticText", "Next")])
+        observed["elements"] = elements
+        observed["returned_element_count"] = elements.count
+        observed["total_element_count"] = elements.count
         let fixture = try driver([
             apps(), windows(), snapshot(grok()),
             step("type_text", [:], arguments: ["text": chunk]), snapshot(grok(draft: chunk)),
             snapshot(grok(draft: chunk)), step("type_text", [:], arguments: ["text": String(repeating: "😀", count: 44)]), snapshot(grok(draft: first)),
             snapshot(grok(draft: first)), step("press_key", [:], arguments: ["key": "return"]), snapshot(grok(draft: first + "\n")),
             snapshot(grok(draft: first + "\n")), step("type_text", [:], arguments: ["text": "Next"]), snapshot(grok(draft: text)),
-            step("click", [:]), snapshot(grok(reply: "Complete", outgoingPrompt: text.replacingOccurrences(of: "\n", with: " ")), repeating: true)
+            step("click", [:]), snapshot(observed, repeating: true)
         ])
         defer { fixture.remove() }
         let answer = try await adapter(fixture).reply(text, app: .grokBot, binding: binding)

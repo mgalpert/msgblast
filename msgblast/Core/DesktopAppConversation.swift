@@ -179,20 +179,43 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             return text == ["What can I do for you?"]
         }
     }
-    private static func renderedTextMatches(_ value: String, _ expected: String, app: DesktopAppProvider) -> Bool {
-        // Grok flattens whitespace when rendering outgoing message text. The
-        // native composer was verified exactly before Send; words stay exact.
-        app == .grokBot ? value.split(whereSeparator: \.isWhitespace) == expected.split(whereSeparator: \.isWhitespace) : value == expected
+    private func outgoingEnds(_ prompt: String, app: DesktopAppProvider, transcript: [Element]) throws -> [Int] {
+        guard app == .grokBot else {
+            let text = app == .muse ? "User message: \(prompt)" : prompt
+            return transcript.indices.filter { transcript[$0].role == "AXStaticText" && transcript[$0].text == text }
+        }
+        let name = try conversation(app: app)
+        let words = prompt.split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return [] }
+        let text = transcript.indices.filter { transcript[$0].role == "AXStaticText" && !transcript[$0].text.isEmpty }
+        var ends: [Int] = []
+        for speaker in text.indices where transcript[text[speaker]].text == "You" {
+            var collected: [Substring] = []
+            for position in text.indices.dropFirst(speaker + 1) {
+                let fragment = transcript[text[position]].text
+                // The compact driver tree omits article containers. Require
+                // an explicit user speaker and never cross a metadata boundary.
+                if fragment == "You" || fragment == name || Self.isTimestamp(fragment) { break }
+                collected += fragment.split(whereSeparator: \.isWhitespace)
+                guard words.starts(with: collected) else { break }
+                if collected == words {
+                    let next = position + 1 < text.count ? transcript[text[position + 1]].text : nil
+                    if next == nil || next == name || next == "You" || next.map(Self.isTimestamp) == true {
+                        ends.append(text[position])
+                    }
+                    break
+                }
+            }
+        }
+        return ends
     }
     func outgoingCount(_ prompt: String, app: DesktopAppProvider) throws -> Int {
-        let text = app == .muse ? "User message: \(prompt)" : prompt
-        return try transcript(app: app).filter { $0.role == "AXStaticText" && Self.renderedTextMatches($0.text, text, app: app) }.count
+        try outgoingEnds(prompt, app: app, transcript: transcript(app: app)).count
     }
     func reply(after prompt: String, app: DesktopAppProvider, outgoingOccurrence: Int = 1) throws -> String? {
         let name = app == .wabi ? "Wabi" : try conversation(app: app)
         let transcript = try transcript(app: app)
-        let outgoing = app == .muse ? "User message: \(prompt)" : prompt
-        let matches = transcript.indices.filter { transcript[$0].role == "AXStaticText" && Self.renderedTextMatches(transcript[$0].text, outgoing, app: app) }
+        let matches = try outgoingEnds(prompt, app: app, transcript: transcript)
         guard outgoingOccurrence > 0, matches.count >= outgoingOccurrence else { return nil }
         let sent = matches[outgoingOccurrence - 1]
         if app == .muse {
