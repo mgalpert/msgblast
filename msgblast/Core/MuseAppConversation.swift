@@ -61,12 +61,17 @@ actor MuseAppConversation {
         try fresh.checkReadable()
         guard let element = try select(fresh) else { return false }
         let point = try fresh.pixelCenter(of: element, target: target, imageURL: image)
+        guard let capture = fresh.capture_id, !capture.isEmpty else {
+            throw DesktopAppError.unavailable("Muse's current screenshot geometry could not be verified. Nothing was clicked.")
+        }
         let after = try await observe(target)
         try empty(after)
         guard after.url == before.url, after.windowBounds != nil, after.windowBounds == fresh.window_bounds else {
             throw DesktopAppError.unavailable("Muse's chat or window geometry changed while its screenshot was captured. Nothing was clicked.")
         }
-        _ = try await driver.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
+        // Bind screenshot pixels to this capture's scale, origin, and exact
+        // window. An unbound click can miss a resized Retina capture's field.
+        _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "capture_id": capture], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
         return true
     }
     private func focusComposer(_ target: DesktopAppConversation.Target, session: String, at url: URL) async throws -> MuseAppObservation {

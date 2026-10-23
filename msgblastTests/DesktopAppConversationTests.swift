@@ -2055,6 +2055,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let click = try XCTUnwrap(calls.first { $0.tool == "click" })
         XCTAssertEqual(click.arguments["x"] as? Int, 600)
         XCTAssertEqual(click.arguments["y"] as? Int, 788)
+        XCTAssertEqual(click.arguments["capture_id"] as? String, "muse-resized-capture", "The driver must map these pixels through the same resized screenshot")
         XCTAssertNil(click.arguments["element_token"], "AXPress on this composer opens its file picker")
         let path = try XCTUnwrap(calls.first { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
         XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Private captures must be removed after use")
@@ -2064,12 +2065,13 @@ final class DesktopAppDriverTests: XCTestCase {
     func testMuseInvalidMissingOrMismatchedCaptureCannotClickSavedChat() async throws {
         let thread = UUID(), owner = UUID()
         let list: [String: Any] = ["elements": [element("AXButton", "New side chat"), element("AXButton", "Saved"), element("AXSplitter", "Resize panel")]]
-        for fault in ["invalid", "missing", "wrong_window", "wrong_dimensions", "wrong_path", "outside", "window_moved", "overflow"] {
+        for fault in ["invalid", "missing", "missing_capture_id", "wrong_window", "wrong_dimensions", "wrong_path", "outside", "window_moved", "overflow"] {
             let other = UUID()
             var initial = windows(); initial["native"] = try object(museObservation(thread: other))
             var capture = capturedNavigation(list)
             var result = capture["result"] as! [String: Any]
             if fault == "invalid" { result["screenshot_frame_valid"] = false }
+            if fault == "missing_capture_id" { result.removeValue(forKey: "capture_id") }
             if fault == "wrong_window" { result["window_id"] = 999 }
             if fault == "wrong_dimensions" { result["screenshot_width"] = 1500 }
             if fault == "outside" {
@@ -2141,6 +2143,7 @@ final class DesktopAppDriverTests: XCTestCase {
         result["pid"] = 4242; result["window_id"] = 101
         result["window_bounds"] = ["x": 200, "y": 100, "width": 800, "height": 600]
         result["screenshot_frame_valid"] = true
+        result["capture_id"] = "muse-resized-capture"
         result["screenshot_width"] = 1200; result["screenshot_height"] = 900
         result["screenshot_scale"] = 2 // The returned PNG was resized; do not multiply by this.
         var step = snapshot(result)
