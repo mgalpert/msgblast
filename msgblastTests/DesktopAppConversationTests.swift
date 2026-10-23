@@ -344,6 +344,26 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [.init(role: "AXPopUpButton", label: "Add reaction")])))
     }
 
+    func testWabi015ReadinessIgnoresIncompleteHistoryWithoutAttributingIt() throws {
+        // Sanitized shape from Wabi 0.1.15: ten sender-marked frames, nine
+        // reaction controls. No user's conversation text is part of the fixture.
+        func frame(complete: Bool) -> WabiAXNode {
+            var children: [WabiAXNode] = [.init(role: "AXGroup", children: [.init(role: "AXStaticText", value: "Example message")])]
+            if complete {
+                children += [.init(role: "AXGroup", children: [.init(role: "AXPopUpButton", label: "Add reaction")]),
+                             .init(role: "AXStaticText", value: "5:13 PM")]
+            }
+            return .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", "xqcrz7y"], children: children)
+        }
+        let history = WabiAXNode(role: "AXWebArea", children: (0..<10).map { frame(complete: $0 != 7) })
+        XCTAssertEqual(try WabiNativeMessages.read(history, purpose: .readiness), [])
+        XCTAssertThrowsError(try WabiNativeMessages.read(history)) { error in
+            guard case WabiObservationError.transient = error else { return XCTFail("Incomplete history must never be attributed: \(error)") }
+        }
+        XCTAssertEqual(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [frame(complete: true)])),
+                       [.init(role: .assistant, text: "Example message")])
+    }
+
     func testWabiIncompleteIncomingFrameHasNoAttributedBodyUntilLayoutSettles() throws {
         func frame(_ sender: String, _ text: String, timestamp: Bool = true) -> WabiAXNode {
             var children: [WabiAXNode] = [.init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction")]
@@ -1032,6 +1052,54 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testWabiCreatesDedicatedChatWithoutReadingUnrelatedHistory() async throws {
+        let fixture = try driver(wabiCreationSteps())
+        defer { fixture.remove() }
+        let created = try await wabiAdapter(fixture, unreadableHistory: true).prepare(savedURL: nil)
+        XCTAssertEqual(created, otherWabiURL)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "Only the New chat chooser and AI chat creation are allowed")
+        XCTAssertFalse(calls.contains { ["type_text", "press_key"].contains($0.tool) })
+        assertBackgroundTargets(calls)
+    }
+
+    func testWabiOnboardingDoesNotRequireReadableHistoricalMessages() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])
+        defer { fixture.remove() }
+        try await wabiAdapter(fixture, unreadableHistory: true).checkAvailable()
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
+    func testWabiReplyStillRequiresReadableHistoryAndConnectionPreservesDrafts() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        let fixture = try driver([apps(.wabi), initial])
+        defer { fixture.remove() }
+        let error = await failure { try await self.wabiAdapter(fixture, unreadableHistory: true).reply(self.prompt, in: self.wabiURL) }
+        XCTAssertTrue(error.contains("Historical layout unavailable"), error)
+        assertNoInput(try await finishedCalls(fixture))
+
+        for draft in ["Keep my draft", "\n"] {
+            var initial = windows(); initial["native"] = wabiNative(draft: draft)
+            let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])
+            defer { fixture.remove() }
+            let error = await failure { try await self.wabiAdapter(fixture, unreadableHistory: true).checkAvailable() }
+            XCTAssertTrue(error.contains("unsent draft"), error)
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+
+    func testWabiReadinessStillRejectsMissingOrAmbiguousNewChatControls() async throws {
+        for controls in [[], [element("AXButton", "New chat"), element("AXButton", "New chat")]] {
+            var initial = windows(); initial["native"] = wabiNative()
+            let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith(controls))])
+            defer { fixture.remove() }
+            let error = await failure { try await self.wabiAdapter(fixture, unreadableHistory: true).checkAvailable() }
+            XCTAssertTrue(error.contains("New chat control is unavailable or ambiguous"), error)
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+
     func testWabiConnectionCheckIsReadOnlyAndGenericSendIsUnavailable() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])
@@ -1106,16 +1174,21 @@ final class DesktopAppDriverTests: XCTestCase {
         state["elements"] = body; state["returned_element_count"] = body.count; state["total_element_count"] = body.count
         return state
     }
-    private func wabiAdapter(_ fixture: DriverFixture, transientAfterSend: Bool = false, neverSettlesAfterSend: Bool = false) -> WabiAppConversation {
+    private func wabiAdapter(_ fixture: DriverFixture, transientAfterSend: Bool = false, neverSettlesAfterSend: Bool = false, unreadableHistory: Bool = false) -> WabiAppConversation {
         let fault = MuseReadFault()
         let file = fixture.directory.appendingPathComponent("native.json")
-        return WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(2), callTimeout: 3)) { target in
+        return WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(2), callTimeout: 3)) { target, purpose in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             let observation = try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
-            if observation.messages.contains(where: { $0.role == .user }), neverSettlesAfterSend || (transientAfterSend && fault.shouldFail()) {
+            if unreadableHistory, purpose == .conversation, observation.url == URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa") {
+                throw WabiObservationError.transient("Historical layout unavailable")
+            }
+            if purpose == .conversation, observation.messages.contains(where: { $0.role == .user }), neverSettlesAfterSend || (transientAfterSend && fault.shouldFail()) {
                 throw WabiObservationError.transient("Wabi's messages are still updating. No sender or reply was inferred.")
             }
-            return observation
+            return WabiAppObservation(url: observation.url, draft: observation.draft, links: observation.links,
+                                      messages: purpose == .readiness ? [] : observation.messages,
+                                      composerFocused: observation.composerFocused)
         }
     }
 

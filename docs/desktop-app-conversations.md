@@ -164,7 +164,7 @@ The installed Wabi version did not respond to a background deep-link open reques
 
 msgblast needs Accessibility to read Wabi's native address and actual composer
 value and sender boundaries; cua-driver supplies background controls and input.
-Both sources must agree on the prepared draft. Wabi 0.1.11 exposes
+Both sources must agree on the prepared draft. Wabi 0.1.11 and 0.1.15 expose
 sender-specific message frames through
 native `AXDOMClassList`; the reader validates their frame boundaries, sender
 markers, footer timestamps, and reaction-control count. Unknown layouts stop the
@@ -172,7 +172,14 @@ adapter rather than guessing a speaker. This native contract can require an
 adapter update after Wabi changes its UI.
 An old comparison with Wabi history but no saved thread stays preserved and
 blocked: start a new comparison to get a dedicated chat. Onboarding's check is
-read-only and never creates a chat or sends a test prompt.
+read-only and never creates a chat or sends a test prompt. It verifies the exact
+window, chat address, empty composer, and New chat control without parsing the
+current chat's history. Wabi 0.1.15 can expose historical message frames without
+complete reaction/footer metadata; those frames must not block onboarding.
+Opening the New chat chooser also ignores unrelated history. Once the dedicated
+chat opens, its welcome message is verified. Reply collection still requires
+complete sender and message boundaries and stops rather than attributing
+incomplete content.
 
 ## ChatGPT, Dots, and Claude native apps
 

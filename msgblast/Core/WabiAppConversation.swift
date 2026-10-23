@@ -30,10 +30,13 @@ enum WabiObservationError: LocalizedError, Sendable {
     var errorDescription: String? { switch self { case .transient(let message): message } }
 }
 
+enum WabiReadPurpose: Sendable { case readiness, conversation }
+
 enum WabiNativeMessages {
-    static func read(_ root: WabiAXNode) throws -> [WabiAppMessage] {
+    static func read(_ root: WabiAXNode, purpose: WabiReadPurpose = .conversation) throws -> [WabiAppMessage] {
+        guard purpose == .conversation else { return [] }
         let nodes = root.descendants
-        // Wabi 0.1.11 exposes sender-specific message frames through native
+        // Wabi 0.1.11 and 0.1.15 expose sender-specific message frames through native
         // AXDOMClassList. Refuse unknown frames rather than infer a speaker
         // from text, position, color, or a delivery receipt.
         let frameClasses: Set<String> = ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e"]
@@ -101,7 +104,7 @@ struct WabiAppReceipt {
 // The driver omits AXURL. Read it independently so a title can never identify
 // a saved Wabi chat.
 enum WabiNativeReader {
-    static func capture(_ target: DesktopAppConversation.Target) throws -> WabiAppObservation {
+    static func capture(_ target: DesktopAppConversation.Target, purpose: WabiReadPurpose = .conversation) throws -> WabiAppObservation {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Grant msgblast Accessibility permission to verify Wabi's dedicated chat.") }
         func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
             var value: CFTypeRef?
@@ -145,39 +148,39 @@ enum WabiNativeReader {
             }
             return attribute(composer, "AXFocused") as? Bool == true
         } ?? false
-        return .init(url: url, draft: draft, links: links, messages: try WabiNativeMessages.read(tree), composerFocused: focused)
+        return .init(url: url, draft: draft, links: links, messages: try WabiNativeMessages.read(tree, purpose: purpose), composerFocused: focused)
     }
 }
 
 actor WabiAppConversation {
     static let shared = WabiAppConversation()
-    typealias NativeRead = @Sendable (DesktopAppConversation.Target) throws -> WabiAppObservation
+    typealias NativeRead = @Sendable (DesktopAppConversation.Target, WabiReadPurpose) throws -> WabiAppObservation
     private let driver: DesktopAppConversation
     private let timing: DesktopAppConversation.Timing
     private let readNative: NativeRead
     private var occupied = false
-    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = WabiNativeReader.capture) {
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = { try WabiNativeReader.capture($0, purpose: $1) }) {
         driver = DesktopAppConversation(executable: executable, timing: timing)
         self.timing = timing; self.readNative = readNative
     }
-    private func native(_ target: DesktopAppConversation.Target) async throws -> WabiAppObservation {
+    private func native(_ target: DesktopAppConversation.Target, purpose: WabiReadPurpose = .conversation) async throws -> WabiAppObservation {
         let read = readNative
         var retries = 2
         while true {
             try Task.checkCancellation()
-            do { return try await Task.detached { try read(target) }.value }
+            do { return try await Task.detached { try read(target, purpose) }.value }
             catch WabiObservationError.transient where retries > 0 {
                 retries -= 1
                 try await Task.sleep(for: timing.pollInterval)
             }
         }
     }
-    private func observe(_ target: DesktopAppConversation.Target, session: String, screenshotURL: URL? = nil) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
+    private func observe(_ target: DesktopAppConversation.Target, session: String, screenshotURL: URL? = nil, purpose: WabiReadPurpose = .conversation) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
         try Task.checkCancellation()
-        let before = try await native(target)
+        let before = try await native(target, purpose: purpose)
         let state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL)
         try state.checkReadable()
-        let after = try await native(target)
+        let after = try await native(target, purpose: purpose)
         guard before.url == after.url, before.draft == after.draft,
               screenshotURL == nil || (before.messages == after.messages && before.composerFocused == after.composerFocused) else { throw DesktopAppError.unavailable("Wabi changed while checking its chat. Nothing was retried.") }
         return (state, after)
@@ -202,11 +205,11 @@ actor WabiAppConversation {
     private func click(_ element: DesktopAppSnapshot.Element, _ target: DesktopAppConversation.Target, session: String) async throws {
         _ = try await driver.call("click", ["element_token": element.element_token!, "session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
     }
-    private func settled(_ target: DesktopAppConversation.Target, session: String, expected: (DesktopAppSnapshot, WabiAppObservation) throws -> Bool) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
+    private func settled(_ target: DesktopAppConversation.Target, session: String, purpose: WabiReadPurpose = .conversation, expected: (DesktopAppSnapshot, WabiAppObservation) throws -> Bool) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
             do {
-                let (state, native) = try await observe(target, session: session)
+                let (state, native) = try await observe(target, session: session, purpose: purpose)
                 if try expected(state, native) { return (state, native) }
             } catch WabiObservationError.transient { }
             guard ContinuousClock.now < deadline else { throw DesktopAppError.unavailable("Wabi did not open the expected chat. Nothing was sent or retried.") }
@@ -220,7 +223,9 @@ actor WabiAppConversation {
         let session = "msgblast-wabi-check-\(UUID())"
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.wabi)
-        let (state, native) = try await observe(target, session: session)
+        // Connecting proves readiness to create a dedicated chat, not the
+        // readability of unrelated messages in the currently open chat.
+        let (state, native) = try await observe(target, session: session, purpose: .readiness)
         try empty(state, native)
         _ = try button(state, "New chat")
     }
@@ -231,7 +236,7 @@ actor WabiAppConversation {
         let session = "msgblast-wabi-prepare-\(UUID())"
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.wabi)
-        var (state, native) = try await observe(target, session: session)
+        var (state, native) = try await observe(target, session: session, purpose: .readiness)
         try empty(state, native)
         if let savedURL {
             guard WabiThread.isValid(savedURL) else { throw DesktopAppError.unavailable("The saved Wabi chat address is invalid. No replacement was created.") }
@@ -249,7 +254,7 @@ actor WabiAppConversation {
         let original = native.url
         let existing = Set(native.links.map(\.url))
         try await click(button(state, "New chat"), target, session: session)
-        (state, native) = try await settled(target, session: session) { state, native in
+        (state, native) = try await settled(target, session: session, purpose: .readiness) { state, native in
             native.draft == nil && state.body.contains(where: { $0.role == "AXTextField" && $0.label == "Name, username, or phone number" })
         }
         guard native.url == original, native.draft == nil,
