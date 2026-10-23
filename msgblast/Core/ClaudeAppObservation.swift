@@ -82,12 +82,15 @@ struct ClaudeAppObservation: Sendable, Equatable {
             throw DesktopAppError.unavailable("Dismiss Claude's dialog before continuing.")
         }
         let areas = nodes.filter { $0.role == "AXWebArea" && $0.url.map { ClaudeChatURL.isChat($0) || ClaudeChatURL.isNew($0) } == true }
+        guard !areas.isEmpty else { throw ClaudeObservationError.transient("Claude is still opening its native chat.") }
         guard areas.count == 1, let url = areas[0].url else { throw DesktopAppError.unavailable("Claude's native chat address is unavailable or ambiguous.") }
         let areaNodes = areas[0].descendants
         let main = areaNodes.filter { $0.subrole == "AXLandmarkMain" }
+        guard !main.isEmpty else { throw ClaudeObservationError.transient("Claude's conversation is still loading.") }
         guard main.count == 1 else { throw DesktopAppError.unavailable("Claude's main conversation could not be separated from its sidebar.") }
         let controls = main[0].descendants
         let fields = controls.filter { $0.role == "AXTextArea" && $0.label == "Write your prompt to Claude" }
+        guard !fields.isEmpty else { throw ClaudeObservationError.transient("Claude's message field is still loading.") }
         guard fields.count == 1 else { throw DesktopAppError.unavailable("Claude's draft is unreadable. It was preserved.") }
         composerFrame = fields[0].frame
         composerFocused = fields[0].focused

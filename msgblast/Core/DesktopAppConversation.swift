@@ -22,7 +22,11 @@ public struct DesktopConversationBinding: Codable, Equatable, Sendable {
 
 enum DesktopAppError: LocalizedError {
     case unavailable(String)
-    var errorDescription: String? { switch self { case .unavailable(let reason): reason } }
+    case incompleteSnapshot
+    var errorDescription: String? { switch self {
+        case .unavailable(let reason): reason
+        case .incompleteSnapshot: "The app's accessibility snapshot is incomplete. Nothing will be sent automatically."
+    } }
 }
 
 struct DesktopAppSnapshot: Decodable, Sendable {
@@ -92,7 +96,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         // Require the returned-count contract and the app-specific sentinels instead.
         guard degraded != true, !body.isEmpty,
               total_element_count == nil || total_element_count == (returned_element_count ?? element_count) else {
-            throw DesktopAppError.unavailable("The app's accessibility snapshot is incomplete. Nothing will be sent automatically.")
+            throw DesktopAppError.incompleteSnapshot
         }
     }
     func conversation(app: DesktopAppProvider) throws -> String {
@@ -329,11 +333,21 @@ actor DesktopAppConversation {
         let session = "msgblast-bots-\(UUID())"
         defer { Task { await endSession(session) } }
         let target = try await target(.grokBot)
-        let state = try await snapshot(target, session: session)
-        let grouped = Dictionary(grouping: try state.grokBots(), by: \.name)
-        let names = grouped.filter { $0.value.count == 1 }.map(\.key).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        guard !names.isEmpty else { throw DesktopAppError.unavailable("No uniquely named bots were found. Open Grok Bot and refresh the bots.") }
-        return names
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while true {
+            try Task.checkCancellation()
+            do {
+                let state = try await snapshot(target, session: session)
+                let grouped = Dictionary(grouping: try state.grokBots(), by: \.name)
+                let names = grouped.filter { $0.value.count == 1 }.map(\.key).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+                guard !names.isEmpty else { throw DesktopAppError.unavailable("No uniquely named bots were found. Open Grok Bot and refresh the bots.") }
+                return names
+            } catch DesktopAppError.incompleteSnapshot where ContinuousClock.now < deadline {
+                // Discovery is read-only; an Electron window may still be
+                // hydrating its accessibility tree after opening.
+                try await Task.sleep(for: timing.pollInterval)
+            }
+        }
     }
     private func checkedGrokBot(_ name: String, state: DesktopAppSnapshot, target: Target) async throws -> (native: GrokBotNativeState, element: DesktopAppSnapshot.Element) {
         let native = try await grokState(state, target: target)

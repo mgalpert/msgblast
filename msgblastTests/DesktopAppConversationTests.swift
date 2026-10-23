@@ -1063,6 +1063,16 @@ final class DesktopAppDriverTests: XCTestCase {
         assertBackgroundTargets(calls)
     }
 
+    func testGrokBotDiscoveryWaitsForColdStartSnapshotWithoutInput() async throws {
+        var loading = grok()
+        loading["degraded"] = true
+        let fixture = try driver([apps(.grokBot), windows(), snapshot(loading), snapshot(grok())])
+        defer { fixture.remove() }
+        let names = try await adapter(fixture).availableGrokBots()
+        XCTAssertFalse(names.isEmpty)
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
     func testWabiOnboardingDoesNotRequireReadableHistoricalMessages() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])

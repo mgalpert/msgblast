@@ -103,9 +103,19 @@ actor ClaudeAppConversation {
         let session = "msgblast-claude-check-\(UUID())"
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.claude)
-        let (state, observation) = try await observe(target, session: session)
-        try empty(state, observation)
-        _ = try control(state, label: "New")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while true {
+            do {
+                let (state, observation) = try await observe(target, session: session)
+                try empty(state, observation)
+                _ = try control(state, label: "New")
+                return
+            } catch ClaudeObservationError.transient where ContinuousClock.now < deadline {
+                try await Task.sleep(for: timing.pollInterval)
+            } catch DesktopAppError.incompleteSnapshot where ContinuousClock.now < deadline {
+                try await Task.sleep(for: timing.pollInterval)
+            }
+        }
     }
     func prepare(comparisonID: UUID, binding: ClaudeConversationBinding?) async throws -> ClaudeConversationBinding {
         guard !occupied else { throw DesktopAppError.unavailable("Claude is already handling a request.") }

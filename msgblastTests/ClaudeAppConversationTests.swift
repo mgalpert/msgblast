@@ -23,6 +23,17 @@ final class ClaudeAppConversationTests: XCTestCase {
             XCTAssertFalse(ClaudeChatURL.isChat(URL(string: value)!))
         }
     }
+    func testStartupReadDoesNotAcceptAmbiguousChatSurfacesOrDialogs() {
+        XCTAssertThrowsError(try ClaudeAppObservation(root: .init(role: "AXWindow"))) { error in
+            guard case ClaudeObservationError.transient = error else { return XCTFail("A missing startup surface should remain observable on the same Connect") }
+        }
+        for children in [[tree(), tree()], [ClaudeAXNode(role: "AXDialog"), tree()]] {
+            XCTAssertThrowsError(try ClaudeAppObservation(root: .init(role: "AXWindow", children: children))) { error in
+                XCTAssertFalse(error is ClaudeObservationError, "Ambiguity and dialogs must fail without retrying input")
+            }
+        }
+    }
+
     func testMessageBoundariesUseNativeSenderAndExcludeToolbars() throws {
         let observed = try ClaudeAppObservation(root: tree([
             article(1, 2, "You said: Prompt excerpt", "Full prompt"),
@@ -83,6 +94,12 @@ private final class ClaudeOneTransientRead: @unchecked Sendable {
     }
 }
 
+private final class ClaudeStartupReads: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    func isLoading() -> Bool { lock.withLock { reads += 1; return reads <= 3 } }
+}
+
 private actor ClaudeRecordedBindings {
     var prepared: [ClaudeConversationBinding] = []
     var bound: [ClaudeConversationBinding] = []
@@ -117,12 +134,14 @@ final class ClaudeAppDriverTests: XCTestCase {
                 ])])
             ]))
         }
-        func adapter(transientAfterSend: Bool = false) -> ClaudeAppConversation {
+        func adapter(transientAfterSend: Bool = false, coldStart: Bool = false) -> ClaudeAppConversation {
             let failure = ClaudeOneTransientRead()
+            let startup = ClaudeStartupReads()
             let path = stage
             let observations = observations
             return ClaudeAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5), readNative: { _ in
                 let stage = Int((try? String(contentsOf: path, encoding: .utf8)) ?? "0") ?? 0
+                if coldStart, startup.isLoading() { return try ClaudeAppObservation(root: .init(role: "AXWindow")) }
                 if transientAfterSend && stage == 2 && failure.claim() { throw ClaudeObservationError.transient("Claude's message history is incomplete.") }
                 let original = observations[min(stage, observations.count - 1)]
                 guard stage == 0, let draft = try? String(contentsOf: path.deletingLastPathComponent().appendingPathComponent("draft"), encoding: .utf8) else { return original }
@@ -130,6 +149,14 @@ final class ClaudeAppDriverTests: XCTestCase {
             })
         }
     }
+    func testOnboardingWaitsForColdStartChatAddressWithoutInput() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try await fixture.adapter(coldStart: true).checkAvailable()
+        XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") })
+        XCTAssertTrue(fixture.calls().contains { $0["tool"] as? String == "get_window_state" })
+    }
+
     private func fixture(followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
