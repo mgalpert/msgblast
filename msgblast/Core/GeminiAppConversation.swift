@@ -55,7 +55,7 @@ actor GeminiAppConversation {
         try await attemptActionOnce(control: read(target, rename: rename).control(label: label, role: role), target: target, session: session, rename: rename)
     }
     private func open(_ binding: GeminiConversationBinding?, mode: GeminiMode, target: DesktopAppConversation.Target, session: String) async throws -> GeminiAppObservation {
-        var native = try await read(target)
+        var native = try await conversationRead(binding: binding, target: target, session: session)
         try empty(native)
         if let binding, let title = binding.title {
             guard binding.mode == mode, title == binding.dedicatedTitle,
@@ -229,11 +229,38 @@ actor GeminiAppConversation {
         guard !closed.nodes.contains(where: { $0.role == "AXPopover" }) else { throw DesktopAppError.unavailable("Close Gemini’s model picker and check again.") }
         return (.init(mode: desired.mode, model: model, thinking: thinking), .init(models: models, thinkingLevels: levels))
     }
-    func checkAvailable() async throws {
+    // Renaming is cosmetic, but its modal must not strand the next request.
+    // Only a saved unfinished rename in the exact nonce-owned chat is ours.
+    private func conversationRead(binding: GeminiConversationBinding?, target: DesktopAppConversation.Target, session: String) async throws -> GeminiAppObservation {
+        let native = try await read(target, rename: true)
+        let sheets = native.nodes.filter { $0.role == "AXSheet" }
+        guard !sheets.isEmpty else { return native }
+        guard let binding, binding.title == binding.dedicatedTitle,
+              let original = binding.fallbackTitle, native.title == original, original != binding.dedicatedTitle,
+              let prompt = binding.firstPrompt, prompt.hasPrefix("[msgblast comparison \(binding.comparisonID.uuidString)]\n\n"),
+              native.messages.first == .init(role: .user, text: prompt),
+              native.draft.isEmpty, !native.generating, sheets.count == 1 else {
+            throw DesktopAppError.unavailable("Close Gemini’s dialog before continuing. Your edits were preserved.")
+        }
+        let controls = sheets[0].descendants
+        let fields = controls.filter { $0.role == "AXTextField" }
+        let cancel = controls.filter { $0.role == "AXButton" && $0.label == "Cancel" && $0.enabled }
+        guard controls.contains(where: { $0.role == "AXStaticText" && ($0.label == "Rename this chat" || $0.value == "Rename this chat") }),
+              fields.count == 1, let value = fields[0].value, [original, binding.dedicatedTitle].contains(value), cancel.count == 1 else {
+            throw DesktopAppError.unavailable("Close Gemini’s dialog before continuing. Your edits were preserved.")
+        }
+        try await attemptActionOnce(control: cancel[0], target: target, session: session, rename: true, expected: native)
+        let closed = try await read(target)
+        guard native.sameConversation(as: closed) else { throw DesktopAppError.unavailable("Gemini changed while closing its unfinished rename. Nothing was sent.") }
+        return closed
+    }
+    func checkAvailable(binding: GeminiConversationBinding? = nil) async throws {
         guard !occupied else { throw DesktopAppError.unavailable("Gemini is already handling a request.") }
         occupied = true; defer { occupied = false }
+        let session = "msgblast-gemini-check-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.gemini)
-        try empty(await read(target))
+        try empty(await conversationRead(binding: binding, target: target, session: session))
     }
     func prepare(binding: GeminiConversationBinding?, preferences: GeminiPreferences) async throws -> (GeminiPreferences, GeminiOptions) {
         guard !occupied else { throw DesktopAppError.unavailable("Gemini is already handling a request.") }
@@ -319,6 +346,10 @@ actor GeminiAppConversation {
                         catch {
                             try Task.checkCancellation()
                             if error is CancellationError { throw error }
+                            // Preserve the verified answer and its fallback identity even
+                            // if the optional edit fails. Never replay the edit or send.
+                            _ = try? await conversationRead(binding: saved, target: target, session: session)
+                            try Task.checkCancellation()
                             return answer.text
                         }
                     } else { try await onBinding(saved) }

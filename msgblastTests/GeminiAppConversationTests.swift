@@ -185,8 +185,10 @@ final class GeminiAppDriverTests: XCTestCase {
             ])])
             if [8, 9].contains(stage) {
                 root.children.append(.init(role: "AXSheet", children: [
+                    .init(role: "AXStaticText", label: "Rename this chat"),
                     control("AXTextField", "", "", 260, value: stage == 8 ? "Automatic title" : binding.dedicatedTitle, selectedText: stage == 8 ? "Automatic title" : ""),
-                    control("AXButton", "Confirm", "", 290)
+                    control("AXButton", "Confirm", "", 290),
+                    control("AXButton", "Cancel", "", 320)
                 ]))
             }
             roots.append(root)
@@ -637,6 +639,60 @@ final class GeminiAppDriverTests: XCTestCase {
         }
     }
 
+    private func unfinishedRenameFixture(restarting: Bool = false, edited: Bool = false, foreign: Bool = false) throws -> Fixture {
+        let base = try fixture(foreignPrompt: foreign)
+        var roots = base.observations.map(\.root)
+        roots[9] = roots[8] // The type operation did not apply; the owned modal stays open.
+        roots[10] = roots[6] // Cancel returns to the original title and verified transcript.
+        if edited {
+            let sheet = roots[8].children.count - 1
+            roots[8].children[sheet].children[1].value = "User's title draft"
+        }
+        var actions = try JSONSerialization.jsonObject(with: Data(contentsOf: base.directory.appendingPathComponent("actions.json"))) as! [[String: Any]]
+        actions[restarting ? 8 : 9] = ["tool": "click", "role": "AXButton", "label": "Cancel", "next_stage": 10]
+        try JSONSerialization.data(withJSONObject: actions).write(to: base.directory.appendingPathComponent("actions.json"))
+        try snapshotData(roots).write(to: base.directory.appendingPathComponent("snapshots.json"))
+        if restarting { try Data("8".utf8).write(to: base.stage) }
+        return .init(directory: base.directory, executable: base.executable, observations: try roots.map { try GeminiAppObservation(root: $0, allowingRename: true) })
+    }
+    func testFailedRenameClosesOnlyOwnedModalAndKeepsAnswerReadyForFollowup() async throws {
+        let f = try unfinishedRenameFixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
+        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
+        let recorded = BindingRecorder()
+        let app = adapter(f)
+        let answer = try await app.reply("Echo check", binding: .init(comparisonID: id, mode: .chat), preferences: .init(), onPrepared: { _ in }) { await recorded.record($0) }
+        XCTAssertEqual(answer, "ECHO-OK")
+        XCTAssertEqual(try String(contentsOf: f.stage, encoding: .utf8), "10", "The unfinished modal must be closed before returning the answer")
+        let value = await recorded.value
+        let saved = try XCTUnwrap(value)
+        XCTAssertEqual(saved.fallbackTitle, "Automatic title")
+        try await app.checkAvailable(binding: saved)
+        let calls = f.calls()
+        XCTAssertEqual(calls.filter { $0["tool"] as? String == "type_text" }.count, 2, "One prompt and one optional title edit, never replayed")
+        let buttons = calls.filter { $0["tool"] as? String == "click" }
+        XCTAssertEqual(buttons.count, 6, "Two model actions, one submission, two Rename actions and one Cancel")
+    }
+    func testRestartRecoversOwnedRenameButPreservesEditedAndForeignDialogs() async throws {
+        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
+        var saved = GeminiConversationBinding(comparisonID: id, mode: .chat)
+        saved.title = saved.dedicatedTitle
+        saved.fallbackTitle = "Automatic title"
+        saved.firstPrompt = saved.firstMessage("Echo check")
+        for variant in ["owned", "edited", "foreign", "unbound"] {
+            let f = try unfinishedRenameFixture(restarting: true, edited: variant == "edited", foreign: variant == "foreign")
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            do {
+                try await adapter(f).checkAvailable(binding: variant == "unbound" ? nil : saved)
+                XCTAssertEqual(variant, "owned")
+            } catch {
+                XCTAssertNotEqual(variant, "owned", error.localizedDescription)
+            }
+            let inputs = f.calls().filter { ["click", "type_text"].contains($0["tool"] as? String ?? "") }
+            XCTAssertEqual(inputs.count, variant == "owned" ? 1 : 0)
+            XCTAssertEqual(try String(contentsOf: f.stage, encoding: .utf8), variant == "owned" ? "10" : "8")
+        }
+    }
+
     func testPermanentRenameFailureKeepsAnswerAndDurableFallbackForResume() async throws {
         let first = try fixture(); defer { try? FileManager.default.removeItem(at: first.directory) }
         let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
@@ -799,6 +855,30 @@ final class GeminiAppDriverTests: XCTestCase {
         }
         XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
     }
+    @MainActor
+    func testFailedNativePreparationSurfacesReasonAndPreservesDraftWithoutCreatingAttempt() async throws {
+        let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
+        let file = f.directory.appendingPathComponent("blocked-session.json")
+        var state = WebWorkspaceState()
+        state.enabled = true
+        state.desktopConversation = .init(name: "Gemini")
+        state.draft = "Keep my follow-up"
+        try JSONEncoder().encode(state).write(to: file)
+        let reason = "Close Gemini’s Rename dialog before continuing."
+        let unavailable = GeminiAppConversation(executable: f.executable, readNative: { _, _ in
+            throw DesktopAppError.unavailable(reason)
+        })
+        let session = WebAgentSession(provider: .geminiApp, storageURL: file, fixture: false,
+                                      museApp: .shared, desktopApps: .demo, desktopDriver: DesktopAppConversation(executable: f.executable), geminiApp: unavailable)
+        let ready = await session.openComparison(UUID())
+        XCTAssertFalse(ready)
+        XCTAssertEqual(session.error, reason, "The comparison pane must explain why preparation stopped")
+        XCTAssertEqual(session.state.draft, "Keep my follow-up")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertFalse(f.calls().contains { ["click", "type_text"].contains($0["tool"] as? String ?? "") })
+        session.beginShutdown()
+    }
+
     @MainActor
     func testReloadedPendingSessionRequiresOriginReviewAndNeverReplays() async throws {
         let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }

@@ -537,7 +537,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             await refresh()
             if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
             if snapshot.ready { await prepareAdditionalDesktopConversation() }
-            return snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
+            let ready = snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
+            if ready { error = nil }
+            else if !snapshot.ready || hasIncompleteNativeRequest(for: id) { error = snapshot.reason }
+            else { error = "\(provider.name) has an unsent draft. It was preserved." }
+            return ready
         }
         do {
             let readyBeforeSetup = try await prepareConversation()
@@ -1452,7 +1456,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         guard saved?.firstPrompt == nil || saved?.title != nil else { throw WebSessionFailure.notReady("Gemini’s first submission was interrupted. Review it before starting a new comparison.") }
                         guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("Gemini’s saved history has no tracked conversation. Start a new comparison; its history was preserved.") }
                     }
-                    if !fixture { try await geminiApp.checkAvailable() }
+                    if !fixture { try await geminiApp.checkAvailable(binding: try state.comparisonID.flatMap { try state.geminiBinding(for: $0) }) }
                     guard generation == comparisonGeneration, !shuttingDown else { return }
                     desktopReady = true
                     desktopStatus = "Gemini ready · \(geminiPreferences.mode.name) · background input"
