@@ -89,7 +89,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertFalse(app.switches["enable-cua-driver-permission"].exists)
         XCTAssertFalse(app.staticTexts["CuaDriver"].exists)
         XCTAssertFalse(app.buttons["Manage"].exists)
-        XCTAssertFalse(app.staticTexts["Messaging agents"].exists)
+        XCTAssertFalse(app.staticTexts["Messages Agents"].exists)
         XCTAssertFalse(app.staticTexts["App agents"].exists)
         for identifier in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-capture"] {
             XCTAssertTrue(app.switches["enable-\(identifier)-permission"].exists)

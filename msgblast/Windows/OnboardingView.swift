@@ -207,7 +207,7 @@ struct OnboardingView: View {
     private var chooser: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Choose your agents").font(.system(size: 28, weight: .bold))
-            Text("Messaging agents").font(.headline)
+            Text("Messages Agents").font(.headline)
             if (setup.state.approvedPermissionSections ?? []).contains(.messaging) {
                 if setup.checking { ProgressView("Adding your Messages agents…").controlSize(.small) }
                 choiceGrid(OnboardingChoice.offeredChoices.filter { $0.isMessages && $0 != .otherMessages })
@@ -223,7 +223,7 @@ struct OnboardingView: View {
                                 .accessibilityIdentifier("locked-message-avatar-\(choice.rawValue)")
                         }
                     }
-                    permissionNote("To access the Messaging Agents,", actionTitle: "Enable permissions")
+                    permissionNote("To access the Messages Agents,", actionTitle: "Enable permissions")
                 }
             }
             Text("App Agents").font(.headline)
