@@ -220,6 +220,13 @@ Contents/Resources/electron.icns. Artwork and trademarks remain their
 respective owners’ property and are not covered by msgblast’s GPL license.
 
 
+Muse and Grok Bot: unmodified native icons from Muse 8.0 (com.meta.endo)
+and Grok Bot 0.75.0 (com.anysphere.sand), retrieved October 22, 2026 from
+the installed Mac apps' Contents/Resources/AppIcon.icns and
+Contents/Resources/icon.icns, respectively. Artwork and trademarks remain
+their respective owners' property and are not covered by msgblast's GPL license.
+
+
 CuaDriver off-Space accessibility window lookup
 https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs
 The bounded remote-token lookup is adapted in DesktopNativeWindowLookup.swift

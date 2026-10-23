@@ -11,14 +11,20 @@ struct AgentAvatar: View {
     var body: some View {
         Group {
             if let data = AgentArtwork.avatar(for: agent, name: name), let image = NSImage(data: data) {
-                Image(nsImage: image).resizable().scaledToFill()
+                if data.starts(with: [0x69, 0x63, 0x6e, 0x73]) {
+                    // Native app icons include their own shape and transparent margins.
+                    Image(nsImage: image).resizable().scaledToFit()
+                } else {
+                    Image(nsImage: image).resizable().scaledToFill()
+                        .frame(width: size, height: size).clipShape(Circle())
+                }
             } else {
                 ZStack {
                     Circle().fill(colors[abs(agent?.colorIndex ?? 0) % colors.count].gradient)
                     Text(String(name.prefix(1))).font(.system(size: size * 0.42, weight: .medium)).foregroundStyle(.white)
                 }
             }
-        }.frame(width: size, height: size).clipShape(Circle())
+        }.frame(width: size, height: size)
     }
 }
 

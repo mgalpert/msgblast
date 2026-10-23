@@ -65,9 +65,9 @@ enum AgentArtwork {
     private static let museDefaultAvatar = bundle.url(forResource: "MuseAvatar", withExtension: "jpg")
         .flatMap { try? Data(contentsOf: $0) }
     private static let webDefaultAvatars: [WebProvider: Data] = Dictionary(uniqueKeysWithValues:
-        [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots, .os3, .hark, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp].compactMap { provider in
+        [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots, .os3, .hark, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp, .museApp, .grokBotApp].compactMap { provider in
             let resource = provider == .codexCLI ? "chatgpt" : provider == .claudeCode ? "claude" : provider == .dotsApp ? "dots" : provider.rawValue
-            let fileExtension = [.wabi, .geminiApp, .chatgptApp, .claudeApp].contains(provider) ? "icns" : [.dots, .dotsApp].contains(provider) ? "pdf" : [.grok, .os3, .hark].contains(provider) ? "png" : "jpg"
+            let fileExtension = [.wabi, .geminiApp, .chatgptApp, .claudeApp, .museApp, .grokBotApp].contains(provider) ? "icns" : [.dots, .dotsApp].contains(provider) ? "pdf" : [.grok, .os3, .hark].contains(provider) ? "png" : "jpg"
             guard let url = bundle.url(forResource: resource, withExtension: fileExtension, subdirectory: "WebAgentIcons"),
                   let data = try? Data(contentsOf: url) else { return nil }
             if provider == .hark, let source = NSImage(data: data) {
@@ -90,7 +90,8 @@ enum AgentArtwork {
 
     static func agent(for session: WebAgentSession) -> Agent {
         Agent(name: session.name, handles: [],
-              avatar: [.grokbot, .grokBotApp].contains(session.provider) ? grokBotAvatar : session.avatar ?? ([.muse, .museApp].contains(session.provider) ? museDefaultAvatar : webDefaultAvatars[session.provider]),
+              avatar: [.museApp, .grokBotApp].contains(session.provider) ? webDefaultAvatars[session.provider] :
+                session.provider == .grokbot ? grokBotAvatar : session.avatar ?? (session.provider == .muse ? museDefaultAvatar : webDefaultAvatars[session.provider]),
               colorIndex: WebProvider.allCases.firstIndex(of: session.provider)! + 4)
     }
 }
