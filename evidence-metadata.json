@@ -1,0 +1,65 @@
+{
+  "source_revision": "ebdb6801a6f941a5833b2d5278cdb83707bd4547",
+  "captures": "Actual msgblast Demo UI; simulated permissions, installation, accounts and replies; no installed provider contacted",
+  "fixture_bundle_settings": {
+    "CFBundleIdentifier": "com.msgblast.demo",
+    "msgblastDemo": true,
+    "msgblastDisableUpdates": true,
+    "msgblastIsolatedDemo": true,
+    "msgblastOnboardingPermissionsPreview": true,
+    "msgblastOnboardingPreview": true,
+    "msgblastPermissionGuidePreview": true,
+    "msgblastPreviewVariant": "demo",
+    "msgblastSourceRevision": "ebdb6801a6f941a5833b2d5278cdb83707bd4547",
+    "msgblastSupportDirectory": "msgblast-Demo",
+    "msgblastTelemetryEndpoint": ""
+  },
+  "variants": [
+    {
+      "id": "development",
+      "bundle_id": "com.msgblast.development",
+      "fixture": false,
+      "updates": "disabled",
+      "compiled_icon_sha256": "c98ec59998f24b23d6d7eff18df429859fae6aa605baf25ff2ca692b1a2c7ccd",
+      "compiled_icon_rgb": [
+        8.0,
+        143.0,
+        124.5
+      ]
+    },
+    {
+      "id": "demo",
+      "bundle_id": "com.msgblast.demo",
+      "fixture": true,
+      "updates": "disabled",
+      "compiled_icon_sha256": "3e233b2177364f165add299fa575edd050c02a43ec24d65dd0ebd65da6b0e4f7",
+      "compiled_icon_rgb": [
+        64.8,
+        38.8,
+        216.0
+      ]
+    }
+  ],
+  "video": {
+    "seconds": 31.958333,
+    "format": "H.264 MP4, no audio",
+    "editing": "Edited screenshot sequence with simulation labels; not continuous recording"
+  },
+  "checks": {
+    "affected_native_adapters": 187,
+    "packaging_python": 25,
+    "real_sparkle_fixture_cases": 5,
+    "controller_fixtures": "passed",
+    "embedded_host_identity_and_private_socket": "passed; no provider actions"
+  },
+  "media_sha256": {
+    "01-permissions-off.jpg": "470f074c1e4c4f8e54125540576d95c232dd50d69ec4f2bdbf898edf9b8e56c5",
+    "02-permissions-partial.jpg": "f7638d4ffbe0c4bcba6aa289448961d83fad526ceeb370bbe3c4f1d0e335f7d2",
+    "03-permissions-ready.jpg": "e44bd80bbec8a34e42c09e0b0d3978c4ac6aefac8cf75cddfeea47475082d77a",
+    "05-native-agents-selected.jpg": "ebe117d2bec204889a0189280f079abe0722ecd842a2f3cb13f93c4d88fdfc48",
+    "08-ready-with-thinking.jpg": "952d8b22ff003749d997ebae1c0b8eb7082da07996fe60685ae4e86c85266ff7",
+    "09-ready-with-task.jpg": "1138e2b0323a95aab7b12e3f9cf55b8f112a4a41d20ecf3fec71db5e3657fbf7",
+    "11-fixture-comparison.jpg": "977c3918b91015f9bac07dc1035f464d94d4973333b68340b7f1213de0a0a4c1",
+    "onboarding.mp4": "2687de5d73218e92f3cdf28805aa58122f723a589973bc6bc2043307e9a1d913"
+  }
+}
