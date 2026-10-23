@@ -151,7 +151,7 @@ final class GeminiAppDriverTests: XCTestCase {
             (try? String(contentsOf: log, encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? []
         }
     }
-    private func fixture(foreignPrompt: Bool = false, driverPID: Int = 42, modelPressNoop: Bool = false, validCapture: Bool = true) throws -> Fixture {
+    private func fixture(foreignPrompt: Bool = false, driverPID: Int = 42, modelPressNoop: Bool = false, validCapture: Bool = true, needsLongerWalk: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
@@ -220,6 +220,8 @@ final class GeminiAppDriverTests: XCTestCase {
         elif tool=='list_windows': print(json.dumps({'windows':[{'window_id':21,'title':'','is_on_screen':False,'on_current_space':False,'space_ids':[1],'bounds':{'width':1000,'height':900}}]}))
         elif tool=='get_window_state':
             result=json.loads((p/'snapshots.json').read_text())[s]
+            if \(needsLongerWalk ? "True" : "False") and args.get('timeout_ms',1000)<5000:
+                result.update({'elements':result['elements'][:1],'truncated':True,'truncation_reason':'timeout','total_element_count':1,'returned_element_count':1})
             if 'screenshot_out_file' in args:
                 path=pathlib.Path(args['screenshot_out_file'])
                 def chunk(kind,data):
@@ -292,6 +294,18 @@ final class GeminiAppDriverTests: XCTestCase {
             return fixture.observations[stage]
         })
     }
+    func testVirtualizedSidebarGetsEnoughReadBudgetToReachTheComposerBeforeAnyInput() async throws {
+        let f = try fixture(needsLongerWalk: true); defer { try? FileManager.default.removeItem(at: f.directory) }
+        let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!
+        let answer = try await adapter(f).reply("Echo check", binding: .init(comparisonID: id, mode: .chat), preferences: .init(), onPrepared: { _ in }, onBinding: { _ in })
+        XCTAssertEqual(answer, "ECHO-OK")
+        let submissions = f.calls().filter { call in
+            guard call["tool"] as? String == "click", let args = call["arguments"] as? [String: Any] else { return false }
+            return (args["element_token"] as? String)?.hasPrefix("s5:") == true
+        }
+        XCTAssertEqual(submissions.count, 1, "A slow accessibility read must not replay submission")
+    }
+
     func testOneBackgroundSubmissionIsAttributedAndBoundDespiteUnknownClickResponse() async throws {
         let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
         let id = UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!

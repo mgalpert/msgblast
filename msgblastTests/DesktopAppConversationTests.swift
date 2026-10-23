@@ -1527,9 +1527,15 @@ final class DesktopAppDriverTests: XCTestCase {
     }
 
     func testDegradedAndTruncatedSnapshotsPreventAllInput() async throws {
+        var partial = grok()
+        partial["truncated"] = true
+        partial["truncation_reason"] = "timeout"
         let invalid: [[String: Any]] = [
             ["elements": [], "degraded": true, "degraded_reason": "ax_window_unresolved"],
-            ["elements": grok()["elements"]!, "total_element_count": 200, "returned_element_count": 3]
+            ["elements": grok()["elements"]!, "total_element_count": 200, "returned_element_count": 3],
+            // 0.38's equal counts describe only the nodes it visited. They do
+            // not override an explicit timeout or depth/node-budget cutoff.
+            partial
         ]
         for state in invalid {
             let fixture = try driver([apps(), windows(), snapshot(state)])

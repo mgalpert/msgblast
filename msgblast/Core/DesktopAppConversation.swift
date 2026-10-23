@@ -45,6 +45,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     }
     let elements: [Element]
     var degraded: Bool?
+    var truncated: Bool?
     var element_count: Int?
     var returned_element_count: Int?
     var total_element_count: Int?
@@ -92,9 +93,9 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         return ArraySlice(elements[start...].prefix { $0.role != "AXMenuBar" })
     }
     func checkReadable() throws {
-        // 0.22 reports elements_complete=false even for an untruncated walk.
-        // Require the returned-count contract and the app-specific sentinels instead.
-        guard degraded != true, !body.isEmpty,
+        // elements_complete can be false even for an untruncated walk. Equal
+        // returned counts do not override an explicit timeout or walk cutoff.
+        guard degraded != true, truncated != true, !body.isEmpty,
               total_element_count == nil || total_element_count == (returned_element_count ?? element_count) else {
             throw DesktopAppError.incompleteSnapshot
         }
@@ -417,7 +418,9 @@ actor DesktopAppConversation {
     func snapshot(_ target: Target, session: String, screenshotURL: URL? = nil) async throws -> DesktopAppSnapshot {
         var arguments = ["session": session]
         if let screenshotURL { arguments["screenshot_out_file"] = screenshotURL.path }
-        return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
+        // The driver's one-second default can stop in a virtualized sidebar,
+        // before it reaches the composer. Keep the complete read bounded.
+        return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40, "timeout_ms": 10_000], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
     private func grokDraftAgrees(_ composer: (element: DesktopAppSnapshot.Element, draft: String), with draft: String) -> Bool {
         let value = composer.element.value ?? ""
