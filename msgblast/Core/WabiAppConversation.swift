@@ -191,8 +191,14 @@ actor WabiAppConversation {
     }
     private func observe(_ target: DesktopAppConversation.Target, session: String, screenshotURL: URL? = nil, purpose: WabiReadPurpose = .conversation) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
         try Task.checkCancellation()
+        // A cold Electron window can expose no web content until Cua enables
+        // its accessibility tree. Initialize it before waiting for the native URL.
+        let readinessState = purpose == .readiness ? try await driver.snapshot(target, session: session, screenshotURL: screenshotURL) : nil
+        try readinessState?.checkReadable()
         let before = try await native(target, purpose: purpose)
-        let state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL)
+        let state: DesktopAppSnapshot
+        if let readinessState { state = readinessState }
+        else { state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL) }
         try state.checkReadable()
         let after = try await native(target, purpose: purpose)
         guard before.url == after.url, before.draft == after.draft,

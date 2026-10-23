@@ -1081,6 +1081,24 @@ final class DesktopAppDriverTests: XCTestCase {
         assertNoInput(try await finishedCalls(fixture))
     }
 
+    func testWabiOnboardingInitializesColdAccessibilityBeforeReadingAddress() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("native.json")
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), callTimeout: 3)) { target, purpose in
+            guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
+            guard try fixture.calls().contains(where: { $0.tool == "get_window_state" }) else {
+                throw WabiObservationError.transient("Wabi's accessibility content has not been initialized")
+            }
+            return try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+        }
+        try await adapter.checkAvailable()
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "get_window_state" }.count, 1)
+        assertNoInput(calls)
+    }
+
     func testWabiOnboardingWaitsForColdStartAddressWithoutInput() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])
