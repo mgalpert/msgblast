@@ -226,7 +226,7 @@ struct OnboardingView: View {
                     permissionNote("To access the Messaging Agents,", actionTitle: "Enable permissions")
                 }
             }
-            Text("Mac apps").font(.headline)
+            Text("App Agents").font(.headline)
             if (setup.state.approvedPermissionSections ?? []).contains(.apps) {
                 choiceGrid(OnboardingChoice.offeredChoices.filter { $0.provider?.desktopApp != nil })
             } else {
