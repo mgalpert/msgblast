@@ -1251,6 +1251,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
     }
 
+    /// An explicit Connect may reopen a closed window; passive refreshes never do.
+    public func prepareDesktopConnection() async -> Bool {
+        do {
+            try await launchDesktopAppForConversation()
+            return true
+        } catch is CancellationError { return false }
+        catch {
+            desktopReady = false
+            desktopStatus = error.localizedDescription
+            self.error = error.localizedDescription
+            updateNativeSnapshot()
+            return false
+        }
+    }
+
     private func launchDesktopAppForConversation() async throws {
         guard let app = provider.desktopApp else { return }
         try Task.checkCancellation()

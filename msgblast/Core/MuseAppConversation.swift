@@ -125,7 +125,12 @@ actor MuseAppConversation {
 
     func checkAvailable() async throws {
         guard !occupied else { throw DesktopAppError.unavailable("Muse is already handling a request.") }
+        let session = "msgblast-muse-check-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.muse)
+        // Let the driver initialize the exact window's accessibility surface
+        // before the independent native identity and draft read.
+        _ = try await snapshot(target, session: session)
         try empty(await observe(target))
     }
 

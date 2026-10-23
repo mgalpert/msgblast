@@ -169,8 +169,7 @@ struct DesktopAppSetupView: View {
     }
 
     private func connect(_ app: DesktopAppProvider) async {
-        if !session.desktopInstallation.isRunning { await session.openDesktopApp() }
-        guard session.desktopInstallation.isRunning else { return }
+        guard await session.prepareDesktopConnection() else { return }
         if app == .grokBot {
             await loadBots(markConnected: false)
             if let name = session.state.desktopConversation?.name, session.grokBotNames.contains(name) {

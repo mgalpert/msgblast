@@ -282,6 +282,53 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertTrue(tools.allSatisfy { $0 == "list_apps" || $0 == "list_windows" }, "Readiness must use only metadata, never input or a probe send")
     }
 
+    func testExplicitOnboardingConnectReopensMuseAndGeminiAndWaitsForTheirWindow() async throws {
+        for provider in [WebProvider.museApp, .geminiApp] {
+            let app = try XCTUnwrap(provider.desktopApp)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let executable = directory.appendingPathComponent("driver")
+            try Data(app.bundleIDs[0].utf8).write(to: directory.appendingPathComponent("bundle"))
+            try Data("""
+            #!/usr/bin/env python3
+            import sys,json,pathlib,time
+            p=pathlib.Path(__file__).parent
+            tool=sys.argv[2];args=json.loads(sys.argv[3])
+            with (p/'calls').open('a') as f:f.write(tool+'\\n')
+            if tool=='list_apps':
+                print(json.dumps({'apps':[{'bundle_id':(p/'bundle').read_text(),'pid':42,'running':True}]}))
+            elif tool=='list_windows':
+                assert args=={'pid':42}
+                ready=(p/'opened').exists() and (p/'warming').exists()
+                if (p/'opened').exists(): (p/'warming').touch()
+                print(json.dumps({'windows':[{'window_id':21,'title':'Main','is_on_screen':True,'bounds':{'width':1000,'height':900}}] if ready else []}))
+            else: raise AssertionError('Unexpected action: '+tool)
+            sys.stdout.flush();time.sleep(.02)
+            """.utf8).write(to: executable)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+            let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + app.name + ".app")
+            apps.installation = .init(url: url, processID: 42)
+            apps.openAction = { _ in try Data().write(to: directory.appendingPathComponent("opened")) }
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent("state.json"),
+                                          fixture: false, museApp: .shared, desktopApps: apps.client,
+                                          desktopDriver: DesktopAppConversation(executable: executable))
+            defer { session.beginShutdown() }
+            session.setEnabled(true)
+            session.updateState { $0.draft = "Keep my prompt" }
+            let prepared = await session.prepareDesktopConnection()
+            XCTAssertTrue(prepared, provider.name)
+            XCTAssertEqual(apps.opened, [url], "Reopen the window even when its process is already running")
+            XCTAssertFalse(session.loading)
+            XCTAssertFalse(session.desktopReady, "Window readiness must not substitute for the conversation check")
+            XCTAssertEqual(session.state.draft, "Keep my prompt")
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            let calls = try String(contentsOf: directory.appendingPathComponent("calls"), encoding: .utf8).split(separator: "\n")
+            XCTAssertEqual(calls.filter { $0 == "list_windows" }.count, 3, "Wait for delayed window creation on the first attempt")
+            XCTAssertTrue(calls.allSatisfy { $0 == "list_apps" || $0 == "list_windows" })
+        }
+    }
+
     func testDirectFirstSendLaunchesAppAndLaunchFailurePreservesDraftWithoutAttempt() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-send-auto-open-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }

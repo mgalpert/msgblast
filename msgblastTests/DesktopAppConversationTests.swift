@@ -1589,10 +1589,10 @@ final class DesktopAppDriverTests: XCTestCase {
             result["windows"] = records
             window["result"] = result
             window["native"] = try object(museObservation(draft: draft))
-            let fixture = try driver([apps(.muse), window])
+            let fixture = try driver([apps(.muse), window, snapshot(["elements": [element("AXButton", "Message Attach file Dictate a message Send")]])])
             defer { fixture.remove() }
             let session = WebAgentSession(provider: .museApp, storageURL: fixture.directory.appendingPathComponent("state.json"),
-                                          fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+                                          fixture: false, museApp: museAdapter(fixture, requiresDriverSnapshot: true), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
             session.setEnabled(true)
             await session.connectDesktopConversation()
             XCTAssertEqual(session.desktopReady, draft.isEmpty)
@@ -1606,7 +1606,7 @@ final class DesktopAppDriverTests: XCTestCase {
             XCTAssertTrue(session.state.attempts.isEmpty)
             XCTAssertTrue(session.state.museAppConversations.isEmpty)
             let calls = try fixture.calls()
-            XCTAssertEqual(calls.map(\.tool), ["list_apps", "list_windows"])
+            XCTAssertEqual(calls.map(\.tool).filter { $0 != "end_session" }, ["list_apps", "list_windows", "get_window_state"])
             assertNoInput(calls)
             session.beginShutdown()
         }
@@ -2117,11 +2117,14 @@ final class DesktopAppDriverTests: XCTestCase {
         private var failed = false
         func shouldFail() -> Bool { lock.withLock { if failed { return false }; failed = true; return true } }
     }
-    private func museAdapter(_ fixture: DriverFixture, timeout: Duration = .seconds(3), transientWindowFailure: Bool = false) -> MuseAppConversation {
+    private func museAdapter(_ fixture: DriverFixture, timeout: Duration = .seconds(3), transientWindowFailure: Bool = false, requiresDriverSnapshot: Bool = false) -> MuseAppConversation {
         let fault = MuseReadFault()
         let url = fixture.directory.appendingPathComponent("native.json")
         return MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: timeout, callTimeout: 3)) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
+            if requiresDriverSnapshot, !(try fixture.calls()).contains(where: { $0.tool == "get_window_state" }) {
+                throw DesktopAppError.unavailable("Muse's accessibility window has not been initialized")
+            }
             let observation = try JSONDecoder().decode(MuseAppObservation.self, from: Data(contentsOf: url))
             if transientWindowFailure, observation.url == MuseSideChatBinding.newURL, fault.shouldFail() {
                 throw DesktopAppError.unavailable("Muse's exact window is temporarily unavailable")
