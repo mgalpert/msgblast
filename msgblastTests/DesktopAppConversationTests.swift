@@ -2046,8 +2046,9 @@ final class DesktopAppDriverTests: XCTestCase {
         initial["native"] = try object(unfocused)
         var composer = element("AXButton", "Message Attach file Dictate a message Send", token: "s00000001:composer")
         composer["frame"] = ["x": 300, "y": 600, "w": 600, "h": 50]
-        let fixture = try driver([apps(.muse), initial, capturedNavigation(["elements": [composer]]),
-                                  try museStep("click", observation: museObservation(thread: thread))])
+        var focus = try museStep("click", observation: museObservation(thread: thread))
+        focus["arguments"] = ["action": "focus"]
+        let fixture = try driver([apps(.muse), initial, capturedNavigation(["elements": [composer]]), focus])
         defer { fixture.remove() }
         let binding = try await museAdapter(fixture).prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: thread, title: "Saved"))
         XCTAssertEqual(binding.threadID, thread)
@@ -2056,6 +2057,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(click.arguments["x"] as? Int, 600)
         XCTAssertEqual(click.arguments["y"] as? Int, 788)
         XCTAssertEqual(click.arguments["capture_id"] as? String, "muse-resized-capture", "The driver must map these pixels through the same resized screenshot")
+        XCTAssertEqual(click.arguments["action"] as? String, "focus", "Focusing the editor must not press its compound attachment control")
         XCTAssertNil(click.arguments["element_token"], "AXPress on this composer opens its file picker")
         let path = try XCTUnwrap(calls.first { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
         XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Private captures must be removed after use")

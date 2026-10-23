@@ -48,7 +48,7 @@ actor MuseAppConversation {
         try state.checkReadable()
         return state
     }
-    private func pixelClick(_ target: DesktopAppConversation.Target, session: String, expectedURL: URL? = nil,
+    private func pixelClick(_ target: DesktopAppConversation.Target, session: String, expectedURL: URL? = nil, focusOnly: Bool = false,
                             select: (DesktopAppSnapshot) throws -> DesktopAppSnapshot.Element?) async throws -> Bool {
         let before = try await observe(target)
         try empty(before)
@@ -71,7 +71,7 @@ actor MuseAppConversation {
         }
         // Bind screenshot pixels to this capture's scale, origin, and exact
         // window. An unbound click can miss a resized Retina capture's field.
-        _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "capture_id": capture], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
+        _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "capture_id": capture, "action": focusOnly ? "focus" : "press"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
         return true
     }
     private func focusComposer(_ target: DesktopAppConversation.Target, session: String, at url: URL) async throws -> MuseAppObservation {
@@ -79,7 +79,9 @@ actor MuseAppConversation {
         try empty(current)
         guard current.url == url else { throw DesktopAppError.unavailable("Muse changed side chats before focusing its composer.") }
         if current.composerFocused, !current.sidebarOpen { return current }
-        _ = try await pixelClick(target, session: session, expectedURL: url) { state in
+        // Cua 0.38's pixel focus action sets AXFocused without AXPress or
+        // pointer events. The compound button's press opens its attachment UI.
+        _ = try await pixelClick(target, session: session, expectedURL: url, focusOnly: true) { state in
             let matches = state.body.filter {
                 (["AXTextArea", "AXTextField"].contains($0.role) && $0.label == "Message") ||
                 ($0.role == "AXButton" && $0.label == "Message Attach file Dictate a message Send")
