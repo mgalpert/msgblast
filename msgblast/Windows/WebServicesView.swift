@@ -650,7 +650,9 @@ private struct WebAgentPane: View {
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityElement(children: .contain)
             }
-            if let error = session.error { Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading) }
+            if let error = session.error, endedMessages != nil || session.desktopRecoveryMessage != error {
+                Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }
             if let draft = session.draftRecoveryText {
                 HStack {
                     Text("Your saved draft is retained. Copy it into this chat to continue.").font(.caption).foregroundStyle(.secondary)
