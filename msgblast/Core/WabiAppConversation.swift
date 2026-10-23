@@ -8,6 +8,19 @@ enum WabiThread {
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return false }
         return URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath.range(of: #"^/threads/[0-9a-f]{24}$"#, options: .regularExpression) != nil
     }
+    static func verifiedURL(_ url: URL?, currentURL: URL?, webAreaCount: Int, composerCount: Int, purpose: WabiReadPurpose) throws -> URL {
+        guard webAreaCount <= 1, composerCount <= 1 else {
+            throw DesktopAppError.unavailable("Wabi's chat address could not be verified.")
+        }
+        if purpose == .readiness, webAreaCount == 0 || url == nil || url?.absoluteString == "about:blank" || url?.absoluteString == "wabi://app/" || url?.absoluteString == "wabi://app" {
+            throw WabiObservationError.transient("Wabi is still opening its chat. Wait for it to finish loading.")
+        }
+        guard webAreaCount == 1, let url, isValid(url), currentURL == url else {
+            throw DesktopAppError.unavailable("Wabi's chat address could not be verified.")
+        }
+        return url
+    }
+
 }
 
 struct WabiAppMessage: Codable, Equatable, Sendable {
@@ -131,8 +144,8 @@ enum WabiNativeReader {
                               classes: role == "AXGroup" ? attribute(element, "AXDOMClassList") as? [String] ?? [] : [], children: children)
         }
         let tree = try walk(window, depth: 0)
-        guard webAreas.count == 1, composers.count <= 1, let url = initialURL, WabiThread.isValid(url),
-              attribute(webAreas[0], "AXURL") as? URL == url else { throw DesktopAppError.unavailable("Wabi's chat address could not be verified.") }
+        let url = try WabiThread.verifiedURL(initialURL, currentURL: webAreas.first.flatMap { attribute($0, "AXURL") as? URL },
+                                             webAreaCount: webAreas.count, composerCount: composers.count, purpose: purpose)
         let draft: String?
         if let composer = composers.first {
             guard let value = attribute(composer, "AXValue") as? String else { throw DesktopAppError.unavailable("Wabi's draft is unreadable. It was preserved.") }
@@ -166,10 +179,11 @@ actor WabiAppConversation {
     private func native(_ target: DesktopAppConversation.Target, purpose: WabiReadPurpose = .conversation) async throws -> WabiAppObservation {
         let read = readNative
         var retries = 2
+        let readinessDeadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
             try Task.checkCancellation()
             do { return try await Task.detached { try read(target, purpose) }.value }
-            catch WabiObservationError.transient where retries > 0 {
+            catch WabiObservationError.transient where purpose == .readiness ? ContinuousClock.now < readinessDeadline : retries > 0 {
                 retries -= 1
                 try await Task.sleep(for: timing.pollInterval)
             }

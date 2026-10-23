@@ -1071,6 +1071,52 @@ final class DesktopAppDriverTests: XCTestCase {
         assertNoInput(try await finishedCalls(fixture))
     }
 
+    func testWabiOnboardingWaitsForColdStartAddressWithoutInput() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        let fixture = try driver([apps(.wabi), initial, snapshot(wabiWith([element("AXButton", "New chat")]))])
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("native.json")
+        let reads = WabiStartupReads()
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), callTimeout: 3)) { target, purpose in
+            guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
+            let url = reads.nextURL()
+            _ = try WabiThread.verifiedURL(url, currentURL: url, webAreaCount: url == nil ? 0 : 1, composerCount: 0, purpose: purpose)
+            return try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+        }
+        try await adapter.checkAvailable()
+        XCTAssertGreaterThanOrEqual(reads.count, 5, "The first three incomplete reads must not require another Connect")
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
+    private final class WabiStartupReads: @unchecked Sendable {
+        private let lock = NSLock()
+        private var reads = 0
+        var count: Int { lock.withLock { reads } }
+        func nextURL() -> URL? {
+            lock.withLock {
+                reads += 1
+                if reads == 1 { return nil }
+                if reads <= 3 { return URL(string: "wabi://app/") }
+                return URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")
+            }
+        }
+    }
+
+    func testWabiLoadingAddressDoesNotRelaxConversationOrAmbiguityGuards() throws {
+        let valid = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
+        for purpose in [WabiReadPurpose.readiness, .conversation] {
+            XCTAssertThrowsError(try WabiThread.verifiedURL(valid, currentURL: valid, webAreaCount: 2, composerCount: 0, purpose: purpose)) { error in
+                XCTAssertFalse(error is WabiObservationError)
+            }
+            XCTAssertThrowsError(try WabiThread.verifiedURL(valid, currentURL: valid, webAreaCount: 1, composerCount: 2, purpose: purpose))
+            XCTAssertThrowsError(try WabiThread.verifiedURL(valid, currentURL: self.otherWabiURL, webAreaCount: 1, composerCount: 0, purpose: purpose))
+            XCTAssertThrowsError(try WabiThread.verifiedURL(URL(string: "https://example.com"), currentURL: valid, webAreaCount: 1, composerCount: 0, purpose: purpose))
+        }
+        XCTAssertThrowsError(try WabiThread.verifiedURL(nil, currentURL: nil, webAreaCount: 0, composerCount: 0, purpose: .conversation)) { error in
+            XCTAssertFalse(error is WabiObservationError, "Only read-only readiness may wait for an uninitialized address")
+        }
+    }
+
     func testWabiReplyStillRequiresReadableHistoryAndConnectionPreservesDrafts() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         let fixture = try driver([apps(.wabi), initial])
