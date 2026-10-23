@@ -63,3 +63,30 @@ enum DesktopNativeWindowLookup {
         return window
     }
 }
+
+// A background web editor may report its web area as the app's focused
+// element while the editor's own AXFocused attribute is true.
+enum DesktopNativeFocus {
+    static func observed(applicationMatches: Bool?, applicationRole: String?, elementFocused: Bool?) -> Bool? {
+        if applicationMatches == true { return true }
+        // A different concrete control is conflicting focus, even if an old
+        // editor flag has not cleared. Only toolkit wrapper roots may defer.
+        let wrappers = ["AXWebArea", "AXGroup", "AXWindow", "AXApplication"]
+        if applicationMatches == false, !wrappers.contains(applicationRole ?? "") { return false }
+        return elementFocused ?? applicationMatches
+    }
+    static func capture(pid: Int, composer: AXUIElement) -> Bool? {
+        func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
+        }
+        let app = AXUIElementCreateApplication(pid_t(pid))
+        AXUIElementSetMessagingTimeout(app, 0.2)
+        let focus = attribute(app, "AXFocusedUIElement").flatMap { value -> AXUIElement? in
+            CFGetTypeID(value) == AXUIElementGetTypeID() ? value as! AXUIElement : nil
+        }
+        return observed(applicationMatches: focus.map { CFEqual($0, composer) },
+                        applicationRole: focus.flatMap { attribute($0, "AXRole") as? String },
+                        elementFocused: attribute(composer, "AXFocused") as? Bool)
+    }
+}

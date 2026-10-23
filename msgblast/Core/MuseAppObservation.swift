@@ -223,13 +223,10 @@ enum MuseNativeReader {
             return parameter("AXStringForRange", rangeValue) as? String
         }
         guard try url() == before, try windowBounds() == initialBounds else { throw DesktopAppError.unavailable("Muse navigated or moved while its draft was being read.") }
-        let app = AXUIElementCreateApplication(pid_t(target.pid))
-        AXUIElementSetMessagingTimeout(app, 0.2)
-        let focus = attribute(app, "AXFocusedUIElement")
         let nodes = tree.descendants
         let header = nodes.first { $0.role == "AXButton" && $0.label.contains("Open chat and side chats") }?.label
         let title = header.map { $0.components(separatedBy: " Unread chats").first ?? $0 } ?? "Muse side chat"
-        return MuseAppObservation(url: before, draft: draft, composerFocused: focus.map { CFEqual($0, composer) } ?? false,
+        return MuseAppObservation(url: before, draft: draft, composerFocused: DesktopNativeFocus.capture(pid: target.pid, composer: composer) == true,
                                   messages: try MuseTranscript.messages(in: messageRoots[0]),
                                   composerIdentity: CFHash(composer),
                                   sidebarOpen: nodes.contains { $0.role == "AXButton" && $0.label == "New side chat" },

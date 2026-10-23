@@ -1304,6 +1304,31 @@ final class DesktopAppDriverTests: XCTestCase {
         assertBackgroundTargets(calls)
     }
 
+    func testNativeEditorFocusAllowsBackgroundWrapperButRefusesConflictingOrLostFocus() async throws {
+        for scene in ["background wrapper", "different editor", "lost focus"] {
+            var prepared = grok(draft: prompt, token: "s00000002")
+            var native = prepared["_grok_native"] as! [String: Any]
+            native["applicationFocusMatches"] = false
+            native["applicationRole"] = scene == "different editor" ? "AXTextArea" : "AXWebArea"
+            native["editorFocused"] = scene != "lost focus"
+            native.removeValue(forKey: "composerFocused")
+            prepared["_grok_native"] = native
+            let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(prepared),
+                                      step("click", [:]), snapshot(grok(reply: "Focus confirmed", token: "s00000003"), repeating: true)])
+            defer { fixture.remove() }
+            if scene == "background wrapper" {
+                let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+                XCTAssertEqual(answer, "Focus confirmed")
+            } else {
+                let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+                XCTAssertTrue(error.contains("Send was not clicked"), scene)
+            }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1, "Prepared text must never be replayed")
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.count, scene == "background wrapper" ? 1 : 0)
+        }
+    }
+
     func testGrokMultilineChunksUseShiftReturnWithoutRefocusingAndKeepNativeNewlinesExact() async throws {
         let first = String(repeating: "😀", count: 300)
         let text = first + "\nNext"
@@ -2225,10 +2250,13 @@ final class DesktopAppDriverTests: XCTestCase {
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             let data = try Data(contentsOf: file)
             let raw = try JSONDecoder().decode(GrokBotNativeState.self, from: data)
-            if let empty = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["emptyEditor"] as? Bool {
-                return .init(name: raw.name, draft: GrokBotNativeReader.draftValue(raw.draft, emptyEditor: empty), composerFocused: raw.composerFocused)
-            }
-            return raw
+            let attributes = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            let draft = (attributes["emptyEditor"] as? Bool).map { GrokBotNativeReader.draftValue(raw.draft, emptyEditor: $0) } ?? raw.draft
+            let focus = (attributes["applicationRole"] as? String).map { role in
+                DesktopNativeFocus.observed(applicationMatches: attributes["applicationFocusMatches"] as? Bool, applicationRole: role,
+                                            elementFocused: attributes["editorFocused"] as? Bool)
+            } ?? raw.composerFocused
+            return .init(name: raw.name, draft: draft, composerFocused: focus)
         }
     }
     private func sendSteps() -> [[String: Any]] {
