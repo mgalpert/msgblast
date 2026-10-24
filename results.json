@@ -1,0 +1,36 @@
+{
+  "fixture": true,
+  "os_permissions_changed": false,
+  "apps": {
+    "Muse": "Ready; no message sent",
+    "Grok Bot": "Ready; no message sent",
+    "Wabi": "Ready; no message sent",
+    "ChatGPT": "Ready; no message sent",
+    "Dots": "Ready; no message sent",
+    "Claude": "Ready; no message sent"
+  },
+  "setup_requires_both_app_permissions": true,
+  "independent_permissions": true,
+  "gemini_unavailable": true,
+  "draft_preserved": true,
+  "onboarding_not_restarted": true,
+  "no_comparison_created": true,
+  "source_revision": "80795eac0e581b90972fd04b1c8942f226a8cfe8",
+  "onboarding": {
+    "fixture": true,
+    "both_app_permissions_required": true,
+    "continue_updates_without_manual_refresh": true,
+    "chooser_reached": true,
+    "os_permissions_changed": false
+  },
+  "live_dev_readonly": {
+    "same_source": true,
+    "five_permission_statuses_present": true,
+    "missing_app_install_guards": true,
+    "completed_onboarding_preserved": true,
+    "draft_and_selection_preserved": true,
+    "comparisons_agents_grid_preserved": true,
+    "saved_session_files_unchanged": 17,
+    "no_connection_or_permission_actions": true
+  }
+}
