@@ -120,9 +120,11 @@ AXPress but that action does not select them. Resuming uses a background pointer
 click derived from the row's current accessibility bounds and a fresh, validated
 window capture. The saved UUID must match after selection. Preparing an empty
 composer does not require WebKit to report editor focus: it can keep focus on its
-outer web view until text arrives. If needed, the first text chunk targets the
-unique current composer token directly, without AXPress. Independent native draft
-and focus readback must succeed before another chunk or submission. Captures are
+outer web view until text arrives. The first text chunk focuses the unique current
+composer using validated screenshot coordinates and types in the same background
+call, without AXPress. The driver's `type_text` call uses the session's fresh
+capture and does not accept a `capture_id` argument. Independent native draft and
+focus readback must succeed before another chunk or submission. Captures are
 kept in owner-only temporary directories and removed after
 the action. Missing captures, wrong window IDs, off-window frames, or image-size
 mismatches prevent the click. If the saved chat is absent from
