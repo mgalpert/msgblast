@@ -166,6 +166,7 @@ struct FeedbackView: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
+            Button("Review earlier crash reports…") { CrashReporting.shared.show() }
             Text("Send feedback to msgblast")
                 .font(.headline)
             Text("Send your note directly to the msgblast team. A diagnostic report is included to help us investigate; you can uncheck it below.")

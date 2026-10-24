@@ -48,3 +48,15 @@ API semantics: [R2 Workers bindings](https://developers.cloudflare.com/r2/api/wo
 ## Verified deployment — October 7, 2026
 
 The authoritative landing checkout at `/Users/contains/projects/msgblast/landing` deployed Worker version `f1f579d1-5824-46b1-9a9f-ea3f018732a3` on `msgblast.app`, with this handler copied byte-for-byte into `worker.mjs`. Its assets use `ASSETS` and `run_worker_first: ["/api/feedback"]`. The private bucket was created with Public Access disabled. Synthetic API checks confirmed new-report 201, identical-retry 200, and GET 405. An isolated native demo app submitted a synthetic note with diagnostic opt-in and displayed the matching receipt; the authenticated R2 object preview confirmed the note and allowed diagnostic fields. These checks used no real messages or contact address and did not release or replace the installed app.
+
+## Crash summary extension
+
+`kind: crash` requires a `crash` object; ordinary feedback/bug requests must omit
+it. This object is a bounded allowlist, not a raw crash-file upload. The native
+review workflow sends no general diagnostic inventory. The same receipt ID and
+frozen content are reused after uncertain outcomes, including relaunch. See
+[crash reporting](../docs/crash-reporting.md) for the schema fields, consent,
+incident/fingerprint semantics, source attribution, symbolication, retention,
+limitations, and deployment ordering. Deploy this updated validator in the
+existing authoritative landing Worker before releasing native crash reporting;
+changing this source alone does not update the live service.

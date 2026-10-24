@@ -72,6 +72,7 @@ public enum FeedbackSubmission {
     }
 
     public static func encodeRequest(_ request: DiagnosticRequest, id: UUID) throws -> Data {
+        guard (request.kind == .crash) == (request.crash != nil) else { throw FeedbackSubmissionError.rejected }
         let package = try DiagnosticReport.make(request)
         // Match the package's control-character removal so the sent note matches the saved note.
         let note = DiagnosticReport.plain(request.note).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -82,7 +83,7 @@ public enum FeedbackSubmission {
             kind: request.kind,
             note: note,
             contact: contact.isEmpty ? nil : contact,
-            diagnostics: package.diagnosticsPreview))
+            diagnostics: package.diagnosticsPreview, crash: request.crash))
         guard data.count <= 64 * 1024 else { throw FeedbackSubmissionError.reportTooLarge }
         return data
     }
@@ -133,6 +134,7 @@ private struct SubmissionPayload: Encodable {
     let note: String
     let contact: String?
     let diagnostics: String?
+    let crash: CrashReport?
 }
 
 private struct ReceiptPayload: Decodable {

@@ -25,9 +25,25 @@ const diagnosticFields = {
   windowStyle: choice(['connected','separate','unknown'])
 };
 
+const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value,key));
+function validCrash(c) {
+  return exact(c,['schema','incident','process','bundleIdentifier','version','build','exception','signal','day','frames','fingerprint'])
+    && c.schema === 1 && typeof c.incident === 'string' && uuid.test(c.incident)
+    && ['app','helper'].includes(c.process)
+    && typeof c.bundleIdentifier === 'string' && /^com\.msgblast\.[A-Za-z0-9-]{1,40}$/.test(c.bundleIdentifier)
+    && diagnosticFields.version(c.version) && diagnosticFields.buildNumber(c.build)
+    && ['EXC_BAD_ACCESS','EXC_BAD_INSTRUCTION','EXC_ARITHMETIC','EXC_BREAKPOINT','EXC_CRASH','EXC_GUARD','EXC_RESOURCE'].includes(c.exception)
+    && ['SIGABRT','SIGSEGV','SIGBUS','SIGILL','SIGTRAP','SIGFPE','SIGSYS'].includes(c.signal)
+    && typeof c.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c.day)
+    && typeof c.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(c.fingerprint)
+    && Array.isArray(c.frames) && c.frames.length > 0 && c.frames.length <= 64
+    && c.frames.every(f => exact(f,['uuid','arch','offset']) && typeof f.uuid === 'string' && uuid.test(f.uuid)
+      && ['arm64','arm64e','x86_64','x86_64h'].includes(f.arch) && Number.isSafeInteger(f.offset) && f.offset >= 0);
+}
+
 function validate(body) {
-  if (!object(body) || Object.keys(body).some(key => !['id','kind','note','contact','diagnostics'].includes(key))) return null;
-  if (typeof body.id !== 'string' || !uuid.test(body.id) || !['feedback','bug'].includes(body.kind)) return null;
+  if (!object(body) || Object.keys(body).some(key => !['id','kind','note','contact','diagnostics','crash'].includes(key))) return null;
+  if (typeof body.id !== 'string' || !uuid.test(body.id) || !['feedback','bug','crash'].includes(body.kind)) return null;
   if (typeof body.note !== 'string' || !body.note.trim() || body.note.length > 16000) return null;
   if (body.contact !== undefined && (typeof body.contact !== 'string' || body.contact.trim().length > 120 || (body.contact.trim() && !email.test(body.contact.trim())))) return null;
   const result = {id:body.id.toLowerCase(), kind:body.kind, note:body.note, contact:body.contact?.trim() ?? ''};
@@ -41,10 +57,15 @@ function validate(body) {
     if (diagnostics.variant !== variant || (!diagnostics.stateFilePresent && diagnostics.stateFileBytes !== 0)) return null;
     result.diagnostics = diagnostics;
   }
+  if (body.kind === 'crash') {
+    if (!validCrash(body.crash)) return null;
+    result.crash = body.crash;
+  } else if (body.crash !== undefined) return null;
   return result;
 }
 
 function canonical(value) {
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
   if (!object(value)) return JSON.stringify(value);
   return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
 }

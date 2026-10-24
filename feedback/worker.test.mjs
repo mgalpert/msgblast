@@ -83,3 +83,24 @@ test('canonical diagnostics ordering permits identical retry and rejects invalid
 test('other routes delegate only to assets',async()=>{
  const env=environment();env.ASSETS={fetch:async()=>new Response('asset')};assert.equal(await (await worker.fetch(new Request('https://msgblast.app/'),env)).text(),'asset');
 });
+
+const crash = {schema:1, incident:'12345678-1234-1234-1234-123456789abc', process:'app', bundleIdentifier:'com.msgblast.mac', version:'0.9.0', build:'40', exception:'EXC_CRASH', signal:'SIGABRT', day:'2026-09-21', frames:[{uuid:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',arch:'arm64',offset:1234}], fingerprint:'a'.repeat(64)};
+test('crash summaries are strictly validated and private with idempotent receipt',async()=>{
+ const env=environment(); const body={...report,kind:'crash',crash};
+ assert.equal((await send(body,env)).status,201);
+ assert.equal((await send(body,env)).status,200);
+ assert.deepEqual(JSON.parse(env.objects.get(`reports/${id}.json`).value).crash,crash);
+ for(const bad of [{...crash,path:'/Users/private'},{...crash,frames:[{...crash.frames[0],symbol:'chat text'}]},{...crash,frames:[]},{...crash,frames:Array(65).fill(crash.frames[0])},{...crash,signal:'SIGTERM'},{...crash,bundleIdentifier:'com.other.app'},{...crash,frames:[{...crash.frames[0],offset:-1}]}]) {
+  assert.equal((await send({...body,crash:bad})).status,400);
+ }
+ assert.equal((await send({...report,kind:'crash'})).status,400);
+ assert.equal((await send({...report,crash})).status,400);
+});
+test('crash retries normalize frame-object key order inside arrays',async()=>{
+ const env=environment();
+ const body={...report,kind:'crash',crash};
+ assert.equal((await send(body,env)).status,201);
+ const reordered={...crash,frames:crash.frames.map(f=>({offset:f.offset,arch:f.arch,uuid:f.uuid}))};
+ assert.equal((await send({...body,crash:reordered},env)).status,200);
+ assert.equal(env.objects.size,1);
+});
