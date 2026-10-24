@@ -1,0 +1,34 @@
+{
+  "source_sha": "9d491d177de7556deba361d2c9ecf8c140a2c731",
+  "variant": "msgblast Dev",
+  "fixture": false,
+  "bundle_id": "com.msgblast.development",
+  "executable_sha256": "f0d4ffc77e4b82094e3a6a574c0670dc57e8d603acadbbabfa1c5df7601aaf07",
+  "signature_verified": true,
+  "development_identity_preserved": true,
+  "onboarding_before_upgrade": "finished",
+  "onboarding_after_upgrade": "finished",
+  "permissions_reset": false,
+  "production_app_modified": false,
+  "chatgpt_initial": {
+    "status": "failed",
+    "detail": "ChatGPT changed during the input check.",
+    "reply_observed": false,
+    "native_draft_empty_after_stop": true,
+    "prepared_binding_saved": false
+  },
+  "dots_first": {
+    "status": "observed",
+    "reply": "PAL-DOTS-FIRST-9D491D1"
+  },
+  "dots_followup": {
+    "status": "observed",
+    "reply": "PAL-DOTS-FOLLOWUP-9D491D1"
+  },
+  "dots_same_binding": true,
+  "limits": [
+    "Live Dev acceptance, not production distribution or fresh-permission acceptance.",
+    "Existing Muse and Demo videos remain separate evidence. No new live ChatGPT/Dots video was captured.",
+    "ChatGPT initial failure remains unresolved; independent recovery checks do not erase it."
+  ]
+}
