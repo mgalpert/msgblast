@@ -123,9 +123,13 @@ final class GeminiAppConversationTests: XCTestCase {
         binding.firstPrompt = binding.firstMessage("Original request")
         try saved.recordGeminiBinding(binding)
         try JSONEncoder().encode(saved).write(to: file)
-        let original = try Data(contentsOf: file)
+        let input = try Data(contentsOf: file)
         let session = WebAgentSession(provider: .geminiApp, storageURL: file, fixture: true, museApp: .shared, desktopApps: .demo)
         defer { session.beginShutdown() }
+        let original = try Data(contentsOf: file)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: original) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: input) as? NSDictionary,
+                       "Opening the session may reorder JSON keys but must preserve every saved value")
         XCTAssertFalse(session.isEnabled)
         XCTAssertFalse(session.canSubmitNativePrompt)
         let prepared = await session.prepareDesktopConnection()
