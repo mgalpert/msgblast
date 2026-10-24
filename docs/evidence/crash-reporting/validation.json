@@ -1,0 +1,82 @@
+{
+  "source_revision": "5c7bd96afa777018e3894de3baadc1929070c970",
+  "base_revision": "b8bf6143f4875a1b6de9372335bf77dae8035f75",
+  "native_tests": {
+    "count": 364,
+    "failures": 0,
+    "xcode": "27.0",
+    "location": "dedicated build Mac"
+  },
+  "worker_tests": {
+    "count": 14,
+    "failures": 0
+  },
+  "python_tests": {
+    "count": 97,
+    "skipped": 1,
+    "failures": 0
+  },
+  "controller_fixture": {
+    "result": "pass",
+    "transport": "actual native controller to actual Worker handler over loopback",
+    "coverage": [
+      "zero requests before Send",
+      "uncertain503afterstorage",
+      "same frozen ID/context after reopening",
+      "one stored report",
+      "duplicate blocking",
+      "oversized note remains editable",
+      "context clears when selecting another report"
+    ]
+  },
+  "manual_demo": {
+    "fixture": "two synthetic Apple-format IPS files; no process deliberately crashed",
+    "bundle_identifier": "com.msgblast.crash-evidence-demo",
+    "support_profile": "msgblast-CrashEvidence-Local",
+    "endpoint": "http://127.0.0.1:8128/api/feedback",
+    "source_override": "fixture identity/profile and loopback endpoint only; outer signature resealed ad-hoc",
+    "relaunch_detection": true,
+    "eligible_incident_selected": true,
+    "submitted_incident_remembered": true,
+    "dismissal_remembered": true,
+    "help_review_available": true,
+    "duplicate_button_disabled": true,
+    "requests": 2,
+    "stored_reports": 1,
+    "identical_retry": true
+  },
+  "manual_dev": {
+    "fixture_mode": false,
+    "bundle_identifier": "com.msgblast.crash-evidence-dev",
+    "support_profile": "msgblast-CrashEvidence-Dev",
+    "result": "Help review opens; Demo fixtures excluded; no report and Send disabled",
+    "no_live_account_connected": true,
+    "source_override": "separate task-owned identity/profile only; original user Dev app untouched"
+  },
+  "symbols": {
+    "configuration": "unsigned isolated Release arm64 archive",
+    "app_dsym_uuid_matches_binary": true,
+    "core_dsym_uuid_matches_binary": true,
+    "production_archive_run": false
+  },
+  "video": {
+    "duration_seconds": 18,
+    "capture": "native continuous recording of the exact review window",
+    "editing": "trailing static hold trimmed from 35 seconds; interaction timing unchanged",
+    "audio": false
+  },
+  "limits": [
+    "Synthetic IPS files do not prove Apple generated a real crash",
+    "No production intake deployed or app released",
+    "No real Messages send, Contacts write, paid model call, or permission reset",
+    "Dev smoke did not validate live crash submission or distributed-update TCC retention",
+    "Native UI suite was not executed; manual UI flow and native controller fixtures were exercised"
+  ],
+  "media_sha256": {
+    "workflow.mp4": "03d8637af8dc219d0bff2709318abf547430fd0df68d4c77b2de4ad64ddf84d4",
+    "review.png": "01287afbed63916f378b1993ef43fd61d950ef471119c6e648a9e99184e1beb3",
+    "uncertain.png": "0680b52e31c7b310cb4b0b307887c7f14a5c22ac9438a8da7f351257d9bbf468",
+    "dev-empty.png": "cc11fc7c67e1b87dda4ea61fa95853452637f76b701166dc8cf392dec5ea9f79",
+    "sent.png": "cdfd5c1f38323fc213c44b1ff29881a37858353b4c2c3b3cb328662d9b4686cc"
+  }
+}
