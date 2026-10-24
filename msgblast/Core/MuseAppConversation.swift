@@ -71,18 +71,17 @@ actor MuseAppConversation {
         }
         // Bind screenshot pixels to this capture's scale, origin, and exact
         // window. An unbound click can miss a resized Retina capture's field.
-        _ = try await driver.call("click", ["session": session, "delivery_mode": focusOnly ? "foreground" : "background", "capture_id": capture, "action": "press"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y, "count": focusOnly ? 2 : 1], as: DesktopAppConversation.Action.self)
+        _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "capture_id": capture, "action": focusOnly ? "focus" : "press"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
         return true
     }
-    private func focusComposer(_ target: DesktopAppConversation.Target, session: String, at url: URL) async throws -> MuseAppObservation {
+    private func prepareComposer(_ target: DesktopAppConversation.Target, session: String, at url: URL) async throws -> MuseAppObservation {
         let current = try await observe(target)
         try empty(current)
-        guard current.url == url else { throw DesktopAppError.unavailable("Muse changed side chats before focusing its composer.") }
-        if current.composerFocused, !current.sidebarOpen { return current }
-        // A single pixel click uses AXPress on Muse's compound button and opens
-        // its attachment picker. Open Muse only to focus its verified empty
-        // editor with routed pointer events, then verify native focus before
-        // background typing. Unfocused background WebKit cannot receive them.
+        guard current.url == url else { throw DesktopAppError.unavailable("Muse changed side chats before preparing its composer.") }
+        if !current.sidebarOpen { return current }
+        // Closing an open sidebar must not AXPress the compound attachment
+        // button. WebKit may report the wrapper as focused until text arrives;
+        // first input will explicitly target the current composer instead.
         _ = try await pixelClick(target, session: session, expectedURL: url, focusOnly: true) { state in
             let matches = state.body.filter {
                 (["AXTextArea", "AXTextField"].contains($0.role) && $0.label == "Message") ||
@@ -91,7 +90,7 @@ actor MuseAppConversation {
             guard matches.count == 1 else { throw DesktopAppError.unavailable("Muse's composer geometry is ambiguous.") }
             return matches[0]
         }
-        return try await settled(target) { $0.url == url && $0.composerFocused && !$0.sidebarOpen }
+        return try await settled(target) { $0.url == url && !$0.sidebarOpen }
     }
     private func sidebar(_ target: DesktopAppConversation.Target, session: String) async throws -> DesktopAppSnapshot {
         var state = try await snapshot(target, session: session)
@@ -179,8 +178,8 @@ actor MuseAppConversation {
         if let id = binding?.threadID {
             if MuseSideChatBinding.threadID(in: current.url) == id {
                 try verifyRecovery(current)
-                let focused = try await focusComposer(target, session: session, at: current.url)
-                return MuseSideChatBinding(comparisonID: comparisonID, threadID: id, title: focused.title)
+                let prepared = try await prepareComposer(target, session: session, at: current.url)
+                return MuseSideChatBinding(comparisonID: comparisonID, threadID: id, title: prepared.title)
             }
             for pass in 0..<2 {
                 var index = 0
@@ -198,8 +197,8 @@ actor MuseAppConversation {
                     let selected = try await settled(target) { MuseSideChatBinding.threadID(in: $0.url) != nil && !$0.sidebarOpen }
                     if MuseSideChatBinding.threadID(in: selected.url) == id {
                         try verifyRecovery(selected)
-                        let focused = try await focusComposer(target, session: session, at: selected.url)
-                        return MuseSideChatBinding(comparisonID: comparisonID, threadID: id, title: focused.title)
+                        let prepared = try await prepareComposer(target, session: session, at: selected.url)
+                        return MuseSideChatBinding(comparisonID: comparisonID, threadID: id, title: prepared.title)
                     }
                     index += 1
                 }
@@ -207,7 +206,7 @@ actor MuseAppConversation {
             }
             throw DesktopAppError.unavailable("The saved Muse side chat was not found in its accessible list. Open it in Muse and try again; no replacement chat was created.")
         }
-        if preparedNew?.matches(comparisonID, target, current) == true, current.url == MuseSideChatBinding.newURL, current.messages.isEmpty, current.composerFocused {
+        if preparedNew?.matches(comparisonID, target, current) == true, current.url == MuseSideChatBinding.newURL, current.messages.isEmpty {
             return MuseSideChatBinding(comparisonID: comparisonID, threadID: nil, title: "New side chat")
         }
         let list = try await sidebar(target, session: session)
@@ -216,9 +215,9 @@ actor MuseAppConversation {
         preparedNew = nil
         try await click(buttons[0], target: target, session: session)
         let created = try await settled(target) { $0.url == MuseSideChatBinding.newURL && $0.messages.isEmpty }
-        let focused = try await focusComposer(target, session: session, at: created.url)
-        preparedNew = NewChat(comparison: comparisonID, target: target, composer: focused.composerIdentity)
-        return MuseSideChatBinding(comparisonID: comparisonID, threadID: nil, title: focused.title)
+        let prepared = try await prepareComposer(target, session: session, at: created.url)
+        preparedNew = NewChat(comparison: comparisonID, target: target, composer: prepared.composerIdentity)
+        return MuseSideChatBinding(comparisonID: comparisonID, threadID: nil, title: prepared.title)
     }
 
     func reply(_ prompt: String, binding: MuseSideChatBinding, requestID: UUID = UUID(),
@@ -241,7 +240,6 @@ actor MuseAppConversation {
             guard matches else { throw DesktopAppError.unavailable("Muse's selected side chat changed. Nothing will be retried automatically.") }
         }
         try sameChat(before, id: binding.threadID)
-        guard before.composerFocused else { throw DesktopAppError.unavailable("Muse's composer lost focus. Reopen the comparison before sending.") }
         let receipt = MuseAppReceipt(baseline: before.messages, prompt: wirePrompt)
         var prefix = ""
         // Small, disjoint chunks keep synthesized input within the driver's
@@ -262,18 +260,39 @@ actor MuseAppConversation {
             // chunks; the final draft must match the entire prompt exactly.
             draft == prefix || (prefix.hasSuffix("\n") && draft == prefix + "\n")
         }
-        for input in inputs {
+        for (index, input) in inputs.enumerated() {
             let check = try await observe(target)
             try sameChat(check, id: binding.threadID)
-            guard matchesPreparedDraft(check.draft), check.composerFocused, !check.generating, check.messages == before.messages else {
+            guard matchesPreparedDraft(check.draft), (check.composerFocused || index == 0), !check.generating, check.messages == before.messages else {
                 throw DesktopAppError.unavailable("Muse's draft or focus changed before typing. Review the preserved draft.")
             }
             switch input {
             case .text(let chunk):
-                // Do not AX-press the compound button: that opens its file picker.
-                _ = try await driver.call("type_text", ["text": chunk, "delivery_mode": "background", "session": session], numbers: ["pid": target.pid, "window_id": target.window, "delay_ms": 0], as: DesktopAppConversation.Action.self)
+                var arguments = ["text": chunk, "delivery_mode": "background", "session": session]
+                if index == 0, !check.composerFocused {
+                    let state = try await snapshot(target, session: session)
+                    let composers = state.body.filter {
+                        (["AXTextArea", "AXTextField"].contains($0.role) && $0.label == "Message") ||
+                        ($0.role == "AXButton" && $0.label == "Message Attach file Dictate a message Send")
+                    }
+                    guard composers.count == 1, composers[0].enabled != false,
+                          let token = composers[0].element_token else {
+                        throw DesktopAppError.unavailable("Muse's current editor could not be targeted safely. Nothing was typed.")
+                    }
+                    let confirmed = try await observe(target)
+                    try sameChat(confirmed, id: binding.threadID)
+                    try empty(confirmed)
+                    guard confirmed.messages == before.messages else {
+                        throw DesktopAppError.unavailable("Muse's conversation changed before typing. Nothing was typed.")
+                    }
+                    // AXSelectedText targets the editor directly; AXPress would
+                    // open attachments. Require independent draft/focus readback.
+                    arguments["element_token"] = token
+                }
+                _ = try await driver.call("type_text", arguments, numbers: ["pid": target.pid, "window_id": target.window, "delay_ms": 0], as: DesktopAppConversation.Action.self)
                 prefix += chunk
             case .newline:
+                guard check.composerFocused else { throw DesktopAppError.unavailable("Muse's editor is not focused for a leading line break. Nothing was submitted.") }
                 // Plain newline character events submit Muse's composer.
                 _ = try await driver.call("press_key", ["key": "return", "delivery_mode": "background", "session": session], numbers: ["pid": target.pid, "window_id": target.window], arrays: ["modifiers": ["shift"]], as: DesktopAppConversation.Action.self)
                 prefix += "\n"
