@@ -30,5 +30,15 @@
     "Live Dev acceptance, not production distribution or fresh-permission acceptance.",
     "Existing Muse and Demo videos remain separate evidence. No new live ChatGPT/Dots video was captured.",
     "ChatGPT initial failure remains unresolved; independent recovery checks do not erase it."
-  ]
+  ],
+  "chatgpt_recovery_first": {
+    "status": "observed",
+    "reply": "PAL-CHATGPT-SECOND-9D491D1",
+    "manual_acknowledgement_required_before_new_comparison": true
+  },
+  "chatgpt_followup": {
+    "status": "failed",
+    "detail": "ChatGPT did not confirm the exact prepared draft. Send was not pressed; review the preserved text.",
+    "native_draft_empty_after_stop": true
+  }
 }

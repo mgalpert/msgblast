@@ -2,7 +2,7 @@
 
 Source: `9d491d177de7556deba361d2c9ecf8c140a2c731`. Live blue-green Dev, not fixture input. The pre-existing development signing identity, saved profile and permissions were preserved. Production was not replaced.
 
-Dots first prompt and follow-up both returned the requested answer inside msgblast, retaining the same Dot binding. ChatGPT’s initial prompt stopped with “ChatGPT changed during the input check.” It has not passed first-attempt acceptance. A later independent recovery check cannot erase that failure.
+Dots first prompt and follow-up both returned the requested answer inside msgblast, retaining the same Dot binding. ChatGPT’s initial prompt stopped with “ChatGPT changed during the input check.” It has not passed first-attempt acceptance. After manually acknowledging the incomplete test receipt, a separate ChatGPT conversation returned its first reply. Its follow-up then failed exact draft verification before Send. The native composer was empty afterward; no uncertain submission was replayed. Neither failure is resolved by the later successful first reply.
 
 The screenshots show only QA prompts, observed responses and the failure state. Raw profiles, remote configuration and diagnostic captures are excluded.
 
