@@ -52,48 +52,50 @@ enum DesktopAppWorkflow {
         return false
     }
 
-    static func wait<Value>(timeout: Duration, interval: Duration, failure: String,
+    static func wait<Value, C: Clock>(timeout: Duration, interval: Duration, failure: String,
                             retry: (Error) -> Bool = transient,
+                            clock: C = ContinuousClock(),
                             isolation: isolated (any Actor)? = #isolation,
-                            read: () async throws -> Value, ready: (Value) throws -> Bool) async throws -> Value {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
+                            read: () async throws -> Value, ready: (Value) throws -> Bool) async throws -> Value where C.Duration == Duration {
+        let deadline = clock.now.advanced(by: timeout)
         var lastError: Error?
-        while ContinuousClock.now < deadline {
+        while clock.now < deadline {
             try Task.checkCancellation()
             do {
                 let value = try await read()
-                guard ContinuousClock.now < deadline else { break }
+                guard clock.now < deadline else { break }
                 lastError = nil
-                if try ready(value), ContinuousClock.now < deadline { return value }
+                if try ready(value), clock.now < deadline { return value }
             } catch {
-                guard retry(error), ContinuousClock.now < deadline else { throw error }
+                guard retry(error), clock.now < deadline else { throw error }
                 lastError = error
             }
-            let pause = min(interval, ContinuousClock.now.duration(to: deadline))
-            if pause > .zero { try await Task.sleep(for: pause) }
+            let pause = min(interval, clock.now.duration(to: deadline))
+            if pause > .zero { try await clock.sleep(for: pause) }
         }
         try Task.checkCancellation()
         throw lastError ?? DesktopAppError.unavailable(failure)
     }
 
-    static func reply(app: String, timing: DesktopAppConversation.Timing, timeout: Duration? = nil,
+    static func reply<C: Clock>(app: String, timing: DesktopAppConversation.Timing, timeout: Duration? = nil,
+                      clock: C = ContinuousClock(),
                       isolation: isolated (any Actor)? = #isolation,
-                      submit: () async throws -> Void, observe: () async throws -> String?) async throws -> String {
+                      submit: () async throws -> Void, observe: () async throws -> String?) async throws -> String where C.Duration == Duration {
         try Task.checkCancellation()
         try await submit()
-        let deadline = ContinuousClock.now.advanced(by: timeout ?? timing.replyTimeout)
-        var previous: String?, since = ContinuousClock.now
-        while ContinuousClock.now < deadline {
-            try await Task.sleep(for: timing.pollInterval)
+        let deadline = clock.now.advanced(by: timeout ?? timing.replyTimeout)
+        var previous: String?, since = clock.now
+        while clock.now < deadline {
+            try await clock.sleep(for: timing.pollInterval)
             let candidate: String?
             do { candidate = try await observe() }
             catch {
                 guard transient(error) else { throw error }
-                previous = nil; since = .now
+                previous = nil; since = clock.now
                 continue
             }
-            if candidate != previous { previous = candidate; since = .now }
-            if let candidate, !candidate.isEmpty, ContinuousClock.now - since >= timing.stableDuration { return candidate }
+            if candidate != previous { previous = candidate; since = clock.now }
+            if let candidate, !candidate.isEmpty, since.duration(to: clock.now) >= timing.stableDuration { return candidate }
         }
         throw DesktopAppError.unavailable("\(app) has not completed a verified reply. Review the native conversation; nothing will be resent automatically.")
     }
