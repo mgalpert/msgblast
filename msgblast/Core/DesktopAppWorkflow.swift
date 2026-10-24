@@ -53,6 +53,7 @@ enum DesktopAppWorkflow {
     }
 
     static func wait<Value>(timeout: Duration, interval: Duration, failure: String,
+                            retry: (Error) -> Bool = transient,
                             isolation: isolated (any Actor)? = #isolation,
                             read: () async throws -> Value, ready: (Value) throws -> Bool) async throws -> Value {
         let deadline = ContinuousClock.now.advanced(by: timeout)
@@ -62,7 +63,7 @@ enum DesktopAppWorkflow {
                 let value = try await read()
                 if try ready(value) { return value }
             } catch {
-                guard transient(error), ContinuousClock.now < deadline else { throw error }
+                guard retry(error), ContinuousClock.now < deadline else { throw error }
             }
             guard ContinuousClock.now < deadline else { throw DesktopAppError.unavailable(failure) }
             try await Task.sleep(for: interval)

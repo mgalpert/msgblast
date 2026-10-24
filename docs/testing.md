@@ -127,6 +127,9 @@ foreign draft refusal, stopping after failed readback, read-only transition
 recovery, nonzero reply-stability intervals, and single submission through reply recovery. Existing per-profile
 adapter fixtures retain destination, sender, nonce, draft and uncertain-send
 assertions. They exercise the common workflow, not copies of its implementation.
+Muse's cold-start connection regression supplies multiple inconsistent native
+composer reads before a stable result. Recovery is read-only and bounded to five
+seconds; a readable unsent draft still blocks connection immediately.
 
 The seven retained `FindsOtherDesktopAndRejectsAmbiguousMainWindows` cases also include
 Claude's layer-1000 full-display overlay with membership in multiple Spaces. The

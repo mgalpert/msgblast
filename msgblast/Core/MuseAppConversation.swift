@@ -24,14 +24,13 @@ actor MuseAppConversation {
     private func observe(_ target: DesktopAppConversation.Target) async throws -> MuseAppObservation {
         try Task.checkCancellation()
         let read = readNative
-        do { return try await Task.detached { try read(target) }.value }
-        catch {
-            // Muse briefly replaces its AX window during side-chat navigation.
-            // Only a read is repeated; no input action is replayed.
-            try Task.checkCancellation()
-            try await Task.sleep(for: timing.pollInterval)
-            return try await Task.detached { try read(target) }.value
-        }
+        // A cold WebKit window can exist before its text-marker and numeric
+        // ranges agree. Wait only for a consistent read; a readable draft is
+        // returned immediately so the caller can preserve it and stop.
+        return try await DesktopAppWorkflow.wait(timeout: .seconds(5), interval: timing.pollInterval,
+            failure: "Muse's conversation could not be read.", retry: { !($0 is CancellationError) }, read: {
+                try await Task.detached { try read(target) }.value
+            }, ready: { _ in true })
     }
     private func empty(_ state: MuseAppObservation) throws {
         guard state.draft.isEmpty, !state.generating else {

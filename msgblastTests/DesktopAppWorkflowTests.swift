@@ -60,6 +60,31 @@ final class DesktopAppWorkflowTests: XCTestCase {
         XCTAssertEqual(reads, 3)
     }
 
+    func testCustomReadRecoveryStopsAtItsDeadlineAndPropagatesCancellation() async {
+        for cancelled in [false, true] {
+            var reads = 0
+            let started = ContinuousClock.now
+            do {
+                let _: Bool = try await DesktopAppWorkflow.wait(timeout: .milliseconds(25), interval: .milliseconds(5),
+                    failure: "Not ready", retry: { !($0 is CancellationError) }, read: {
+                        reads += 1
+                        if cancelled { throw CancellationError() }
+                        throw Failure.changed
+                    }, ready: { $0 })
+                XCTFail("Unreadable state must never become ready")
+            } catch {
+                if cancelled {
+                    XCTAssertTrue(error is CancellationError)
+                    XCTAssertEqual(reads, 1)
+                } else {
+                    XCTAssertTrue(error is Failure, "Keep the last native failure at the deadline")
+                    XCTAssertGreaterThan(reads, 1)
+                    XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .milliseconds(25))
+                }
+            }
+        }
+    }
+
     func testReplyReadRecoveryDoesNotSubmitAgain() async throws {
         var submissions = 0, reads = 0
         let answer = try await DesktopAppWorkflow.reply(app: "Fixture", timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(1)), submit: {
