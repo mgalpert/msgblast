@@ -1983,12 +1983,45 @@ final class DesktopAppDriverTests: XCTestCase {
         assertMuseBackground(calls)
     }
 
+    func testMuseWaitsForUnchangedDraftReadbackWithoutReplayingInput() async throws {
+        let owner = UUID(), thread = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        let typed = museObservation(thread: thread, draft: prompt)
+        let messages = [MuseAppMessage(role: .user, text: prompt), .init(role: .assistant, text: "Observed reply")]
+        let fixture = try driver([apps(.muse), initial, museComposerCapture(),
+            try museStep("type_text", observation: typed),
+            try museStep("press_key", observation: museObservation(thread: thread, messages: messages))])
+        defer { fixture.remove() }
+        let staleReads = MuseReadFault(failures: 2)
+        let expectedDraft = prompt
+        let adapter = MuseAppConversation(executable: fixture.executable,
+            timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(3), callTimeout: 3)) { _ in
+                let actual = try JSONDecoder().decode(MuseAppObservation.self,
+                    from: Data(contentsOf: fixture.directory.appendingPathComponent("native.json")))
+                // CGEvent completion can precede WebKit publishing its exact
+                // parameterized text range. Only delay the post-input readback.
+                if actual.draft == expectedDraft, staleReads.shouldFail() {
+                    var stale = actual; stale.draft = ""; return stale
+                }
+                return actual
+            }
+        let result = try await adapter.reply(prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Title")) { _ in }
+        XCTAssertEqual(result, "Observed reply")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1, "Readback recovery must not retype")
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, 1, "Submit once, after the exact draft appears")
+        XCTAssertFalse(staleReads.shouldFail(), "Both stale reads must be consumed before submission")
+        assertMuseBackground(calls)
+    }
+
     func testMusePartialDraftFocusLossAndChatSwitchPreventReturnWithoutReplay() async throws {
         let owner = UUID(), thread = UUID()
-        for fault in ["partial", "focus", "chat"] {
+        for fault in ["unchanged", "partial", "focus", "chat", "history", "generating"] {
             var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
-            var typed = museObservation(thread: fault == "chat" ? UUID() : thread, draft: fault == "partial" ? "Partial" : prompt)
+            var typed = museObservation(thread: fault == "chat" ? UUID() : thread, draft: fault == "unchanged" ? "" : fault == "partial" ? "Partial" : prompt)
             typed.composerFocused = fault != "focus"
+            if fault == "history" { typed.messages = [.init(role: .assistant, text: "Unrelated incoming message")] }
+            typed.generating = fault == "generating"
             let fixture = try driver([apps(.muse), initial, museComposerCapture(), try museStep("type_text", observation: typed)])
             defer { fixture.remove() }
             _ = await failure { try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Title")) { _ in XCTFail("Must not record an unsubmitted draft") } }

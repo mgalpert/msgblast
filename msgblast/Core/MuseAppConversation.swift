@@ -295,11 +295,18 @@ actor MuseAppConversation {
 
             }
         }, after: { step in
-            let typed = try await self.observe(target)
-            try sameChat(typed, id: binding.threadID)
-            guard matchesPreparedDraft(typed.draft, prefix: step.after), typed.composerFocused, !typed.generating, typed.messages == before.messages else {
-                throw DesktopAppError.unavailable("Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.")
-            }
+            _ = try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: self.timing.pollInterval,
+                failure: "Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.",
+                read: { try await self.observe(target) }, ready: { typed in
+                    try sameChat(typed, id: binding.threadID)
+                    // CGEvent completion can precede WebKit's text-range update.
+                    let ready = matchesPreparedDraft(typed.draft, prefix: step.after)
+                    guard ready || matchesPreparedDraft(typed.draft, prefix: step.before),
+                          typed.composerFocused, !typed.generating, typed.messages == before.messages else {
+                        throw DesktopAppError.unavailable("Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.")
+                    }
+                    return ready
+                })
         })
         let ready = try await observe(target)
         try sameChat(ready, id: binding.threadID)
