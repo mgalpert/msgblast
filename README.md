@@ -1,11 +1,11 @@
-# Final Dev acceptance on a dedicated Mac
+# ChatGPT and Dots final Dev acceptance
 
-Source: `9d491d177de7556deba361d2c9ecf8c140a2c731`. Live blue-green Dev, not fixture input. The pre-existing development signing identity, saved profile and permissions were preserved. Production was not replaced.
+Source: `1c0511d002d80e0f800e20a7327b36f1e1bb4325`. Blue-green msgblast Dev in live mode on the authorized dedicated Mac. Same development signing identity, designated requirement, installed path and profile; deep/strict verification and exact executable hash checked.
 
-Dots first prompt and follow-up both returned the requested answer inside msgblast, retaining the same Dot binding. ChatGPT’s initial prompt stopped with “ChatGPT changed during the input check.” It has not passed first-attempt acceptance. After manually acknowledging the incomplete test receipt, a separate ChatGPT conversation returned its first reply. Its follow-up then failed exact draft verification before Send. The native composer was empty afterward; no uncertain submission was replayed. Neither failure is resolved by the later successful first reply.
+ChatGPT first prompt and follow-up returned the exact QA markers on their first attempts. Both receipts retain the same new dedicated binding, distinct from all earlier comparisons. Dots first/follow-up returned the exact markers and retained the existing Dot. No manual ChatGPT focus, Reconnect, acknowledgement or replay was used. Existing comparisons and completed onboarding survived.
 
-The screenshots show only QA prompts, observed responses and the failure state. Raw profiles, remote configuration and diagnostic captures are excluded.
+The 40-second video records the actual ChatGPT pair continuously at 4x speed, without cuts or audio. It is cropped to the exact Dev window. The PNG screenshots are unedited native window captures. QA prompts only; raw display video and native account metadata are excluded.
 
-The completed onboarding checkpoint remained finished after upgrading; Dev opened its existing agent screen. This is an existing-profile upgrade check, not a fresh-install or fresh-permission check.
+Five regression methods failed before their respective fixes. 205 affected native tests pass; one native smoke test is skipped because it requires pre-existing AX access. The moved-field fixture uses a 100×100 capture and checks actual input hits before advancing the draft. Deliberately stale coordinates fail, and restored production coordinates pass. Fixtures prove guards and ordering, not live delivery.
 
-No new ChatGPT/Dots video was captured. The PR retains its separately labeled, matching-source Muse interaction video and earlier Demo onboarding video.
+Limits: ChatGPT already running, existing account/grants, no fresh OS permission acceptance. Gemini is deferred. CI status belongs to the PR. See validation.json for sanitized results.

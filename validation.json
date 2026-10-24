@@ -1,44 +1,69 @@
 {
-  "source_sha": "9d491d177de7556deba361d2c9ecf8c140a2c731",
-  "variant": "msgblast Dev",
-  "fixture": false,
-  "bundle_id": "com.msgblast.development",
-  "executable_sha256": "f0d4ffc77e4b82094e3a6a574c0670dc57e8d603acadbbabfa1c5df7601aaf07",
-  "signature_verified": true,
-  "development_identity_preserved": true,
-  "onboarding_before_upgrade": "finished",
-  "onboarding_after_upgrade": "finished",
-  "permissions_reset": false,
-  "production_app_modified": false,
-  "chatgpt_initial": {
-    "status": "failed",
-    "detail": "ChatGPT changed during the input check.",
-    "reply_observed": false,
-    "native_draft_empty_after_stop": true,
-    "prepared_binding_saved": false
-  },
-  "dots_first": {
-    "status": "observed",
-    "reply": "PAL-DOTS-FIRST-9D491D1"
-  },
-  "dots_followup": {
-    "status": "observed",
-    "reply": "PAL-DOTS-FOLLOWUP-9D491D1"
-  },
-  "dots_same_binding": true,
-  "limits": [
-    "Live Dev acceptance, not production distribution or fresh-permission acceptance.",
-    "Existing Muse and Demo videos remain separate evidence. No new live ChatGPT/Dots video was captured.",
-    "ChatGPT initial failure remains unresolved; independent recovery checks do not erase it."
+  "source_revision": "1c0511d002d80e0f800e20a7327b36f1e1bb4325",
+  "live_checks": [
+    {
+      "agent": "chatgptApp",
+      "prompt": "Reply only: CHATGPT-FOLLOWUP-1C0511D. Do not use tools or take other actions.",
+      "status": "observed"
+    },
+    {
+      "agent": "chatgptApp",
+      "prompt": "Reply only: CHATGPT-FIRST-1C0511D. Do not use tools or take other actions.",
+      "status": "observed"
+    },
+    {
+      "agent": "dotsApp",
+      "prompt": "Reply only: DOTS-FOLLOWUP-1C0511D. Do not use tools or take other actions.",
+      "status": "observed"
+    },
+    {
+      "agent": "dotsApp",
+      "prompt": "Reply only: DOTS-FIRST-1C0511D. Do not use tools or take other actions.",
+      "status": "observed"
+    }
   ],
-  "chatgpt_recovery_first": {
-    "status": "observed",
-    "reply": "PAL-CHATGPT-SECOND-9D491D1",
-    "manual_acknowledgement_required_before_new_comparison": true
+  "existing_comparisons_unchanged": true,
+  "completed_onboarding_unchanged": true,
+  "bindings": {
+    "chatgpt_new_dedicated_chat": true,
+    "chatgptApp_pair_retains_one_binding": true,
+    "dots_existing_destination": true,
+    "dotsApp_pair_retains_one_binding": true
   },
-  "chatgpt_followup": {
-    "status": "failed",
-    "detail": "ChatGPT did not confirm the exact prepared draft. Send was not pressed; review the preserved text.",
-    "native_draft_empty_after_stop": true
-  }
+  "app_identity": {
+    "bundle_id": "com.msgblast.development",
+    "live_mode": true,
+    "updates_disabled": true,
+    "signed_archive_sha256": "f5162c9eb384498f51e74ce52b8f1293661200768b1457c827f2497c5ccc4d0a",
+    "installed_executable_sha256": "4ca5dcd1e9e85f2bd3051a4eeadf3f178812cdb25c6bf4e78bd34715c37a4fa5",
+    "deep_strict_signature_verified": true,
+    "development_signing_identity_and_requirement_retained": true
+  },
+  "interventions": {
+    "manual_chatgpt_focus": false,
+    "reconnect": false,
+    "receipt_acknowledgement": false,
+    "replayed_input_or_send": false,
+    "permission_reset": false
+  },
+  "unit_regressions": {
+    "passed": 205,
+    "permission_dependent_smoke_skipped": 1,
+    "proof_methods_red_before_fix": 5,
+    "stale_coordinate_mutation": "caught; source restored; positive proof passes"
+  },
+  "video": {
+    "seconds": 40,
+    "speed": 4,
+    "cuts": false,
+    "audio": false,
+    "capture": "continuous live display recording cropped to exact Dev window",
+    "simulated": false
+  },
+  "limits": [
+    "Existing account and OS grants",
+    "ChatGPT process already running because it also hosts work sessions",
+    "Gemini deferred",
+    "Full CI status reported separately in PR"
+  ]
 }
