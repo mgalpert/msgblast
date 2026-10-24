@@ -57,17 +57,23 @@ enum DesktopAppWorkflow {
                             isolation: isolated (any Actor)? = #isolation,
                             read: () async throws -> Value, ready: (Value) throws -> Bool) async throws -> Value {
         let deadline = ContinuousClock.now.advanced(by: timeout)
-        while true {
+        var lastError: Error?
+        while ContinuousClock.now < deadline {
             try Task.checkCancellation()
             do {
                 let value = try await read()
-                if try ready(value) { return value }
+                guard ContinuousClock.now < deadline else { break }
+                lastError = nil
+                if try ready(value), ContinuousClock.now < deadline { return value }
             } catch {
                 guard retry(error), ContinuousClock.now < deadline else { throw error }
+                lastError = error
             }
-            guard ContinuousClock.now < deadline else { throw DesktopAppError.unavailable(failure) }
-            try await Task.sleep(for: interval)
+            let pause = min(interval, ContinuousClock.now.duration(to: deadline))
+            if pause > .zero { try await Task.sleep(for: pause) }
         }
+        try Task.checkCancellation()
+        throw lastError ?? DesktopAppError.unavailable(failure)
     }
 
     static func reply(app: String, timing: DesktopAppConversation.Timing, timeout: Duration? = nil,

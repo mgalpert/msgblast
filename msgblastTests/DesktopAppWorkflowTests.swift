@@ -85,6 +85,26 @@ final class DesktopAppWorkflowTests: XCTestCase {
         }
     }
 
+    func testReadRecoveryRejectsLateSuccessAndDoesNotStartAnotherReadAfterExpiry() async {
+        for lateFirstResult in [false, true] {
+            var reads = 0
+            do {
+                let _: Bool = try await DesktopAppWorkflow.wait(timeout: .milliseconds(100), interval: .milliseconds(300),
+                    failure: "Recovery deadline", retry: { _ in true }, read: {
+                        reads += 1
+                        if lateFirstResult { try await Task.sleep(for: .milliseconds(300)) }
+                        else if reads == 1 { throw Failure.changed }
+                        return true
+                    }, ready: { $0 })
+                XCTFail("Expired observation cannot authorize readiness")
+            } catch {
+                if lateFirstResult { XCTAssertEqual(error.localizedDescription, "Recovery deadline") }
+                else { XCTAssertTrue(error is Failure, "Retain the native failure instead of reading past expiry") }
+            }
+            XCTAssertEqual(reads, 1, "An expired recovery window must not start another native read")
+        }
+    }
+
     func testReplyReadRecoveryDoesNotSubmitAgain() async throws {
         var submissions = 0, reads = 0
         let answer = try await DesktopAppWorkflow.reply(app: "Fixture", timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(1)), submit: {
