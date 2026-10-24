@@ -25,7 +25,43 @@ actor ChatGPTAppConversation {
     private func idle(_ native: ChatGPTAppObservation) throws {
         guard native.draft.isEmpty, !native.generating else { throw DesktopAppError.unavailable("ChatGPT has a draft or active response. It was preserved.") }
     }
+    private func composerElement(_ control: ChatGPTAXNode, target: DesktopAppConversation.Target, session: String, expected: ChatGPTAppObservation, imageURL: URL?) async throws -> (DesktopAppSnapshot, DesktopAppSnapshot.Element) {
+        let failure = "ChatGPT’s composer has not settled. Nothing was typed automatically."
+        let result: (DesktopAppSnapshot, DesktopAppSnapshot.Element)? = try await DesktopAppWorkflow.wait(timeout: .seconds(5), interval: timing.pollInterval, failure: failure, read: {
+            let before = try await self.read(target)
+            guard before.sameContent(as: expected), !before.generating else { throw DesktopAppError.unavailable("ChatGPT changed before input. Your draft was preserved.") }
+            let field = try before.requiredComposer()
+            guard field.role == control.role, field.label == control.label, field.id == control.id,
+                  !control.focused || field.focused,
+                  before.draft.isEmpty || field.selectedText == control.selectedText else {
+                throw DesktopAppError.unavailable("ChatGPT’s composer focus or selection changed. Your draft was preserved.")
+            }
+            let state = try await self.driver.snapshot(target, session: session, screenshotURL: imageURL)
+            try state.checkReadable()
+            let after = try await self.read(target)
+            guard before.sameContent(as: after), !after.generating, state.pid == target.pid, state.window_id == target.window else {
+                throw DesktopAppError.unavailable("ChatGPT changed during the input check. Nothing was retried.")
+            }
+            let current = try after.requiredComposer()
+            guard !control.focused || current.focused else { throw DesktopAppError.unavailable("ChatGPT’s composer lost focus. Your draft was preserved.") }
+            // Geometry and empty-field focus can settle after navigation. Only
+            // observations repeat; input uses one coherent, current snapshot.
+            guard field.frame == current.frame, field.value == current.value, field.selectedText == current.selectedText,
+                  field.focused == current.focused, field.role == current.role, field.label == current.label, field.id == current.id,
+                  field.visible, field.enabled else { return nil }
+            let matches = state.body.filter {
+                $0.role == field.role && $0.label == field.label && $0.frame == field.frame && $0.enabled != false && $0.element_token != nil
+            }
+            guard matches.count <= 1 else { throw DesktopAppError.unavailable("ChatGPT’s composer is ambiguous. Nothing was typed.") }
+            return matches.first.map { (state, $0) }
+        }, ready: { $0 != nil })
+        guard let result else { throw DesktopAppError.unavailable(failure) }
+        return result
+    }
     private func element(_ control: ChatGPTAXNode, target: DesktopAppConversation.Target, session: String, expected: ChatGPTAppObservation, imageURL: URL? = nil, semanticNavigation: Bool = false) async throws -> (DesktopAppSnapshot, DesktopAppSnapshot.Element) {
+        if let composer = expected.composer, control.role == composer.role, control.label == composer.label {
+            return try await composerElement(control, target: target, session: session, expected: expected, imageURL: imageURL)
+        }
         let before = try await read(target)
         guard before.sameContent(as: expected) else { throw DesktopAppError.unavailable("ChatGPT changed before input. Nothing was retried.") }
         let state = try await driver.snapshot(target, session: session, screenshotURL: imageURL)
@@ -40,6 +76,20 @@ actor ChatGPTAppConversation {
         }
         guard control.visible || semanticOnly, matches.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s control could not be verified for background input.") }
         return (state, matches[0])
+    }
+    private func focusComposer(_ expected: ChatGPTAppObservation, target: DesktopAppConversation.Target, session: String) async throws -> ChatGPTAppObservation {
+        let native = try await read(target)
+        guard native.sameContent(as: expected), !native.generating else { throw DesktopAppError.unavailable("ChatGPT changed while preparing its composer. Nothing was typed.") }
+        let composer = try native.requiredComposer()
+        if composer.focused { return native }
+        let (_, element) = try await self.element(composer, target: target, session: session, expected: native)
+        _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "element_token": element.element_token!], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
+        return try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: timing.pollInterval,
+            failure: "ChatGPT’s composer could not take focus. Nothing was typed.", read: {
+                let current = try await self.read(target)
+                guard current.sameContent(as: native), !current.generating else { throw DesktopAppError.unavailable("ChatGPT changed while focusing its composer. Your draft was preserved.") }
+                return current
+            }, ready: { try $0.requiredComposer().focused })
     }
     private func action(_ tool: String = "click", control: ChatGPTAXNode, text: String? = nil, key: String? = nil, target: DesktopAppConversation.Target, session: String, expected: ChatGPTAppObservation, pixel: Bool = false, semanticNavigation: Bool = false, verifyImage: Bool = false, modifiers: [String] = [], focusedInput: Bool = false) async throws {
         let image = pixel || verifyImage ? FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-chatgpt-\(UUID()).png") : nil
@@ -185,7 +235,7 @@ actor ChatGPTAppConversation {
     private func checkedDraft(_ expected: String, previous: ChatGPTAppObservation, target: DesktopAppConversation.Target) async throws -> ChatGPTAppObservation {
         let current = try await read(target)
         guard current.kind == previous.kind, current.title == previous.title, current.messages == previous.messages,
-              !current.generating, current.draft == expected else { throw DesktopAppError.unavailable("ChatGPT did not confirm the exact prepared draft. Send was not pressed; review the preserved text.") }
+              !current.generating, current.composer?.focused == true, current.draft == expected else { throw DesktopAppError.unavailable("ChatGPT did not confirm the exact prepared draft. Send was not pressed; review the preserved text.") }
         return current
     }
     func reply(_ text: String, binding: ChatGPTConversationBinding, onPrepared: @Sendable (ChatGPTConversationBinding) async throws -> Void, onBinding: @Sendable (ChatGPTConversationBinding) async throws -> Void) async throws -> String {
@@ -195,6 +245,7 @@ actor ChatGPTAppConversation {
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(binding.kind == .dots ? .dots : .chatgpt)
         var native = try await open(binding, target: target, session: session)
+        native = try await focusComposer(native, target: target, session: session)
         let baseline = native.messages, openedTitle = native.title, prompt = binding.firstPrompt == nil ? binding.firstMessage(text) : text
         var pending = recoveredLegacyBinding(binding, native: native) ?? binding
         try DesktopAppWorkflow.validateText(prompt)

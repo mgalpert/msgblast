@@ -268,12 +268,17 @@ private actor ChatGPTRecordedBindings {
 }
 
 final class ChatGPTAppSubmissionTests: XCTestCase {
+    private enum Preparation: String, Sendable {
+        case ready, unfocused, movingComposer, focusNoOp, draftDuringFocus, chatDuringFocus, historyDuringFocus, generationDuringFocus, focusLostAfterTyping
+        var needsFocus: Bool { [.unfocused, .focusNoOp, .draftDuringFocus, .chatDuringFocus, .historyDuringFocus, .generationDuringFocus].contains(self) }
+    }
     private struct Fixture: Sendable {
         let directory: URL
         let executable: URL
         let binding: ChatGPTConversationBinding
         let roots: [ChatGPTAXNode]
         let nativeParagraphs: Bool
+        let preparation: Preparation
         var stage: URL { directory.appendingPathComponent("stage") }
         func adapter(transientAfterTyping: Bool = false, partialOutgoingOnce: Bool = false, thinkingStatusOnce: Bool = false, renameReadFailure: Bool = false, renameReadCancellation: Bool = false, prependHistoryAfterSend: Bool = false, dotTransitionOnce: Bool = false) -> ChatGPTAppConversation {
             ChatGPTAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(3), callTimeout: 3), readNative: { target in
@@ -315,6 +320,34 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
                     }
                     update(&root)
                 }
+                func preparationState(_ node: inout ChatGPTAXNode) {
+                    if node.role == "AXTextArea" {
+                        if preparation.needsFocus && index == 0 { node.focused = false }
+                        if preparation == .movingComposer, FileManager.default.fileExists(atPath: directory.appendingPathComponent("composer-moved").path) {
+                            node.frame = .init(x: 0, y: 20, w: 10, h: 10)
+                        }
+                        if preparation == .draftDuringFocus, index == 1 {
+                            node.value = "A draft typed elsewhere"; node.children = []
+                        }
+                        if preparation == .focusLostAfterTyping, !((try? String(contentsOf: directory.appendingPathComponent("native-draft"), encoding: .utf8)) ?? "").isEmpty {
+                            node.focused = false
+                        }
+                    }
+                    for child in node.children.indices { preparationState(&node.children[child]) }
+                }
+                preparationState(&root)
+                if preparation == .chatDuringFocus, index == 1 { root.label = "Another conversation" }
+                if index == 1, preparation == .historyDuringFocus {
+                    func appendHistory(_ node: inout ChatGPTAXNode) {
+                        if node.classes.contains(where: { $0.hasPrefix("_transcriptContent_") }) {
+                            node.children.append(.init(role: "AXGroup", children: [.init(role: "AXHeading", label: "You said:"), .init(role: "AXStaticText", value: "An unrelated message")]))
+                        } else { for child in node.children.indices { appendHistory(&node.children[child]) } }
+                    }
+                    appendHistory(&root)
+                }
+                if index == 1, preparation == .generationDuringFocus {
+                    root.children[0].children[0].children.append(.init(role: "AXButton", label: "Stop generating"))
+                }
                 if partialOutgoingOnce || thinkingStatusOnce,
                    let submitted = try? String(contentsOf: directory.appendingPathComponent("submitted-draft"), encoding: .utf8), !submitted.isEmpty {
                     let partialMarker = directory.appendingPathComponent("partial-outgoing-read")
@@ -343,7 +376,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             (try? String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? []
         }
     }
-    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false) throws -> Fixture {
+    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false, preparation: Preparation = .ready) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chatgpt-submit-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var binding = ChatGPTConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, kind: kind)
@@ -443,6 +476,16 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             roots.insert(.init(role: "AXWindow", label: "Existing task", children: [.init(role: "AXWebArea", url: "app://-/index.html", children: [newChat, .init(role: "AXPopUpButton", label: "Switch mode, current mode: ChatGPT"), .init(role: "AXGroup", id: "task-chat-panel", children: [workField])])]), at: 0)
             actions.insert(["tool": "click", "label": "New chat", "role": "AXButton"], at: 0)
         }
+        if preparation.needsFocus {
+            var unfocused = roots[0]
+            func blur(_ node: inout ChatGPTAXNode) {
+                if node.role == "AXTextArea" { node.focused = false }
+                for child in node.children.indices { blur(&node.children[child]) }
+            }
+            blur(&unfocused)
+            roots.insert(unfocused, at: 0)
+            actions.insert(["tool": "click", "label": composerLabel, "role": "AXTextArea"], at: 0)
+        }
         let snapshots: [[String: Any]] = roots.enumerated().map { stage, root in
             let elements: [[String: Any]] = root.descendants.enumerated().compactMap { index, node in
                 guard node.frame != nil || (node.role == "AXButton" && node.classes.contains("sidebar-item")) else { return nil }
@@ -454,6 +497,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         }
         try JSONSerialization.data(withJSONObject: snapshots).write(to: directory.appendingPathComponent("snapshots.json"))
         try JSONSerialization.data(withJSONObject: actions).write(to: directory.appendingPathComponent("actions.json"))
+        try Data(preparation.rawValue.utf8).write(to: directory.appendingPathComponent("preparation"))
         if unknownSend { try Data().write(to: directory.appendingPathComponent("unknown-send")) }
         if dropNewline { try Data().write(to: directory.appendingPathComponent("drop-newline")) }
         if renameFailure { try Data().write(to: directory.appendingPathComponent("rename-failure")) }
@@ -473,6 +517,10 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         elif tool=='get_window_state':
             assert a['pid']==42 and a['window_id']==21
             state=states[s]
+            if (p/'preparation').read_text()=='movingComposer':
+                (p/'composer-moved').touch()
+                for element in state['elements']:
+                    if element['role']=='AXTextArea':element['frame']['y']=20
             if a['include_screenshot']:
                 image=pathlib.Path(a['screenshot_out_file'])
                 image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1sAAAAASUVORK5CYII='))
@@ -497,14 +545,61 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             if e['label']=='Send':
                 (p/'submitted-draft').write_text(draft)
                 (p/'native-draft').write_text('')
-            if not(e['label']=='Automatic title' and tool=='click' and (p/'rename-failure').exists()):(p/'stage').write_text(str(s+1))
+            no_focus=(p/'preparation').read_text()=='focusNoOp' and tool=='click' and e['role']=='AXTextArea'
+            if not(no_focus or (e['label']=='Automatic title' and tool=='click' and (p/'rename-failure').exists())):(p/'stage').write_text(str(s+1))
             if not(e['label']=='Send' and (p/'unknown-send').exists()):print(json.dumps({'effect':'unverifiable'}))
         elif tool=='end_session':print('{}')
         else:raise AssertionError('Unexpected tool '+tool)
         sys.stdout.flush();time.sleep(0.02)
         """.utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        return .init(directory: directory, executable: executable, binding: binding, roots: roots, nativeParagraphs: nativeParagraphs)
+        return .init(directory: directory, executable: executable, binding: binding, roots: roots, nativeParagraphs: nativeParagraphs, preparation: preparation)
+    }
+    func testUnfocusedComposerIsFocusedBeforeFirstPromptAndFollowupInput() async throws {
+        for followup in [false, true] {
+            let f = try fixture(followup: followup, preparation: .unfocused)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let answer = try await f.adapter().reply(followup ? "Follow-up" : "First question", binding: f.binding, onPrepared: { _ in }, onBinding: { _ in })
+            XCTAssertEqual(answer, "ANSWER")
+            let mutations = f.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+            XCTAssertEqual(mutations.first?["tool"] as? String, "click", "Focus must be established before any characters are delivered")
+            XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), followup ? "Follow-up" : f.binding.firstMessage("First question"))
+        }
+    }
+    func testComposerMovingDuringSnapshotIsReobservedWithoutReplayingInput() async throws {
+        let f = try fixture(preparation: .movingComposer)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let answer = try await f.adapter().reply("First question", binding: f.binding, onPrepared: { _ in }, onBinding: { _ in })
+        XCTAssertEqual(answer, "ANSWER")
+        let inputs = f.calls().filter { $0["tool"] as? String == "type_text" }.compactMap { $0["arguments"] as? [String: Any] }
+        XCTAssertEqual(inputs.filter { $0["text"] as? String == f.binding.firstMessage("").trimmingCharacters(in: .newlines) }.count, 1)
+        XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), f.binding.firstMessage("First question"))
+    }
+    func testFailedFocusOrChangedContextNeverReservesOrTypesInput() async throws {
+        for preparation in [Preparation.focusNoOp, .draftDuringFocus, .chatDuringFocus, .historyDuringFocus, .generationDuringFocus] {
+            let f = try fixture(preparation: preparation)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            do {
+                _ = try await f.adapter().reply("First question", binding: f.binding, onPrepared: { _ in XCTFail("Focus and context must be verified before reserving input") }, onBinding: { _ in XCTFail("No conversation can be bound") })
+                XCTFail("Unverified focus or changed context must block input")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.localizedCaseInsensitiveContains(preparation == .focusNoOp ? "focus" : "changed"), error.localizedDescription)
+            }
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1, "The case must reach the focus action")
+            XCTAssertFalse(f.calls().contains { ["type_text", "press_key"].contains($0["tool"] as? String ?? "") })
+            XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path))
+        }
+    }
+    func testFocusLostAfterSingleChunkNeverPressesSend() async throws {
+        let f = try fixture(followup: true, preparation: .focusLostAfterTyping)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        do {
+            _ = try await f.adapter().reply("Follow-up", binding: f.binding, onPrepared: { _ in }, onBinding: { _ in XCTFail("Focus loss must not bind a reply") })
+            XCTFail("Focus loss must block Send even for a one-chunk prompt")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("exact prepared draft"), error.localizedDescription) }
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "type_text" }.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path))
+        XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("native-draft"), encoding: .utf8), "Follow-up")
     }
     func testRawNativeValueMayCollapseEmptyParagraphsWithoutChangingSubmittedPrompt() async throws {
         for kind in [ChatGPTAppKind.chatgpt, .dots] {
