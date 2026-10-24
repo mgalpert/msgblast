@@ -100,6 +100,19 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try interrupted.reply(after: "Background test", app: .grokBot))
     }
 
+    func testGrokTimeDividerBeforeNewOutgoingDoesNotCountAsForeignMessage() throws {
+        let old = ["You", "Earlier question", "Test Bot", "Earlier answer", "7:10 PM"]
+        func view(_ text: [String]) throws -> DesktopAppSnapshot {
+            try decode([element("AXHeading", "Test Bot")] + text.map { element("AXStaticText", $0) } +
+                       [element("AXTextArea", "Prompt", value: "Message Test Bot")])
+        }
+        let anchor = try view(old).grokHistoryAnchor()
+        let result = try view(old + ["Today 10:35 PM", "You", "Requested prompt", "10:35 PM", "Test Bot", "Observed answer", "10:35 PM"])
+        XCTAssertEqual(try result.grokReply(after: "Requested prompt", anchor: anchor), "Observed answer")
+        let interrupted = try view(old + ["Today 10:35 PM", "Test Bot", "Unsolicited update", "You", "Requested prompt", "Test Bot", "Observed answer"])
+        XCTAssertThrowsError(try interrupted.grokReply(after: "Requested prompt", anchor: anchor))
+    }
+
     func testGrokEmptyAnchorCannotAttributeRestoredOldReply() throws {
         let restored = try decode([element("AXHeading", "Test Bot"), element("AXStaticText", "You"),
                                    element("AXStaticText", "Repeated prompt"), element("AXStaticText", "Test Bot"),

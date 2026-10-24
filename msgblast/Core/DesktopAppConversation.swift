@@ -247,8 +247,9 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         let start = textRows[boundary - 1] + 1
         let added = Array(transcript.dropFirst(start))
         let addedText = added.filter { $0.role == "AXStaticText" && !$0.text.isEmpty }.map(\.text)
+        let messages = addedText.drop(while: Self.isTimestamp)
         guard addedText.filter({ $0 == "You" }).count <= 1,
-              addedText.isEmpty || addedText.first == "You" else {
+              messages.isEmpty || messages.first == "You" else {
             throw DesktopAppError.unavailable("Another message appeared in Grok Bot while waiting. No reply was attributed.")
         }
         return try reply(after: prompt, app: .grokBot, outgoingOccurrence: 1, transcript: added)
