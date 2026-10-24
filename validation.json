@@ -1,0 +1,21 @@
+{
+  "source_revision": "0b28ac51f10dc9b9d96a4f51ebe8cb2c136e956b",
+  "native_unit": {
+    "total": 686,
+    "passed": 685,
+    "failed": 0,
+    "skipped": 1,
+    "skip": "Test-owned live AX smoke: unit host lacks existing Accessibility approval; no grant requested"
+  },
+  "controller_fixtures": "passed, including actual saved AppModel reopen for deferred Gemini checkpoints",
+  "live": {
+    "Grok Bot": "new + follow-up observed on clean 5fe4683 Dev; app source identical to final revision",
+    "Wabi": "new dedicated AI thread + follow-up observed on clean 5fe4683 Dev; app source identical to final revision",
+    "Claude": "new + follow-up observed on final 0b28ac5 Dev in Chat mode",
+    "Muse": "earlier WIP new + follow-up passed; final 0b28ac5 first input did not land and stopped before Send; not final-verified",
+    "Gemini": "deferred after failed control-readiness checks; saved state retained",
+    "ChatGPT and Dots": "current live reruns skipped at user request; native regression tests run"
+  },
+  "demo": "actual native app from final commit, simulated permissions/installation/connections; no provider contacted",
+  "video": "continuous 66.98-second window recording played at 2x (33.61s), no cuts, no audio, scaled to 1280px width"
+}
