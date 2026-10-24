@@ -151,6 +151,23 @@ final class WorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsShowsOnlyHostPermissions() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["Cedar"].waitForExistence(timeout: 10))
+        let prompt = app.textViews["Shared prompt"]
+        prompt.click()
+        prompt.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["Desktop app control"].waitForExistence(timeout: 5))
+        for id in ["cua-host", "cua-capture"] {
+            XCTAssertEqual(app.staticTexts["permission-status-\(id)"].value as? String, "Allowed")
+        }
+        XCTAssertFalse(app.staticTexts["permission-status-cua-driver"].exists)
+    }
+
+    @MainActor
     func testSettingsCanEnableContactsWhileMessagesAccessIsOff() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo", "--permission-guide-preview", "--contacts-access-preview"]

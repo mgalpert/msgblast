@@ -1,0 +1,187 @@
+import ApplicationServices
+import Foundation
+
+/// Metadata Cua's action snapshots do not expose. One bounded reader serves
+/// every profile; app parsers never walk live Accessibility elements themselves.
+struct DesktopAccessibilityNode: Sendable {
+    var role: String
+    var subrole = ""
+    var label = ""
+    var value: String?
+    var id = ""
+    var domID = ""
+    var classes: [String] = []
+    var url: URL?
+    var selected = false
+    var enabled = true
+    var focused = false
+    var selectedText: String?
+    var frame: DesktopAppSnapshot.Element.Frame?
+    var identity: UInt?
+    var editorText: String?
+    var children: [Self] = []
+    var descendants: [Self] {
+        var result: [Self] = []
+        func append(_ node: Self) {
+            result.append(node)
+            node.children.forEach(append)
+        }
+        append(self)
+        return result
+    }
+}
+
+enum DesktopAccessibilityError: LocalizedError {
+    case incomplete, invalidElement
+    var errorDescription: String? { "The app is still updating its controls. No input was sent." }
+}
+
+enum DesktopAccessibilityTree {
+    struct Limits {
+        var maximumNodes = 6_000
+        var maximumDepth = 60
+        var timeout: TimeInterval = 3
+    }
+
+    static func read<Handle>(_ root: Handle, app: DesktopAppProvider, limits: Limits = .init(),
+                             now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+                             attributes: (Handle) throws -> (DesktopAccessibilityNode, [Handle])) throws -> DesktopAccessibilityNode {
+        let deadline = now() + limits.timeout
+        var count = 0
+        func walk(_ handle: Handle, depth: Int, parentRole: String = "", insideWeb: Bool = false) throws -> DesktopAccessibilityNode {
+            count += 1
+            guard count <= limits.maximumNodes, depth <= limits.maximumDepth, now() < deadline else { throw DesktopAccessibilityError.incomplete }
+            let captured: (DesktopAccessibilityNode, [Handle])
+            do { captured = try attributes(handle) }
+            catch DesktopAccessibilityError.invalidElement where app == .gemini && parentRole == "AXOutline" {
+                guard now() < deadline else { throw DesktopAccessibilityError.incomplete }
+                return .init(role: "AXUnknown")
+            }
+            guard now() < deadline else { throw DesktopAccessibilityError.incomplete }
+            var (node, children) = captured
+            if node.role.isEmpty, app == .gemini, parentRole == "AXOutline" { return .init(role: "AXUnknown") }
+            guard !node.role.isEmpty else { throw DesktopAccessibilityError.incomplete }
+            // First-party ChatGPT can embed unrelated app surfaces. Those may
+            // never supply the composer, controls or transcript of our chat.
+            let nestedWeb = [.chatgpt, .dots].contains(app) && insideWeb && node.role == "AXWebArea"
+            node.children = nestedWeb ? [] : try children.map { try walk($0, depth: depth + 1, parentRole: node.role, insideWeb: insideWeb || node.role == "AXWebArea") }
+            guard now() < deadline else { throw DesktopAccessibilityError.incomplete }
+            return node
+        }
+        return try walk(root, depth: 0)
+    }
+}
+
+enum DesktopAccessibilityMetadata {
+    static func check(_ status: AXError) throws {
+        if status == .invalidUIElement { throw DesktopAccessibilityError.invalidElement }
+        guard status == .success else { throw DesktopAccessibilityError.incomplete }
+    }
+    static func address(_ value: Any?) throws -> String? {
+        guard let value else { return nil }
+        if let url = value as? URL { return url.absoluteString }
+        guard let string = value as? String, !string.isEmpty, URL(string: string) != nil else { throw DesktopAccessibilityError.incomplete }
+        return string
+    }
+    static func values(_ values: [String: Any]) throws -> [String: Any] {
+        try values.reduce(into: [:]) { result, entry in
+            let (key, value) = entry
+            if CFGetTypeID(value as CFTypeRef) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
+                var error = AXError.success
+                guard AXValueGetValue(value as! AXValue, .axError, &error) else { throw DesktopAccessibilityError.incomplete }
+                if error == .attributeUnsupported || error == .noValue { return }
+                try check(error)
+            } else { result[key] = value }
+        }
+    }
+    static func frame(_ values: [String: Any]) -> DesktopAppSnapshot.Element.Frame? {
+        guard let position = values["AXPosition"], let size = values["AXSize"],
+              CFGetTypeID(position as CFTypeRef) == AXValueGetTypeID(), CFGetTypeID(size as CFTypeRef) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero, dimensions = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else { return nil }
+        return .init(x: point.x, y: point.y, w: dimensions.width, h: dimensions.height)
+    }
+
+    static func node(_ attributes: [String: Any], identity: UInt? = nil) throws -> DesktopAccessibilityNode {
+        let values = try values(attributes)
+        let title = values["AXTitle"] as? String ?? ""
+        let value = values["AXValue"]
+        return DesktopAccessibilityNode(role: values["AXRole"] as? String ?? "", subrole: values["AXSubrole"] as? String ?? "",
+            label: title.isEmpty ? values["AXDescription"] as? String ?? "" : title,
+            value: value as? String ?? (value as? NSNumber)?.stringValue,
+            id: values["AXIdentifier"] as? String ?? "", domID: values["AXDOMIdentifier"] as? String ?? "",
+            classes: values["AXDOMClassList"] as? [String] ?? [], url: try address(values["AXURL"]).flatMap(URL.init(string:)),
+            selected: values["AXSelected"] as? Bool == true, enabled: values["AXEnabled"] as? Bool != false,
+            focused: values["AXFocused"] as? Bool == true, selectedText: values["AXSelectedText"] as? String,
+            frame: frame(values), identity: identity)
+    }
+}
+
+enum DesktopAccessibility {
+    private static let keys = ["AXRole", "AXSubrole", "AXTitle", "AXDescription", "AXValue", "AXIdentifier", "AXDOMIdentifier", "AXDOMClassList", "AXURL", "AXSelected", "AXEnabled", "AXFocused", "AXSelectedText", "AXPosition", "AXSize", "AXChildren"]
+
+    private static func attributes(_ element: AXUIElement) throws -> [String: Any] {
+        var values: CFArray?
+        try DesktopAccessibilityMetadata.check(AXUIElementCopyMultipleAttributeValues(element, keys as CFArray, [], &values))
+        guard let values = values as? [Any], values.count == keys.count else { throw DesktopAccessibilityError.incomplete }
+        return try DesktopAccessibilityMetadata.values(Dictionary(uniqueKeysWithValues: zip(keys, values)))
+    }
+
+    private static func attribute(_ element: AXUIElement, _ key: String) throws -> CFTypeRef? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, key as CFString, &value)
+        if status == .attributeUnsupported || status == .noValue { return nil }
+        try DesktopAccessibilityMetadata.check(status)
+        return value
+    }
+
+
+    static func isComposer(_ node: DesktopAccessibilityNode, app: DesktopAppProvider) -> Bool {
+        switch app {
+        case .muse:
+            return (["AXTextArea", "AXTextField"].contains(node.role) && node.label == "Message") ||
+                (node.role == "AXButton" && ["Message Attach file Dictate a message Send", "Message Attach file Dictate a message Stop"].contains(node.label))
+        case .wabi: return ["AXTextArea", "AXTextField"].contains(node.role) && node.label == "Message"
+        case .grokBot: return node.role == "AXTextArea" && node.label == "Prompt"
+        default: return false
+        }
+    }
+
+    static func capture(_ target: DesktopAppConversation.Target, app: DesktopAppProvider) throws -> DesktopAccessibilityNode {
+        guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Allow msgblast Device Control and Data Access to connect your apps.") }
+        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw DesktopAccessibilityError.incomplete }
+        let initial = try attributes(window)
+        var addresses: [(AXUIElement, String?)] = []
+        let root = try DesktopAccessibilityTree.read(window, app: app) { element in
+            let values = try attributes(element)
+            var node = try DesktopAccessibilityMetadata.node(values, identity: CFHash(element))
+            if node.role == "AXWebArea" { addresses.append((element, try DesktopAccessibilityMetadata.address(values["AXURL"]))) }
+            if isComposer(node, app: app) {
+                node.focused = DesktopNativeFocus.capture(pid: target.pid, composer: element) == true
+                if app == .muse { node.editorText = try museEditorText(element) }
+            }
+            return (node, values["AXChildren"] as? [AXUIElement] ?? [])
+        }
+        let final = try attributes(window)
+        guard root.role == "AXWindow", let initialFrame = DesktopAccessibilityMetadata.frame(initial), initialFrame == DesktopAccessibilityMetadata.frame(final),
+              try addresses.allSatisfy({ try DesktopAccessibilityMetadata.address(attribute($0.0, "AXURL")) == $0.1 }) else { throw DesktopAccessibilityError.incomplete }
+        return root
+    }
+
+    /// Muse's compound WebKit editor exposes exact text through parameterized
+    /// ranges rather than AXValue. This is a profile hook, not another walker.
+    private static func museEditorText(_ composer: AXUIElement) throws -> String {
+        func parameter(_ key: String, _ argument: CFTypeRef) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyParameterizedAttributeValue(composer, key as CFString, argument, &value) == .success ? value : nil
+        }
+        return try MuseComposerText.read(markerText: {
+            guard let range = parameter("AXTextMarkerRangeForUIElement", composer) else { return nil }
+            return parameter("AXStringForTextMarkerRange", range) as? String
+        }) { range in
+            var native = CFRange(location: range.location, length: range.length)
+            guard let rangeValue = AXValueCreate(.cfRange, &native) else { return nil }
+            return parameter("AXStringForRange", rangeValue) as? String
+        }
+    }
+}

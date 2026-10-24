@@ -137,6 +137,8 @@ struct PermissionCheck {
         let beforeDemo = probe.snapshot
         await permissions.refresh(model: model)
         await permissions.enableSending(model: model)
+        await permissions.enableContacts(model: model)
+        precondition(probe.snapshot.settings == beforeDemo.settings)
         precondition(probe.snapshot.historyReads == beforeDemo.historyReads && probe.snapshot.asks == beforeDemo.asks && probe.snapshot.messagesOpened == beforeDemo.messagesOpened)
         precondition(permissions.history == .notConnected && permissions.sending == .allowed)
         print("PASS: demo permissions bypass native permission checks and requests")

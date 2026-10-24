@@ -35,7 +35,7 @@ extension AppModel {
     }
 
     var agentGridCatalog: [AgentGridEntry] {
-        let webEntries = webAgents.sessions.map { AgentGridEntry(id: $0.id.gridID, agent: AgentArtwork.agent(for: $0)) }
+        let webEntries = webAgents.sessions.filter { $0.provider.isAvailableInBuild && (!WebProvider.settingsOnlyWebProviders.contains($0.provider) || $0.isEnabled) }.map { AgentGridEntry(id: $0.id.gridID, agent: AgentArtwork.agent(for: $0)) }
         let featured = featuredMessageChoices.map { choice in
             AgentGridEntry(id: .featuredMessages(choice), agent: featuredMessageAgent(for: choice) ??
                 Agent(name: choice.name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice)))
@@ -116,7 +116,7 @@ extension AppModel {
         let members = Set(comparison?.resolvedWebAgentIDs ?? [])
         let shown = Set(agentGridLayout.visibleIDs)
         return webAgents.sessions.filter {
-            $0.provider.supportsSharedSubmissions &&
+            $0.provider.isAvailableInBuild && $0.provider.supportsSharedSubmissions &&
                 (shown.contains($0.id.gridID) || members.contains($0.id))
         }
     }

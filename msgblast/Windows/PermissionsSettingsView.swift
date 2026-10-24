@@ -27,6 +27,8 @@ struct PermissionsSettingsView: View {
                     Task { await permissions.enableSending(model: model) }
                 }
             }
+            Divider()
+            CuaPermissionsView(demo: model.demo, busy: model.busy || model.webBroadcastBusy)
             if model.demo {
                 Text("Demo permissions are simulated. No system access is changed.")
                     .font(.caption).foregroundStyle(.secondary)

@@ -16,13 +16,21 @@ final class MessagesAccessGuide: ObservableObject {
     private var dragInProgress = false
     private var returning = false
     private let defaults: UserDefaults
+    private let requestKey: String
+    private var appURL = Bundle.main.bundleURL
+    private var appName = "msgblast"
+    private var permissionName = "Full Disk Access"
+    private var checkAccess: (() async -> Bool)?
     static let pendingKey = "messagesAccessHandoffPending"
     private let settingsBundleID = "com.apple.systempreferences"
 
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    init(defaults: UserDefaults = .standard, pendingKey: String = MessagesAccessGuide.pendingKey) {
+        self.defaults = defaults
+        requestKey = pendingKey
+    }
 
     func observeHistory(available: Bool) {
-        guard flow.isActive || flow.stage == .verified || defaults.bool(forKey: Self.pendingKey) else { return }
+        guard flow.isActive || flow.stage == .verified || defaults.bool(forKey: requestKey) else { return }
         var next = flow
         next.observeHistory(available: available)
         guard next != flow else { return }
@@ -34,20 +42,31 @@ final class MessagesAccessGuide: ObservableObject {
         }
     }
 
-    func start() {
-        guard !flow.isActive else { return }
+    func start(appURL: URL = Bundle.main.bundleURL, appName: String = "msgblast",
+               pane: String = "Privacy_AllFiles", permissionName: String = "Full Disk Access",
+               checkAccess: (() async -> Bool)? = nil) {
+        guard !dragInProgress, !returning else { return }
+        if flow.isActive {
+            stopOperation()
+            hidePanel()
+            flow.cancel()
+        }
+        self.appURL = appURL
+        self.appName = appName
+        self.permissionName = permissionName
+        self.checkAccess = checkAccess
         message = nil
-        defaults.set(true, forKey: Self.pendingKey)
+        defaults.set(true, forKey: requestKey)
         flow.begin()
         if checkHistory?() == true { observeHistory(available: true); return }
-        guard AppBundleDragPayload.writer(for: Bundle.main.bundleURL) != nil else {
-            fail("Open the installed msgblast app, then try again.")
+        guard AppBundleDragPayload.writer(for: appURL) != nil else {
+            fail("Open the installed \(appName) app, then try again.")
             return
         }
         let source = sourceFrame()
         let snapshot = sourceSnapshot()
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"), NSWorkspace.shared.open(url) else {
-            fail("Open System Settings → Privacy & Security → Full Disk Access.")
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)"), NSWorkspace.shared.open(url) else {
+            fail("Open System Settings → Privacy & Security → \(permissionName).")
             return
         }
         generation = UUID()
@@ -71,8 +90,6 @@ final class MessagesAccessGuide: ObservableObject {
                 guard self.generation == token else { return }
                 guide.contentView = NSHostingView(rootView: self.guideContent())
                 var tick = 0
-                var droppedAt: ContinuousClock.Instant?
-                let clock = ContinuousClock()
                 while !Task.isCancelled, self.generation == token, self.flow.isActive {
                     if !self.dragInProgress, self.flow.stage == .guiding {
                         guard let frame = self.settingsFrame() else {
@@ -82,16 +99,12 @@ final class MessagesAccessGuide: ObservableObject {
                         let docked = self.guideFrame(frame)
                         if guide.frame != docked { guide.setFrame(docked, display: true) }
                     }
-                    if self.flow.stage == .waitingForAccess {
-                        if droppedAt == nil { droppedAt = clock.now }
-                        if let droppedAt, clock.now - droppedAt > .seconds(15) {
-                            self.fail("Enable msgblast in Full Disk Access, then check again. You may need to quit and reopen msgblast.")
-                            return
-                        }
-                    }
-                    if tick % 6 == 0, !self.dragInProgress, self.checkHistory?() == true {
-                        self.observeHistory(available: true)
-                        return
+                    if tick % 6 == 0, !self.dragInProgress {
+                        let available: Bool
+                        if let checkAccess = self.checkAccess { available = await checkAccess() }
+                        else { available = self.checkHistory?() == true }
+                        guard self.generation == token else { return }
+                        if available { self.observeHistory(available: true); return }
                     }
                     tick += 1
                     try await Task.sleep(for: .milliseconds(150))
@@ -99,14 +112,14 @@ final class MessagesAccessGuide: ObservableObject {
             } catch is CancellationError { }
             catch {
                 guard self.generation == token else { return }
-                self.fail("Settings is open. Use its + button to add msgblast, then check again.")
+                self.fail("In \(self.permissionName), use + to add \(self.appName), then enable its switch.")
             }
         }
     }
 
     func cancel(abandonRequest: Bool = true) {
         guard !returning else { return }
-        if abandonRequest { defaults.removeObject(forKey: Self.pendingKey) }
+        if abandonRequest { defaults.removeObject(forKey: requestKey) }
         stopOperation()
         let token = generation
         guard let panel, let destination = sourceFrame(), !dragInProgress else {
@@ -126,7 +139,7 @@ final class MessagesAccessGuide: ObservableObject {
     }
 
     func dismissCompletion() {
-        defaults.removeObject(forKey: Self.pendingKey)
+        defaults.removeObject(forKey: requestKey)
         flow.cancel()
     }
 
@@ -156,16 +169,16 @@ final class MessagesAccessGuide: ObservableObject {
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.title = "Messages access guide"
+        panel.title = "\(permissionName) guide"
         panel.isExcludedFromWindowsMenu = false
-        panel.setAccessibilityLabel("Messages access guide")
+        panel.setAccessibilityLabel(panel.title)
         panel.setAccessibilityElement(true)
         NSApp.addWindowsItem(panel, title: panel.title, filename: false)
         return panel
     }
 
     private func guideContent() -> some View {
-        MessagesAccessGuideContent(cancel: { [weak self] in self?.cancel() }, dragStarted: { [weak self] in self?.dragInProgress = true }, dragEnded: { [weak self] dropped in
+        MessagesAccessGuideContent(appURL: appURL, appName: appName, permissionName: permissionName, cancel: { [weak self] in self?.cancel() }, dragStarted: { [weak self] in self?.dragInProgress = true }, dragEnded: { [weak self] dropped in
             guard let self else { return }
             self.dragInProgress = false
             self.flow.finishDrag(dropped: dropped)
@@ -268,36 +281,29 @@ struct MessagesAccessRow: View {
     @ObservedObject var guide: MessagesAccessGuide
     let check: () -> Void
     var isOnboarding = false
+    var accessAllowed = false
     var body: some View {
         let handedOff = guide.flow.stage == .guiding || guide.flow.stage == .waitingForAccess
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: guide.flow.stage == .verified ? "checkmark.circle.fill" : "lock.fill")
                     .font(.title2).foregroundStyle(guide.flow.stage == .verified ? .green : .secondary)
-                if handedOff {
-                    Text("Complete in System Settings").foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Check again", action: check)
-                } else {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(isOnboarding ? "Chat with the agents you text on Messages" : "Connect Messages").font(.headline)
-                        if isOnboarding {
-                            Text("Your messages are yours. You choose what to share.")
-                                .font(.callout).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            Text("Full Disk Access lets msgblast read your local Messages history to find and compare the agents you text. Web model chats work without it.")
-                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    Spacer()
-                    if guide.flow.stage == .verified {
-                        Label("Done", systemImage: "checkmark").foregroundStyle(.green)
-                        Button("Continue") { guide.dismissCompletion() }
-                    } else {
-                        Button("Open Settings") { guide.start() }.buttonStyle(.borderedProminent).disabled(guide.flow.isActive)
-                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isOnboarding ? "Chat with the agents you text on Messages" : "Connect Messages").font(.headline)
+                    Text(isOnboarding ? "Your messages are yours. You choose what to share." : "Find the agents you text in Messages.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer()
+                Toggle("Full Disk Access", isOn: Binding(get: { accessAllowed }, set: { _ in
+                    if accessAllowed {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } else { guide.start() }
+                }))
+                .labelsHidden().toggleStyle(PermissionSwitchStyle())
+                .accessibilityLabel("Full Disk Access")
+                .accessibilityIdentifier("enable-messages-history-permission")
             }.padding(14).frame(minHeight: 72)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
                 .overlay { if handedOff { RoundedRectangle(cornerRadius: 12).stroke(.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5, 4])) } }
@@ -314,6 +320,9 @@ struct MessagesAccessRow: View {
 }
 
 private struct MessagesAccessGuideContent: View {
+    let appURL: URL
+    let appName: String
+    let permissionName: String
     let cancel: () -> Void
     let dragStarted: () -> Void
     let dragEnded: (Bool) -> Void
@@ -321,12 +330,12 @@ private struct MessagesAccessGuideContent: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.up").font(.title3.weight(.semibold)).foregroundStyle(.blue)
-                Text("Drag msgblast to the list above").font(.callout)
+                Text("Drag \(appName) to the list, then enable it").font(.callout)
             }
             HStack(spacing: 8) {
                 Button(action: cancel) { Image(systemName: "chevron.left") }.buttonStyle(.borderless)
                     .accessibilityLabel("Back to msgblast")
-                AppBundleDragRow(dragStarted: dragStarted, dragEnded: dragEnded).frame(height: 44)
+                AppBundleDragRow(appURL: appURL, appName: appName, permissionName: permissionName, dragStarted: dragStarted, dragEnded: dragEnded).frame(height: 44)
             }
         }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
@@ -334,24 +343,29 @@ private struct MessagesAccessGuideContent: View {
 }
 
 private struct AppBundleDragRow: NSViewRepresentable {
+    var appURL = Bundle.main.bundleURL
+    var appName = "msgblast"
+    var permissionName = "Full Disk Access"
     let dragStarted: () -> Void
     let dragEnded: (Bool) -> Void
-    func makeNSView(context: Context) -> AppBundleDragView { AppBundleDragView(dragStarted: dragStarted, dragEnded: dragEnded) }
+    func makeNSView(context: Context) -> AppBundleDragView { AppBundleDragView(appURL: appURL, appName: appName, permissionName: permissionName, dragStarted: dragStarted, dragEnded: dragEnded) }
     func updateNSView(_ nsView: AppBundleDragView, context: Context) { nsView.onStart = dragStarted; nsView.onEnd = dragEnded }
 }
 
 private final class AppBundleDragView: NSView, NSDraggingSource {
     var onStart: () -> Void
     var onEnd: (Bool) -> Void
+    private let appURL: URL
     private var down: NSEvent?
     private var dragging = false
-    init(dragStarted: @escaping () -> Void, dragEnded: @escaping (Bool) -> Void) {
+    init(appURL: URL, appName: String, permissionName: String, dragStarted: @escaping () -> Void, dragEnded: @escaping (Bool) -> Void) {
+        self.appURL = appURL
         onStart = dragStarted; onEnd = dragEnded
         super.init(frame: CGRect(x: 0, y: 0, width: 280, height: 44))
         wantsLayer = true; layer?.cornerRadius = 9
         layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.3).cgColor
-        let icon = NSImageView(image: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
-        let name = NSTextField(labelWithString: "msgblast")
+        let icon = NSImageView(image: NSWorkspace.shared.icon(forFile: appURL.path))
+        let name = NSTextField(labelWithString: appName)
         name.font = .systemFont(ofSize: 13, weight: .semibold)
         icon.translatesAutoresizingMaskIntoConstraints = false; name.translatesAutoresizingMaskIntoConstraints = false
         addSubview(icon); addSubview(name)
@@ -363,8 +377,8 @@ private final class AppBundleDragView: NSView, NSDraggingSource {
         ])
         setAccessibilityElement(true); setAccessibilityRole(.button)
         setAccessibilityEnabled(true)
-        setAccessibilityLabel("Drag msgblast into Full Disk Access")
-        setAccessibilityHelp("Drag this app into the Full Disk Access list in System Settings, then enable its switch.")
+        setAccessibilityLabel("Drag \(appName) into \(permissionName)")
+        setAccessibilityHelp("Drag this app into the \(permissionName) list in System Settings, then enable its switch.")
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
@@ -372,7 +386,7 @@ private final class AppBundleDragView: NSView, NSDraggingSource {
     override func mouseUp(with event: NSEvent) { down = nil; dragging = false }
     override func mouseDragged(with event: NSEvent) {
         guard let down, !dragging, hypot(event.locationInWindow.x - down.locationInWindow.x, event.locationInWindow.y - down.locationInWindow.y) >= 3,
-              let writer = AppBundleDragPayload.writer(for: Bundle.main.bundleURL) else { return }
+              let writer = AppBundleDragPayload.writer(for: appURL) else { return }
         dragging = true; onStart()
         let item = NSDraggingItem(pasteboardWriter: writer)
         let preview = NSImage(size: bounds.size)
@@ -383,4 +397,25 @@ private final class AppBundleDragView: NSView, NSDraggingSource {
     }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { dragging = false; down = nil; onEnd(!operation.isEmpty) }
+}
+
+struct PermissionSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            configuration.label
+            Button { configuration.isOn.toggle() } label: {
+                Capsule()
+                    .fill(configuration.isOn ? Color.green : Color.red)
+                    .frame(width: 40, height: 24)
+                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
+                        Circle().fill(.white).frame(width: 20, height: 20).padding(2)
+                    }
+            }
+            .buttonStyle(.plain)
+        }
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.switch)
+        }
+    }
 }
