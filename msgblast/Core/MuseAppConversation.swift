@@ -268,28 +268,39 @@ actor MuseAppConversation {
             }
             switch input {
             case .text(let chunk):
-                var arguments = ["text": chunk, "delivery_mode": "background", "session": session]
-                if index == 0, !check.composerFocused {
-                    let state = try await snapshot(target, session: session)
+                let arguments = ["text": chunk, "delivery_mode": "background", "session": session]
+                var numbers = ["pid": target.pid, "window_id": target.window, "delay_ms": 0]
+                if index == 0 {
+                    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-muse-input-\(UUID())")
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                    defer { try? FileManager.default.removeItem(at: directory) }
+                    let image = directory.appendingPathComponent("window.png")
+                    let state = try await driver.snapshot(target, session: session, screenshotURL: image)
+                    try state.checkReadable()
                     let composers = state.body.filter {
                         (["AXTextArea", "AXTextField"].contains($0.role) && $0.label == "Message") ||
                         ($0.role == "AXButton" && $0.label == "Message Attach file Dictate a message Send")
                     }
-                    guard composers.count == 1, composers[0].enabled != false,
-                          let token = composers[0].element_token else {
+                    guard composers.count == 1, composers[0].enabled != false else {
                         throw DesktopAppError.unavailable("Muse's current editor could not be targeted safely. Nothing was typed.")
+                    }
+                    let point = try state.pixelCenter(of: composers[0], target: target, imageURL: image)
+                    guard state.capture_id?.isEmpty == false else {
+                        throw DesktopAppError.unavailable("Muse's editor capture could not be verified. Nothing was typed.")
                     }
                     let confirmed = try await observe(target)
                     try sameChat(confirmed, id: binding.threadID)
                     try empty(confirmed)
-                    guard confirmed.messages == before.messages else {
-                        throw DesktopAppError.unavailable("Muse's conversation changed before typing. Nothing was typed.")
+                    guard confirmed.messages == before.messages, confirmed.windowBounds != nil,
+                          confirmed.windowBounds == state.window_bounds else {
+                        throw DesktopAppError.unavailable("Muse's conversation or geometry changed before typing. Nothing was typed.")
                     }
-                    // AXSelectedText targets the editor directly; AXPress would
-                    // open attachments. Require independent draft/focus readback.
-                    arguments["element_token"] = token
+                    // Embedded WebKit needs pixel focus and text in one call.
+                    // type_text uses this session's fresh capture; unlike click,
+                    // its schema does not accept a capture_id argument.
+                    numbers["x"] = point.x; numbers["y"] = point.y
                 }
-                _ = try await driver.call("type_text", arguments, numbers: ["pid": target.pid, "window_id": target.window, "delay_ms": 0], as: DesktopAppConversation.Action.self)
+                _ = try await driver.call("type_text", arguments, numbers: numbers, as: DesktopAppConversation.Action.self)
                 prefix += chunk
             case .newline:
                 guard check.composerFocused else { throw DesktopAppError.unavailable("Muse's editor is not focused for a leading line break. Nothing was submitted.") }

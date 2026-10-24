@@ -1890,7 +1890,11 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture, cleanupCount: 2)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.compactMap { $0.arguments["text"] as? String }, ["[msgblast request \(requestID.uuidString.lowercased())]", prompt])
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
-        XCTAssertTrue(calls.filter { $0.tool == "type_text" }.allSatisfy { $0.arguments["element_token"] == nil && $0.arguments["x"] == nil })
+        let typed = calls.filter { $0.tool == "type_text" }
+        XCTAssertEqual(typed.first?.arguments["x"] as? Int, 510)
+        XCTAssertEqual(typed.first?.arguments["y"] as? Int, 750)
+        XCTAssertTrue(typed.dropFirst().allSatisfy { $0.arguments["x"] == nil && $0.arguments["y"] == nil })
+        XCTAssertTrue(typed.allSatisfy { $0.arguments["element_token"] == nil && $0.arguments["capture_id"] == nil })
         assertMuseBackground(calls)
         session.beginShutdown()
     }
@@ -1924,7 +1928,7 @@ final class DesktopAppDriverTests: XCTestCase {
             var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
             var typed = museObservation(thread: fault == "chat" ? UUID() : thread, draft: fault == "partial" ? "Partial" : prompt)
             typed.composerFocused = fault != "focus"
-            let fixture = try driver([apps(.muse), initial, try museStep("type_text", observation: typed)])
+            let fixture = try driver([apps(.muse), initial, museComposerCapture(), try museStep("type_text", observation: typed)])
             defer { fixture.remove() }
             _ = await failure { try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Title")) { _ in XCTFail("Must not record an unsubmitted draft") } }
             let calls = try await finishedCalls(fixture)
@@ -2053,7 +2057,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
         var blocked = try museStep("type_text", observation: museObservation(thread: thread, draft: prompt))
         blocked["wait_for_release"] = true
-        let fixture = try driver([apps(.muse), initial, blocked])
+        let fixture = try driver([apps(.muse), initial, museComposerCapture(), blocked])
         defer { fixture.remove() }
         let adapter = museAdapter(fixture)
         let sending = Task { try await adapter.reply(prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Saved")) { _ in XCTFail("No submission") } }
@@ -2092,7 +2096,7 @@ final class DesktopAppDriverTests: XCTestCase {
     func testMuseChangedChatWhileWaitingCannotReturnForeignAnswer() async throws {
         let owner = UUID(), thread = UUID()
         var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
-        let fixture = try driver([apps(.muse), initial,
+        let fixture = try driver([apps(.muse), initial, museComposerCapture(),
             try museStep("type_text", observation: museObservation(thread: thread, draft: prompt)),
             try museStep("press_key", observation: museObservation(thread: UUID(), messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Foreign reply")]))])
         defer { fixture.remove() }
@@ -2107,7 +2111,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let multiline = "First line 😀\n\nReply only: MULTILINE"
         var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
         let fixture = try driver([
-            apps(.muse), initial,
+            apps(.muse), initial, museComposerCapture(),
             try museStep("type_text", observation: museObservation(thread: thread, draft: "First line 😀")),
             try museStep("press_key", observation: museObservation(thread: thread, draft: "First line 😀\n\n")),
             try museStep("press_key", observation: museObservation(thread: thread, draft: "First line 😀\n\n\n")),
@@ -2168,7 +2172,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
         var typing = try museStep("type_text", observation: museObservation(thread: thread, draft: text))
         typing["arguments"] = ["text": text]
-        let fixture = try driver([apps(.muse), initial, typing,
+        let fixture = try driver([apps(.muse), initial, museComposerCapture(), typing,
             try museStep("press_key", observation: museObservation(thread: thread, messages: [.init(role: .user, text: text), .init(role: .assistant, text: "Unicode preserved")]))])
         defer { fixture.remove() }
         let answer = try await museAdapter(fixture).reply(text, binding: .init(comparisonID: owner, threadID: thread, title: "Saved")) { _ in }
@@ -2184,10 +2188,9 @@ final class DesktopAppDriverTests: XCTestCase {
         var initial = windows(), unfocused = museObservation(thread: thread)
         unfocused.composerFocused = false
         initial["native"] = try object(unfocused)
-        let composer = element("AXButton", "Message Attach file Dictate a message Send", token: "s00000001:composer")
-        let typing = try museStep("type_text", observation: museObservation(thread: thread, draft: prompt), token: "s00000001:composer")
+        let typing = try museStep("type_text", observation: museObservation(thread: thread, draft: prompt))
         let fixture = try driver([apps(.muse), initial, apps(.muse), initial,
-            snapshot(["elements": [composer]]), typing,
+            museComposerCapture(), typing,
             try museStep("press_key", observation: museObservation(thread: thread, messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Targeted reply")]))])
         defer { fixture.remove() }
         let adapter = museAdapter(fixture)
@@ -2197,10 +2200,38 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(answer, "Targeted reply")
         let calls = try await finishedCalls(fixture)
         let typed = try XCTUnwrap(calls.first { $0.tool == "type_text" })
-        XCTAssertEqual(typed.arguments["element_token"] as? String, "s00000001:composer")
+        XCTAssertNil(typed.arguments["element_token"])
+        XCTAssertNil(typed.arguments["capture_id"], "type_text does not accept capture_id in driver 0.38")
+        XCTAssertEqual(typed.arguments["x"] as? Int, 510)
+        XCTAssertEqual(typed.arguments["y"] as? Int, 750)
         XCTAssertFalse(calls.contains { $0.tool == "click" }, "The compound button must never be pressed to focus it")
         XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, 1)
         assertMuseBackground(calls)
+    }
+
+    func testMuseInputCaptureRejectsMissingImageMovedWindowAndChangedChatBeforeTyping() async throws {
+        for fault in ["missing_image", "window_moved", "chat_changed"] {
+            let thread = UUID()
+            var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+            var capture = museComposerCapture()
+            if fault == "missing_image" { capture["capture"] = "missing" }
+            else {
+                var changed = museObservation(thread: fault == "chat_changed" ? UUID() : thread)
+                if fault == "window_moved" { changed.windowBounds = .init(x: 300, y: 100, width: 800, height: 600) }
+                capture["native"] = try object(changed)
+            }
+            let fixture = try driver([apps(.muse), initial, capture])
+            defer { fixture.remove() }
+            _ = await failure {
+                try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: UUID(), threadID: thread, title: "Saved")) { _ in
+                    XCTFail("An untyped draft cannot own a thread")
+                }
+            }
+            let calls = try await finishedCalls(fixture)
+            assertNoInput(calls)
+            let path = try XCTUnwrap(calls.last { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Private capture must be cleaned up for \(fault)")
+        }
     }
 
     func testMuseInvalidMissingOrMismatchedCaptureCannotClickSavedChat() async throws {
@@ -2261,6 +2292,12 @@ final class DesktopAppDriverTests: XCTestCase {
         assertMuseBackground(calls)
     }
 
+    private func museComposerCapture() -> [String: Any] {
+        var field = element("AXButton", "Message Attach file Dictate a message Send", token: "s00000001:composer")
+        field["frame"] = ["x": 240, "y": 580, "w": 600, "h": 40]
+        return capturedNavigation(["elements": [field]])
+    }
+
     private func capturedNavigation(_ state: [String: Any]) -> [String: Any] {
         var result = state
         var index = 0
@@ -2314,7 +2351,7 @@ final class DesktopAppDriverTests: XCTestCase {
         return [apps(.muse), initial,
                 snapshot(["elements": [element("AXButton", "New side chat", token: "s00000001:new")]]),
                 try museStep("click", observation: museObservation(), token: "s00000001:new"),
-                apps(.muse), windows(),
+                apps(.muse), windows(), museComposerCapture(),
                 try input("type_text", draft: reference, arguments: ["text": reference]),
                 try input("press_key", draft: reference + "\n\n", arguments: ["key": "return", "modifiers": ["shift"]]),
                 try input("press_key", draft: reference + "\n\n\n", arguments: ["key": "return", "modifiers": ["shift"]]),
@@ -2520,6 +2557,11 @@ final class DesktopAppDriverTests: XCTestCase {
     if len(sys.argv) != 4 or sys.argv[1] != "call":
         raise SystemExit(90)
     tool, arguments = sys.argv[2], json.loads(sys.argv[3])
+    if tool == "type_text":
+        allowed = {"session", "pid", "window_id", "text", "element_token", "x", "y", "delay_ms", "scope", "target", "delivery_mode"}
+        if set(arguments) - allowed:
+            print(json.dumps({"refusal": {"code": "invalid_arguments"}, "status": "refused"}))
+            raise SystemExit(92)
     with (root / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with (root / "calls.jsonl").open("a") as log:
