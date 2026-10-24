@@ -1,0 +1,80 @@
+{
+  "evidence_sha": "9d491d177de7556deba361d2c9ecf8c140a2c731",
+  "app_identity": {
+    "source_sha": "9d491d177de7556deba361d2c9ecf8c140a2c731",
+    "bundle_id": "com.msgblast.development",
+    "demo": false,
+    "updates_disabled": true,
+    "support_directory": "msgblast-Dev",
+    "executable_path": "/Applications/msgblast Dev.app/Contents/MacOS/msgblast",
+    "executable_sha256": "f0d4ffc77e4b82094e3a6a574c0670dc57e8d603acadbbabfa1c5df7601aaf07",
+    "deep_strict_signature_verified": true
+  },
+  "tests": {
+    "affected": 115,
+    "passed": 115,
+    "red_on_old_code": true,
+    "fixture_limits": "Controlled native reads and driver executable exercise production adapter guards; do not establish live delivery."
+  },
+  "live": {
+    "attempts": [
+      {
+        "id": "AE464970-3C91-4CB0-B9AA-3344C8C019E6",
+        "comparisonID": "271D43CD-8343-4E80-9C07-4FB974570320",
+        "text": "Reply only: MUSE-EXACT-WARM-FOLLOWUP-1024. Do not use tools or take other actions.",
+        "status": "observed",
+        "detail": "Reply text observed in the background and stable for three seconds. The app may continue working.",
+        "conversationURL": "https://muse.ai/thread/69976b8a-9d23-49a1-822e-3fdb5eb3bfdc"
+      },
+      {
+        "id": "5C52A8D7-12B0-40E9-8EF0-D94850ED4FC2",
+        "comparisonID": "271D43CD-8343-4E80-9C07-4FB974570320",
+        "text": "Reply only: MUSE-EXACT-WARM-FIRST-1024. Do not use tools or take other actions.",
+        "status": "observed",
+        "detail": "Reply text observed in the background and stable for three seconds. The app may continue working.",
+        "conversationURL": "https://muse.ai/thread/69976b8a-9d23-49a1-822e-3fdb5eb3bfdc"
+      },
+      {
+        "id": "A737680A-2182-4762-BA43-AD890096A13C",
+        "comparisonID": "846FEECA-2AFE-46B9-91E0-3110931297F2",
+        "text": "Reply only: MUSE-EXACT-COLD-FOLLOWUP-1024. Do not use tools or take other actions.",
+        "status": "observed",
+        "detail": "Reply text observed in the background and stable for three seconds. The app may continue working.",
+        "conversationURL": "https://muse.ai/thread/2dbaf752-eb26-45b5-be41-a9b7637d3047"
+      },
+      {
+        "id": "DE3FC1D9-FF86-425F-88E5-8ADABAAD83AD",
+        "comparisonID": "846FEECA-2AFE-46B9-91E0-3110931297F2",
+        "text": "Reply only: MUSE-EXACT-COLD-FIRST-1024. Do not use tools or take other actions.",
+        "status": "observed",
+        "detail": "Reply text observed in the background and stable for three seconds. The app may continue working.",
+        "conversationURL": "https://muse.ai/thread/2dbaf752-eb26-45b5-be41-a9b7637d3047"
+      }
+    ],
+    "cold_before_send": {
+      "muse_running": false,
+      "dev_pid": 5391,
+      "dev_window": 8923,
+      "source_sha": "9d491d177de7556deba361d2c9ecf8c140a2c731"
+    },
+    "manual_reconnect": false,
+    "manual_muse_activation_for_submission": false,
+    "external_muse_snapshot_before_cold_first_reply": false,
+    "input_replay": false
+  },
+  "historical_attribution": "Original intermittent failure not reproduced in two diagnostic live runs; repaired demonstrated immediate-readback race, not claimed to prove every driver focus failure impossible.",
+  "video": {
+    "duration_seconds": 28.833333,
+    "source_duration_seconds": 115.36,
+    "speed": 4,
+    "cuts": false,
+    "audio": false,
+    "window_only": true,
+    "url": "https://github.com/user-attachments/assets/3068ab9c-6843-4778-a88c-dae7ca628661"
+  },
+  "files": {
+    "muse-cold-first-followup.png": "3b9b6aec464934de99d67d81dedd9a6bcc96a63ca4e3f1782a0f44776a74f3aa",
+    "muse-warm-first-followup.png": "53dfd6c29c9aa1010827279480ee13e551e510b1cd0ad4bdc1f22fe8d7a8f3ff",
+    "muse-cold-live.mp4": "6d69721bbd3109ca0a750700df6f7e14e76d3d5cf96d49309799c9912f317a35"
+  }
+}
