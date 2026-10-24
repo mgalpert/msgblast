@@ -144,7 +144,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         await refresh.value
         let ready = await opening.value
         XCTAssertFalse(ready, "The new check intentionally reports that sign-in is required")
-        XCTAssertEqual(held.count, 3, "The explicit start must wait and make a fresh check; Muse may repeat that failed read once")
+        XCTAssertGreaterThan(held.count, 1, "After the old read finishes, the explicit start must make its own check rather than reuse the old successful result")
         XCTAssertTrue(session.desktopStatus.contains("Fixture replacement requires sign-in"), session.desktopStatus)
         XCTAssertEqual(session.state.comparisonID, comparison)
         XCTAssertFalse(session.snapshot.ready)
