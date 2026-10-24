@@ -720,6 +720,9 @@ struct AppSettingsView: View {
             Section("Permissions") {
                 PermissionsSettingsView(model: model)
             }
+            Section("App Agents") {
+                AppAgentsSettingsView(model: model, web: model.webAgents, permissions: model.onboarding.appPermissions)
+            }
             Picker("Conversations", selection: Binding(get: { model.state.effectiveWindowStyle }, set: { model.setWindowStyle($0) })) {
                 Text("One window").tag(ComparisonWindowStyle.connected)
                 Text("Separate windows").tag(ComparisonWindowStyle.separate)
