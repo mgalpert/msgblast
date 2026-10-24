@@ -100,6 +100,34 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try interrupted.reply(after: "Background test", app: .grokBot))
     }
 
+    func testGrokEmptyAnchorCannotAttributeRestoredOldReply() throws {
+        let restored = try decode([element("AXHeading", "Test Bot"), element("AXStaticText", "You"),
+                                   element("AXStaticText", "Repeated prompt"), element("AXStaticText", "Test Bot"),
+                                   element("AXStaticText", "Old answer"), element("AXTextArea", "Prompt", value: "Message Test Bot")])
+        let empty = DesktopAppSnapshot.GrokHistoryAnchor(history: [], bot: "Test Bot")
+        XCTAssertThrowsError(try restored.grokReply(after: "Repeated prompt", anchor: empty))
+    }
+
+    func testGrokRecentAnchorRejectsMissingDuplicateAndForeignHistory() throws {
+        func view(_ text: [String]) throws -> DesktopAppSnapshot {
+            try decode([element("AXHeading", "Test Bot")] + text.map { element("AXStaticText", $0) } +
+                       [element("AXTextArea", "Prompt", value: "Message Test Bot")])
+        }
+        let baseline = ["You", "Earlier question", "Test Bot", "Earlier answer", "12:00 PM"]
+        let fresh = ["You", "Requested prompt", "Test Bot", "Fresh answer", "12:01 PM"]
+        let anchor = try view(baseline).grokHistoryAnchor()
+        XCTAssertNil(try view(baseline).grokReply(after: "Requested prompt", anchor: anchor))
+        XCTAssertEqual(try view(baseline + fresh).grokReply(after: "Requested prompt", anchor: anchor), "Fresh answer")
+        for changed in [
+            ["You", "Earlier question", "Test Bot", "Edited answer", "12:00 PM"] + fresh,
+            baseline + baseline + fresh,
+            baseline + ["You", "Foreign prompt", "Test Bot", "Foreign answer"] + fresh,
+            baseline + ["Test Bot", "Unsolicited update"] + fresh
+        ] {
+            XCTAssertThrowsError(try view(changed).grokReply(after: "Requested prompt", anchor: anchor))
+        }
+    }
+
     func testGrokConversationHeaderIgnoresHeadingsInsideReplies() throws {
         var header = element("AXHeading", "Test Bot")
         header["element_index"] = 2
@@ -1304,7 +1332,69 @@ final class DesktopAppDriverTests: XCTestCase {
         assertBackgroundTargets(calls)
     }
 
+    func testGrokMissingHistoryStopsBeforeTypingInsteadOfCreditingAnOldReply() async throws {
+        var empty = grok()
+        var elements = try XCTUnwrap(empty["elements"] as? [[String: Any]])
+        elements.removeAll { $0["role"] as? String == "AXStaticText" }
+        empty["elements"] = elements
+        empty["returned_element_count"] = elements.count
+        empty["total_element_count"] = elements.count
+        let fixture = try driver([apps(), windows(), snapshot(empty), step("type_text", [:]),
+                                  snapshot(grok(draft: prompt, token: "s00000002")), step("click", [:]),
+                                  snapshot(grok(reply: "Old restored answer", token: "s00000003"), repeating: true)])
+        defer { fixture.remove() }
+        let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+        XCTAssertTrue(error.contains("still loading"), error)
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
+    func testGrokVirtualizedOlderHistoryCannotBlockOrClaimTheNewReply() async throws {
+        func withOlderMessages(_ state: [String: Any], prompts: [String]) throws -> [String: Any] {
+            var result = state
+            var elements = try XCTUnwrap(result["elements"] as? [[String: Any]])
+            let firstMessage = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXStaticText" })
+            let older = prompts.flatMap { text in [element("AXStaticText", "You"), element("AXStaticText", text),
+                                                   element("AXStaticText", "Fixture Bot"), element("AXStaticText", "Older answer")] }
+            elements.insert(contentsOf: older, at: firstMessage)
+            result["elements"] = elements
+            result["returned_element_count"] = elements.count
+            result["total_element_count"] = elements.count
+            return result
+        }
+        let initial = try withOlderMessages(grok(reply: "Previous visible answer"), prompts: ["Older question"])
+        let typed = grok(draft: prompt, reply: "Previous visible answer", token: "s00000002", focused: false)
+        let restoredOlder = try withOlderMessages(grok(reply: "Previous visible answer", token: "s00000003"), prompts: [prompt, prompt])
+        let fresh = grok(reply: "Fresh anchored answer", token: "s00000004", previousReply: "Previous visible answer")
+        let fixture = try driver([apps(), windows(), snapshot(initial), step("type_text", [:]), snapshot(typed),
+                                  step("click", [:]), snapshot(restoredOlder), snapshot(fresh, repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Fresh anchored answer", "Loaded older occurrences must never be credited to the new request")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        assertBackgroundTargets(calls)
+    }
+
+    func testGrokFinalConfirmedDraftCanSubmitWithoutKeyboardFocus() async throws {
+        let fixture = try driver([
+            apps(), windows(), snapshot(grok()), step("type_text", [:]),
+            snapshot(grok(draft: prompt, token: "s00000002", focused: false)),
+            step("click", [:]), snapshot(grok(reply: "Verified final draft", token: "s00000003"), repeating: true)
+        ])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Verified final draft")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1, "Never replay a draft whose input landed")
+        let clicks = calls.filter { $0.tool == "click" }
+        XCTAssertEqual(clicks.count, 1, "Submit the verified draft once")
+        XCTAssertEqual(clicks.first?.arguments["element_token"] as? String, "s00000002:send")
+        assertBackgroundTargets(calls)
+    }
+
     func testNativeEditorFocusAllowsBackgroundWrapperButRefusesConflictingOrLostFocus() async throws {
+        let multiline = prompt + "\nNext chunk"
         for scene in ["background wrapper", "different editor", "lost focus"] {
             var prepared = grok(draft: prompt, token: "s00000002")
             var native = prepared["_grok_native"] as! [String: Any]
@@ -1313,18 +1403,24 @@ final class DesktopAppDriverTests: XCTestCase {
             native["editorFocused"] = scene != "lost focus"
             native.removeValue(forKey: "composerFocused")
             prepared["_grok_native"] = native
-            let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(prepared),
-                                      step("click", [:]), snapshot(grok(reply: "Focus confirmed", token: "s00000003"), repeating: true)])
+            var plan = [apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(prepared)]
+            if scene == "background wrapper" {
+                plan += [snapshot(prepared), step("press_key", [:]), snapshot(grok(draft: prompt + "\n")),
+                         snapshot(grok(draft: prompt + "\n")), step("type_text", [:]), snapshot(grok(draft: multiline, token: "s00000003")),
+                         step("click", [:]), snapshot(grok(reply: "Focus confirmed", token: "s00000004", outgoingPrompt: multiline), repeating: true)]
+            }
+            let fixture = try driver(plan)
             defer { fixture.remove() }
             if scene == "background wrapper" {
-                let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+                let answer = try await adapter(fixture).reply(multiline, app: .grokBot, binding: binding)
                 XCTAssertEqual(answer, "Focus confirmed")
             } else {
-                let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
+                let error = await failure { try await self.adapter(fixture).reply(multiline, app: .grokBot, binding: self.binding) }
                 XCTAssertTrue(error.contains("Send was not clicked"), scene)
             }
             let calls = try await finishedCalls(fixture)
-            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1, "Prepared text must never be replayed")
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, scene == "background wrapper" ? 2 : 1)
+            XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, scene == "background wrapper" ? 1 : 0)
             XCTAssertEqual(calls.filter { $0.tool == "click" }.count, scene == "background wrapper" ? 1 : 0)
         }
     }
@@ -1380,8 +1476,8 @@ final class DesktopAppDriverTests: XCTestCase {
     }
 
     func testGrokBotListOrHistoryChangeAfterTypingNeverSubmits() async throws {
-        for changed in [grok(draft: prompt, bots: ["Fixture Bot", "Fixture Bot"]),
-                        grok(draft: prompt, reply: "An unrelated message arrived")] {
+        for changed in [grok(draft: prompt, bots: ["Fixture Bot", "Fixture Bot"], focused: false),
+                        grok(draft: prompt, reply: "An unrelated message arrived", focused: false)] {
             let fixture = try driver([apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(changed)])
             defer { fixture.remove() }
             _ = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
@@ -2310,7 +2406,9 @@ final class DesktopAppDriverTests: XCTestCase {
         }
         var heading = element("AXHeading", name, value: "2"); heading["element_index"] = 100
         var details = element("AXButton", "View conversation details"); details["parent_index"] = 100
-        body += [element("AXSplitter", "Resize sidebar"), heading, details]
+        body += [element("AXSplitter", "Resize sidebar"), heading, details,
+                 element("AXStaticText", "You"), element("AXStaticText", "Earlier unrelated question"),
+                 element("AXStaticText", name), element("AXStaticText", "Earlier unrelated answer")]
         if let previousReply {
             body += [element("AXStaticText", "You"), element("AXStaticText", outgoingPrompt ?? prompt), element("AXStaticText", name), element("AXStaticText", previousReply)]
         }

@@ -314,8 +314,18 @@ The adapter checks the exact process/window, conversation name, and empty
 composer. In Grok Bot 0.71.2, the native `sand-conversation-heading` identifies
 the actual chat header independently of headings inside a reply. msgblast's
 Accessibility access reads that header and the composer's actual value; placeholder
-text is never treated as proof of an empty draft. It types with a fresh element token, independently reads the prepared
-draft, and clicks the enabled Send control once. Every mutation specifies
+text is never treated as proof of an empty draft. Typing uses the current editor's
+validated capture geometry and independently checks each prepared draft. Focus
+must remain confirmed between keyboard chunks. After the last chunk, the exact
+draft and conversation are checked before the enabled Send control is clicked
+once; that button does not require keyboard focus.
+
+Grok virtualizes older messages when its transcript scrolls. msgblast anchors on
+the latest conversation messages instead of counting every loaded occurrence of
+a prompt. A new outgoing prompt and reply must appear after that unique anchor.
+Missing or duplicate anchors, changed recent history, or another new message
+stop attribution. No usable history stops input; a completely empty new bot has
+no independently verified empty-chat contract yet. Every mutation specifies
 `delivery_mode: background`; a refusal never triggers foreground input or replay.
 
 ## Replies, recovery, and limits

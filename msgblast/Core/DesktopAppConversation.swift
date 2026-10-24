@@ -214,12 +214,53 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         }
         return ends
     }
+    struct GrokHistoryAnchor: Sendable {
+        let text: [String]
+        init(history: [String], bot: String) {
+            let speakers = history.indices.filter { history[$0] == "You" || history[$0] == bot }
+            let start = speakers.dropLast().last ?? history.startIndex
+            text = Array(history.dropFirst(start))
+        }
+        func boundary(in history: [String]) -> Int? {
+            if text.isEmpty { return nil }
+            guard history.count >= text.count else { return nil }
+            let matches = (0...(history.count - text.count)).filter { history[$0..<($0 + text.count)].elementsEqual(text) }
+            guard matches.count == 1 else { return nil }
+            return matches[0] + text.count
+        }
+        func matchesEnd(of history: [String]) -> Bool { boundary(in: history) == history.count }
+    }
+    func grokHistoryAnchor() throws -> GrokHistoryAnchor {
+        let history = try historyText(app: .grokBot)
+        let bot = try conversation(app: .grokBot)
+        guard history.contains(where: { $0 != bot && $0 != "You" && !Self.isTimestamp($0) && !$0.isEmpty }) else {
+            throw DesktopAppError.unavailable("Grok Bot's conversation is still loading. Open it and wait for its messages before trying again.")
+        }
+        return GrokHistoryAnchor(history: history, bot: bot)
+    }
+    func grokReply(after prompt: String, anchor: GrokHistoryAnchor) throws -> String? {
+        let transcript = try transcript(app: .grokBot)
+        let textRows = transcript.indices.filter { transcript[$0].role == "AXStaticText" }
+        guard let boundary = anchor.boundary(in: textRows.map { transcript[$0].text }) else {
+            throw DesktopAppError.unavailable("Grok Bot's recent conversation changed or became ambiguous. Review the chat; no reply was attributed.")
+        }
+        let start = textRows[boundary - 1] + 1
+        let added = Array(transcript.dropFirst(start))
+        let addedText = added.filter { $0.role == "AXStaticText" && !$0.text.isEmpty }.map(\.text)
+        guard addedText.filter({ $0 == "You" }).count <= 1,
+              addedText.isEmpty || addedText.first == "You" else {
+            throw DesktopAppError.unavailable("Another message appeared in Grok Bot while waiting. No reply was attributed.")
+        }
+        return try reply(after: prompt, app: .grokBot, outgoingOccurrence: 1, transcript: added)
+    }
     func outgoingCount(_ prompt: String, app: DesktopAppProvider) throws -> Int {
         try outgoingEnds(prompt, app: app, transcript: transcript(app: app)).count
     }
     func reply(after prompt: String, app: DesktopAppProvider, outgoingOccurrence: Int = 1) throws -> String? {
+        try reply(after: prompt, app: app, outgoingOccurrence: outgoingOccurrence, transcript: transcript(app: app))
+    }
+    private func reply(after prompt: String, app: DesktopAppProvider, outgoingOccurrence: Int, transcript: [Element]) throws -> String? {
         let name = app == .wabi ? "Wabi" : try conversation(app: app)
-        let transcript = try transcript(app: app)
         let matches = try outgoingEnds(prompt, app: app, transcript: transcript)
         guard outgoingOccurrence > 0, matches.count >= outgoingOccurrence else { return nil }
         let sent = matches[outgoingOccurrence - 1]
@@ -442,7 +483,7 @@ actor DesktopAppConversation {
             }
             if index < lines.count - 1 { inputs.append(.newline) }
         }
-        let history = try initial.historyText(app: .grokBot)
+        let history = try initial.grokHistoryAnchor()
         var state = initial, prefix = ""
         for (index, input) in inputs.enumerated() {
             if index > 0 { state = try await snapshot(target, session: session, screenshotURL: image) }
@@ -450,7 +491,7 @@ actor DesktopAppConversation {
             let native = try await grokState(state, target: target)
             let field = try state.composer(app: .grokBot)
             guard native.draft == prefix, grokDraftAgrees(field, with: prefix),
-                  try state.historyText(app: .grokBot) == history, !state.isGenerating,
+                  try history.matchesEnd(of: state.historyText(app: .grokBot)), !state.isGenerating,
                   prefix.isEmpty || native.composerFocused == true else {
                 throw DesktopAppError.unavailable("Grok Bot's draft, focus, or history changed. Nothing was submitted; review the preserved text.")
             }
@@ -476,9 +517,9 @@ actor DesktopAppConversation {
             state = try await snapshot(target, session: session)
             try validate(state, app: .grokBot, binding: binding)
             let prepared = try await grokState(state, target: target)
-            guard prepared.draft == prefix, prepared.composerFocused == true,
+            guard prepared.draft == prefix, index == inputs.count - 1 || prepared.composerFocused == true,
                   try grokDraftAgrees(state.composer(app: .grokBot), with: prefix),
-                  try state.historyText(app: .grokBot) == history, !state.isGenerating else {
+                  try history.matchesEnd(of: state.historyText(app: .grokBot)), !state.isGenerating else {
                 throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
             }
         }
@@ -502,7 +543,7 @@ actor DesktopAppConversation {
         var state = try await snapshot(target, session: session, screenshotURL: app == .grokBot ? image : nil)
         if app == .grokBot { state = try await openGrokBot(binding.name, state: state, target: target, session: session, screenshotURL: image) }
         try validate(state, app: app, binding: binding)
-        let previousPromptCount = try state.outgoingCount(prompt, app: app)
+        let receipt = try state.grokHistoryAnchor()
         let field = try state.composer(app: app)
         let draft = app == .grokBot ? try await grokState(state, target: target).draft : field.draft
         guard draft.isEmpty else { throw DesktopAppError.unavailable("\(app.name) has an unsent draft. It was preserved.") }
@@ -522,10 +563,8 @@ actor DesktopAppConversation {
                 previous = nil; stableSince = .now
                 continue
             }
-            let promptCount = try state.outgoingCount(prompt, app: app)
             let composerCleared = app == .grokBot ? try await grokState(state, target: target).draft.isEmpty : try state.composer(app: app).draft.isEmpty
-            let candidate = composerCleared && promptCount > previousPromptCount
-                ? try state.reply(after: prompt, app: app, outgoingOccurrence: previousPromptCount + 1) : nil
+            let candidate = composerCleared ? try state.grokReply(after: prompt, anchor: receipt) : nil
             if candidate != previous || state.isGenerating { previous = candidate; stableSince = .now }
             if let candidate, !state.isGenerating, ContinuousClock.now - stableSince >= timing.stableDuration { return candidate }
         }
