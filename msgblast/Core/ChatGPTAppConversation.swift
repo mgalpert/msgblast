@@ -63,6 +63,15 @@ actor ChatGPTAppConversation {
         do { _ = try await driver.call(tool, args, numbers: numbers, arrays: modifiers.isEmpty ? [:] : ["modifiers": modifiers], as: DesktopAppConversation.Action.self) }
         catch { try Task.checkCancellation() }
     }
+    private func recoveredLegacyBinding(_ binding: ChatGPTConversationBinding, native: ChatGPTAppObservation) -> ChatGPTConversationBinding? {
+        guard binding.kind == .chatgpt, binding.fallbackTitle == "ChatGPT",
+              binding.title == binding.dedicatedTitle, native.kind == .chatgpt, !native.title.isEmpty,
+              let prompt = binding.firstPrompt, prompt.hasPrefix(binding.firstMessage("")),
+              native.messages.first == .init(role: .user, text: prompt) else { return nil }
+        var recovered = binding
+        recovered.fallbackTitle = native.title
+        return recovered
+    }
     private func open(_ binding: ChatGPTConversationBinding, target: DesktopAppConversation.Target, session: String) async throws -> ChatGPTAppObservation {
         var native = try await read(target)
         try idle(native)
@@ -86,6 +95,7 @@ actor ChatGPTAppConversation {
                 try await action(control: dot, target: target, session: session, expected: native)
                 native = try await read(target)
             }
+            guard !native.dotSetup else { throw DesktopAppError.unavailable("Create your Dot in ChatGPT, then connect Dots.") }
             guard native.kind == .dots, binding.title == nil || binding.title == native.title else { throw DesktopAppError.unavailable("This comparison’s Dot is unavailable. No replacement was created.") }
             if let prompt = binding.firstPrompt {
                 guard native.messages.contains(.init(role: .user, text: prompt)) else { throw DesktopAppError.unavailable("The saved Dot conversation does not contain this comparison’s first prompt.") }
@@ -95,6 +105,7 @@ actor ChatGPTAppConversation {
         if let title = binding.title {
             guard title == binding.dedicatedTitle, let prompt = binding.firstPrompt,
                   binding.fallbackTitle.map({ !$0.isEmpty }) ?? true else { throw DesktopAppError.unavailable("ChatGPT’s saved conversation identity is invalid.") }
+            if recoveredLegacyBinding(binding, native: native) != nil { return native }
             let titles = [title, binding.fallbackTitle].compactMap { $0 }
             if native.kind != .chatgpt || !titles.contains(native.title) {
                 let desired = native.nodes.filter { $0.role == "AXButton" && $0.label == title && $0.classes.contains("sidebar-item") }
@@ -113,7 +124,7 @@ actor ChatGPTAppConversation {
             try await action(control: new, target: target, session: session, expected: native)
             native = try await read(target)
         }
-        guard native.kind == .chatgpt, native.isNew else { throw DesktopAppError.unavailable("ChatGPT did not open a blank conversation.") }
+        guard native.kind == .chatgpt, native.isNew || native.codexBootstrap else { throw DesktopAppError.unavailable("ChatGPT did not open a blank conversation.") }
         let switchers = native.nodes.filter { $0.role == "AXPopUpButton" && $0.label.hasPrefix("Switch mode, current mode:") }
         if switchers.count == 1, switchers[0].label != "Switch mode, current mode: ChatGPT" {
             try await action(control: switchers[0], target: target, session: session, expected: native)
@@ -134,7 +145,15 @@ actor ChatGPTAppConversation {
     func checkAvailable(kind: ChatGPTAppKind) async throws {
         guard !occupied else { throw DesktopAppError.unavailable("ChatGPT is already handling a request.") }
         occupied = true; defer { occupied = false }
-        try idle(await read(driver.target(kind == .dots ? .dots : .chatgpt)))
+        let target = try await driver.target(kind == .dots ? .dots : .chatgpt)
+        let native = try await read(target)
+        try idle(native)
+        if kind == .dots || native.dotSetup {
+            guard kind != .dots || !native.dotSetup else { throw DesktopAppError.unavailable("Create your Dot in ChatGPT, then connect Dots.") }
+            let session = "msgblast-chatgpt-check-\(UUID())"
+            defer { Task { await driver.endSession(session) } }
+            _ = try await open(.init(comparisonID: UUID(), kind: kind), target: target, session: session)
+        }
     }
     func prepare(comparisonID: UUID, kind: ChatGPTAppKind, binding: ChatGPTConversationBinding?) async throws -> ChatGPTConversationBinding {
         guard !occupied else { throw DesktopAppError.unavailable("ChatGPT is already handling a request.") }
@@ -145,7 +164,7 @@ actor ChatGPTAppConversation {
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(kind == .dots ? .dots : .chatgpt)
         let native = try await open(saved, target: target, session: session)
-        var result = saved
+        var result = recoveredLegacyBinding(saved, native: native) ?? saved
         if kind == .dots { result.title = native.title }
         return result
     }
@@ -177,12 +196,12 @@ actor ChatGPTAppConversation {
         let target = try await driver.target(binding.kind == .dots ? .dots : .chatgpt)
         var native = try await open(binding, target: target, session: session)
         let baseline = native.messages, openedTitle = native.title, prompt = binding.firstPrompt == nil ? binding.firstMessage(text) : text
-        var pending = binding
+        var pending = recoveredLegacyBinding(binding, native: native) ?? binding
         pending.firstPrompt = binding.firstPrompt ?? prompt
         if binding.kind == .dots { pending.title = native.title }
         let preflightImage = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-chatgpt-preflight-\(UUID()).png")
         defer { try? FileManager.default.removeItem(at: preflightImage) }
-        let (preflightState, preflightField) = try await element(native.composer, target: target, session: session, expected: native, imageURL: preflightImage)
+        let (preflightState, preflightField) = try await element(native.requiredComposer(), target: target, session: session, expected: native, imageURL: preflightImage)
         _ = try preflightState.pixelCenter(of: preflightField, target: target, imageURL: preflightImage)
         try await onPrepared(pending)
         var prepared = native
@@ -190,12 +209,12 @@ actor ChatGPTAppConversation {
         let chunks = prompt.components(separatedBy: "\n")
         for (index, line) in chunks.enumerated() {
             if index > 0 {
-                if prefix.isEmpty && !prepared.composer.focused {
-                    try await action(control: prepared.composer, target: target, session: session, expected: prepared, pixel: true)
+                if try prefix.isEmpty && !prepared.requiredComposer().focused {
+                    try await action(control: prepared.requiredComposer(), target: target, session: session, expected: prepared, pixel: true)
                     prepared = try await checkedDraft(prefix, previous: prepared, target: target)
                 }
-                guard prepared.composer.focused else { throw DesktopAppError.unavailable("ChatGPT’s composer lost focus. Review the preserved draft; nothing was retried.") }
-                try await action("press_key", control: prepared.composer, key: "return", target: target, session: session, expected: prepared, verifyImage: true, modifiers: ["shift"], focusedInput: true)
+                guard try prepared.requiredComposer().focused else { throw DesktopAppError.unavailable("ChatGPT’s composer lost focus. Review the preserved draft; nothing was retried.") }
+                try await action("press_key", control: prepared.requiredComposer(), key: "return", target: target, session: session, expected: prepared, verifyImage: true, modifiers: ["shift"], focusedInput: true)
                 prefix += "\n"
                 prepared = try await checkedDraft(prefix, previous: prepared, target: target)
             }
@@ -205,7 +224,7 @@ actor ChatGPTAppConversation {
                 let chunk = String(remaining[..<end])
                 remaining = remaining[end...]
                 let first = prefix.isEmpty
-                try await action("type_text", control: prepared.composer, text: chunk, target: target, session: session, expected: prepared, pixel: first, verifyImage: !first, focusedInput: !first)
+                try await action("type_text", control: prepared.requiredComposer(), text: chunk, target: target, session: session, expected: prepared, pixel: first, verifyImage: !first, focusedInput: !first)
                 prefix += chunk
                 prepared = try await checkedDraft(prefix, previous: prepared, target: target)
             }

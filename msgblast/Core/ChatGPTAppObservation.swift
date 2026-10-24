@@ -47,15 +47,21 @@ struct ChatGPTAppObservation: Sendable {
     let draft: String
     let generating: Bool
     let messages: [ChatGPTMessage]
-    let composer: ChatGPTAXNode
+    let composer: ChatGPTAXNode?
     let codexBootstrap: Bool
-    var isNew: Bool { kind == .chatgpt && !codexBootstrap && messages.isEmpty }
+    var dotSetup: Bool { composer == nil }
+    var isNew: Bool { composer != nil && kind == .chatgpt && !codexBootstrap && messages.isEmpty }
+    func requiredComposer() throws -> ChatGPTAXNode {
+        guard let composer else { throw DesktopAppError.unavailable("Create your Dot in ChatGPT, then connect Dots.") }
+        return composer
+    }
     init(root: ChatGPTAXNode) throws {
         guard root.role == "AXWindow" else { throw DesktopAppError.unavailable("Open ChatGPT’s main window.") }
         let windowTitle = root.label
-        title = windowTitle
         let all = root.descendants
         guard let web = all.first(where: { $0.role == "AXWebArea" && $0.url == "app://-/index.html" }) else { throw DesktopAppError.unavailable("This ChatGPT application version is not supported yet.") }
+        let conversationTitle = web.label.isEmpty ? windowTitle : web.label
+        title = conversationTitle
         // Nested web areas belong to browser tabs and embedded apps, never ChatGPT.
         func safe(_ n: ChatGPTAXNode) -> [ChatGPTAXNode] {
             [n] + n.children.filter { $0.role != "AXWebArea" }.flatMap(safe)
@@ -64,32 +70,51 @@ struct ChatGPTAppObservation: Sendable {
         guard !nodes.contains(where: { ["AXDialog", "AXSheet"].contains($0.role) }) else { throw DesktopAppError.unavailable("Dismiss ChatGPT’s dialog before continuing.") }
         let codexFields = nodes.filter { $0.role == "AXTextArea" && $0.label == "Work with ChatGPT" }
         if nodes.filter({ $0.role == "AXPopUpButton" && ["Switch mode, current mode: Codex", "Switch mode, current mode: ChatGPT"].contains($0.label) }).count == 1, codexFields.count == 1, let value = codexFields[0].value {
-            composer = codexFields[0]; kind = .chatgpt; codexBootstrap = true
-            draft = composer.descendants.contains(where: { $0.classes.contains("placeholder") }) && ["Work with ChatGPT\n", "\n"].contains(value) ? "" : value
+            let composer = codexFields[0]; self.composer = composer; kind = .chatgpt; codexBootstrap = true
+            draft = composer.descendants.contains(where: { $0.classes.contains("placeholder") }) && ["Work with ChatGPT", "Work with ChatGPT\n", "\n"].contains(value) ? "" : value
             generating = false; messages = []; return
         }
         codexBootstrap = false
         let panels = nodes.filter { $0.id.hasSuffix("-chat-panel") }
+        let initialDotSetup = nodes.filter { $0.role == "AXHeading" && $0.label == "Create your dot" }.count == 1
+        let dotComputerSetup = nodes.filter { $0.role == "AXHeading" && $0.label == "Choose where your dot can work" }.count == 1
+            && nodes.filter { $0.role == "AXCheckBox" && $0.label == "Your local computer" }.count == 1
+            && nodes.filter { $0.role == "AXButton" && $0.label == "Continue" }.count == 1
+        if panels.isEmpty,
+           initialDotSetup || dotComputerSetup,
+           nodes.filter({ $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") }).count == 1,
+           !nodes.contains(where: { ["AXTextArea", "AXTextField"].contains($0.role) }) {
+            composer = nil; kind = .dots; draft = ""; generating = false; messages = []; return
+        }
+        if panels.isEmpty,
+           nodes.filter({ $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") }).count == 1,
+           nodes.filter({ $0.role == "AXButton" && $0.label == "Your dot" && $0.classes.contains("sidebar-item") }).count == 1,
+           !nodes.contains(where: { ["AXTextArea", "AXTextField", "AXHeading"].contains($0.role) }) {
+            throw ChatGPTObservationError.transient
+        }
         guard panels.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s native conversation panel is unavailable.") }
         let panel = safe(panels[0])
         let fields = panel.filter { $0.role == "AXTextArea" && ["Ask ChatGPT", "Message"].contains($0.label) }
         guard fields.count == 1, let value = fields[0].value else { throw DesktopAppError.unavailable("ChatGPT’s message field is unavailable. Your draft was preserved.") }
-        composer = fields[0]
+        let composer = fields[0]; self.composer = composer
         kind = composer.label == "Message" ? .dots : .chatgpt
         let placeholder = kind == .dots ? "Send a message" : "Ask ChatGPT"
         let hasPlaceholder = composer.descendants.contains { $0.classes.contains("placeholder") }
-        draft = hasPlaceholder && value == placeholder + "\n" ? "" : try Self.paragraphDraft(composer, raw: value)
+        draft = hasPlaceholder && [placeholder, placeholder + "\n"].contains(value) ? "" : try Self.paragraphDraft(composer, raw: value)
         generating = panel.contains { $0.role == "AXButton" && ["Stop", "Stop generating", "Stop response"].contains($0.label) }
         if kind == .dots {
-            guard nodes.filter({ $0.role == "AXPopUpButton" && $0.label == "Open \(windowTitle)’s profile" }).count == 1 else { throw DesktopAppError.unavailable("The active Dot’s identity could not be verified.") }
+            guard nodes.filter({ $0.role == "AXPopUpButton" && $0.label == "Open \(conversationTitle)’s profile" }).count == 1 else { throw DesktopAppError.unavailable("The active Dot’s identity could not be verified.") }
             let lists = panel.filter { $0.classes.contains("message-list") }
             guard lists.count == 1 else { throw DesktopAppError.unavailable("The Dot’s message list is unavailable.") }
-            messages = try lists[0].children.filter { $0.classes.contains("message-row") }.compactMap { row in
-                let bubbles = row.descendants.filter { $0.classes.contains("message-bubble") }
-                guard bubbles.count <= 1 else { throw DesktopAppError.unavailable("The Dot’s message layout changed.") }
-                guard let body = bubbles.first else { return nil }
-                let text = Self.bodyText(body)
-                return text.isEmpty ? nil : .init(role: row.classes.contains("self") ? .user : .assistant, text: text)
+            func bubbles(_ node: ChatGPTAXNode) -> [ChatGPTAXNode] {
+                if node.classes.contains("message-bubble") { return [node] }
+                return node.children.flatMap(bubbles)
+            }
+            messages = lists[0].children.filter { $0.classes.contains("message-row") }.flatMap { row in
+                bubbles(row).compactMap { body -> ChatGPTMessage? in
+                    let text = Self.bodyText(body)
+                    return text.isEmpty ? nil : .init(role: row.classes.contains("self") ? .user : .assistant, text: text)
+                }
             }
         } else {
             let transcripts = panel.filter { $0.classes.contains(where: { $0.hasPrefix("_transcriptContent_") }) }
@@ -155,7 +180,7 @@ struct ChatGPTAppObservation: Sendable {
         guard candidates.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s requested control is unavailable or ambiguous.") }
         return candidates[0]
     }
-    func sameContent(as other: Self) -> Bool { title == other.title && codexBootstrap == other.codexBootstrap && kind == other.kind && draft == other.draft && messages == other.messages }
+    func sameContent(as other: Self) -> Bool { title == other.title && dotSetup == other.dotSetup && codexBootstrap == other.codexBootstrap && kind == other.kind && draft == other.draft && messages == other.messages }
 }
 enum ChatGPTNativeReader {
     static func capture(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppObservation {

@@ -51,6 +51,47 @@ final class ChatGPTAppConversationTests: XCTestCase {
             XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(value: value, placeholder: false))).draft, value)
         }
     }
+    func testEmptyWorkComposerAcceptsPlaceholderWithoutTrailingNewlineButPreservesLiteralDraft() throws {
+        let mode = ChatGPTAXNode(role: "AXPopUpButton", label: "Switch mode, current mode: ChatGPT")
+        for hasPlaceholder in [true, false] {
+            let native = try ChatGPTAppObservation(root: window(composer: field("Work with ChatGPT", value: "Work with ChatGPT", placeholder: hasPlaceholder), extra: [mode]))
+            XCTAssertEqual(native.draft, hasPlaceholder ? "" : "Work with ChatGPT")
+            XCTAssertTrue(native.codexBootstrap)
+            XCTAssertFalse(native.isNew)
+        }
+    }
+    func testEmptyChatComposerAcceptsPlaceholderWithoutTrailingNewline() throws {
+        XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(value: "Ask ChatGPT"))).draft, "")
+        XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(value: "Ask ChatGPT", placeholder: false))).draft, "Ask ChatGPT")
+    }
+    func testFirstPartyContentTitleOverridesGenericNativeWindowTitle() throws {
+        var chat = window(title: "ChatGPT")
+        chat.children[0].label = "Reply exact string"
+        XCTAssertEqual(try ChatGPTAppObservation(root: chat).title, "Reply exact string")
+        var dot = window(composer: field("Message", value: "Send a message"), title: "ChatGPT", extra: [
+            .init(role: "AXPopUpButton", label: "Open Pal’s profile")
+        ])
+        dot.children[0].label = "Pal"
+        dot.children[0].children[1].children.insert(.init(role: "AXGroup", classes: ["message-list"]), at: 0)
+        XCTAssertEqual(try ChatGPTAppObservation(root: dot).title, "Pal")
+    }
+    func testDotComputerSetupIsNotReportedAsMissingConversationPanel() throws {
+        let setup = ChatGPTAXNode(role: "AXWindow", label: "ChatGPT", children: [
+            .init(role: "AXWebArea", url: "app://-/index.html", children: [
+                .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
+                .init(role: "AXHeading", label: "Choose where your dot can work"),
+                .init(role: "AXCheckBox", label: "Your local computer", value: "1"),
+                .init(role: "AXButton", label: "Continue")
+            ])
+        ])
+        let native = try ChatGPTAppObservation(root: setup)
+        XCTAssertTrue(native.dotSetup)
+        XCTAssertFalse(native.isNew)
+        XCTAssertTrue(native.messages.isEmpty)
+        XCTAssertThrowsError(try native.requiredComposer()) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Create your Dot in ChatGPT"))
+        }
+    }
     func testNativeParagraphDraftPreservesBlankLinesAndRejectsDisagreement() throws {
         let paragraphs: [ChatGPTAXNode] = [
             .init(role: "AXGroup", children: [.init(role: "AXStaticText", value: "First")]),
@@ -94,6 +135,20 @@ final class ChatGPTAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try observation([baseline[0], older, baseline[1], outgoing, answer]).appendedMessages(after: baseline))
         XCTAssertThrowsError(try observation(baseline + [outgoing, answer, .init(role: .user, text: "Another request")]).appendedMessages(after: baseline))
         XCTAssertThrowsError(try observation([older, outgoing, answer]).appendedMessages(after: baseline))
+    }
+    func testDotGroupedBubblesRetainMessageBoundariesWithoutDuplicateNestedWrappers() throws {
+        func bubble(_ text: String, nested: Bool = false) -> ChatGPTAXNode {
+            let body = ChatGPTAXNode(role: "AXStaticText", value: text)
+            return .init(role: "AXGroup", classes: ["message-bubble"], children: nested ? [.init(role: "AXGroup", classes: ["message-bubble"], children: [body])] : [body])
+        }
+        let rows: [ChatGPTAXNode] = [
+            .init(role: "AXGroup", classes: ["message-row"], children: [bubble("Hello"), bubble("Anything top of mind?", nested: true), .init(role: "AXButton", label: "Reply")]),
+            .init(role: "AXGroup", classes: ["message-row", "self"], children: [bubble("One"), bubble("Two"), .init(role: "AXStaticText", value: "10:08 PM")])
+        ]
+        let root = window([.init(role: "AXGroup", classes: ["message-list"], children: rows)], composer: field("Message", value: "Send a message"), title: "paldot", extra: [.init(role: "AXPopUpButton", label: "Open paldot’s profile")])
+        let native = try ChatGPTAppObservation(root: root)
+        XCTAssertTrue(native.draft.isEmpty)
+        XCTAssertEqual(native.messages, [.init(role: .assistant, text: "Hello"), .init(role: .assistant, text: "Anything top of mind?"), .init(role: .user, text: "One"), .init(role: .user, text: "Two")])
     }
     func testDotBodyExcludesPermissionCardsAndTimestamps() throws {
         let rows: [ChatGPTAXNode] = [
@@ -220,7 +275,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let roots: [ChatGPTAXNode]
         let nativeParagraphs: Bool
         var stage: URL { directory.appendingPathComponent("stage") }
-        func adapter(transientAfterTyping: Bool = false, partialOutgoingOnce: Bool = false, thinkingStatusOnce: Bool = false, renameReadFailure: Bool = false, renameReadCancellation: Bool = false, prependHistoryAfterSend: Bool = false) -> ChatGPTAppConversation {
+        func adapter(transientAfterTyping: Bool = false, partialOutgoingOnce: Bool = false, thinkingStatusOnce: Bool = false, renameReadFailure: Bool = false, renameReadCancellation: Bool = false, prependHistoryAfterSend: Bool = false, dotTransitionOnce: Bool = false) -> ChatGPTAppConversation {
             ChatGPTAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(3), callTimeout: 3), readNative: { target in
                 guard target == .init(pid: 42, window: 21) else { throw DesktopAppError.unavailable("Wrong exact window") }
                 let index = Int((try? String(contentsOf: stage, encoding: .utf8)) ?? "0") ?? 0
@@ -232,6 +287,11 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
                     throw ChatGPTObservationError.transient
                 }
                 var root = roots[index]
+                let dotTransition = directory.appendingPathComponent("dot-transition-read")
+                if dotTransitionOnce, index == 1, !FileManager.default.fileExists(atPath: dotTransition.path) {
+                    root.children[0].children.removeAll { $0.role == "AXHeading" }
+                    try Data().write(to: dotTransition)
+                }
                 if root.label == binding.dedicatedTitle, index == roots.count - 1 {
                     if renameReadFailure { throw DesktopAppError.unavailable("Rename completion could not be read") }
                     if renameReadCancellation { throw CancellationError() }
@@ -283,7 +343,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             (try? String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? []
         }
     }
-    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false) throws -> Fixture {
+    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chatgpt-submit-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var binding = ChatGPTConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, kind: kind)
@@ -353,6 +413,28 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             if duplicateTitle { chrome.insert(sidebar, at: 0) }
             roots.insert(.init(role: "AXWindow", label: "Example Dot", children: [.init(role: "AXWebArea", url: "app://-/index.html", children: chrome)]), at: 0)
             actions.insert(["tool": "click", "label": binding.fallbackTitle ?? binding.dedicatedTitle, "role": "AXButton"], at: 0)
+        }
+        if dotSetup {
+            var newChat = control("AXButton", "New chat", x: 70)
+            newChat.classes = ["sidebar-item"]
+            roots.insert(.init(role: "AXWindow", label: "ChatGPT", children: [.init(role: "AXWebArea", url: "app://-/index.html", children: [newChat, .init(role: "AXButton", label: "Your dot", classes: ["sidebar-item"]), .init(role: "AXHeading", label: "Create your dot")])]), at: 0)
+            actions.insert(["tool": "click", "label": "New chat", "role": "AXButton"], at: 0)
+        }
+        if newChatWork {
+            let workField = control("AXTextArea", "Work with ChatGPT", value: "Work with ChatGPT", x: 0, children: [.init(role: "AXGroup", classes: ["placeholder"])])
+            let work = ChatGPTAXNode(role: "AXWindow", label: "ChatGPT", children: [.init(role: "AXWebArea", url: "app://-/index.html", children: [.init(role: "AXPopUpButton", label: "Switch mode, current mode: ChatGPT"), control("AXCheckBox", "Chat", value: "0", x: 30), workField])])
+            roots.insert(work, at: dotSetup ? 1 : 0)
+            actions.insert(["tool": "click", "label": "Chat", "role": "AXCheckBox"], at: dotSetup ? 1 : 0)
+        }
+        if dotSetupDestination {
+            var home = root()
+            var newChat = control("AXButton", "New chat", x: 70)
+            newChat.classes = ["sidebar-item"]
+            var dot = control("AXButton", "Your dot", x: 80)
+            dot.classes = ["sidebar-item"]
+            home.children[0].children.insert(.init(role: "AXGroup", children: [newChat, dot]), at: 0)
+            roots.insert(home, at: 0)
+            actions.insert(["tool": "click", "label": "Your dot", "role": "AXButton"], at: 0)
         }
         if existingWork {
             var newChat = control("AXButton", "New chat", x: 70)
@@ -514,6 +596,21 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertNil(args["x"])
         XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
     }
+    func testLegacyGenericFallbackRecoversOnlyTheAlreadyOpenExactComparison() async throws {
+        let fixture = try fixture(followup: true, fallbackResume: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        var legacy = fixture.binding
+        legacy.fallbackTitle = "ChatGPT"
+        let recovered = try await fixture.adapter().prepare(comparisonID: legacy.comparisonID, kind: .chatgpt, binding: legacy)
+        XCTAssertEqual(recovered.fallbackTitle, "Automatic title")
+        XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") })
+        legacy.firstPrompt = "Another conversation"
+        do {
+            _ = try await fixture.adapter().prepare(comparisonID: legacy.comparisonID, kind: .chatgpt, binding: legacy)
+            XCTFail("A generic title cannot identify another conversation")
+        } catch { }
+        XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") })
+    }
     func testDuplicateSavedSidebarTitleNeverNavigatesOrTypes() async throws {
         let fixture = try fixture(followup: true, reopen: true, duplicateTitle: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
         do {
@@ -562,6 +659,53 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertTrue(inputs.allSatisfy { (($0["text"] as? String) ?? "").count <= 256 })
         XCTAssertNotNil(inputs.first?["x"])
         XCTAssertTrue(inputs.dropFirst().allSatisfy { $0["x"] == nil && $0["y"] == nil && $0["element_token"] == nil })
+    }
+
+    func testChatGPTConnectionFromDotSetupOpensChatWithoutTypingOrSending() async throws {
+        let fixture = try fixture(dotSetup: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try await fixture.adapter().checkAvailable(kind: .chatgpt)
+        let mutations = fixture.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(mutations.count, 1)
+        XCTAssertEqual(mutations.first?["tool"] as? String, "click")
+        XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "1")
+    }
+    func testChatGPTConnectionFromDotSetupHandlesNewChatDefaultingToWork() async throws {
+        let fixture = try fixture(dotSetup: true, newChatWork: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try await fixture.adapter().checkAvailable(kind: .chatgpt)
+        let mutations = fixture.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(mutations.count, 2)
+        XCTAssertTrue(mutations.allSatisfy { $0["tool"] as? String == "click" })
+        XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "2")
+    }
+    func testDotsConnectionFromSetupExplainsRequiredSetupWithoutCreatingDot() async throws {
+        let fixture = try fixture(dotSetup: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do { try await fixture.adapter().checkAvailable(kind: .dots); XCTFail("A missing Dot cannot be ready") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Create your Dot in ChatGPT")) }
+        XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") })
+    }
+    func testDotsConnectionChecksDotDestinationInsteadOfAcceptingIdleChatGPT() async throws {
+        let fixture = try fixture(dotSetup: true, dotSetupDestination: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do { try await fixture.adapter().checkAvailable(kind: .dots); XCTFail("Idle ChatGPT does not prove a Dot exists") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Create your Dot in ChatGPT")) }
+        let mutations = fixture.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(mutations.count, 1)
+        XCTAssertEqual(mutations.first?["tool"] as? String, "click")
+        XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "1")
+    }
+    func testDotsConnectionWaitsForNavigationWithoutRepeatingClick() async throws {
+        let fixture = try fixture(dotSetup: true, dotSetupDestination: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do { try await fixture.adapter(dotTransitionOnce: true).checkAvailable(kind: .dots); XCTFail("A Dot requiring setup cannot be ready") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Create your Dot in ChatGPT")) }
+        let mutations = fixture.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(mutations.count, 1)
+        XCTAssertEqual(mutations.first?["tool"] as? String, "click")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("dot-transition-read").path))
+    }
+    func testNewChatGPTPromptFromDotSetupUsesDedicatedChat() async throws {
+        let fixture = try fixture(dotSetup: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let answer = try await fixture.adapter().reply("First question", binding: fixture.binding, onPrepared: { _ in }, onBinding: { _ in })
+        XCTAssertEqual(answer, "ANSWER")
+        XCTAssertEqual(try String(contentsOf: fixture.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), fixture.binding.firstMessage("First question"))
     }
 
     func testExistingWorkTaskOpensNewChatWithoutChangingGlobalModeOrTypingIntoTask() async throws {
