@@ -1891,7 +1891,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.compactMap { $0.arguments["text"] as? String }, ["[msgblast request \(requestID.uuidString.lowercased())]", prompt])
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
         XCTAssertTrue(calls.filter { $0.tool == "type_text" }.allSatisfy { $0.arguments["element_token"] == nil && $0.arguments["x"] == nil })
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
         session.beginShutdown()
     }
 
@@ -1915,7 +1915,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.compactMap { $0.arguments["y"] as? Int }, [105, 165])
         XCTAssertTrue(calls.filter { $0.tool == "click" }.allSatisfy { $0.arguments["element_token"] == nil })
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
     }
 
     func testMusePartialDraftFocusLossAndChatSwitchPreventReturnWithoutReplay() async throws {
@@ -1930,7 +1930,7 @@ final class DesktopAppDriverTests: XCTestCase {
             let calls = try await finishedCalls(fixture)
             XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
             XCTAssertFalse(calls.contains { $0.tool == "press_key" })
-            assertMuseBackground(calls)
+            assertMuseInputRoutes(calls)
         }
     }
 
@@ -1970,7 +1970,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(reopened.state.museAppConversations[owner.uuidString]?.threadID, thread)
         let calls = try await finishedCalls(fixture, cleanupCount: 2)
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
         reopened.beginShutdown()
     }
 
@@ -2013,7 +2013,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture, cleanupCount: 4)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Recovery cannot create a replacement")
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1, "Recovery cannot resend")
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
         reopened.beginShutdown()
     }
 
@@ -2044,7 +2044,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture, cleanupCount: 3)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
         session.beginShutdown()
     }
 
@@ -2086,7 +2086,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertTrue(message.contains("not found"), message)
         let calls = try await finishedCalls(fixture)
         XCTAssertFalse(calls.contains { $0.tool == "type_text" || $0.tool == "press_key" || $0.arguments["element_token"] as? String == "s00000001:new" })
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
     }
 
     func testMuseChangedChatWhileWaitingCannotReturnForeignAnswer() async throws {
@@ -2124,7 +2124,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(keys[1].arguments["modifiers"] as? [String], ["shift"])
         XCTAssertNil(keys[2].arguments["modifiers"])
         XCTAssertTrue(calls.filter { $0.tool == "type_text" }.allSatisfy { !($0.arguments["text"] as? String ?? "").contains("\n") })
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
     }
 
     func testMuseFixtureComparisonsKeepIndependentSideChatsAndResumeSavedID() async throws {
@@ -2176,7 +2176,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, 1)
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
     }
 
     func testMuseResumeFocusesCompoundComposerWithCaptureBoundPointerEvents() async throws {
@@ -2187,7 +2187,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var composer = element("AXButton", "Message Attach file Dictate a message Send", token: "s00000001:composer")
         composer["frame"] = ["x": 300, "y": 600, "w": 600, "h": 50]
         var focus = try museStep("click", observation: museObservation(thread: thread))
-        focus["arguments"] = ["action": "press", "count": 2]
+        focus["arguments"] = ["action": "press", "count": 2, "delivery_mode": "foreground"]
         let fixture = try driver([apps(.muse), initial, capturedNavigation(["elements": [composer]]), focus])
         defer { fixture.remove() }
         let binding = try await museAdapter(fixture).prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: thread, title: "Saved"))
@@ -2198,11 +2198,12 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(click.arguments["y"] as? Int, 788)
         XCTAssertEqual(click.arguments["capture_id"] as? String, "muse-resized-capture", "The driver must map these pixels through the same resized screenshot")
         XCTAssertEqual(click.arguments["action"] as? String, "press")
+        XCTAssertEqual(click.arguments["delivery_mode"] as? String, "foreground", "Opening Muse is limited to focusing its verified empty editor")
         XCTAssertEqual(click.arguments["count"] as? Int, 2, "A single pixel click resolves to AXPress on the compound attachment control; two clicks use routed pointer events")
         XCTAssertNil(click.arguments["element_token"], "AXPress on this composer opens its file picker")
         let path = try XCTUnwrap(calls.first { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
         XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Private captures must be removed after use")
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
     }
 
     func testMuseInvalidMissingOrMismatchedCaptureCannotClickSavedChat() async throws {
@@ -2269,7 +2270,7 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(clicks.first?.arguments["element_token"] as? String, "s00000001:new")
         XCTAssertNil(clicks.last?.arguments["element_token"], "AXPress on the compound composer opens attachments")
         XCTAssertFalse(calls.contains { $0.tool == "type_text" || $0.tool == "press_key" })
-        assertMuseBackground(calls)
+        assertMuseInputRoutes(calls)
     }
 
     private func capturedNavigation(_ state: [String: Any]) -> [String: Any] {
@@ -2352,9 +2353,14 @@ final class DesktopAppDriverTests: XCTestCase {
             return observation
         }
     }
-    private func assertMuseBackground(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {
+    private func assertMuseInputRoutes(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {
         for call in calls where ["click", "type_text", "press_key"].contains(call.tool) {
-            XCTAssertEqual(call.arguments["delivery_mode"] as? String, "background", file: file, line: line)
+            let opensComposer = call.tool == "click" && call.arguments["count"] as? Int == 2
+            XCTAssertEqual(call.arguments["delivery_mode"] as? String, opensComposer ? "foreground" : "background", file: file, line: line)
+            if opensComposer {
+                XCTAssertNotNil(call.arguments["capture_id"], file: file, line: line)
+                XCTAssertNil(call.arguments["element_token"], file: file, line: line)
+            }
             XCTAssertEqual(call.arguments["pid"] as? Int, 4242, file: file, line: line)
             XCTAssertEqual(call.arguments["window_id"] as? Int, 101, file: file, line: line)
         }

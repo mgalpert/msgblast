@@ -119,8 +119,9 @@ Creation uses a fresh accessibility button. Muse's side-chat rows advertise
 AXPress but that action does not select them. Resuming uses a background pointer
 click derived from the row's current accessibility bounds and a fresh, validated
 window capture. The saved UUID must match after selection. When needed, the empty
-composer receives a capture-bound double click, which uses routed pointer events
-instead of pressing its compound attachment control. Native focus is verified
+composer is opened briefly and receives a capture-bound double click, which uses
+routed pointer events instead of pressing its compound attachment control.
+Native focus is verified
 before typing. Captures are kept in owner-only temporary directories and removed after
 the action. Missing captures, wrong window IDs, off-window frames, or image-size
 mismatches prevent the click. If the saved chat is absent from
@@ -145,8 +146,9 @@ WebKit's extra terminal line break is tolerated only between chunks; the whole
 final draft must equal the requested prompt before one final Return. Unsupported
 control characters and unverifiable drafts stop input and preserve the text.
 Typing and Send use no pixel coordinates. Navigation/focus coordinates come
-from each fresh capture rather than a saved layout. No OCR, DOM injection,
-foreground fallback, or automatic replay is used. A transient failed native read is retried once without repeating
+from each fresh capture rather than a saved layout. Muse may come forward to
+focus its empty editor when a comparison opens; typing and submission remain
+background operations. No OCR, DOM injection, or automatic send replay is used. A transient failed native read is retried once without repeating
 an input action.
 
 ## Wabi dedicated chats
@@ -457,7 +459,8 @@ that records every call. It never contacts installed apps. Coverage includes:
 - Stable-reply waits, generation controls, old echoed prompts, and foreign replies.
 - Incomplete sends across restart, explicit acknowledgement by the original
   comparison, cancellation, bounded process waits, and driver-process cleanup.
-- Exact background targets, one submission, no foreground fallback, and no replay.
+- Exact targets, background typing/submission, capture-bound Muse editor focus,
+  one submission, and no send replay.
 - Resized capture geometry, background composer focus without AXPress, invalid
   or missing capture refusal, and removal of private temporary screenshots.
 - Wabi creation through the AI chooser, exact URL resume despite renamed titles,

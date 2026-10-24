@@ -71,7 +71,7 @@ actor MuseAppConversation {
         }
         // Bind screenshot pixels to this capture's scale, origin, and exact
         // window. An unbound click can miss a resized Retina capture's field.
-        _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "capture_id": capture, "action": "press"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y, "count": focusOnly ? 2 : 1], as: DesktopAppConversation.Action.self)
+        _ = try await driver.call("click", ["session": session, "delivery_mode": focusOnly ? "foreground" : "background", "capture_id": capture, "action": "press"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y, "count": focusOnly ? 2 : 1], as: DesktopAppConversation.Action.self)
         return true
     }
     private func focusComposer(_ target: DesktopAppConversation.Target, session: String, at url: URL) async throws -> MuseAppObservation {
@@ -80,8 +80,9 @@ actor MuseAppConversation {
         guard current.url == url else { throw DesktopAppError.unavailable("Muse changed side chats before focusing its composer.") }
         if current.composerFocused, !current.sidebarOpen { return current }
         // A single pixel click uses AXPress on Muse's compound button and opens
-        // its attachment picker. Two routed pointer clicks focus the empty
-        // editor instead; native readback must still confirm keyboard focus.
+        // its attachment picker. Open Muse only to focus its verified empty
+        // editor with routed pointer events, then verify native focus before
+        // background typing. Unfocused background WebKit cannot receive them.
         _ = try await pixelClick(target, session: session, expectedURL: url, focusOnly: true) { state in
             let matches = state.body.filter {
                 (["AXTextArea", "AXTextField"].contains($0.role) && $0.label == "Message") ||
