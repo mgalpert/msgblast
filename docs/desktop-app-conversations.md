@@ -119,8 +119,9 @@ Creation uses a fresh accessibility button. Muse's side-chat rows advertise
 AXPress but that action does not select them. Resuming uses a background pointer
 click derived from the row's current accessibility bounds and a fresh, validated
 window capture. The saved UUID must match after selection. When needed, the empty
-composer is focused through the same capture-based route before native focus is
-verified. Captures are kept in owner-only temporary directories and removed after
+composer receives a capture-bound double click, which uses routed pointer events
+instead of pressing its compound attachment control. Native focus is verified
+before typing. Captures are kept in owner-only temporary directories and removed after
 the action. Missing captures, wrong window IDs, off-window frames, or image-size
 mismatches prevent the click. If the saved chat is absent from
 the exposed side-chat list, open it in Muse and try again. The adapter never

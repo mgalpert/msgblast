@@ -2179,7 +2179,7 @@ final class DesktopAppDriverTests: XCTestCase {
         assertMuseBackground(calls)
     }
 
-    func testMuseResumeFocusesCompoundComposerByFreshGeometryWithoutAXPress() async throws {
+    func testMuseResumeFocusesCompoundComposerWithCaptureBoundPointerEvents() async throws {
         let owner = UUID(), thread = UUID()
         var initial = windows(), unfocused = museObservation(thread: thread)
         unfocused.composerFocused = false
@@ -2187,7 +2187,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var composer = element("AXButton", "Message Attach file Dictate a message Send", token: "s00000001:composer")
         composer["frame"] = ["x": 300, "y": 600, "w": 600, "h": 50]
         var focus = try museStep("click", observation: museObservation(thread: thread))
-        focus["arguments"] = ["action": "focus"]
+        focus["arguments"] = ["action": "press", "count": 2]
         let fixture = try driver([apps(.muse), initial, capturedNavigation(["elements": [composer]]), focus])
         defer { fixture.remove() }
         let binding = try await museAdapter(fixture).prepare(comparisonID: owner, binding: .init(comparisonID: owner, threadID: thread, title: "Saved"))
@@ -2197,7 +2197,8 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(click.arguments["x"] as? Int, 600)
         XCTAssertEqual(click.arguments["y"] as? Int, 788)
         XCTAssertEqual(click.arguments["capture_id"] as? String, "muse-resized-capture", "The driver must map these pixels through the same resized screenshot")
-        XCTAssertEqual(click.arguments["action"] as? String, "focus", "Focusing the editor must not press its compound attachment control")
+        XCTAssertEqual(click.arguments["action"] as? String, "press")
+        XCTAssertEqual(click.arguments["count"] as? Int, 2, "A single pixel click resolves to AXPress on the compound attachment control; two clicks use routed pointer events")
         XCTAssertNil(click.arguments["element_token"], "AXPress on this composer opens its file picker")
         let path = try XCTUnwrap(calls.first { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
         XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Private captures must be removed after use")
