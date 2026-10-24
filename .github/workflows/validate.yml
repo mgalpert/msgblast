@@ -36,6 +36,9 @@ jobs:
           npm test
           npm run check
 
+      - name: Verify private feedback and crash intake contract
+        run: node --test feedback/worker.test.mjs
+
       - name: Verify anonymous telemetry contract
         run: node --test telemetry/worker.test.mjs
 
@@ -93,6 +96,9 @@ jobs:
 
       - name: Exercise real Sparkle updater with isolated fixtures
         run: python3 scripts/test_updates.py --derived-data build/updater-validation
+
+      - name: Verify crash consent and uncertain retry through the local intake
+        run: bash scripts/test_crash_reporting.sh build/updater-validation
 
       - name: Verify Settings permission checks and consent boundaries
         run: bash scripts/test_app_permissions.sh

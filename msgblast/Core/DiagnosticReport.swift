@@ -5,7 +5,7 @@ import Foundation
 /// This type does not read Messages, Contacts, drafts, or the network.
 public enum DiagnosticReport {
     public static let maximumNoteLength = 8000
-    public static let packageNames = ["README.txt", "feedback.txt", "diagnostics.json"]
+    public static let packageNames = ["README.txt", "feedback.txt", "diagnostics.json", "crash.json"]
     public static let diagnosticKeys = [
         "agentCount", "attachmentCount", "buildNumber", "bundleIdentifier", "comparisonCount",
         "fixtureMode", "hasDraft", "lastErrorCategory", "messagesStatus", "operatingSystem",
@@ -48,6 +48,7 @@ public enum DiagnosticReport {
             ("README.txt", Data(readme(included: request.includeDiagnostics).utf8)),
             ("feedback.txt", Data(feedbackText(kind: request.kind, contact: contact, note: note, now: now).utf8))
         ]
+        if let crash = request.crash { files.append(("crash.json", Data(crash.preview.utf8))) }
         if request.includeDiagnostics {
             files.append(("diagnostics.json", Data(json.utf8)))
         }
@@ -107,8 +108,8 @@ public enum DiagnosticReport {
 }
 
 public enum DiagnosticReportKind: String, Codable, CaseIterable, Sendable {
-    case feedback, bug
-    public var label: String { self == .bug ? "Bug report" : "Feedback" }
+    case feedback, bug, crash
+    public var label: String { self == .crash ? "Crash report" : self == .bug ? "Bug report" : "Feedback" }
     public var filename: String { self == .bug ? "msgblast-bug-report.zip" : "msgblast-feedback.zip" }
 }
 
@@ -118,6 +119,7 @@ public struct DiagnosticRequest: Sendable, Equatable {
     public var contact: String
     public var includeDiagnostics: Bool
     public var facts: DiagnosticFacts
+    public var crash: CrashReport? = nil
     public init(kind: DiagnosticReportKind, note: String, contact: String = "", includeDiagnostics: Bool = false, facts: DiagnosticFacts) {
         self.kind = kind
         self.note = note
