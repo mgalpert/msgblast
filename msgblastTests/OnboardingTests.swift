@@ -30,14 +30,64 @@ final class OnboardingTests: XCTestCase {
 
     func testOnboardingOffersNativeAppsAndRetainsLegacyWebCheckpoints() throws {
         let offered = Set(OnboardingChoice.offeredChoices)
-        for choice: OnboardingChoice in [.muse, .chatgpt, .claude, .dots, .grok, .grokbot] { XCTAssertFalse(offered.contains(choice)) }
-        for choice: OnboardingChoice in [.museApp, .chatgptApp, .claudeApp, .dotsApp, .grokBotApp, .wabi, .geminiApp, .hark, .os3] { XCTAssertTrue(offered.contains(choice)) }
+        for choice: OnboardingChoice in [.muse, .chatgpt, .claude, .dots, .grok, .grokbot, .geminiApp] { XCTAssertFalse(offered.contains(choice)) }
+        for choice: OnboardingChoice in [.museApp, .chatgptApp, .claudeApp, .dotsApp, .grokBotApp, .wabi, .hark, .os3] { XCTAssertTrue(offered.contains(choice)) }
         var saved = OnboardingState()
         saved.selected = [.chatgpt, .muse, .grokbot]
         saved.completed = [.muse]
         let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(saved))
         XCTAssertEqual(restored.selected, [.chatgpt, .muse, .grokbot])
         XCTAssertEqual(restored.pendingChoices, [.chatgpt, .grokbot], "An existing setup checkpoint must remain resumable")
+    }
+
+    func testDeferredGeminiCheckpointSurvivesWithoutBlockingOtherAppConnections() throws {
+        var saved = OnboardingState()
+        saved.selected = [.geminiApp, .wabi]
+        saved.stage = .connecting
+        let reopened = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(saved))
+        XCTAssertEqual(reopened.selected, saved.selected)
+        XCTAssertEqual(reopened.pendingChoices, [.wabi])
+        XCTAssertEqual(reopened.pendingSteps, [.agent(.wabi)])
+        XCTAssertFalse(WebProvider.desktopProviders.contains(.geminiApp))
+        XCTAssertEqual(reopened.availableSelected, [.wabi])
+        saved.selected = [.geminiApp]; saved.completed = [.geminiApp]; saved.stage = .choosing
+        saved.begin()
+        XCTAssertFalse(saved.hasConnectedAgent, "A deferred saved completion cannot count as a working agent")
+        XCTAssertEqual(saved.stage, .choosing)
+        saved.selected.insert(.wabi)
+        saved.begin()
+        XCTAssertEqual(saved.stage, .connecting)
+        XCTAssertEqual(saved.currentStep, .agent(.wabi))
+        XCTAssertTrue(saved.selected.contains(.geminiApp), "Do not erase the saved selection")
+    }
+
+    func testDeferredFinalConnectionReconcilesWithoutErasingSavedChoices() throws {
+        for connected: Set<OnboardingChoice> in [[], [.wabi]] {
+            var saved = OnboardingState()
+            saved.completePermissions(messaging: false, apps: true)
+            saved.selected = connected.union([.geminiApp])
+            saved.completed = connected
+            saved.stage = .connecting
+            var reopened = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(saved))
+            reopened.reconcileBuildAvailability()
+            XCTAssertEqual(reopened.stage, connected.isEmpty ? .choosing : .feedback)
+            var expected = saved
+            expected.stage = reopened.stage
+            XCTAssertEqual(reopened, expected, "Only the empty active checkpoint may change")
+            reopened.reconcileBuildAvailability()
+            XCTAssertEqual(reopened, expected)
+        }
+    }
+
+    func testDeferredChoiceDoesNotRewindPendingOrFinishedSetup() {
+        for stage: OnboardingState.Stage in [.choosing, .importing, .connecting, .feedback, .finished] {
+            var saved = OnboardingState()
+            saved.selected = [.geminiApp, .wabi]
+            saved.stage = stage
+            var reopened = saved
+            reopened.reconcileBuildAvailability()
+            XCTAssertEqual(reopened, saved, "Pending Wabi or an unrelated checkpoint must remain intact")
+        }
     }
 
     func testAutomaticMessagesCheckpointRetainsOptOutAcrossPermissionRestart() throws {
@@ -215,7 +265,7 @@ final class OnboardingTests: XCTestCase {
         setup.skipped = setup.selected
         setup.discoveredMessageAgentIDs = [tiny.id]
         XCTAssertTrue(setup.connectionReminderChoices(selectedProviders: []).isEmpty)
-        XCTAssertEqual(setup.connectionReminderChoices(selectedProviders: [.geminiApp]), [.geminiApp])
+        XCTAssertTrue(setup.connectionReminderChoices(selectedProviders: [.geminiApp]).isEmpty)
         XCTAssertTrue(setup.unresolvedMessageAgents(in: [tiny], chats: [], selectedIDs: []).isEmpty)
         XCTAssertEqual(setup.unresolvedMessageAgents(in: [tiny], chats: [], selectedIDs: [tiny.id]).map(\.name), ["tinyNature"])
     }

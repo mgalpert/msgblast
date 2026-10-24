@@ -153,10 +153,10 @@ final class DesktopAppConversationTests: XCTestCase {
     }
 
     func testGrokEmptyParagraphRequiresNativeEmptyEditorEvidence() {
-        XCTAssertEqual(GrokBotNativeReader.draftValue("\n", emptyEditor: true), "")
-        XCTAssertEqual(GrokBotNativeReader.draftValue("\n", emptyEditor: false), "\n")
+        XCTAssertEqual(GrokBotAppProfile.draftValue("\n", emptyEditor: true), "")
+        XCTAssertEqual(GrokBotAppProfile.draftValue("\n", emptyEditor: false), "\n")
         for text in ["Message Test Bot", "Type your answer, or talk about something else", "Keep this draft"] {
-            XCTAssertEqual(GrokBotNativeReader.draftValue(text, emptyEditor: true), text)
+            XCTAssertEqual(GrokBotAppProfile.draftValue(text, emptyEditor: true), text)
         }
     }
 
@@ -169,7 +169,7 @@ final class DesktopAppConversationTests: XCTestCase {
             ("First\nSecond", "First\nSecond"),
             ("First\n\nSecond", "First\n\nSecond")
         ] {
-            XCTAssertEqual(GrokBotNativeReader.draftValue(raw, emptyEditor: false), expected)
+            XCTAssertEqual(GrokBotAppProfile.draftValue(raw, emptyEditor: false), expected)
         }
     }
 
@@ -592,8 +592,13 @@ final class DesktopAppDriverTests: XCTestCase {
         let main = window(101, onScreen: false, title: [.gemini, .chatgpt, .dots, .claude].contains(app) ? "" : "Fixture chat")
         var hidden = window(11, onScreen: false, title: "")
         hidden["space_ids"] = NSNull()
+        // Claude retains a full-display layer-1000 helper on every Space.
+        // Space membership does not turn overlays into conversation windows.
+        var overlay = window(12, onScreen: false, title: "")
+        overlay["space_ids"] = [1, 3, 20]
+        overlay["layer"] = 1000
         let fixture = try driver([apps(app), step("list_windows", ["windows": [
-            window(9, onScreen: true, width: 200), window(10, onScreen: true, title: "Log in"), hidden, main
+            window(9, onScreen: true, width: 200), window(10, onScreen: true, title: "Log in"), hidden, overlay, main
         ]])])
         defer { fixture.remove() }
         let target = try await adapter(fixture).target(app)
@@ -825,6 +830,22 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testDelayedGrokDraftReadbackWaitsWithoutReplayingInput() async throws {
+        let fixture = try driver([
+            apps(), windows(), snapshot(grok()), step("type_text", ["effect": "unverifiable"], arguments: ["text": prompt]),
+            snapshot(grok()), snapshot(grok(draft: prompt, token: "s00000002")),
+            step("click", [:], arguments: ["element_token": "s00000002:send"]),
+            snapshot(grok(reply: "Delayed draft verified", token: "s00000003"), repeating: true)
+        ])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Delayed draft verified")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        assertBackgroundTargets(calls)
+    }
+
     func testWabiUsesCapturedPixelTypingInsteadOfRefusedElectronAXTarget() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         var typed = step("type_text", ["effect": "unverifiable"])
@@ -961,7 +982,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent])
         defer { fixture.remove() }
         let error = await failure { try await self.wabiAdapter(fixture, neverSettlesAfterSend: true).reply(self.prompt, in: self.wabiURL) }
-        XCTAssertTrue(error.contains("No stable Wabi reply"), error)
+        XCTAssertTrue(error.contains("nothing will be resent automatically"), error)
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
@@ -1062,6 +1083,44 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(resumed, otherWabiURL)
         let resumeCalls = try await finishedCalls(saved)
         XCTAssertEqual(resumeCalls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiChooserTargetsAIOptionWhenToolbarRemainsAccessible() async throws {
+        for retainedDraft: String? in [nil, ""] {
+            var steps = wabiCreationSteps()
+            steps[3]["native"] = wabiNative(draft: retainedDraft)
+            var picker = steps[4]["result"] as! [String: Any]
+            var elements = picker["elements"] as! [[String: Any]]
+            elements.insert(element("AXButton", "New chat", token: "s00000002:toolbar"), at: 0)
+            if retainedDraft != nil { elements.insert(element("AXTextArea", "Message", value: "Say something…"), at: 1) }
+            picker["elements"] = elements
+            steps[4]["result"] = picker
+            let fixture = try driver(steps)
+            defer { fixture.remove() }
+            let created = try await wabiAdapter(fixture).prepare(savedURL: nil)
+            XCTAssertEqual(created, otherWabiURL)
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.compactMap { $0.arguments["element_token"] as? String }, ["s00000001:new", "s00000002:new"])
+            XCTAssertFalse(calls.contains { $0.tool == "type_text" })
+        }
+    }
+
+    func testWabiAmbiguousAIChoicesNeverSelectAContactOrCreateAChat() async throws {
+        var steps = wabiCreationSteps()
+        var picker = steps[4]["result"] as! [String: Any]
+        var elements = picker["elements"] as! [[String: Any]]
+        var duplicate = element("AXButton", "New chat", token: "s00000002:duplicate")
+        duplicate["parent_index"] = 80
+        elements.append(duplicate)
+        picker["elements"] = elements; steps[4]["result"] = picker
+        steps = Array(steps.prefix(5))
+        let fixture = try driver(steps)
+        defer { fixture.remove() }
+        let problem = await failure { try await self.wabiAdapter(fixture).prepare(savedURL: nil).absoluteString }
+        XCTAssertTrue(problem.contains("AI chat choice"))
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Only opening the chooser is allowed")
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" })
     }
 
     func testWabiMissingAmbiguousSavedChatAndDraftNeverCreateReplacement() async throws {
@@ -1265,8 +1324,10 @@ final class DesktopAppDriverTests: XCTestCase {
         let navigation = [element("AXButton", "New chat", token: "s00000001:new")]
         var open = step("click", [:], arguments: ["element_token": "s00000001:new"])
         open["native"] = wabiNative(draft: nil)
+        var choices = element("AXList", ""); choices["element_index"] = 80
+        var aiChoice = element("AXButton", "New chat", token: "s00000002:new"); aiChoice["parent_index"] = 80
         let chooser = [element("AXHeading", "New chat"), element("AXHeading", "Contacts on Wabi"),
-                       element("AXTextField", "Name, username, or phone number"), element("AXButton", "New chat", token: "s00000002:new"),
+                       element("AXTextField", "Name, username, or phone number"), choices, aiChoice,
                        element("AXButton", "Eugenia Kuyda @eugenia")]
         var create = step("click", [:], arguments: ["element_token": "s00000002:new"])
         create["native"] = wabiNative(url: otherWabiURL, messages: [.init(role: .assistant, text: "What can I do for you?")])
@@ -1570,7 +1631,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let fixture = try driver(sendSteps() + [snapshot(grok(reply: "Unverified answer", bots: ["Fixture Bot", "Fixture Bot"]), repeating: true)])
         defer { fixture.remove() }
         let error = await failure { try await self.adapter(fixture, replyTimeout: .milliseconds(200)).reply(self.prompt, app: .grokBot, binding: self.binding) }
-        XCTAssertTrue(error.contains("No stable reply"), error)
+        XCTAssertTrue(error.contains("nothing will be resent automatically"), error)
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
@@ -1590,7 +1651,7 @@ final class DesktopAppDriverTests: XCTestCase {
             let fixture = try driver([
                 apps(), windows(), snapshot(grok()),
                 step("type_text", ["effect": "partial", "delivered_chars": 7]),
-                snapshot(grok(draft: draft, token: "s00000002"))
+                snapshot(grok(draft: draft, token: "s00000002"), repeating: draft.isEmpty)
             ])
             defer { fixture.remove() }
             let error = await failure { try await self.adapter(fixture).reply(self.prompt, app: .grokBot, binding: self.binding) }
@@ -1718,7 +1779,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let fixture = try driver(sendSteps() + [snapshot(grok(token: "s00000003"), repeating: true)])
         defer { fixture.remove() }
         let error = await failure { try await self.adapter(fixture, replyTimeout: .milliseconds(180)).reply(self.prompt, app: .grokBot, binding: self.binding) }
-        XCTAssertTrue(error.contains("No stable reply"), error)
+        XCTAssertTrue(error.contains("nothing will be resent automatically"), error)
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
@@ -2393,7 +2454,7 @@ final class DesktopAppDriverTests: XCTestCase {
             let data = try Data(contentsOf: file)
             let raw = try JSONDecoder().decode(GrokBotNativeState.self, from: data)
             let attributes = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-            let draft = (attributes["emptyEditor"] as? Bool).map { GrokBotNativeReader.draftValue(raw.draft, emptyEditor: $0) } ?? raw.draft
+            let draft = (attributes["emptyEditor"] as? Bool).map { GrokBotAppProfile.draftValue(raw.draft, emptyEditor: $0) } ?? raw.draft
             let focus = (attributes["applicationRole"] as? String).map { role in
                 DesktopNativeFocus.observed(applicationMatches: attributes["applicationFocusMatches"] as? Bool, applicationRole: role,
                                             elementFocused: attributes["editorFocused"] as? Bool)

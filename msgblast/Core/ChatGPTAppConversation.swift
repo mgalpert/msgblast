@@ -7,7 +7,7 @@ actor ChatGPTAppConversation {
     private let timing: DesktopAppConversation.Timing
     private let readNative: NativeRead
     private var occupied = false
-    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = ChatGPTNativeReader.capture) {
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = ChatGPTAppProfile.capture) {
         driver = DesktopAppConversation(executable: executable, timing: timing); self.timing = timing; self.readNative = readNative
     }
     private func read(_ target: DesktopAppConversation.Target) async throws -> ChatGPTAppObservation {
@@ -197,6 +197,7 @@ actor ChatGPTAppConversation {
         var native = try await open(binding, target: target, session: session)
         let baseline = native.messages, openedTitle = native.title, prompt = binding.firstPrompt == nil ? binding.firstMessage(text) : text
         var pending = recoveredLegacyBinding(binding, native: native) ?? binding
+        try DesktopAppWorkflow.validateText(prompt)
         pending.firstPrompt = binding.firstPrompt ?? prompt
         if binding.kind == .dots { pending.title = native.title }
         let preflightImage = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-chatgpt-preflight-\(UUID()).png")
@@ -205,77 +206,49 @@ actor ChatGPTAppConversation {
         _ = try preflightState.pixelCenter(of: preflightField, target: target, imageURL: preflightImage)
         try await onPrepared(pending)
         var prepared = native
-        var prefix = ""
-        let chunks = prompt.components(separatedBy: "\n")
-        for (index, line) in chunks.enumerated() {
-            if index > 0 {
-                if try prefix.isEmpty && !prepared.requiredComposer().focused {
-                    try await action(control: prepared.requiredComposer(), target: target, session: session, expected: prepared, pixel: true)
-                    prepared = try await checkedDraft(prefix, previous: prepared, target: target)
+        try await DesktopAppWorkflow.enterText(prompt, before: { _ in }, perform: { step in
+            switch step.input {
+            case .newline:
+                if try step.before.isEmpty && !prepared.requiredComposer().focused {
+                    try await self.action(control: prepared.requiredComposer(), target: target, session: session, expected: prepared, pixel: true)
+                    prepared = try await self.checkedDraft(step.before, previous: prepared, target: target)
                 }
                 guard try prepared.requiredComposer().focused else { throw DesktopAppError.unavailable("ChatGPT’s composer lost focus. Review the preserved draft; nothing was retried.") }
-                try await action("press_key", control: prepared.requiredComposer(), key: "return", target: target, session: session, expected: prepared, verifyImage: true, modifiers: ["shift"], focusedInput: true)
-                prefix += "\n"
-                prepared = try await checkedDraft(prefix, previous: prepared, target: target)
+                try await self.action("press_key", control: prepared.requiredComposer(), key: "return", target: target, session: session, expected: prepared, verifyImage: true, modifiers: ["shift"], focusedInput: true)
+            case .text(let chunk):
+                let first = step.before.isEmpty
+                try await self.action("type_text", control: prepared.requiredComposer(), text: chunk, target: target, session: session, expected: prepared, pixel: first, verifyImage: !first, focusedInput: !first)
             }
-            var remaining = line[...]
-            while !remaining.isEmpty {
-                let end = remaining.index(remaining.startIndex, offsetBy: 256, limitedBy: remaining.endIndex) ?? remaining.endIndex
-                let chunk = String(remaining[..<end])
-                remaining = remaining[end...]
-                let first = prefix.isEmpty
-                try await action("type_text", control: prepared.requiredComposer(), text: chunk, target: target, session: session, expected: prepared, pixel: first, verifyImage: !first, focusedInput: !first)
-                prefix += chunk
-                prepared = try await checkedDraft(prefix, previous: prepared, target: target)
-            }
-        }
+        }, after: { step in
+            prepared = try await self.checkedDraft(step.after, previous: prepared, target: target)
+        })
         let typed = try await read(target)
         guard typed.kind == native.kind, typed.title == native.title, typed.messages == baseline, typed.draft == prompt else { throw DesktopAppError.unavailable("ChatGPT’s prepared prompt changed. It was not submitted or retried.") }
-        try await action(control: typed.control(label: "Send"), target: target, session: session, expected: typed)
-        let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
-        var stable: String?, since = ContinuousClock.now
-        while ContinuousClock.now < deadline {
-            do { native = try await read(target) }
-            catch is ChatGPTObservationError { stable = nil; try await Task.sleep(for: timing.pollInterval); continue }
+        let answer = try await DesktopAppWorkflow.reply(app: binding.kind == .dots ? "Dots" : "ChatGPT", timing: timing, submit: {
+            try await self.action(control: typed.control(label: "Send"), target: target, session: session, expected: typed)
+        }, observe: {
+            native = try await self.read(target)
             guard native.kind == binding.kind, (pending.title == nil || native.title == openedTitle), native.draft.isEmpty || native.draft == prompt,
                   native.messages.count >= baseline.count else { throw DesktopAppError.unavailable("ChatGPT’s conversation changed. No reply was attributed.") }
             let appended = try native.appendedMessages(after: baseline)
-            if !appended.isEmpty {
-                let outgoing = appended[0]
-                if outgoing != .init(role: .user, text: prompt) {
-                    guard outgoing.role == .user, !outgoing.text.isEmpty,
-                          prompt.hasPrefix(outgoing.text) || outgoing.text.hasPrefix(prompt) else { throw DesktopAppError.unavailable("ChatGPT’s outgoing message did not match this request.") }
-                    // While rendering, Electron can expose only part of our
-                    // prompt or append its Thinking status to the same bubble.
-                    // Neither form can authorize a reply until the exact prompt appears.
-                    stable = nil
-                    try await Task.sleep(for: timing.pollInterval)
-                    continue
+            if let outgoing = appended.first, outgoing != .init(role: .user, text: prompt) {
+                guard outgoing.role == .user, !outgoing.text.isEmpty, prompt.hasPrefix(outgoing.text) || outgoing.text.hasPrefix(prompt) else {
+                    throw DesktopAppError.unavailable("ChatGPT’s outgoing message did not match this request.")
                 }
+                return nil
             }
-            if appended.count == 2, let answer = appended.last, answer.role == .assistant, !native.generating, native.draft.isEmpty {
-                if stable != answer.text { stable = answer.text; since = .now }
-                if ContinuousClock.now - since >= timing.stableDuration {
-                    var saved = pending
-                    if binding.kind == .chatgpt, binding.title == nil {
-                        guard !native.title.isEmpty else { throw DesktopAppError.unavailable("ChatGPT’s completed conversation title could not be read. Its reply was preserved in the native app.") }
-                        saved.title = binding.dedicatedTitle
-                        saved.fallbackTitle = native.title
-                        // Persist the verified chat before optional title cleanup.
-                        // Its exact nonce remains the ownership proof on reopen.
-                        try await onBinding(saved)
-                        do { try await rename(binding.dedicatedTitle, expected: native, target: target, session: session) }
-                        catch {
-                            try Task.checkCancellation()
-                            if error is CancellationError { throw error }
-                            return answer.text
-                        }
-                    } else { try await onBinding(saved) }
-                    return answer.text
-                }
-            } else { stable = nil }
-            try await Task.sleep(for: timing.pollInterval)
-        }
-        throw DesktopAppError.unavailable("ChatGPT has not completed its reply. Review the native conversation; nothing will be resent automatically.")
+            guard appended.count == 2, let answer = appended.last, answer.role == .assistant, !native.generating, native.draft.isEmpty else { return nil }
+            return answer.text
+        })
+        var saved = pending
+        if binding.kind == .chatgpt, binding.title == nil {
+            guard !native.title.isEmpty else { throw DesktopAppError.unavailable("ChatGPT’s completed conversation title could not be read. Its reply was preserved in the native app.") }
+            saved.title = binding.dedicatedTitle
+            saved.fallbackTitle = native.title
+            try await onBinding(saved)
+            do { try await rename(binding.dedicatedTitle, expected: native, target: target, session: session) }
+            catch { try Task.checkCancellation(); if error is CancellationError { throw error } }
+        } else { try await onBinding(saved) }
+        return answer
     }
 }

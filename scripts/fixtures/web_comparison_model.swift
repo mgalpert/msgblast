@@ -76,6 +76,25 @@ import msgblastCore
         precondition(relaunched.onboarding.state.currentStep == .agent(.wabi), "Apps-only onboarding must continue without returning to permissions")
         print("PASS: resumed apps-only chooser drops the hidden legacy Messages prerequisite through real permission refresh, saves the migration, retains agent identity, and starts the selected native connection.")
 
+        for completed: Set<OnboardingChoice> in [[], [.wabi]] {
+            var deferred = OnboardingState()
+            deferred.completePermissions(messaging: false, apps: true)
+            deferred.selected = completed.union([.geminiApp])
+            deferred.completed = completed
+            deferred.stage = .connecting
+            relaunched.state.onboarding = deferred
+            try relaunched.save()
+            let reopened = AppModel()
+            let expectedStage: OnboardingState.Stage = completed.isEmpty ? .choosing : .feedback
+            precondition(reopened.onboarding.state.stage == expectedStage, "A deferred final connection must not reopen a blank page")
+            precondition(reopened.onboarding.state.selected == deferred.selected)
+            precondition(reopened.onboarding.state.completed == deferred.completed)
+            precondition(reopened.onboarding.state.skipped == deferred.skipped)
+            let savedReopened = try reopened.local.load().onboarding
+            precondition(savedReopened == reopened.onboarding.state)
+        }
+        print("PASS: actual AppModel reopens Gemini-only setup at choosing and completed-Wabi setup at feedback, preserving and saving raw selections and completion.")
+
         var progress = OnboardingState()
         progress.selected = [.chatgptApp, .claudeApp, .codexCLI, .fo]
         progress.completed = [.chatgptApp]
@@ -131,7 +150,7 @@ import msgblastCore
         print("PASS: actual OnboardingController checkpoints native/CLI/Messages setup through LocalStore, rejects unchecked grants after AppModel relaunch, and resumes the exact saved connection step after fresh simulated permission checks.")
 
         var checklist = OnboardingState()
-        checklist.selected = [.chatgptApp, .dotsApp, .claudeApp, .geminiApp]
+        checklist.selected = [.chatgptApp, .dotsApp, .claudeApp, .wabi]
         checklist.stage = .connecting
         precondition(checklist.completePermissions(messaging: true, apps: true))
         resumed.state.onboarding = checklist
@@ -148,13 +167,13 @@ import msgblastCore
         }
         resumed.state.onboarding?.approvedPermissionSections = [.messaging]
         let unavailableAppAccess = resumed.onboarding.state
-        resumed.onboarding.completeDesktopConnections(checked: [.chatgptApp, .dotsApp, .claudeApp], skipped: [.geminiApp])
+        resumed.onboarding.completeDesktopConnections(checked: [.chatgptApp, .dotsApp, .claudeApp], skipped: [.wabi])
         precondition(resumed.onboarding.state == unavailableAppAccess, "Earlier connection results cannot bypass missing App access after a permission change")
         resumed.state.onboarding = checklist
-        resumed.onboarding.completeDesktopConnections(checked: [.chatgptApp, .dotsApp, .claudeApp], skipped: [.geminiApp])
+        resumed.onboarding.completeDesktopConnections(checked: [.chatgptApp, .dotsApp, .claudeApp], skipped: [.wabi])
         let connected = resumed.onboarding.state
         precondition(connected.stage == .feedback)
-        precondition(connected.completed == [.chatgptApp, .dotsApp, .claudeApp] && connected.skipped == [.geminiApp])
+        precondition(connected.completed == [.chatgptApp, .dotsApp, .claudeApp] && connected.skipped == [.wabi])
         // Saved completion is not a fresh process's live app connection.
         resumed.onboarding.session(for: .chatgptApp).updateState { $0.comparisonID = UUID() }
         precondition(!resumed.onboarding.session(for: .chatgptApp).desktopReady)
@@ -167,7 +186,7 @@ import msgblastCore
                      resumed.onboarding.state.pendingChoices == [.chatgptApp],
                      "A saved Ready result without a current connection must return to that app's connection check, not skip to final setup")
         precondition(resumed.onboarding.state.completed == [.dotsApp, .claudeApp] &&
-                     resumed.onboarding.state.skipped == [.geminiApp],
+                     resumed.onboarding.state.skipped == [.wabi],
                      "Rechecking a stale connection must retain the other completed and explicitly skipped choices")
         precondition(resumed.onboarding.session(for: .chatgptApp).state.attempts.isEmpty,
                      "Recovering setup must not send a prompt")
@@ -422,6 +441,18 @@ import msgblastCore
         showcaseComparison.setWebAgents([copy.id])
         precondition(Set(showcase.recipientMessageAgents(for: showcaseComparison).map(\.id)) == Set([shown.id, hidden.id]), "Existing hidden members remain available")
         precondition(Set(showcase.recipientWebSessions(for: showcaseComparison).map(\.id)) == Set([.muse, copy.id]))
+        let deferredGemini = showcase.webAgents.session(for: WebAgentID(provider: .geminiApp))!
+        deferredGemini.updateState { $0.enabled = true; $0.selected = true; $0.draft = "Preserve deferred Gemini draft" }
+        let savedGrid = showcase.state.agentGrid
+        showcase.state.agentGrid?.add(.web(.geminiApp))
+        var deferredComparison = showcaseComparison
+        deferredComparison.setWebAgents([copy.id, deferredGemini.id])
+        precondition(!showcase.agentGridCatalog.contains { $0.id == .web(.geminiApp) })
+        precondition(!showcase.recipientWebSessions(for: deferredComparison).contains { $0.id == deferredGemini.id })
+        precondition(!showcase.webAgents.selected.contains { $0.id == deferredGemini.id })
+        precondition(deferredGemini.state.enabled == true && deferredGemini.state.draft == "Preserve deferred Gemini draft")
+        showcase.state.agentGrid = savedGrid
+        print("PASS: deferred Gemini stays outside the catalog and recipients, including saved memberships, without erasing its saved preference or draft.")
         showcase.state.comparisons.insert(showcaseComparison, at: 0)
         let showcaseMuse = showcase.webAgents.session(for: WebAgentID.muse)!
         showcaseMuse.updateState { $0.selected = true }; showcaseMuse.connect()

@@ -1,11 +1,40 @@
 # Desktop app conversations
 
-Muse App, Grok Bot App, Wabi, Gemini, ChatGPT App, Dots App, and Claude App are optional agents with msgblast's native
+Muse, Grok Bot, Wabi, ChatGPT, Dots, and Claude are optional agents with msgblast's native
 conversation pane. They use the pinned CuaDriver executable bundled in msgblast, running as a
 private embedded helper. No separate driver installation or CuaDriver app is
 required.
 The Muse website, Grok Bot webhook, and CLI agents retain their own accounts,
 state files, histories, and execution paths.
+
+## Shared app workflow
+
+All profiles use `DesktopAccessibility` for bounded, batched native metadata reads
+and `DesktopAppWorkflow` for common input validation and reply observation.
+The shipping profiles share chunked text entry; most also share navigation waiting.
+Cua owns exact-window input tokens, capture geometry and input delivery. Its
+current structured snapshots omit some metadata needed for attribution, so one
+shared Accessibility reader supplies URLs, DOM classes, selected state and exact
+editor values. Profiles parse that immutable tree; they do not walk live windows.
+Muse retains a parameterized text-range hook for its compound editor.
+
+Discovery excludes nonstandard window layers as well as hidden helpers. A
+full-screen overlay with Space membership is not a second conversation window;
+two real main windows still block ambiguous targeting.
+
+Text entry uses disjoint chunks and explicit Shift-Return line breaks. Each
+profile verifies its destination and draft before a chunk and confirms readback
+before the workflow advances. An unknown input result is never replayed. Submit
+runs once, followed only by observations until an owned reply is stable. Partial
+reads and loading states may be reread; foreign drafts, changed destinations and
+ambiguous replies stop the operation. The existing send-attempt ledger and saved
+conversation ownership remain authoritative across restarts.
+
+Gemini is deferred in this build because its native controls did not pass live
+readiness checks. Its saved data and Codable identities remain intact, but it is
+not offered in onboarding or the agent catalog and cannot connect or send.
+Native apps remain third-party UI integrations: fixture
+passes do not establish live delivery or compatibility with an untested version.
 
 ## Setup
 
@@ -37,16 +66,14 @@ sharing choices intact.
    Enable msgblast app control and Screen Recording for native app agents.
    macOS owns the grant decisions; opening Settings alone grants no access.
 2. Install the desktop app on this Mac and sign in. Onboarding labels each app
-   **Installed on this Mac** or **Not installed** before it can be selected.
+   **Installed** or **Install** before it can be selected.
    Settings also checks installation before allowing an app to be enabled.
    If it is installed but closed, the app's **Open** button
    opens it normally. Keep one main window available and dismiss dialogs. The window can be on
    another desktop; users do not need to move it. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
 3. Choose your agents after completing the access screen. Native apps share one
-   compact connection checklist: choose **Connect** beside each app, or explicitly
-   skip it for now. Continue stays disabled until every row is connected or
-   skipped. Grok Bot keeps its bot picker in its row; Gemini keeps Chat/Task,
-   model and thinking choices there. These checks send no messages. Each
+   compact connection checklist: choose **Connect** beside each selected app.
+   Continue stays disabled until every selected app is connected. Grok Bot keeps its bot picker in its row. These checks send no messages. Each
    connected row confirms it is ready for the first prompt. A restart preserves
    selected agents but requires fresh connection checks. Settings keeps the
    full installation and permission controls for later changes.
@@ -59,8 +86,7 @@ sharing choices intact.
    permissions, an existing draft, or an unavailable window still need attention.
    Connected conversation panes show messages and their composer. Installation,
    enablement and connection controls live behind the header's options button;
-   the same popover keeps Grok bot and Gemini mode/model/thinking choices
-   available. An existing conversation that loses its connection shows a compact
+   the same popover keeps Grok bot choices available. An existing conversation that loses its connection shows a compact
    reconnect action instead of the setup panel.
 
 The build embeds the official CuaDriver **0.38.0** executable at
@@ -228,75 +254,14 @@ these Electron message fields from fresh window geometry. Existing drafts and
 active replies are preserved. Model choices remain those selected in the native
 app. Unknown input outcomes are inspected without replaying the action.
 
-## Gemini Chat and Task
+## Deferred Gemini support
 
-Install the native Mac app from [Google’s Gemini download](https://gemini.google/mac)
-and sign in there. Gemini uses the same msgblast app-control permission. Its native controls do not require window screenshots for input.
-The Apps chooser puts native apps first and prevents selecting missing apps;
-existing website accounts remain separate.
-
-Choose **Chat** or **Task**, a **Model**, and an available **Thinking level** in
-msgblast’s setup or native conversation pane. **Refresh Gemini options** reads
-Gemini’s current native pickers; model names and thinking levels are not a fixed
-account-wide catalog. Changing mode resets the model and thinking choice to the
-native mode’s current selection. Configuration opens a blank chat when needed,
-changes controls, and verifies their selected state without sending a prompt.
-If a saved choice disappears, the available replacements are shown and the native
-picker closes; sending stays blocked until you choose a valid replacement. A
-model without separate effort controls offers **Use Gemini’s default thinking**.
-The connection check itself only reads the open conversation and draft.
-
-Each comparison owns a dedicated Gemini conversation. Mode is fixed after its
-first prompt because Gemini removes the Chat/Task switch after a chat starts.
-Start a new comparison to change mode. Model and thinking choices are saved per
-comparison and verified before sending. Models without a thinking-level control
-use their native reasoning behavior; msgblast does not invent an effort setting.
-
-Gemini 1.131.4.1198 exposes no canonical chat address through its native
-accessibility tree. After a completed first response, msgblast saves its verified
-first outgoing message, observed title, and intended `msgblast <comparison UUID>`
-title before attempting the optional rename. A failed rename keeps the observed
-title as a resumable fallback and still returns the completed reply. The first prompt includes a comparison reference; the local
-transcript retains the original prompt. Resuming requires a unique sidebar
-button, the saved dedicated or fallback title, and the matching first message. A renamed or missing
-conversation is refused rather than replaced. An interrupted first submission
-is saved after configuration succeeds, immediately before input, and blocks
-automatic replacement, including after restart. Known model-choice refusals stay
-not sent and do not reserve a conversation.
-Review Gemini and start a new comparison if that initial binding could not finish.
-
-The native reader correlates Gemini’s exact window number and independently
-reads draft values, native control identifiers, selected mode/model, and transcript
-rows. Gemini’s WindowServer title is empty, so discovery requires one on-screen
-main-size window followed by native validation. Virtualized inaccessible sidebar
-rows cannot supply navigation targets. Cua actions use fresh tokens matched to
-native control frames, always with background delivery. There is no automatic
-foreground fallback. Unknown action results are reobserved, never replayed.
-Transient native observations, including an unavailable exact window during
-a sheet transition, get at most two read-only retries at the polling interval.
-A persistent failure stops that operation without repeating its input.
-
-A response needs the exact new outgoing message, unchanged prior transcript,
-a completed answer with its native Copy response control, no Stop response control,
-and stable text. Task status headings such as “Thinking it through” and “Completed”,
-and usage notices, are excluded from answer text. Unknown answer layouts stop
-attribution. Transient incomplete native walks during response generation reset
-the stability timer and retry observation within the existing reply deadline;
-input and Submit are never replayed. Cancellation stops local waiting; it does
-not cancel Gemini’s work.
-
-Live characterization on October 20, 2026 with cua-driver 0.22.1 observed one
-minimal Chat echo and one minimal Task echo, both returning their expected text.
-The Task response showed a distinct working status before its completed answer.
-Chat/Argon exposed Low, Medium, and High thinking levels; Task exposed Flash and
-Argon without a separate thinking submenu in this version. Controls and options
-may change with the app or account. Initial off-Space typing was refused; brief
-user-authorized foreground initialization enabled subsequent background operations.
-The final adapter also submitted a minimal Chat prompt once, read its exact
-answer, saved the dedicated conversation title, and sent/read a follow-up in
-that same saved conversation through background controls.
-These checks do not establish minimized, hidden, or unattended off-Space operation.
-Research captures contain private sidebar information and are not PR evidence.
+Gemini is unavailable in this build. Saved preferences, conversation bindings,
+transcripts and drafts still decode and are preserved. A saved onboarding
+selection no longer blocks the other app connections. Direct connect, configure
+and send calls do not invoke its native driver. The retained adapter and its
+synthetic tests are groundwork for a later compatibility effort, not a claim of
+live Chat or Task support.
 
 ## Grok Bot
 
@@ -345,10 +310,8 @@ history; another outgoing request invalidates attribution. Known generation
 controls defer completion. Otherwise reply text must stay stable for three
 seconds. This is an observation, not proof that all provider work has finished;
 providers can issue later follow-ups. Cancellation stops local waiting, not work
-inside the provider app. Gemini Chat waits up to three minutes; Task waits up to
-30 minutes so a longer reasoning task can finish without another submission.
-Both modes keep Cancel available. Cancelling preserves an unconfirmed receipt
-and the draft rather than treating the request as unsent.
+inside the provider app. Cancelling preserves an unconfirmed receipt and the
+draft rather than treating the request as unsent.
 
 An incomplete request blocks further desktop sends across comparisons until the
 user reviews and acknowledges it. Other comparisons identify the blocking
@@ -429,9 +392,9 @@ submit into another comparison. Controller fixtures exercise the actual AppModel
 and LocalStore restoring all three native providers. These are simulated inputs;
 the live checks above establish compatibility only with the observed app versions.
 
-`GeminiAppConversationTests` covers native Chat/Task boundaries, progress and
+Retained, synthetic `GeminiAppConversationTests` covers native Chat/Task boundaries, progress and
 usage-notice exclusion, actual draft values, legacy state, immutable ownership,
-and comparison-specific preferences. `GeminiAppDriverTests` exercises the real
+and deferred-provider state retention with input blocked. `GeminiAppDriverTests` exercises the retained
 adapter through a temporary driver process: exact targets, one submission with
 an unknown click result, dedicated-title persistence, foreign outgoing refusal,
 interrupted-first-send protection, session reload, saved-chat follow-ups, and

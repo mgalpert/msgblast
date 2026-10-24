@@ -713,7 +713,10 @@ private struct WebAgentPane: View {
     private func nativeConversation(_ provider: PersonalAgentProvider?) -> some View {
         VStack(spacing: 12) {
             let connected = session.provider.desktopApp != nil ? session.desktopReady : session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
-            if !session.isEnabled {
+            if !session.provider.isAvailableInBuild {
+                Text("\(session.name) is unavailable in this build. Your saved conversation is preserved.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if !session.isEnabled {
                 Text("Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
                     .font(.caption).foregroundStyle(.secondary)
             } else if let app = session.provider.desktopApp, !connected,

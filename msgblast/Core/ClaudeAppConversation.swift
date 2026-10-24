@@ -8,7 +8,7 @@ actor ClaudeAppConversation {
     private let readNative: NativeRead
     private var occupied = false
 
-    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = ClaudeNativeReader.capture) {
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = ClaudeAppProfile.capture) {
         driver = DesktopAppConversation(executable: executable, timing: timing)
         self.timing = timing; self.readNative = readNative
     }
@@ -89,14 +89,11 @@ actor ClaudeAppConversation {
         return observation
     }
     private func settled(_ target: DesktopAppConversation.Target, session: String, expected: (ClaudeAppObservation) -> Bool) async throws -> (DesktopAppSnapshot, ClaudeAppObservation) {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
-        while true {
-            let current = try await observe(target, session: session)
-            if expected(current.1) { return current }
-            guard ContinuousClock.now < deadline else { throw DesktopAppError.unavailable("Claude did not open the expected conversation. Nothing was sent.") }
-            try await Task.sleep(for: timing.pollInterval)
-        }
+        try await DesktopAppWorkflow.wait(timeout: .seconds(8), interval: timing.pollInterval,
+            failure: "Claude did not open the expected conversation. Nothing was sent.",
+            read: { try await self.observe(target, session: session) }, ready: { expected($0.1) })
     }
+
     func checkAvailable() async throws {
         guard !occupied else { throw DesktopAppError.unavailable("Claude is already handling a request.") }
         occupied = true; defer { occupied = false }
@@ -139,6 +136,7 @@ actor ClaudeAppConversation {
         let target = try await driver.target(.claude)
         let baseline = try await opened(binding, target: target, session: session)
         let prompt = binding.url == nil ? binding.firstMessage(text) : text
+        try DesktopAppWorkflow.validateText(prompt)
         let receipt = ClaudeAppReceipt(baseline: baseline.messages, prompt: prompt)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-claude-capture-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -152,68 +150,43 @@ actor ClaudeAppConversation {
         if saved.firstPrompt == nil { saved.firstPrompt = prompt }
         try await onPrepared(saved)
         guard try await native(target) == before else { throw DesktopAppError.unavailable("Claude changed before input. Nothing was typed.") }
-        // Native text events drop literal newlines in Claude's editor. Keep
-        // chunks disjoint and confirm every append before advancing.
-        enum Input { case text(String), newline }
-        var inputs: [Input] = []
-        let lines = prompt.split(separator: "\n", omittingEmptySubsequences: false)
-        for (index, line) in lines.enumerated() {
-            let characters = Array(line)
-            for offset in stride(from: 0, to: characters.count, by: 256) {
-                inputs.append(.text(String(characters[offset..<min(offset + 256, characters.count)])))
-            }
-            if index < lines.count - 1 { inputs.append(.newline) }
-        }
-        var prefix = ""
-        for input in inputs {
-            let (fresh, current) = try await observe(target, session: session, screenshotURL: image)
-            let field = try composer(fresh, current)
-            guard current.url == baseline.url, current.messages == baseline.messages, current.draft == prefix,
+        var point = (x: 0, y: 0)
+        var current = before
+        try await DesktopAppWorkflow.enterText(prompt, before: { step in
+            let (fresh, observed) = try await self.observe(target, session: session, screenshotURL: image)
+            current = observed
+            let field = try self.composer(fresh, current)
+            guard current.url == baseline.url, current.messages == baseline.messages, current.draft == step.before,
                   !current.generating, !fresh.isGenerating, current.windowBounds == fresh.window_bounds,
-                  prefix.isEmpty || current.composerFocused else {
+                  step.before.isEmpty || current.composerFocused else {
                 throw DesktopAppError.unavailable("Claude's draft, focus, or conversation changed before typing. Review the preserved text.")
             }
-            let currentPoint = try fresh.pixelCenter(of: field, target: target, imageURL: image)
-            switch input {
-            case .text(let chunk):
-                var numbers = ["pid": target.pid, "window_id": target.window, "delay_ms": 0]
-                // Focus once; another pixel click could move the insertion
-                // point into text already entered by an earlier chunk.
-                if prefix.isEmpty { numbers["x"] = currentPoint.x; numbers["y"] = currentPoint.y }
-                _ = try await driver.call("type_text", ["session": session, "text": chunk, "delivery_mode": "background"], numbers: numbers, as: DesktopAppConversation.Action.self)
-                prefix += chunk
-            case .newline:
-                if !current.composerFocused {
-                    _ = try await driver.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": currentPoint.x, "y": currentPoint.y], as: DesktopAppConversation.Action.self)
-                    let focused = try await native(target)
-                    guard focused.url == baseline.url, focused.messages == baseline.messages, focused.draft == prefix, focused.composerFocused, !focused.generating else {
-                        throw DesktopAppError.unavailable("Claude's empty composer did not retain focus. Nothing was submitted.")
-                    }
+            point = try fresh.pixelCenter(of: field, target: target, imageURL: image)
+        }, perform: { step in
+            if step.input == .newline, !current.composerFocused {
+                _ = try await self.driver.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: DesktopAppConversation.Action.self)
+                let focused = try await self.native(target)
+                guard focused.url == baseline.url, focused.messages == baseline.messages, focused.draft == step.before, focused.composerFocused, !focused.generating else {
+                    throw DesktopAppError.unavailable("Claude's empty composer did not retain focus. Nothing was submitted.")
                 }
-                _ = try await driver.call("press_key", ["session": session, "key": "return", "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], arrays: ["modifiers": ["shift"]], as: DesktopAppConversation.Action.self)
-                prefix += "\n"
             }
-            let (typedState, typed) = try await observe(target, session: session)
-            _ = try composer(typedState, typed)
-            guard typed.url == baseline.url, typed.messages == baseline.messages, typed.draft == prefix,
+            try await self.driver.input(step.input, focus: step.before.isEmpty, point: point, target: target, session: session)
+        }, after: { step in
+            let (typedState, typed) = try await self.observe(target, session: session)
+            _ = try self.composer(typedState, typed)
+            guard typed.url == baseline.url, typed.messages == baseline.messages, typed.draft == step.after,
                   typed.composerFocused, !typed.generating, !typedState.isGenerating else {
                 throw DesktopAppError.unavailable("Claude did not confirm the prepared draft. Send was not pressed; review the preserved text.")
             }
-        }
+        })
         let (draftState, draft) = try await observe(target, session: session)
         _ = try composer(draftState, draft)
         guard draft.url == baseline.url, draft.messages == baseline.messages, draft.draft == prompt, draft.composerFocused, !draft.generating, !draftState.isGenerating else { throw DesktopAppError.unavailable("Claude's prepared draft or conversation changed. Send was not pressed; review the preserved text.") }
         guard try await native(target) == draft else { throw DesktopAppError.unavailable("Claude changed before Send. Review the preserved draft.") }
-        try await click(control(draftState, label: "Send message"), target: target, session: session)
-        let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
-        var previous: String?
-        var stableSince = ContinuousClock.now
-        while ContinuousClock.now < deadline {
-            try await Task.sleep(for: timing.pollInterval)
-            let state: DesktopAppSnapshot
-            let current: ClaudeAppObservation
-            do { (state, current) = try await observe(target, session: session) }
-            catch ClaudeObservationError.transient { previous = nil; stableSince = .now; continue }
+        return try await DesktopAppWorkflow.reply(app: "Claude", timing: timing, submit: {
+            try await self.click(self.control(draftState, label: "Send message"), target: target, session: session)
+        }, observe: {
+            let (state, current) = try await self.observe(target, session: session)
             if let url = saved.url {
                 guard current.url == url else { throw DesktopAppError.unavailable("Claude switched conversations while waiting. No automatic resend.") }
             } else if ClaudeChatURL.isChat(current.url) {
@@ -223,10 +196,8 @@ actor ClaudeAppConversation {
                     try await onBinding(saved)
                 }
             } else if !ClaudeChatURL.isNew(current.url) { throw DesktopAppError.unavailable("Claude's conversation address changed unexpectedly.") }
-            let candidate = current.draft.isEmpty ? try receipt.reply(in: current.messages) : nil
-            if candidate != previous || current.generating || state.isGenerating { previous = candidate; stableSince = .now }
-            if let candidate, saved.url != nil, !current.generating, !state.isGenerating, ContinuousClock.now - stableSince >= timing.stableDuration { return candidate }
-        }
-        throw DesktopAppError.unavailable("No stable Claude reply was observed. Review its saved conversation before explicitly allowing another request.")
+            guard saved.url != nil, current.draft.isEmpty, !current.generating, !state.isGenerating else { return nil }
+            return try receipt.reply(in: current.messages)
+        })
     }
 }

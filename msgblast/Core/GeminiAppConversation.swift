@@ -8,7 +8,7 @@ actor GeminiAppConversation {
     private let taskReplyTimeout: Duration
     private let readNative: NativeRead
     private var occupied = false
-    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), taskReplyTimeout: Duration = .seconds(30 * 60), readNative: @escaping NativeRead = { try GeminiNativeReader.capture($0, allowingRename: $1) }) {
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), taskReplyTimeout: Duration = .seconds(30 * 60), readNative: @escaping NativeRead = { try GeminiAppProfile.capture($0, allowingRename: $1) }) {
         driver = DesktopAppConversation(executable: executable, timing: timing)
         self.timing = timing; self.taskReplyTimeout = taskReplyTimeout; self.readNative = readNative
     }
@@ -300,6 +300,7 @@ actor GeminiAppConversation {
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.gemini)
         let prompt = binding.title == nil ? binding.firstMessage(text) : text
+        try DesktopAppWorkflow.validateText(prompt)
         let opened = try await open(binding, mode: preferences.mode, target: target, session: session)
         _ = try await configure(preferences, target: target, session: session)
         var native = try await read(target)
@@ -313,51 +314,35 @@ actor GeminiAppConversation {
         try await attemptActionOnce("type_text", control: field, text: prompt, target: target, session: session, expected: native)
         let prepared = try await read(target)
         guard prepared.draft == prompt, prepared.messages == baseline, prepared.title == native.title, prepared.model == native.model else { throw DesktopAppError.unavailable("Gemini’s prepared prompt changed. It was not sent or retried.") }
-        try await attemptActionOnce(control: prepared.control(id: "send_button"), target: target, session: session, expected: prepared)
-        let deadline = ContinuousClock.now.advanced(by: binding.mode == .task ? taskReplyTimeout : timing.replyTimeout)
-        var stableText: String?, stableSince = ContinuousClock.now
-        while ContinuousClock.now < deadline {
-            do { native = try await read(target) }
-            catch is GeminiObservationError {
-                stableText = nil
-                try Task.checkCancellation()
-                try await Task.sleep(for: timing.pollInterval)
-                continue
-            }
-            guard binding.title == nil || native.title == opened.title else { throw DesktopAppError.unavailable("Gemini navigated away from this comparison. No reply was attributed.") }
-            guard native.draft.isEmpty || native.draft == prompt else { throw DesktopAppError.unavailable("Gemini’s draft changed while waiting. Review its conversation.") }
-            let messages = native.messages
-            guard messages.starts(with: baseline), messages.count <= baseline.count + 2 else { throw DesktopAppError.unavailable("Gemini’s conversation changed. No reply was attributed.") }
-            if messages.count > baseline.count {
-                guard messages[baseline.count] == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Gemini’s outgoing message did not match this request.") }
-            }
-            if messages.count == baseline.count + 2, let answer = messages.last, answer.role == .assistant, !native.generating, native.draft.isEmpty {
-                if stableText != answer.text { stableText = answer.text; stableSince = .now }
-                if ContinuousClock.now - stableSince >= timing.stableDuration {
-                    var saved = pending
-                    if saved.title == nil {
-                        guard !native.title.isEmpty, !native.isNew else { throw DesktopAppError.unavailable("Gemini’s completed conversation title could not be read. Its reply was preserved in the native app.") }
-                        saved.title = binding.dedicatedTitle
-                        saved.fallbackTitle = native.title
-                        // The exact first prompt owns this chat even if cosmetic
-                        // renaming fails or the process stops during that edit.
-                        try await onBinding(saved)
-                        do { try await rename(saved, expected: native, target: target, session: session) }
-                        catch {
-                            try Task.checkCancellation()
-                            if error is CancellationError { throw error }
-                            // Preserve the verified answer and its fallback identity even
-                            // if the optional edit fails. Never replay the edit or send.
-                            _ = try? await conversationRead(binding: saved, target: target, session: session)
-                            try Task.checkCancellation()
-                            return answer.text
-                        }
-                    } else { try await onBinding(saved) }
-                    return answer.text
+        let answer = try await DesktopAppWorkflow.reply(app: "Gemini", timing: timing,
+            timeout: binding.mode == .task ? taskReplyTimeout : timing.replyTimeout, submit: {
+                try await self.attemptActionOnce(control: prepared.control(id: "send_button"), target: target, session: session, expected: prepared)
+            }, observe: {
+                native = try await self.read(target)
+                guard binding.title == nil || native.title == opened.title else { throw DesktopAppError.unavailable("Gemini navigated away from this comparison. No reply was attributed.") }
+                guard native.draft.isEmpty || native.draft == prompt else { throw DesktopAppError.unavailable("Gemini’s draft changed while waiting. Review its conversation.") }
+                let messages = native.messages
+                guard messages.starts(with: baseline), messages.count <= baseline.count + 2 else { throw DesktopAppError.unavailable("Gemini’s conversation changed. No reply was attributed.") }
+                if messages.count > baseline.count {
+                    guard messages[baseline.count] == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Gemini’s outgoing message did not match this request.") }
                 }
-            } else { stableText = nil }
-            try await Task.sleep(for: timing.pollInterval)
-        }
-        throw DesktopAppError.unavailable("Gemini has not completed its reply. Review the dedicated conversation; nothing will be resent automatically.")
+                guard messages.count == baseline.count + 2, let answer = messages.last, answer.role == .assistant, !native.generating, native.draft.isEmpty else { return nil }
+                return answer.text
+            })
+        var saved = pending
+        if saved.title == nil {
+            guard !native.title.isEmpty, !native.isNew else { throw DesktopAppError.unavailable("Gemini’s completed conversation title could not be read. Its reply was preserved in the native app.") }
+            saved.title = binding.dedicatedTitle
+            saved.fallbackTitle = native.title
+            try await onBinding(saved)
+            do { try await rename(saved, expected: native, target: target, session: session) }
+            catch {
+                try Task.checkCancellation()
+                if error is CancellationError { throw error }
+                _ = try? await conversationRead(binding: saved, target: target, session: session)
+                try Task.checkCancellation()
+            }
+        } else { try await onBinding(saved) }
+        return answer
     }
 }

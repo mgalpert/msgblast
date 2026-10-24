@@ -145,7 +145,7 @@ final class OnboardingController: ObservableObject {
     func begin() {
         guard !state.needsPermissionSetup, !permissionChecksBusy else { return }
         let sections = state.approvedPermissionSections ?? []
-        guard state.selected.allSatisfy({ choice in
+        guard state.availableSelected.allSatisfy({ choice in
             if choice.isMessages { return sections.contains(.messaging) }
             if choice.provider?.desktopApp != nil { return sections.contains(.apps) }
             return true
@@ -155,7 +155,7 @@ final class OnboardingController: ObservableObject {
         invalidateCheck()
         // Saved completion survives permission restarts; live readiness does not.
         // Return only stale app checks to the connection step.
-        let stale = Set(state.completed.intersection(state.selected).filter { choice in
+        let stale = Set(state.completed.intersection(state.availableSelected).filter { choice in
             guard let provider = choice.provider, provider.desktopApp != nil else { return false }
             return !isReady(session(for: provider))
         })

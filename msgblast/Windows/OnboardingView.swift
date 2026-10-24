@@ -59,7 +59,7 @@ struct OnboardingView: View {
                         Spacer()
                         Button("Continue setup") { setup.begin() }
                             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                            .disabled(setup.permissionChecksBusy || setup.state.selected.isEmpty || setup.state.selected.contains { !choiceAvailable($0) })
+                            .disabled(setup.permissionChecksBusy || setup.state.availableSelected.isEmpty || setup.state.availableSelected.contains { !choiceAvailable($0) })
                     } else {
                         Button("Back") { setup.back() }
                         Spacer()

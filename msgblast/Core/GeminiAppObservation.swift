@@ -1,5 +1,3 @@
-import ApplicationServices
-import Darwin
 import Foundation
 
 public enum GeminiMode: String, CaseIterable, Codable, Sendable { case chat, task
@@ -147,38 +145,16 @@ struct GeminiAppObservation: Sendable {
     func sameConversation(as other: Self) -> Bool { sameContent(as: other) && model == other.model }
 }
 
-enum GeminiNativeReader {
+enum GeminiAppProfile {
     static func capture(_ target: DesktopAppConversation.Target, allowingRename: Bool = false) throws -> GeminiAppObservation {
-        guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Allow msgblast Accessibility access to connect Gemini.") }
-        func attr(_ e: AXUIElement, _ key: String) -> CFTypeRef? {
-            var value: CFTypeRef?
-            return AXUIElementCopyAttributeValue(e, key as CFString, &value) == .success ? value : nil
+        do { return try parse(DesktopAccessibility.capture(target, app: .gemini), allowingRename: allowingRename) }
+        catch DesktopAccessibilityError.incomplete { throw GeminiObservationError.transient("Gemini's controls are still updating.") }
+    }
+    static func parse(_ root: DesktopAccessibilityNode, allowingRename: Bool = false) throws -> GeminiAppObservation {
+        func convert(_ node: DesktopAccessibilityNode) -> GeminiAXNode {
+            .init(role: node.role, label: node.label, value: node.value, id: node.id, selected: node.selected,
+                  enabled: node.enabled, selectedText: node.selectedText, frame: node.frame, children: node.children.map(convert))
         }
-        func string(_ e: AXUIElement, _ key: String) -> String { attr(e, key) as? String ?? "" }
-        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw GeminiObservationError.transient("Gemini’s exact window is unavailable for background control. Dismiss dialogs and check again.") }
-        var count = 0
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        func walk(_ e: AXUIElement, depth: Int, parentRole: String = "") throws -> GeminiAXNode {
-            count += 1
-            guard count <= 6000, depth <= 60, ContinuousClock.now < deadline else { throw GeminiObservationError.transient("Gemini’s accessibility tree is incomplete.") }
-            let role = string(e, "AXRole")
-            // Gemini retains inaccessible references for virtualized sidebar rows.
-            // They cannot supply a navigation target; missing transcript/control roles still fail.
-            if role.isEmpty, parentRole == "AXOutline" { return .init(role: "AXUnknown") }
-            guard !role.isEmpty else { throw GeminiObservationError.transient("Gemini changed while reading its controls.") }
-            let title = string(e, "AXTitle"), description = string(e, "AXDescription")
-            var frame: DesktopAppSnapshot.Element.Frame?
-            if let p = attr(e, "AXPosition"), let s = attr(e, "AXSize"), CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() {
-                var point = CGPoint.zero, size = CGSize.zero
-                if AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size) {
-                    frame = .init(x: point.x, y: point.y, w: size.width, h: size.height)
-                }
-            }
-            let children = try (attr(e, "AXChildren") as? [AXUIElement] ?? []).map { try walk($0, depth: depth + 1, parentRole: role) }
-            return .init(role: role, label: title.isEmpty ? description : title, value: attr(e, "AXValue") as? String,
-                         id: string(e, "AXIdentifier"), selected: attr(e, "AXSelected") as? Bool == true,
-                         enabled: attr(e, "AXEnabled") as? Bool != false, selectedText: attr(e, "AXSelectedText") as? String, frame: frame, children: children)
-        }
-        return try GeminiAppObservation(root: walk(window, depth: 0), allowingRename: allowingRename)
+        return try GeminiAppObservation(root: convert(root), allowingRename: allowingRename)
     }
 }

@@ -79,7 +79,7 @@ minimal model substitute. It verifies checks without consent, explicit Enable
 requests, denied recovery, changed access, Messages launch failure, and demo
 isolation without reading user data or requesting a real OS grant.
 
-All seven native integrations (Muse, Grok Bot, Wabi, Gemini, ChatGPT, Dots, and
+The six shipping integrations (Muse, Grok Bot, Wabi, ChatGPT, Dots, and
 Claude) use `DesktopNativeWindowLookup`. Its tests in `DesktopAppConversationTests`
 simulate an empty macOS `AXWindows` list, verify exact process/window identity,
 reject wrong-window/control candidates, and bound fallback discovery. Each app
@@ -112,6 +112,25 @@ starts simulated app-control and capture access off. Combined with the existing
 so Continue stays blocked until a complete permission group is enabled. These
 settings never change macOS access and are ignored for live app-control grants.
 Label captures as simulated and retain the compiled source revision.
+
+## Shared native app engine
+
+`DesktopAccessibilityTests` covers exact draft/URL metadata, bounded incomplete
+reads, Gemini virtualized sidebar references, and isolation from embedded foreign
+ChatGPT web content. Raw attribute fixtures exercise the production conversion,
+including string-valued URLs, native AX error slots, and exact text/geometry.
+A test-owned local WebKit editor also exercises native capture when the test host
+already has Accessibility access. It skips without requesting or changing access
+when that grant is absent; record that skip separately from fixture passes.
+`DesktopAppWorkflowTests` covers multiline/Unicode entry,
+foreign draft refusal, stopping after failed readback, read-only transition
+recovery, nonzero reply-stability intervals, and single submission through reply recovery. Existing per-profile
+adapter fixtures retain destination, sender, nonce, draft and uncertain-send
+assertions. They exercise the common workflow, not copies of its implementation.
+
+The seven retained `FindsOtherDesktopAndRejectsAmbiguousMainWindows` cases also include
+Claude's layer-1000 full-display overlay with membership in multiple Spaces. The
+same fixture still rejects a second real layer-zero window on either desktop.
 
 ## Embedded app-control runtime
 
@@ -269,3 +288,6 @@ For manual evidence, launch the packaged blue Demo with `--isolated-demo --busin
 Live native action requires the exact app's Accessibility permission. Inspecting native controls without pressing them verifies only their availability; Demo and matcher fixtures do not establish real Business submission or delivery. Preserve the user's active Business choices unless they authorize that live selection.
 
 For private-send scrolling evidence, launch the blue Demo with `--isolated-demo --no-demo-replies`. This keeps automatic simulated replies from moving the transcript after submission. The native UI regression sends a long reply through Cedar's own composer and checks that its end is visible without manual scrolling. The AppKit controller fixture covers overflowing joined panes and a late tapback; it does not reproduce the real composer timing failure by itself.
+
+Gemini is deferred: its compatibility fixtures remain, but public session tests
+prove saved state survives while connection, configuration and sending stay blocked.

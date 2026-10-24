@@ -4,7 +4,7 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
     case chatgptApp, dotsApp, claudeApp, chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, geminiApp, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
 
     public static var offeredChoices: [Self] { allCases.filter { choice in
-        choice != .grokbot && (choice.provider.map { !WebProvider.settingsOnlyWebProviders.contains($0) } ?? true)
+        choice != .grokbot && (choice.provider.map { $0.isAvailableInBuild && !WebProvider.settingsOnlyWebProviders.contains($0) } ?? true)
     } }
 
     public var id: String { rawValue }
@@ -173,8 +173,12 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         messagesDiscoveryReviewed = connector == .messages ? false : true
     }
 
+    public var availableSelected: Set<OnboardingChoice> {
+        selected.filter { $0.provider?.isAvailableInBuild ?? true }
+    }
+
     public var pendingChoices: [OnboardingChoice] {
-        OnboardingChoice.allCases.filter { selected.contains($0) && !completed.contains($0) && !skipped.contains($0) }
+        OnboardingChoice.allCases.filter { availableSelected.contains($0) && !completed.contains($0) && !skipped.contains($0) }
     }
     public var pendingSteps: [OnboardingStep] {
         let choices = pendingChoices
@@ -195,7 +199,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     }
     public func connectionReminderChoices(selectedProviders: Set<WebProvider>) -> Set<OnboardingChoice> {
         skipped.intersection(selected).filter { choice in
-            choice.provider.map { selectedProviders.contains($0) } == true
+            choice.provider.map { $0.isAvailableInBuild && selectedProviders.contains($0) } == true
         }
     }
     public func unresolvedMessageAgents(in agents: [Agent], chats: [Chat], selectedIDs: Set<UUID>? = nil) -> [Agent] {
@@ -231,7 +235,12 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         stage = .choosing
     }
     public var hasConnectedAgent: Bool {
-        completed.intersection(selected).contains { $0.provider != nil || $0.isMessages }
+        completed.intersection(availableSelected).contains { $0.provider != nil || $0.isMessages }
+    }
+
+    public mutating func reconcileBuildAvailability() {
+        guard availableSelected != selected else { return }
+        finishIfResolved()
     }
 
     public mutating func toggle(_ choice: OnboardingChoice) {
@@ -239,7 +248,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         if selected.contains(choice) { selected.remove(choice) } else { selected.insert(choice) }
     }
     public mutating func begin() {
-        guard !selected.isEmpty else { return }
+        guard !availableSelected.isEmpty else { return }
         if !hasConnectedAgent && pendingSteps.isEmpty { skipped = [] }
         stage = pendingWebProviders.isEmpty ? .connecting : .importing
         finishIfResolved()

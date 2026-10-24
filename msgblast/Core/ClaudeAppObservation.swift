@@ -1,5 +1,3 @@
-import ApplicationServices
-import Darwin
 import Foundation
 
 enum ClaudeChatURL {
@@ -153,44 +151,16 @@ enum ClaudeObservationError: LocalizedError {
 
 // Claude's Electron wrapper and its conversation expose different AXWebAreas.
 // Use the exact native window and the inner canonical address, never its title.
-enum ClaudeNativeReader {
+enum ClaudeAppProfile {
     static func capture(_ target: DesktopAppConversation.Target) throws -> ClaudeAppObservation {
-        guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Grant msgblast Accessibility permission to verify Claude's conversation.") }
-        func attr(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
-            var value: CFTypeRef?
-            return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
+        do { return try parse(DesktopAccessibility.capture(target, app: .claude)) }
+        catch DesktopAccessibilityError.incomplete { throw ClaudeObservationError.transient("Claude's controls are still updating.") }
+    }
+    static func parse(_ root: DesktopAccessibilityNode) throws -> ClaudeAppObservation {
+        func convert(_ node: DesktopAccessibilityNode) -> ClaudeAXNode {
+            .init(role: node.role, subrole: node.subrole, label: node.label, value: node.value, classes: node.classes,
+                  url: node.url, frame: node.frame, focused: node.focused, children: node.children.map(convert))
         }
-        func string(_ element: AXUIElement, _ key: String) -> String { attr(element, key) as? String ?? "" }
-        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw DesktopAppError.unavailable("Claude's exact main window is unavailable. Dismiss dialogs and try again.") }
-        var count = 0
-        var addresses: [(AXUIElement, URL)] = []
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        func walk(_ element: AXUIElement, depth: Int) throws -> ClaudeAXNode {
-            count += 1
-            guard count <= 6000, depth <= 60, ContinuousClock.now < deadline else { throw ClaudeObservationError.transient("Claude's native accessibility tree is incomplete.") }
-            let role = string(element, "AXRole")
-            guard !role.isEmpty else { throw ClaudeObservationError.transient("Claude's native accessibility tree changed while reading.") }
-            func point(_ key: String) -> CGPoint? {
-                guard let v = attr(element, key), CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
-                var point = CGPoint.zero
-                return AXValueGetValue(v as! AXValue, .cgPoint, &point) ? point : nil
-            }
-            func size() -> CGSize? {
-                guard let v = attr(element, "AXSize"), CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
-                var size = CGSize.zero
-                return AXValueGetValue(v as! AXValue, .cgSize, &size) ? size : nil
-            }
-            let frame: DesktopAppSnapshot.Element.Frame?
-            if let origin = point("AXPosition"), let size = size() { frame = .init(x: origin.x, y: origin.y, w: size.width, h: size.height) } else { frame = nil }
-            let title = string(element, "AXTitle")
-            let url = attr(element, "AXURL") as? URL
-            if role == "AXWebArea", let url, ClaudeChatURL.isNew(url) || ClaudeChatURL.isChat(url) { addresses.append((element, url)) }
-            return ClaudeAXNode(role: role, subrole: string(element, "AXSubrole"), label: title.isEmpty ? string(element, "AXDescription") : title,
-                                value: attr(element, "AXValue") as? String, classes: attr(element, "AXDOMClassList") as? [String] ?? [], url: url, frame: frame, focused: attr(element, "AXFocused") as? Bool ?? false,
-                                children: try (attr(element, "AXChildren") as? [AXUIElement] ?? []).map { try walk($0, depth: depth + 1) })
-        }
-        let observation = try ClaudeAppObservation(root: walk(window, depth: 0))
-        guard addresses.count == 1, attr(addresses[0].0, "AXURL") as? URL == observation.url else { throw DesktopAppError.unavailable("Claude navigated while reading its conversation.") }
-        return observation
+        return try ClaudeAppObservation(root: convert(root))
     }
 }

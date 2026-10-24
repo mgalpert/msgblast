@@ -1,5 +1,3 @@
-import ApplicationServices
-import Darwin
 import Foundation
 
 public struct MuseSideChatBinding: Codable, Equatable, Sendable {
@@ -153,84 +151,30 @@ struct MuseAppReceipt {
 }
 
 
-enum MuseNativeReader {
+enum MuseAppProfile {
     static func capture(_ target: DesktopAppConversation.Target) throws -> MuseAppObservation {
-        guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Grant msgblast Accessibility permission to read Muse's side-chat identity and draft.") }
-        func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
-            var value: CFTypeRef?
-            return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
-        }
-        func string(_ element: AXUIElement, _ key: String) -> String { attribute(element, key) as? String ?? "" }
-        guard let window = DesktopNativeWindowLookup.resolve(target) else {
-            throw DesktopAppError.unavailable("Muse's window could not be read safely. Dismiss any dialogs and connect again; no message was sent.")
-        }
-        func windowBounds() throws -> DesktopAppSnapshot.Bounds {
-            guard let position = attribute(window, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
-                  let size = attribute(window, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else {
-                throw DesktopAppError.unavailable("Muse's native window geometry is unavailable.")
-            }
-            var point = CGPoint.zero, dimensions = CGSize.zero
-            guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else {
-                throw DesktopAppError.unavailable("Muse's native window geometry is unreadable.")
-            }
-            return .init(x: point.x, y: point.y, width: dimensions.width, height: dimensions.height)
-        }
-        let initialBounds = try windowBounds()
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        var count = 0, webAreas: [AXUIElement] = [], composers: [AXUIElement] = [], messageRoots: [MuseAXNode] = []
-        var initialURL: URL?
-        func walk(_ element: AXUIElement, depth: Int) throws -> MuseAXNode {
-            count += 1
-            guard count <= 6000, depth <= 60, ContinuousClock.now < deadline else {
-                throw DesktopAppError.unavailable("Muse's accessibility tree could not be read completely.")
-            }
-            let role = string(element, "AXRole")
-            let title = string(element, "AXTitle")
-            let label = title.isEmpty ? string(element, "AXDescription") : title
-            guard role != "AXSheet", role != "AXDialog" else { throw DesktopAppError.unavailable("Dismiss Muse's dialog before continuing.") }
-            if role == "AXWebArea" { webAreas.append(element); initialURL = attribute(element, "AXURL") as? URL }
-            if (["AXTextArea", "AXTextField"].contains(role) && label == "Message") ||
-                (role == "AXButton" && ["Message Attach file Dictate a message Send", "Message Attach file Dictate a message Stop"].contains(label)) { composers.append(element) }
-            let children = try (attribute(element, "AXChildren") as? [AXUIElement] ?? []).map { try walk($0, depth: depth + 1) }
-            let node = MuseAXNode(role: role, label: label, value: string(element, "AXValue"), children: children)
-            if role == "AXGroup", label == "Chat messages" { messageRoots.append(node) }
-            return node
-        }
-        let tree = try walk(window, depth: 0)
-        guard webAreas.count == 1, composers.count == 1, messageRoots.count == 1,
-              let web = webAreas.first, let composer = composers.first else {
+        try parse(DesktopAccessibility.capture(target, app: .muse))
+    }
+    static func parse(_ root: DesktopAccessibilityNode) throws -> MuseAppObservation {
+        let nodes = root.descendants
+        guard !nodes.contains(where: { ["AXSheet", "AXDialog"].contains($0.role) }) else { throw DesktopAppError.unavailable("Dismiss Muse's dialog before continuing.") }
+        let areas = nodes.filter { $0.role == "AXWebArea" }
+        let composers = nodes.filter { DesktopAccessibility.isComposer($0, app: .muse) }
+        let transcripts = nodes.filter { $0.role == "AXGroup" && $0.label == "Chat messages" }
+        guard areas.count == 1, let url = areas.first?.url, composers.count == 1, let composer = composers.first,
+              let draft = composer.editorText, transcripts.count == 1,
+              url == URL(string: "https://muse.ai/") || url == MuseSideChatBinding.newURL || MuseSideChatBinding.threadID(in: url) != nil else {
             throw DesktopAppError.unavailable("Muse's side chat and composer could not be read independently. Nothing will be sent.")
         }
-        func url() throws -> URL {
-            guard let url = attribute(web, "AXURL") as? URL,
-                  url == URL(string: "https://muse.ai/") || url == MuseSideChatBinding.newURL || MuseSideChatBinding.threadID(in: url) != nil else {
-                throw DesktopAppError.unavailable("Muse's current chat address is unavailable or unsupported.")
-            }
-            return url
+        func convert(_ node: DesktopAccessibilityNode) -> MuseAXNode {
+            .init(role: node.role, label: node.label, value: node.value ?? "", children: node.children.map(convert))
         }
-        let before = try url()
-        guard initialURL == before else { throw DesktopAppError.unavailable("Muse navigated while its messages were being read.") }
-        func parameter(_ key: String, _ argument: CFTypeRef) -> CFTypeRef? {
-            var value: CFTypeRef?
-            return AXUIElementCopyParameterizedAttributeValue(composer, key as CFString, argument, &value) == .success ? value : nil
-        }
-        let draft = try MuseComposerText.read(markerText: {
-            guard let range = parameter("AXTextMarkerRangeForUIElement", composer) else { return nil }
-            return parameter("AXStringForTextMarkerRange", range) as? String
-        }) { range in
-            var native = CFRange(location: range.location, length: range.length)
-            guard let rangeValue = AXValueCreate(.cfRange, &native) else { return nil }
-            return parameter("AXStringForRange", rangeValue) as? String
-        }
-        guard try url() == before, try windowBounds() == initialBounds else { throw DesktopAppError.unavailable("Muse navigated or moved while its draft was being read.") }
-        let nodes = tree.descendants
         let header = nodes.first { $0.role == "AXButton" && $0.label.contains("Open chat and side chats") }?.label
         let title = header.map { $0.components(separatedBy: " Unread chats").first ?? $0 } ?? "Muse side chat"
-        return MuseAppObservation(url: before, draft: draft, composerFocused: DesktopNativeFocus.capture(pid: target.pid, composer: composer) == true,
-                                  messages: try MuseTranscript.messages(in: messageRoots[0]),
-                                  composerIdentity: CFHash(composer),
-                                  sidebarOpen: nodes.contains { $0.role == "AXButton" && $0.label == "New side chat" },
-                                  windowBounds: initialBounds,
-                                  generating: nodes.contains { $0.label == "Stop" || $0.label.hasSuffix(" Dictate a message Stop") }, title: title)
+        return .init(url: url, draft: draft, composerFocused: composer.focused,
+                     messages: try MuseTranscript.messages(in: convert(transcripts[0])), composerIdentity: composer.identity,
+                     sidebarOpen: nodes.contains { $0.role == "AXButton" && $0.label == "New side chat" },
+                     windowBounds: root.frame.map { .init(x: $0.x, y: $0.y, width: $0.w, height: $0.h) },
+                     generating: nodes.contains { $0.label == "Stop" || $0.label.hasSuffix(" Dictate a message Stop") }, title: title)
     }
 }

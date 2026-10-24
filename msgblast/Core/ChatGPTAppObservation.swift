@@ -1,5 +1,3 @@
-import ApplicationServices
-import Darwin
 import Foundation
 
 public enum ChatGPTAppKind: String, Codable, Sendable { case chatgpt, dots }
@@ -182,33 +180,17 @@ struct ChatGPTAppObservation: Sendable {
     }
     func sameContent(as other: Self) -> Bool { title == other.title && dotSetup == other.dotSetup && codexBootstrap == other.codexBootstrap && kind == other.kind && draft == other.draft && messages == other.messages }
 }
-enum ChatGPTNativeReader {
+enum ChatGPTAppProfile {
     static func capture(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppObservation {
-        guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Allow msgblast Accessibility access to connect ChatGPT.") }
-        func attr(_ e: AXUIElement, _ key: String) -> CFTypeRef? { var value: CFTypeRef?; return AXUIElementCopyAttributeValue(e, key as CFString, &value) == .success ? value : nil }
-        func string(_ e: AXUIElement, _ key: String) -> String { attr(e, key) as? String ?? "" }
-        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw ChatGPTObservationError.transient }
-        var count = 0
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        func walk(_ e: AXUIElement, depth: Int, insideWeb: Bool = false) throws -> ChatGPTAXNode {
-            count += 1
-            guard count <= 6000, depth <= 60, ContinuousClock.now < deadline else { throw ChatGPTObservationError.transient }
-            let role = string(e, "AXRole")
-            guard !role.isEmpty else { throw ChatGPTObservationError.transient }
-            let title = string(e, "AXTitle"), desc = string(e, "AXDescription")
-            var frame: DesktopAppSnapshot.Element.Frame?
-            if let p = attr(e, "AXPosition"), let s = attr(e, "AXSize"), CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() {
-                var point = CGPoint.zero, size = CGSize.zero
-                if AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size) { frame = .init(x: point.x, y: point.y, w: size.width, h: size.height) }
-            }
-            let nestedWeb = role == "AXWebArea" && insideWeb
-            let children = nestedWeb ? [] : try (attr(e, "AXChildren") as? [AXUIElement] ?? []).map { try walk($0, depth: depth + 1, insideWeb: insideWeb || role == "AXWebArea") }
-            let value = attr(e, "AXValue"), url = attr(e, "AXURL")
-            return .init(role: role, label: title.isEmpty ? desc : title, value: (value as? String) ?? (value as? NSNumber)?.stringValue,
-                         id: string(e, "AXDOMIdentifier"), subrole: string(e, "AXSubrole"), classes: attr(e, "AXDOMClassList") as? [String] ?? [],
-                         url: (url as? URL)?.absoluteString ?? (url as? String ?? ""), selectedText: attr(e, "AXSelectedText") as? String,
-                         enabled: attr(e, "AXEnabled") as? Bool != false, focused: attr(e, "AXFocused") as? Bool == true, frame: frame, children: children)
+        do { return try parse(DesktopAccessibility.capture(target, app: .chatgpt)) }
+        catch DesktopAccessibilityError.incomplete { throw ChatGPTObservationError.transient }
+    }
+    static func parse(_ root: DesktopAccessibilityNode) throws -> ChatGPTAppObservation {
+        func convert(_ node: DesktopAccessibilityNode) -> ChatGPTAXNode {
+            .init(role: node.role, label: node.label, value: node.value, id: node.domID, subrole: node.subrole,
+                  classes: node.classes, url: node.url?.absoluteString ?? "", selectedText: node.selectedText,
+                  enabled: node.enabled, focused: node.focused, frame: node.frame, children: node.children.map(convert))
         }
-        return try ChatGPTAppObservation(root: walk(window, depth: 0))
+        return try ChatGPTAppObservation(root: convert(root))
     }
 }

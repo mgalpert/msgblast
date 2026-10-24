@@ -316,7 +316,7 @@ actor DesktopAppConversation {
     private let embedded: Bool
     private let timing: Timing
     private let readGrok: @Sendable (Target) throws -> GrokBotNativeState
-    init(executable: URL? = nil, timing: Timing = Timing(), readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotNativeReader.capture) {
+    init(executable: URL? = nil, timing: Timing = Timing(), readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
         self.executable = executable ?? Self.findDriver()
         self.embedded = executable == nil
         self.timing = timing
@@ -328,7 +328,7 @@ actor DesktopAppConversation {
     struct Target: Sendable, Equatable { let pid: Int; let window: Int }
     private struct AppList: Decodable, Sendable { struct App: Decodable, Sendable { let bundle_id: String; let pid: Int; let running: Bool }; let apps: [App] }
     private struct WindowList: Decodable, Sendable {
-        struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; var space_ids: [UInt64]?; let bounds: Bounds }
+        struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; var space_ids: [UInt64]?; var layer: Int?; let bounds: Bounds }
         let windows: [Window]
     }
     func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
@@ -447,7 +447,7 @@ actor DesktopAppConversation {
         // Off-screen windows with a Space belong to another desktop. Hidden
         // application helpers have neither an on-screen surface nor a Space.
         let candidates = windows.windows.filter {
-            $0.bounds.width >= 400 && $0.bounds.height >= 400 &&
+            ($0.layer ?? 0) == 0 && $0.bounds.width >= 400 && $0.bounds.height >= 400 &&
             ($0.is_on_screen != false || !($0.space_ids ?? []).isEmpty) &&
             ([DesktopAppProvider.gemini, .chatgpt, .dots, .claude].contains(app) || !($0.title ?? "").isEmpty) &&
             $0.title != "Log in"
@@ -472,58 +472,66 @@ actor DesktopAppConversation {
         return value == draft || value == trimmed || (trimmed.isEmpty && composer.draft.isEmpty) ||
             (draft.isEmpty && value == "\n")
     }
+    func input(_ input: DesktopAppWorkflow.Input, focus: Bool, point: (x: Int, y: Int), target: Target, session: String) async throws {
+        switch input {
+        case .text(let text):
+            var numbers = ["pid": target.pid, "window_id": target.window, "delay_ms": 0]
+            if focus { numbers["x"] = point.x; numbers["y"] = point.y }
+            _ = try await call("type_text", ["session": session, "text": text, "delivery_mode": "background"], numbers: numbers, as: Action.self)
+        case .newline:
+            _ = try await call("press_key", ["session": session, "key": "return", "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], arrays: ["modifiers": ["shift"]], as: Action.self)
+        }
+    }
     private func typeGrokDraft(_ prompt: String, initial: DesktopAppSnapshot, target: Target,
                                session: String, binding: DesktopConversationBinding, image: URL) async throws -> DesktopAppSnapshot {
-        enum Input { case text(String), newline }
-        var inputs: [Input] = []
-        let lines = prompt.split(separator: "\n", omittingEmptySubsequences: false)
-        for (index, line) in lines.enumerated() {
-            let characters = Array(line)
-            for offset in stride(from: 0, to: characters.count, by: 256) {
-                inputs.append(.text(String(characters[offset..<min(offset + 256, characters.count)])))
-            }
-            if index < lines.count - 1 { inputs.append(.newline) }
-        }
         let history = try initial.grokHistoryAnchor()
-        var state = initial, prefix = ""
-        for (index, input) in inputs.enumerated() {
-            if index > 0 { state = try await snapshot(target, session: session, screenshotURL: image) }
-            try validate(state, app: .grokBot, binding: binding)
-            let native = try await grokState(state, target: target)
+        var state = initial
+        var point = (x: 0, y: 0)
+        var native = GrokBotNativeState(name: binding.name, draft: "")
+        try await DesktopAppWorkflow.enterText(prompt, before: { step in
+            if !step.first { state = try await self.snapshot(target, session: session, screenshotURL: image) }
+            try self.validate(state, app: .grokBot, binding: binding)
+            native = try await self.grokState(state, target: target)
             let field = try state.composer(app: .grokBot)
-            guard native.draft == prefix, grokDraftAgrees(field, with: prefix),
+            guard native.draft == step.before, self.grokDraftAgrees(field, with: step.before),
                   try history.matchesEnd(of: state.historyText(app: .grokBot)), !state.isGenerating,
-                  prefix.isEmpty || native.composerFocused == true else {
+                  step.before.isEmpty || native.composerFocused == true else {
                 throw DesktopAppError.unavailable("Grok Bot's draft, focus, or history changed. Nothing was submitted; review the preserved text.")
             }
-            let point = try state.pixelCenter(of: field.element, target: target, imageURL: image, appName: "Grok Bot")
-            switch input {
-            case .text(let text):
-                var numbers = ["pid": target.pid, "window_id": target.window, "delay_ms": 0]
-                // One capture-bound focus, then disjoint append-only chunks.
-                if prefix.isEmpty { numbers["x"] = point.x; numbers["y"] = point.y }
-                _ = try await call("type_text", ["session": session, "text": text, "delivery_mode": "background"], numbers: numbers, as: Action.self)
-                prefix += text
-            case .newline:
-                if native.composerFocused != true {
-                    _ = try await call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: Action.self)
-                    let focused = try await grokState(state, target: target)
-                    guard focused.name == binding.name, focused.draft == prefix, focused.composerFocused == true else {
-                        throw DesktopAppError.unavailable("Grok Bot's empty composer did not retain focus. Nothing was submitted.")
-                    }
+            point = try state.pixelCenter(of: field.element, target: target, imageURL: image, appName: "Grok Bot")
+        }, perform: { step in
+            if step.input == .newline, native.composerFocused != true {
+                _ = try await self.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: Action.self)
+                let focused = try await self.grokState(state, target: target)
+                guard focused.name == binding.name, focused.draft == step.before, focused.composerFocused == true else {
+                    throw DesktopAppError.unavailable("Grok Bot's empty composer did not retain focus. Nothing was submitted.")
                 }
-                _ = try await call("press_key", ["session": session, "key": "return", "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], arrays: ["modifiers": ["shift"]], as: Action.self)
-                prefix += "\n"
             }
-            state = try await snapshot(target, session: session)
-            try validate(state, app: .grokBot, binding: binding)
-            let prepared = try await grokState(state, target: target)
-            guard prepared.draft == prefix, index == inputs.count - 1 || prepared.composerFocused == true,
-                  try grokDraftAgrees(state.composer(app: .grokBot), with: prefix),
-                  try history.matchesEnd(of: state.historyText(app: .grokBot)), !state.isGenerating else {
-                throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
-            }
-        }
+            try await self.input(step.input, focus: step.before.isEmpty, point: point, target: target, session: session)
+        }, after: { step in
+            let verified = try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: self.timing.pollInterval,
+                failure: "Grok Bot did not confirm the prepared draft. Send was not clicked; review the preserved text.",
+                read: {
+                    let candidate = try await self.snapshot(target, session: session)
+                    return (candidate, try await self.grokState(candidate, target: target))
+                }, ready: { observation in
+                    let (candidate, prepared) = observation
+                    try self.validate(candidate, app: .grokBot, binding: binding)
+                    let field = try candidate.composer(app: .grokBot)
+                    let nativeReady = prepared.draft == step.after
+                    let driverReady = self.grokDraftAgrees(field, with: step.after)
+                    // Renderer updates can lag the input receipt. Only the
+                    // unchanged prior draft or the exact expected draft may wait.
+                    guard nativeReady || prepared.draft == step.before,
+                          driverReady || self.grokDraftAgrees(field, with: step.before),
+                          step.last || prepared.composerFocused == true,
+                          try history.matchesEnd(of: candidate.historyText(app: .grokBot)), !candidate.isGenerating else {
+                        throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
+                    }
+                    return nativeReady && driverReady
+                })
+            state = verified.0
+        })
         return state
     }
     func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding) async throws -> String {
@@ -550,27 +558,17 @@ actor DesktopAppConversation {
         guard draft.isEmpty else { throw DesktopAppError.unavailable("\(app.name) has an unsent draft. It was preserved.") }
         state = try await typeGrokDraft(prompt, initial: state, target: target, session: session, binding: binding, image: image)
         let button = try state.sendButton(app: app)
-        _ = try await call("click", ["session": session, "element_token": button.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
-        let deadline = ContinuousClock.now.advanced(by: timing.replyTimeout)
-        var previous: String?
-        var stableSince = ContinuousClock.now
-        while ContinuousClock.now < deadline {
-            try await Task.sleep(for: timing.pollInterval)
-            state = try await snapshot(target, session: session)
-            try validate(state, app: app, binding: binding, verifyBotList: false)
-            if app == .grokBot, (try? state.grokBots().filter { $0.name == binding.name }.count) != 1 {
-                // A working bot can temporarily disappear from the selectable
-                // sidebar. Observe only until its unique identity returns.
-                previous = nil; stableSince = .now
-                continue
-            }
-            let composerCleared = app == .grokBot ? try await grokState(state, target: target).draft.isEmpty : try state.composer(app: app).draft.isEmpty
-            let candidate = composerCleared ? try state.grokReply(after: prompt, anchor: receipt) : nil
-            if candidate != previous || state.isGenerating { previous = candidate; stableSince = .now }
-            if let candidate, !state.isGenerating, ContinuousClock.now - stableSince >= timing.stableDuration { return candidate }
-        }
-        throw DesktopAppError.unavailable("No stable reply was observed. The app may still be working. Check the conversation before explicitly allowing another request.")
+        return try await DesktopAppWorkflow.reply(app: app.name, timing: timing, submit: {
+            _ = try await self.call("click", ["session": session, "element_token": button.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+        }, observe: {
+            state = try await self.snapshot(target, session: session)
+            try self.validate(state, app: app, binding: binding, verifyBotList: false)
+            if app == .grokBot, (try? state.grokBots().filter { $0.name == binding.name }.count) != 1 { return nil }
+            let cleared = app == .grokBot ? try await self.grokState(state, target: target).draft.isEmpty : try state.composer(app: app).draft.isEmpty
+            return cleared && !state.isGenerating ? try state.grokReply(after: prompt, anchor: receipt) : nil
+        })
     }
+
     func endSession(_ session: String) async {
         _ = try? await call("end_session", ["session": session], as: Action.self)
     }

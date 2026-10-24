@@ -5,7 +5,9 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
     public static let settingsOnlyWebProviders: [Self] = [.muse, .chatgpt, .claude, .dots, .grok]
     public static let optionalProviders: [Self] = [.codexCLI, .claudeCode]
-    public static let desktopProviders: [Self] = [.chatgptApp, .dotsApp, .claudeApp, .geminiApp, .museApp, .grokBotApp, .wabi]
+    public static let desktopProviders: [Self] = [.chatgptApp, .dotsApp, .claudeApp, .museApp, .grokBotApp, .wabi]
+    // Retain Gemini's Codable identity and saved data while native support is deferred.
+    public var isAvailableInBuild: Bool { self != .geminiApp }
     public var desktopApp: DesktopAppProvider? {
         switch self { case .museApp: .muse; case .grokBotApp: .grokBot; case .wabi: .wabi; case .geminiApp: .gemini; case .chatgptApp: .chatgpt; case .dotsApp: .dots; case .claudeApp: .claude; default: nil }
     }

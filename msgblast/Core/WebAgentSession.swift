@@ -252,7 +252,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         persist()
     }
 
-    public var isEnabled: Bool { provider.usesNativeConversation ? state.enabled == true : state.websiteEnabled != false }
+    public var isEnabled: Bool { provider.isAvailableInBuild && (provider.usesNativeConversation ? state.enabled == true : state.websiteEnabled != false) }
 
     public func setEnabled(_ enabled: Bool) {
         if enabled, provider.desktopApp != nil {
@@ -1139,7 +1139,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.comparisonID.flatMap { state.geminiConversations[$0.uuidString]?.firstPrompt } != nil
     }
     public func configureGemini(_ preferences: GeminiPreferences) async {
-        guard provider == .geminiApp, !loading, !isSending, !storageFailed, !shuttingDown else { return }
+        guard provider == .geminiApp, provider.isAvailableInBuild, !loading, !isSending, !storageFailed, !shuttingDown else { return }
         guard !geminiModeLocked || preferences.mode == geminiPreferences.mode else { return }
         guard !hasIncompleteNativeRequest(for: state.comparisonID) else { return }
         loading = true; desktopReady = false
@@ -1416,7 +1416,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     private func refreshDesktop() async {
-        guard let app = provider.desktopApp, !loading, !refreshing, !shuttingDown else { return }
+        guard let app = provider.desktopApp, provider.isAvailableInBuild, !loading, !refreshing, !shuttingDown else { return }
         refreshing = true
         let generation = comparisonGeneration
         defer { refreshing = false }

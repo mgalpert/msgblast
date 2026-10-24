@@ -15,26 +15,20 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
-    private final class HeldGeminiRead: @unchecked Sendable {
+    private final class HeldMuseRead: @unchecked Sendable {
         private let condition = NSCondition()
         private var released = false
         private var reads = 0
         let started: XCTestExpectation
-        let observation: GeminiAppObservation
+        let observation: MuseAppObservation
         let failFollowingRead: Bool
         init(started: XCTestExpectation, failFollowingRead: Bool = false) throws {
             self.started = started
             self.failFollowingRead = failFollowingRead
-            observation = try GeminiAppObservation(root: .init(role: "AXWindow", label: "Gemini — New chat", children: [
-                .init(role: "AXSplitGroup", children: [.init(role: "AXGroup", children: [
-                    .init(role: "AXTextArea", label: "Ask Gemini", value: ""),
-                    .init(role: "AXButton", label: "Flash, Choose model"),
-                    .init(role: "AXButton", label: "Chat", id: "chat-input-mode-ask", selected: true)
-                ])])
-            ]))
+            observation = MuseAppObservation(url: URL(string: "https://muse.ai/")!, draft: "", composerFocused: true, messages: [])
         }
         var count: Int { condition.lock(); defer { condition.unlock() }; return reads }
-        func capture() throws -> GeminiAppObservation {
+        func capture() throws -> MuseAppObservation {
             condition.lock()
             reads += 1
             let first = reads == 1
@@ -55,7 +49,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
     }
 
-    private func readOnlyGeminiDriver(in directory: URL) throws -> URL {
+    private func readOnlyMuseDriver(in directory: URL) throws -> URL {
         let executable = directory.appendingPathComponent("driver")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data("""
@@ -65,10 +59,12 @@ final class DesktopAppInstallationTests: XCTestCase {
         with (pathlib.Path(__file__).parent/'calls').open('a') as f:f.write(tool+'\\n')
         if tool=='list_apps':
             assert args=={}
-            print(json.dumps({'apps':[{'bundle_id':'com.google.GeminiMacOS','pid':42,'running':True}]}))
+            print(json.dumps({'apps':[{'bundle_id':'com.meta.endo','pid':42,'running':True}]}))
         elif tool=='list_windows':
             assert args=={'pid':42}
-            print(json.dumps({'windows':[{'window_id':21,'title':'','is_on_screen':True,'bounds':{'width':1000,'height':900}}]}))
+            print(json.dumps({'windows':[{'window_id':21,'title':'Muse','is_on_screen':True,'bounds':{'width':1000,'height':900}}]}))
+        elif tool=='get_window_state':
+            print(json.dumps({'elements':[{'role':'AXWindow'}]}))
         else: raise AssertionError('Unexpected mutation: '+tool)
         sys.stdout.flush();time.sleep(.02)
         """.utf8).write(to: executable)
@@ -79,17 +75,17 @@ final class DesktopAppInstallationTests: XCTestCase {
     func testReadinessRefreshCannotMarkReplacementComparisonReady() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let executable = try readOnlyGeminiDriver(in: directory)
-        let held = try HeldGeminiRead(started: expectation(description: "Old comparison availability read held"))
+        let executable = try readOnlyMuseDriver(in: directory)
+        let held = try HeldMuseRead(started: expectation(description: "Old comparison availability read held"))
         defer { held.release() }
         let apps = Apps()
-        apps.installation = .init(url: URL(fileURLWithPath: "/Fixture/Gemini.app"), processID: 42)
-        let session = WebAgentSession(provider: .geminiApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
-                                      museApp: .shared, desktopApps: apps.client, desktopDriver: DesktopAppConversation(executable: executable),
-                                      geminiApp: GeminiAppConversation(executable: executable, readNative: { _, _ in try held.capture() }))
+        apps.installation = .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 42)
+        let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: MuseAppConversation(executable: executable, readNative: { _ in try held.capture() }),
+                                      desktopApps: apps.client, desktopDriver: DesktopAppConversation(executable: executable))
         defer { session.beginShutdown() }
         session.setEnabled(true)
-        session.updateState { $0.desktopConversation = .init(name: "Gemini"); $0.comparisonID = UUID() }
+        session.updateState { $0.desktopConversation = .init(name: "Muse"); $0.comparisonID = UUID() }
         session.connect(automaticallyRefresh: false)
         let refresh = Task { await session.refresh() }
         await fulfillment(of: [held.started], timeout: 2)
@@ -110,17 +106,17 @@ final class DesktopAppInstallationTests: XCTestCase {
     func testExplicitConversationStartWaitsForRefreshThenMakesItsOwnAvailabilityCheck() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let executable = try readOnlyGeminiDriver(in: directory)
-        let held = try HeldGeminiRead(started: expectation(description: "Background availability read held"), failFollowingRead: true)
+        let executable = try readOnlyMuseDriver(in: directory)
+        let held = try HeldMuseRead(started: expectation(description: "Background availability read held"), failFollowingRead: true)
         defer { held.release() }
         let apps = Apps()
-        apps.installation = .init(url: URL(fileURLWithPath: "/Fixture/Gemini.app"), processID: 42)
-        let session = WebAgentSession(provider: .geminiApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
-                                      museApp: .shared, desktopApps: apps.client, desktopDriver: DesktopAppConversation(executable: executable),
-                                      geminiApp: GeminiAppConversation(executable: executable, readNative: { _, _ in try held.capture() }))
+        apps.installation = .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 42)
+        let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: MuseAppConversation(executable: executable, readNative: { _ in try held.capture() }),
+                                      desktopApps: apps.client, desktopDriver: DesktopAppConversation(executable: executable))
         defer { session.beginShutdown() }
         session.setEnabled(true)
-        session.updateState { $0.desktopConversation = .init(name: "Gemini") }
+        session.updateState { $0.desktopConversation = .init(name: "Muse") }
         session.connect(automaticallyRefresh: false)
         let refresh = Task { await session.refresh() }
         await fulfillment(of: [held.started], timeout: 2)
@@ -148,7 +144,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         await refresh.value
         let ready = await opening.value
         XCTAssertFalse(ready, "The new check intentionally reports that sign-in is required")
-        XCTAssertEqual(held.count, 2, "The explicit start must wait and make a fresh check instead of returning the old readiness snapshot")
+        XCTAssertEqual(held.count, 3, "The explicit start must wait and make a fresh check; Muse may repeat that failed read once")
         XCTAssertTrue(session.desktopStatus.contains("Fixture replacement requires sign-in"), session.desktopStatus)
         XCTAssertEqual(session.state.comparisonID, comparison)
         XCTAssertFalse(session.snapshot.ready)
@@ -250,27 +246,27 @@ final class DesktopAppInstallationTests: XCTestCase {
         tool=sys.argv[2];args=json.loads(sys.argv[3])
         with (p/'calls.jsonl').open('a') as f:f.write(tool+'\\n')
         if tool=='list_apps':
-            print(json.dumps({'apps':[{'bundle_id':'com.google.GeminiMacOS','pid':42,'running':True}]}))
+            print(json.dumps({'apps':[{'bundle_id':'com.meta.endo','pid':42,'running':True}]}))
         elif tool=='list_windows':
             assert args=={'pid':42}
-            windows=[{'window_id':21,'title':'','is_on_screen':True,'bounds':{'width':1000,'height':900}}] if (p/'opened').exists() else []
+            windows=[{'window_id':21,'title':'Muse','is_on_screen':True,'bounds':{'width':1000,'height':900}}] if (p/'opened').exists() else []
             print(json.dumps({'windows':windows}))
         else: raise AssertionError('Unexpected action: '+tool)
         sys.stdout.flush();time.sleep(.02)
         """.utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Gemini.app")
+        let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: appURL, processID: 42)
         apps.openAction = { _ in try Data().write(to: directory.appendingPathComponent("opened")) }
         let driver = DesktopAppConversation(executable: executable)
-        let gemini = GeminiAppConversation(executable: executable, readNative: { _, _ in
+        let muse = MuseAppConversation(executable: executable, readNative: { _ in
             throw DesktopAppError.unavailable("Fixture sign-in required")
         })
-        let session = WebAgentSession(provider: .geminiApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
-                                      museApp: .shared, desktopApps: apps.client, desktopDriver: driver, geminiApp: gemini)
+        let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: muse, desktopApps: apps.client, desktopDriver: driver)
         defer { session.beginShutdown() }
         session.setEnabled(true)
-        session.updateState { $0.desktopConversation = .init(name: "Gemini"); $0.draft = "Retain my prompt" }
+        session.updateState { $0.desktopConversation = .init(name: "Muse"); $0.draft = "Retain my prompt" }
         let ready = await session.openComparison(UUID())
         XCTAssertFalse(ready, "The window reopened, but sign-in was not completed")
         XCTAssertEqual(apps.opened, [appURL], "A running process without a window still needs an explicit open")
@@ -282,8 +278,8 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertTrue(tools.allSatisfy { $0 == "list_apps" || $0 == "list_windows" }, "Readiness must use only metadata, never input or a probe send")
     }
 
-    func testExplicitOnboardingConnectReopensMuseAndGeminiAndWaitsForTheirWindow() async throws {
-        for provider in [WebProvider.museApp, .geminiApp] {
+    func testExplicitOnboardingConnectReopensShippingAppsAndWaitsForTheirWindow() async throws {
+        for provider in WebProvider.desktopProviders {
             let app = try XCTUnwrap(provider.desktopApp)
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

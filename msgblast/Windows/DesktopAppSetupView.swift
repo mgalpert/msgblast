@@ -11,7 +11,10 @@ struct DesktopAppSetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let app = session.provider.desktopApp {
+            if !session.provider.isAvailableInBuild {
+                Text("\(session.name) is unavailable in this build. Your saved conversations and settings are preserved.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if let app = session.provider.desktopApp {
                 let installed = session.desktopInstallation.isInstalled
                 if !compact {
                     Label(installed ? "\(app.name) is installed on this Mac" : "\(app.name) isn’t installed on this Mac",

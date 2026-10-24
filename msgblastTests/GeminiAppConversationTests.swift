@@ -110,34 +110,39 @@ final class GeminiAppConversationTests: XCTestCase {
     }
 
     @MainActor
-    func testComparisonModeLocksAfterFirstPromptAndChoicesPersistSeparately() async throws {
+    func testDeferredGeminiKeepsSavedStateButCannotConnectConfigureOrSend() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let session = WebAgentSession(provider: .geminiApp, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
-        session.setEnabled(true)
+        let file = directory.appendingPathComponent("state.json"), id = UUID()
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.selected = true; saved.draft = "Keep my draft"
+        saved.desktopConversation = .init(name: "Gemini")
+        saved.geminiPreferences = .init(mode: .task, model: "Saved model")
+        var binding = GeminiConversationBinding(comparisonID: id, mode: .task)
+        binding.firstPrompt = binding.firstMessage("Original request")
+        try saved.recordGeminiBinding(binding)
+        try JSONEncoder().encode(saved).write(to: file)
+        let original = try Data(contentsOf: file)
+        let session = WebAgentSession(provider: .geminiApp, storageURL: file, fixture: true, museApp: .shared, desktopApps: .demo)
+        defer { session.beginShutdown() }
+        XCTAssertFalse(session.isEnabled)
+        XCTAssertFalse(session.canSubmitNativePrompt)
+        let prepared = await session.prepareDesktopConnection()
+        XCTAssertFalse(prepared)
         await session.connectDesktopConversation()
-        await session.configureGemini(.init(mode: .chat, model: "4 Argon, Complex tasks"))
-        XCTAssertEqual(session.geminiOptions.thinkingLevels.count, 3)
-        XCTAssertEqual(session.geminiPreferences.thinking, "Low, Quick and efficient")
-        let id = UUID()
-        _ = await session.openComparison(id)
-        await session.configureGemini(.init(mode: .task, model: "4 Argon, Complex tasks"))
-        XCTAssertEqual(session.geminiPreferences.mode, .task)
-        XCTAssertTrue(session.geminiOptions.thinkingLevels.isEmpty)
-        let attempt = await session.send("Synthetic Task prompt", comparisonID: id)
-        XCTAssertEqual(attempt?.status, .observed)
-        XCTAssertTrue(session.geminiModeLocked)
         await session.configureGemini(.init(mode: .chat))
-        XCTAssertEqual(session.geminiPreferences.mode, .task)
-        _ = await session.openComparison(UUID())
-        XCTAssertFalse(session.geminiModeLocked)
-        XCTAssertEqual(session.geminiPreferences.mode, .chat)
-        _ = await session.openComparison(id)
-        XCTAssertEqual(session.geminiPreferences.mode, .task)
-        XCTAssertEqual(session.state.geminiConversations[id.uuidString]?.title, "msgblast \(id.uuidString)")
-        session.beginShutdown()
+        let attempt = await session.send("Do not submit", comparisonID: id)
+        XCTAssertNil(attempt)
+        XCTAssertFalse(session.desktopReady)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertEqual(session.state.draft, "Keep my draft")
+        XCTAssertEqual(session.geminiPreferences, saved.geminiPreferences)
+        XCTAssertEqual(try session.state.geminiBinding(for: id), binding)
+        XCTAssertEqual(session.state.enabled, true, "The user's saved preference must not be erased")
+        XCTAssertEqual(try Data(contentsOf: file), original)
     }
+
 }
 
 final class GeminiAppDriverTests: XCTestCase {
@@ -418,38 +423,6 @@ final class GeminiAppDriverTests: XCTestCase {
             if stage == 4 { reads += 1; if reads >= 3 { navigated = true } }
             return navigated
         }
-    }
-    @MainActor
-    func testUnavailableModelDoesNotReserveAnUnsubmittedConversation() async throws {
-        let base = try fixture()
-        let f = try scenario(Array(base.observations.prefix(5)).map(\.root), actions: [
-            ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
-            ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"],
-            ["tool": "click", "role": "AXButton", "label": "Flash, Choose model"],
-            ["tool": "click", "role": "AXButton", "label": "3.8 Flash, All-around help"]
-        ], in: base)
-        defer { try? FileManager.default.removeItem(at: f.directory) }
-        let id = UUID()
-        let session = WebAgentSession(provider: .geminiApp, storageURL: f.directory.appendingPathComponent("session.json"), fixture: false,
-                                      museApp: .shared, desktopApps: .demo, desktopDriver: DesktopAppConversation(executable: f.executable), geminiApp: adapter(f))
-        session.setEnabled(true)
-        session.updateState {
-            $0.comparisonID = id
-            $0.geminiComparisonPreferences[id.uuidString] = .init(model: "Unavailable saved model")
-        }
-        await session.connectDesktopConversation()
-        let attempt = await session.send("Echo check", comparisonID: id)
-        XCTAssertTrue(attempt?.detail?.contains("selected model isn’t available") == true)
-        XCTAssertNil(try session.state.geminiBinding(for: id), "A configuration failure before input must not lock the comparison to an interrupted submission")
-        XCTAssertEqual(attempt?.status, .notSent)
-        XCTAssertEqual(session.geminiOptions.models, ["3.8 Flash, All-around help"])
-        await session.configureGemini(.init(model: "3.8 Flash, All-around help"))
-        XCTAssertTrue(session.snapshot.ready)
-        XCTAssertEqual(session.state.comparisonID, id)
-        XCTAssertEqual(session.geminiPreferences.model, "3.8 Flash, All-around help")
-        XCTAssertNil(try session.state.geminiBinding(for: id))
-        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
-        session.beginShutdown()
     }
     func testTransientNativeReadAfterSubmissionDoesNotReplayOrAbandonReply() async throws {
         let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
@@ -870,7 +843,7 @@ final class GeminiAppDriverTests: XCTestCase {
         XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
     }
     @MainActor
-    func testFailedNativePreparationSurfacesReasonAndPreservesDraftWithoutCreatingAttempt() async throws {
+    func testDeferredGeminiDoesNotInvokeNativePreparationOrCreateAttempt() async throws {
         let f = try fixture(); defer { try? FileManager.default.removeItem(at: f.directory) }
         let file = f.directory.appendingPathComponent("blocked-session.json")
         var state = WebWorkspaceState()
@@ -886,7 +859,7 @@ final class GeminiAppDriverTests: XCTestCase {
                                       museApp: .shared, desktopApps: .demo, desktopDriver: DesktopAppConversation(executable: f.executable), geminiApp: unavailable)
         let ready = await session.openComparison(UUID())
         XCTAssertFalse(ready)
-        XCTAssertEqual(session.error, reason, "The comparison pane must explain why preparation stopped")
+        XCTAssertNil(session.error, "Deferred integrations must not enter native preparation")
         XCTAssertEqual(session.state.draft, "Keep my follow-up")
         XCTAssertTrue(session.state.attempts.isEmpty)
         XCTAssertFalse(f.calls().contains { ["click", "type_text"].contains($0["tool"] as? String ?? "") })

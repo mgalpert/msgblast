@@ -83,6 +83,7 @@ final class AppModel: ObservableObject {
         do {
             state = try local.load()
             if !existingStore && (!demo || onboardingPreview) { state.onboarding = OnboardingState() }
+            state.onboarding?.reconcileBuildAvailability()
             // Preserve completed setup across permission restarts. The final
             // connection check verifies readiness before opening chats.
             try local.save(state)
