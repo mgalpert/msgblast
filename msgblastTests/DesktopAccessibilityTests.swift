@@ -53,6 +53,27 @@ final class DesktopAccessibilityTests: XCTestCase {
         XCTAssertThrowsError(try read(transcript, app: .gemini))
     }
 
+    func testChatGPTAndDotsRejectStaleEditorFocusWhenAnotherControlOwnsInput() throws {
+        for app in [DesktopAppProvider.chatgpt, .dots] {
+            for label in ["Ask ChatGPT", "Message", "Work with ChatGPT"] {
+                let source = [0: Source(node: .init(role: "AXWindow"), children: [1, 2]),
+                              1: Source(node: .init(role: "AXTextArea", label: label, focused: true)),
+                              2: Source(node: .init(role: "AXTextField", label: "Chat title", focused: true))]
+                var checked: [Int] = []
+                let tree = try DesktopAccessibilityTree.read(0, app: app, focus: { handle in
+                    checked.append(handle)
+                    return DesktopNativeFocus.observed(applicationMatches: false, applicationRole: "AXSearchField", elementFocused: true)
+                }) { handle in
+                    let value = source[handle]!
+                    return (value.node, value.children)
+                }
+                XCTAssertEqual(checked, [1], "Only the actual chat editor needs native focus resolution")
+                XCTAssertFalse(tree.children[0].focused, "A stale AXFocused flag must not authorize keyboard input: \(app), \(label)")
+                XCTAssertTrue(tree.children[1].focused, "Other controls retain their own metadata")
+            }
+        }
+    }
+
     func testChatGPTNestedWebContentCannotSupplyConversationControls() throws {
         let source = [0: Source(node: .init(role: "AXWindow"), children: [1]),
                       1: Source(node: .init(role: "AXWebArea"), children: [2]),

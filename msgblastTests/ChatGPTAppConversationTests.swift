@@ -504,12 +504,16 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let executable = directory.appendingPathComponent("driver")
         try Data("""
         #!/usr/bin/env python3
-        import sys,json,pathlib,time,base64
+        import sys,json,pathlib,time,struct,zlib
         p=pathlib.Path(__file__).parent
         tool=sys.argv[2];a=json.loads(sys.argv[3])
         with (p/'calls.jsonl').open('a') as f:f.write(json.dumps({'tool':tool,'arguments':a})+'\\n')
         s=int((p/'stage').read_text()) if (p/'stage').exists() else 0
         states=json.loads((p/'snapshots.json').read_text())
+        if (p/'composer-moved').exists():
+            for state in states:
+                for field in state['elements']:
+                    if field['role']=='AXTextArea':field['frame']['y']=20
         if tool=='list_apps':print(json.dumps({'apps':[{'bundle_id':'com.openai.codex','pid':42,'running':True}]}))
         elif tool=='list_windows':
             assert a['pid']==42
@@ -523,15 +527,18 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
                     if element['role']=='AXTextArea':element['frame']['y']=20
             if a['include_screenshot']:
                 image=pathlib.Path(a['screenshot_out_file'])
-                image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1sAAAAASUVORK5CYII='))
-                state.update(screenshot_frame_valid=True,screenshot_width=1,screenshot_height=1,screenshot_file_path=str(image))
+                def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data)&0xffffffff)
+                image.write_bytes(bytes([137,80,78,71,13,10,26,10])+chunk(b'IHDR',struct.pack('>IIBBBBB',100,100,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(bytes(301)*100))+chunk(b'IEND',b''))
+                state.update(screenshot_frame_valid=True,screenshot_width=100,screenshot_height=100,screenshot_file_path=str(image))
             print(json.dumps(state))
         elif tool in ['type_text','click','press_key']:
             e=json.loads((p/'actions.json').read_text())[s]
             assert tool==e['tool'] and a['pid']==42 and a['window_id']==21 and a['delivery_mode']=='background'
             matches=[x for x in states[s]['elements'] if x['role']==e['role'] and x['label']==e['label']]
             assert len(matches)==1
-            if e.get('pixel')=='yes':assert a['x']==0 and a['y']==0 and 'element_token' not in a
+            if e.get('pixel')=='yes':
+                field=matches[0]['frame']
+                assert 'element_token' not in a and field['x']<=a['x']<field['x']+field['w'] and field['y']<=a['y']<field['y']+field['h'], 'Input missed the current composer'
             elif e.get('focused')=='yes':assert 'x' not in a and 'y' not in a and 'element_token' not in a
             else:assert a['element_token']==matches[0]['element_token']
             if 'text' in e:assert a['text']==e['text']
@@ -573,6 +580,9 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(answer, "ANSWER")
         let inputs = f.calls().filter { $0["tool"] as? String == "type_text" }.compactMap { $0["arguments"] as? [String: Any] }
         XCTAssertEqual(inputs.filter { $0["text"] as? String == f.binding.firstMessage("").trimmingCharacters(in: .newlines) }.count, 1)
+        let point = try XCTUnwrap(inputs.first)
+        XCTAssertTrue((0..<10).contains(try XCTUnwrap(point["x"] as? Int)))
+        XCTAssertTrue((20..<30).contains(try XCTUnwrap(point["y"] as? Int)), "Typing must hit the settled composer rather than its previous location")
         XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), f.binding.firstMessage("First question"))
     }
     func testFailedFocusOrChangedContextNeverReservesOrTypesInput() async throws {

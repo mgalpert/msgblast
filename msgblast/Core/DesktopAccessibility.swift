@@ -45,6 +45,7 @@ enum DesktopAccessibilityTree {
 
     static func read<Handle>(_ root: Handle, app: DesktopAppProvider, limits: Limits = .init(),
                              now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+                             focus: ((Handle) -> Bool?)? = nil,
                              attributes: (Handle) throws -> (DesktopAccessibilityNode, [Handle])) throws -> DesktopAccessibilityNode {
         let deadline = now() + limits.timeout
         var count = 0
@@ -59,6 +60,7 @@ enum DesktopAccessibilityTree {
             }
             guard now() < deadline else { throw DesktopAccessibilityError.incomplete }
             var (node, children) = captured
+            if let focus, DesktopAccessibility.isComposer(node, app: app) { node.focused = focus(handle) == true }
             if node.role.isEmpty, app == .gemini, parentRole == "AXOutline" { return .init(role: "AXUnknown") }
             guard !node.role.isEmpty else { throw DesktopAccessibilityError.incomplete }
             // First-party ChatGPT can embed unrelated app surfaces. Those may
@@ -143,6 +145,7 @@ enum DesktopAccessibility {
                 (node.role == "AXButton" && ["Message Attach file Dictate a message Send", "Message Attach file Dictate a message Stop"].contains(node.label))
         case .wabi: return ["AXTextArea", "AXTextField"].contains(node.role) && node.label == "Message"
         case .grokBot: return node.role == "AXTextArea" && node.label == "Prompt"
+        case .chatgpt, .dots: return node.role == "AXTextArea" && ["Ask ChatGPT", "Message", "Work with ChatGPT"].contains(node.label)
         default: return false
         }
     }
@@ -152,14 +155,11 @@ enum DesktopAccessibility {
         guard let window = DesktopNativeWindowLookup.resolve(target) else { throw DesktopAccessibilityError.incomplete }
         let initial = try attributes(window)
         var addresses: [(AXUIElement, String?)] = []
-        let root = try DesktopAccessibilityTree.read(window, app: app) { element in
+        let root = try DesktopAccessibilityTree.read(window, app: app, focus: { DesktopNativeFocus.capture(pid: target.pid, composer: $0) }) { element in
             let values = try attributes(element)
             var node = try DesktopAccessibilityMetadata.node(values, identity: CFHash(element))
             if node.role == "AXWebArea" { addresses.append((element, try DesktopAccessibilityMetadata.address(values["AXURL"]))) }
-            if isComposer(node, app: app) {
-                node.focused = DesktopNativeFocus.capture(pid: target.pid, composer: element) == true
-                if app == .muse { node.editorText = try museEditorText(element) }
-            }
+            if app == .muse, isComposer(node, app: app) { node.editorText = try museEditorText(element) }
             return (node, values["AXChildren"] as? [AXUIElement] ?? [])
         }
         let final = try attributes(window)
