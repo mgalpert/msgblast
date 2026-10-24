@@ -1,0 +1,14 @@
+{
+  "README.md": "0fbe60d74dcd036e571d6e3c7bc33b37c97a43c823be61fc7f920bf858ae2112",
+  "validation.json": "1ef8ba8f9baf36f65bd0219efe25be179851d359302aec23fad46835d7c686e6",
+  "preview-manifest.json": "61d099e5717e88b5dc399df6c99155cba96dfab0c2307f5857f820365ed6d07b",
+  "01-permissions.png": "8dc9b2ce62ba730a44e5f316594110278d715280102a41c2d4b7948e6125a252",
+  "02-agents.png": "824f54c11494719caf7ac24d5f66cba2297434b74385cf61a8aa970413d2ef5b",
+  "03-connections-pending.png": "24f5fe0477e1e73c8585e51d0c770748a0c236a8d316e9aacd719ffd725db25d",
+  "04-connections-ready.png": "52cf21e79abf2155cf16e69e2d2199682d8da5b62e6c040b742bcdd86440509c",
+  "muse-live.png": "893eaa8b28a088a8c07f615f87679feaa7d496f3a6bd48a3be030ace9aa3d741",
+  "grok-live.png": "7457b1b786e4efef9da4ae6449211caccb0ba925aec380fb3426be262bd4bdbb",
+  "wabi-live.png": "35b5f8683a50ba40affb52b4400233e7c2e4c8577e4dac236dcfc64206b49736",
+  "claude-live.png": "c80d37c9f4a23ee0cefc125efc7c9edf0c55e174a3067a0ec8ade36a3140952a",
+  "onboarding.mp4": "335e75d75e0a91203b3a4c9acc4d481ae886feb9de3cd7ccaba73160a0aa6f7d"
+}
