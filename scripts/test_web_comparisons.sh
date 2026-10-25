@@ -14,7 +14,16 @@ web_flags=(-swift-version 6 -D DEBUG -parse-as-library -module-cache-path "$web_
     -framework msgblastCore -framework Sparkle
     -Xlinker -rpath -Xlinker "$web_frameworks" -Xlinker -rpath -Xlinker "$web_sparkle")
 web_sources=()
-while IFS= read -r source; do web_sources+=("$source"); done < <(rg --files "$web_root/msgblast" -g '*.swift' | rg -v '/Core/|/msgblastApp.swift$')
+while IFS= read -r source; do web_sources+=("$source"); done < <(python3 - "$web_root/msgblast" <<'PY_SOURCES'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for source in sorted(root.rglob("*.swift")):
+    if "Core" not in source.relative_to(root).parts and source.name != "msgblastApp.swift":
+        print(source)
+PY_SOURCES
+)
+if [ "${#web_sources[@]}" -eq 0 ]; then echo "No app sources found" >&2; exit 1; fi
 # Keep the real scene actions/lifecycle definitions while giving the fixture its own entry point.
 python3 - "$web_root/msgblast/App/msgblastApp.swift" "$web_tmp/app-support.swift" <<'PY_SUPPORT'
 from pathlib import Path
@@ -25,7 +34,7 @@ end = source.index("\n@MainActor\nprivate final class AppStartup", start)
 Path(sys.argv[2]).write_text(source[:start] + source[end:])
 PY_SUPPORT
 web_sources+=("$web_tmp/app-support.swift")
-xcrun swiftc "${web_flags[@]}" "${web_sources[@]}" "$web_root/scripts/fixtures/web_comparison_model.swift" -o "$web_tmp/model"
+xcrun swiftc "${web_flags[@]}" "${web_sources[@]}" "$web_root/scripts/fixtures/web_comparison_model.swift" "$web_root/scripts/fixtures/permission_review_model.swift" -o "$web_tmp/model"
 "$web_tmp/model" --demo --isolated-demo
 # Exercise the actual startup path twice against one app-owned fixture profile.
 python3 - "$web_tmp" <<'PY_REVIEW'
@@ -41,7 +50,7 @@ shutil.copy2(root / "model", app / "MacOS" / "model")
     "msgblastSupportDirectory": "msgblast-PermissionReview-" + uuid.uuid4().hex[:12],
 }))
 PY_REVIEW
-"$web_tmp/PermissionReview.app/Contents/MacOS/model" --demo --permission-review-relaunch-fixture
+"$web_tmp/PermissionReview.app/Contents/MacOS/model" --demo --permission-review-relaunch-fixture --contacts-access-preview
 
 xcrun swiftc "${web_flags[@]}" "$web_root/msgblast/App/AppUpdater.swift" "$web_root/scripts/fixtures/web_broadcast_lifecycle.swift" -o "$web_tmp/lifecycle"
 "$web_tmp/lifecycle"

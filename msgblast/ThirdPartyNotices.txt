@@ -201,3 +201,58 @@ Retrieved October 10, 2026 from the providers' official websites.
 These service marks identify their respective services. Artwork and trademarks
 remain the property of their respective owners and are not covered by msgblast's
 GPL license. Hark's transparent mark is presented on white backing for contrast.
+
+Wabi: unmodified native icon from Wabi 0.1.11 (ai.wabi.desktop), retrieved
+October 19, 2026 from the installed Mac app's Contents/Resources/icon.icns.
+The icon identifies Wabi in msgblast. Artwork and trademarks remain Wabi's
+property and are not covered by msgblast's GPL license.
+
+Gemini: unmodified native icon from Gemini 1.131.4.1198
+(com.google.GeminiMacOS), retrieved October 20, 2026 from the installed Mac
+app's Contents/Resources/AppIcon.icns. The icon identifies Gemini in msgblast.
+Artwork and trademarks remain Google's property and are not covered by
+msgblast's GPL license.
+
+ChatGPT and Claude: unmodified native icons from ChatGPT 26.1013.40934
+(com.openai.codex) and Claude 3.1623.0 (com.anthropic.claudefordesktop),
+retrieved October 21, 2026 from the installed Mac apps’
+Contents/Resources/electron.icns. Artwork and trademarks remain their
+respective owners’ property and are not covered by msgblast’s GPL license.
+
+
+Muse and Grok Bot: unmodified native icons from Muse 8.0 (com.meta.endo)
+and Grok Bot 0.75.0 (com.anysphere.sand), retrieved October 22, 2026 from
+the installed Mac apps' Contents/Resources/AppIcon.icns and
+Contents/Resources/icon.icns, respectively. Artwork and trademarks remain
+their respective owners' property and are not covered by msgblast's GPL license.
+
+
+CuaDriver off-Space accessibility window lookup
+https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs
+The bounded remote-token lookup is adapted in DesktopNativeWindowLookup.swift
+and shared by all native app readers.
+
+MIT License
+
+Copyright (c) 2025 Cua AI, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Embedded CuaDriver
+The bundled CuaDriver executable is provided by trycua/cua. Its pinned version, upstream source revision, and archive checksums are in cua-driver.json. See CuaDriverNotices.txt for its license and third-party notices.

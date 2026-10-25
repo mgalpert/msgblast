@@ -404,7 +404,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.buttons["Muse"].rightClick()
         app.menuItems["Open chat"].click()
         XCTAssertFalse(app.staticTexts["Appeared in Muse"].exists)
-        XCTAssertFalse(app.buttons["Connect Muse"].exists)
+        XCTAssertFalse(app.buttons["Check Muse connection"].exists)
     }
 
     @MainActor

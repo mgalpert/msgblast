@@ -1,7 +1,11 @@
 import Foundation
 
 public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Sendable, Hashable {
-    case chatgpt, claude, grokbot, muse, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
+    case chatgptApp, dotsApp, claudeApp, chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, geminiApp, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
+
+    public static var offeredChoices: [Self] { allCases.filter { choice in
+        choice != .grokbot && (choice.provider.map { $0.isAvailableInBuild && !WebProvider.settingsOnlyWebProviders.contains($0) } ?? true)
+    } }
 
     public var id: String { rawValue }
     public var name: String {
@@ -18,11 +22,18 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
     }
     public var provider: WebProvider? {
         switch self {
+        case .chatgptApp: .chatgptApp
+        case .dotsApp: .dotsApp
+        case .claudeApp: .claudeApp
         case .chatgpt: .chatgpt
         case .claude: .claude
         case .grokbot: .grokbot
         case .grok: .grok
         case .muse: .muse
+        case .museApp: .museApp
+        case .grokBotApp: .grokBotApp
+        case .wabi: .wabi
+        case .geminiApp: .geminiApp
         case .codexCLI: .codexCLI
         case .claudeCode: .claudeCode
         case .dots: .dots
@@ -60,6 +71,41 @@ public enum OnboardingConnector: String, CaseIterable, Codable, Sendable {
     }
 }
 
+public enum OnboardingPermissionSection: String, Codable, Sendable, Hashable {
+    case messaging, apps
+}
+
+/// Current checks, not saved OS grants. A section is usable only when every requirement is ready.
+public struct OnboardingPermissionReadiness: Equatable, Sendable {
+    public var fullDiskAccess: Bool
+    public var contacts: Bool
+    public var automation: Bool
+    public var hostAccessibility: Bool
+    public var screenCapture: Bool
+    public var driverInstalled: Bool
+
+    public init(fullDiskAccess: Bool, contacts: Bool, automation: Bool,
+                hostAccessibility: Bool, screenCapture: Bool,
+                driverInstalled: Bool) {
+        self.fullDiskAccess = fullDiskAccess
+        self.contacts = contacts
+        self.automation = automation
+        self.hostAccessibility = hostAccessibility
+        self.screenCapture = screenCapture
+        self.driverInstalled = driverInstalled
+    }
+
+    public var messagingReady: Bool { fullDiskAccess && contacts && automation }
+    public var appsReady: Bool { hostAccessibility && screenCapture && driverInstalled }
+    public var canContinue: Bool { messagingReady && appsReady }
+    public var completedSections: Set<OnboardingPermissionSection> {
+        var sections: Set<OnboardingPermissionSection> = []
+        if messagingReady { sections.insert(.messaging) }
+        if appsReady { sections.insert(.apps) }
+        return sections
+    }
+}
+
 public enum OnboardingStep: Hashable, Sendable {
     case agent(WebProvider)
     case runtime(LocalAgentRuntime)
@@ -70,9 +116,13 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     public enum Stage: String, Codable, Sendable { case choosing, importing, connecting, feedback, finished }
 
     // Optional for compatibility: older saved setups continue at their existing step.
+    public var permissionsCompleted: Bool? = false
+    public var permissionsSkipped: Bool?
+    public var approvedPermissionSections: Set<OnboardingPermissionSection>?
     public var connectorStartCompleted: Bool? = false
     public var connector: OnboardingConnector?
     public var prerequisitesCompleted: Bool? = false
+    public var messagesAutomaticallyAdded: Bool?
     public var messagesDiscoveryReviewed: Bool?
     public var discoveredMessageAgentIDs: [UUID]?
     public var excludedDiscoveredMessageAgentIDs: [UUID]?
@@ -84,6 +134,49 @@ public struct OnboardingState: Codable, Equatable, Sendable {
 
     public init() {}
 
+    public var needsPermissionSetup: Bool { permissionsCompleted != true }
+
+    /// Save the permission-screen checkpoint before handing control to System Settings.
+    public mutating func preparePermissionChange() {
+        permissionsCompleted = false
+        permissionsSkipped = false
+    }
+
+    @discardableResult
+    public mutating func completePermissions(messaging: Bool, apps: Bool) -> Bool {
+        guard messaging && apps else { return false }
+        recordPermissionReview(messaging: messaging, apps: apps)
+        permissionsSkipped = false
+        return true
+    }
+
+    public mutating func skipPermissions(messaging: Bool, apps: Bool) {
+        recordPermissionReview(messaging: messaging, apps: apps)
+        permissionsSkipped = true
+    }
+
+    private mutating func recordPermissionReview(messaging: Bool, apps: Bool) {
+        var sections: Set<OnboardingPermissionSection> = []
+        if messaging { sections.insert(.messaging) }
+        if apps { sections.insert(.apps) }
+        revalidatePermissionSections(sections)
+        permissionsCompleted = true
+        connector = nil
+        connectorStartCompleted = true
+        prerequisitesCompleted = true
+        if stage == .choosing, messagesDiscoveryReviewed != true {
+            messagesDiscoveryReviewed = true
+        }
+    }
+
+    public mutating func revalidatePermissionSections(_ sections: Set<OnboardingPermissionSection>) {
+        approvedPermissionSections = sections
+        // This legacy picker is hidden now that Messages agents are discovered
+        // automatically. Without Messaging access it cannot remain an invisible
+        // selected prerequisite. Keep its saved agent identity and discovery data.
+        if !isFinished, sections.contains(.apps), !sections.contains(.messaging) { selected.remove(.otherMessages) }
+    }
+
     public mutating func chooseConnector(_ connector: OnboardingConnector) {
         self.connector = connector
         connectorStartCompleted = true
@@ -92,8 +185,12 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         messagesDiscoveryReviewed = connector == .messages ? false : true
     }
 
+    public var availableSelected: Set<OnboardingChoice> {
+        selected.filter { $0.provider?.isAvailableInBuild ?? true }
+    }
+
     public var pendingChoices: [OnboardingChoice] {
-        OnboardingChoice.allCases.filter { selected.contains($0) && !completed.contains($0) && !skipped.contains($0) }
+        OnboardingChoice.allCases.filter { availableSelected.contains($0) && !completed.contains($0) && !skipped.contains($0) }
     }
     public var pendingSteps: [OnboardingStep] {
         let choices = pendingChoices
@@ -112,8 +209,13 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         Set(selected.filter(\.isMessages).compactMap { messageAgentIDs[$0.rawValue] } + (discoveredMessageAgentIDs ?? []))
             .subtracting(excludedDiscoveredMessageAgentIDs ?? [])
     }
-    public func unresolvedMessageAgents(in agents: [Agent], chats: [Chat]) -> [Agent] {
-        agents.filter { selectedMessageAgentIDs.contains($0.id) && ChatResolver.resolve(agent: $0, chats: chats) == nil }
+    public func connectionReminderChoices(selectedProviders: Set<WebProvider>) -> Set<OnboardingChoice> {
+        skipped.intersection(selected).filter { choice in
+            choice.provider.map { $0.isAvailableInBuild && selectedProviders.contains($0) } == true
+        }
+    }
+    public func unresolvedMessageAgents(in agents: [Agent], chats: [Chat], selectedIDs: Set<UUID>? = nil) -> [Agent] {
+        agents.filter { selectedMessageAgentIDs.contains($0.id) && (selectedIDs?.contains($0.id) ?? true) && ChatResolver.resolve(agent: $0, chats: chats) == nil }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
     public mutating func excludeDiscoveredMessageAgent(_ id: UUID, agents: [Agent], availableIDs: Set<UUID>) {
@@ -145,7 +247,12 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         stage = .choosing
     }
     public var hasConnectedAgent: Bool {
-        completed.intersection(selected).contains { $0.provider != nil || $0.isMessages }
+        completed.intersection(availableSelected).contains { $0.provider != nil || $0.isMessages }
+    }
+
+    public mutating func reconcileBuildAvailability() {
+        guard availableSelected != selected else { return }
+        finishIfResolved()
     }
 
     public mutating func toggle(_ choice: OnboardingChoice) {
@@ -153,7 +260,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         if selected.contains(choice) { selected.remove(choice) } else { selected.insert(choice) }
     }
     public mutating func begin() {
-        guard !selected.isEmpty else { return }
+        guard !availableSelected.isEmpty else { return }
         if !hasConnectedAgent && pendingSteps.isEmpty { skipped = [] }
         stage = pendingWebProviders.isEmpty ? .connecting : .importing
         finishIfResolved()
@@ -216,6 +323,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         if stage == .feedback { stage = .connecting }
     }
     public mutating func resume() {
+        preparePermissionChange()
         skipped.removeAll()
         stage = .choosing
         connectorStartCompleted = false

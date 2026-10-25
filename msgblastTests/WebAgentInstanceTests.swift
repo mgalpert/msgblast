@@ -4,6 +4,58 @@ import CryptoKit
 
 @MainActor
 final class WebAgentInstanceTests: XCTestCase {
+    func testNewAppWebAgentsRequireSettingsOptInAndRememberItAcrossRestart() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true, websiteOptInRequired: true)
+        defer { agents.beginShutdown() }
+        for provider in WebProvider.settingsOnlyWebProviders {
+            let session = try XCTUnwrap(agents.session(for: .init(provider: provider)))
+            XCTAssertFalse(session.isEnabled)
+            XCTAssertFalse(agents.availableSessions.contains { $0.id == session.id })
+            let result = await session.send("Must remain local")
+            XCTAssertNil(result)
+            XCTAssertTrue(session.state.attempts.isEmpty)
+        }
+        XCTAssertTrue(try XCTUnwrap(agents.session(for: .init(provider: .hark))).isEnabled)
+        XCTAssertTrue(try XCTUnwrap(agents.session(for: .init(provider: .os3))).isEnabled)
+        agents.setEnabled(true, for: .chatgpt)
+        let chatgpt = try XCTUnwrap(agents.session(for: .chatgpt))
+        XCTAssertTrue(chatgpt.isEnabled)
+        let id = chatgpt.state.sessionID
+        chatgpt.updateState { $0.draft = "Keep this draft" }
+        let reopened = WebAgents(directory: directory, fixture: true, websiteOptInRequired: true)
+        defer { reopened.beginShutdown() }
+        let restored = try XCTUnwrap(reopened.session(for: .chatgpt))
+        XCTAssertTrue(restored.isEnabled)
+        XCTAssertEqual(restored.state.sessionID, id)
+        XCTAssertEqual(restored.state.draft, "Keep this draft")
+        restored.setEnabled(false)
+        XCTAssertFalse(restored.isEnabled)
+        XCTAssertEqual(restored.state.draft, "Keep this draft")
+        let disabled = WebAgents(directory: directory, fixture: true, websiteOptInRequired: true)
+        defer { disabled.beginShutdown() }
+        XCTAssertFalse(try XCTUnwrap(disabled.session(for: .chatgpt)).isEnabled)
+    }
+
+    func testExistingWebAccountWithNoEnableFlagKeepsIdentityAndHistory() throws {
+        let directory = temporaryDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var saved = WebWorkspaceState()
+        saved.enabled = false // Old CLI enablement must not disable a website.
+        saved.draft = "Existing draft"
+        saved.conversationURLs["existing"] = URL(string: "https://chatgpt.com/c/existing")!
+        try JSONEncoder().encode(saved).write(to: directory.appendingPathComponent(WebProvider.chatgpt.storageFilename))
+        let agents = WebAgents(directory: directory, fixture: true, websiteOptInRequired: true)
+        defer { agents.beginShutdown() }
+        let restored = try XCTUnwrap(agents.session(for: .chatgpt))
+        XCTAssertTrue(restored.isEnabled, "Do not disable existing users during the transition")
+        XCTAssertEqual(restored.state.sessionID, saved.sessionID)
+        XCTAssertEqual(restored.state.draft, saved.draft)
+        XCTAssertEqual(restored.state.conversationURLs, saved.conversationURLs)
+    }
+
     func testCopiesKeepLoginIdentityAndStartWithEmptyHistory() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
