@@ -103,6 +103,12 @@ struct PermissionCheck {
         probe.change { $0.running = false; $0.automation = .notRequested; $0.asks = [] }
         await permissions.refresh(model: model)
         precondition(permissions.sending == .needsMessages && permissions.sending.actionTitle == "Check access" && probe.snapshot.asks.isEmpty)
+        model.contacts.status = .authorized
+        await permissions.refresh(model: model)
+        precondition(!permissions.requiresReview && permissions.sending != .allowed,
+                     "Closed Messages must not trigger revoked-access onboarding or claim sending is allowed")
+        precondition(probe.snapshot.messagesOpened == 0 && probe.snapshot.asks.isEmpty,
+                     "Passive startup and Settings checks must neither launch Messages nor request consent")
         await permissions.enableSending(model: model)
         precondition(probe.snapshot.messagesOpened == 1 && probe.snapshot.asks == [false] && permissions.sending == .notRequested)
         await permissions.enableSending(model: model)

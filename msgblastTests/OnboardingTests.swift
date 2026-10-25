@@ -193,24 +193,26 @@ final class OnboardingTests: XCTestCase {
     }
 
     func testExplicitPermissionSkipSurvivesRestartWithoutClaimingMissingGrants() throws {
-        var setup = OnboardingState()
-        setup.stage = .finished
-        setup.selected = [.chatgptApp, .otherMessages]
-        setup.completed = [.chatgptApp]
-        setup.messageAgentIDs["otherMessages"] = UUID()
-        setup.skipPermissions(messaging: false, apps: true)
-        var restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(setup))
-        XCTAssertFalse(restored.needsPermissionSetup)
-        XCTAssertEqual(restored.permissionsSkipped, true)
-        XCTAssertEqual(restored.approvedPermissionSections, [.apps], "Skipping must never claim a missing Messages grant")
-        XCTAssertEqual(restored.selected, [.chatgptApp, .otherMessages])
-        XCTAssertEqual(restored.completed, [.chatgptApp])
-        XCTAssertEqual(restored.messageAgentIDs, setup.messageAgentIDs)
-        restored.preparePermissionChange()
-        XCTAssertTrue(restored.needsPermissionSetup)
-        XCTAssertEqual(restored.permissionsSkipped, false, "An explicit retry must resume access after another restart")
-        XCTAssertEqual(restored.selected, setup.selected)
-        XCTAssertEqual(restored.stage, .finished)
+        for stage: OnboardingState.Stage in [.choosing, .importing, .connecting, .feedback, .finished] {
+            var setup = OnboardingState()
+            setup.stage = stage
+            setup.selected = [.chatgptApp, .otherMessages]
+            setup.completed = [.chatgptApp]
+            setup.messageAgentIDs["otherMessages"] = UUID()
+            setup.skipPermissions(messaging: false, apps: true)
+            var restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(setup))
+            XCTAssertFalse(restored.needsPermissionSetup)
+            XCTAssertEqual(restored.permissionsSkipped, true)
+            XCTAssertEqual(restored.approvedPermissionSections, [.apps], "Skipping must never claim a missing Messages grant")
+            XCTAssertEqual(restored.selected, stage == .finished ? [.chatgptApp, .otherMessages] : [.chatgptApp])
+            XCTAssertEqual(restored.completed, [.chatgptApp])
+            XCTAssertEqual(restored.messageAgentIDs, setup.messageAgentIDs)
+            restored.preparePermissionChange()
+            XCTAssertTrue(restored.needsPermissionSetup)
+            XCTAssertEqual(restored.permissionsSkipped, false, "An explicit retry must resume access after another restart")
+            XCTAssertEqual(restored.selected, setup.selected)
+            XCTAssertEqual(restored.stage, stage)
+        }
     }
 
     func testLegacyUnfinishedSetupRequiresPermissionCheckAndKeepsItsPendingStep() throws {

@@ -59,6 +59,7 @@ final class OnboardingController: ObservableObject {
               driverInstalled: appPermissions.installed)
     }
     var permissionSetupReady: Bool { permissionReadiness.canContinue }
+    private var permissionReviewRequired: Bool { messagesPermissions.requiresReview || !permissionReadiness.appsReady }
     var permissionChecksBusy: Bool {
         checkingPermissions || messagesPermissions.checkingSending || messagesPermissions.requestingContacts || appPermissions.checking ||
         messagesPermissions.history == .checking || messagesPermissions.contacts == .checking || messagesPermissions.sending == .checking ||
@@ -68,7 +69,7 @@ final class OnboardingController: ObservableObject {
     func resumePermissionsAtLaunch() async {
         await refreshPermissions()
         guard model.state.onboarding == nil || state.isFinished,
-              state.permissionsSkipped != true, !permissionSetupReady else { return }
+              state.permissionsSkipped != true, permissionReviewRequired else { return }
         checkpointPermissionChange()
     }
 
@@ -83,7 +84,7 @@ final class OnboardingController: ObservableObject {
         if state.permissionsCompleted == true {
             let sections = permissionReadiness.completedSections
             var next = state
-            if !permissionSetupReady && next.permissionsSkipped != true { next.preparePermissionChange() }
+            if permissionReviewRequired && next.permissionsSkipped != true { next.preparePermissionChange() }
             next.revalidatePermissionSections(sections)
             if !next.isFinished {
                 next.completed = next.completed.filter { choice in

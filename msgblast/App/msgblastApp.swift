@@ -5,7 +5,7 @@ import msgblastCore
 struct msgblastApp: App {
     @NSApplicationDelegateAdaptor(AppLifecycle.self) private var lifecycle
     @StateObject private var startup = AppStartup()
-    private var model: AppModel? { startup.checkingPermissions ? nil : startup.model }
+    private var model: AppModel? { startup.model }
     @StateObject private var updater = AppUpdater()
     @Environment(\.openWindow) private var openWindow
     private static let menuBarIcon: NSImage = {
@@ -30,7 +30,6 @@ struct msgblastApp: App {
         WindowGroup(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "msgblast", id: "main") {
             Group {
                 if startup.needsInstallation { InstallationView() }
-                else if startup.checkingPermissions { ProgressView("Checking access…") }
                 else if let model {
                     Group {
                         if model.needsSharingChoice { SharingChoiceView(model: model) }
@@ -176,7 +175,6 @@ enum msgblastMain {
 
 @MainActor
 private final class AppStartup: ObservableObject {
-    @Published private(set) var checkingPermissions = true
     let needsInstallation: Bool
     let model: AppModel?
     let shortcut = NewBlastShortcut()
@@ -199,11 +197,10 @@ private final class AppStartup: ObservableObject {
         // uninstalled copy (its initializer starts Messages history polling).
         observation = model?.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         if let model {
-            Task { [weak self] in
+            Task {
                 await model.onboarding.resumePermissionsAtLaunch()
-                self?.checkingPermissions = false
             }
-        } else { checkingPermissions = false }
+        }
     }
 }
 

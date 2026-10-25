@@ -49,6 +49,12 @@ final class AppPermissions: ObservableObject {
     nonisolated private static let messagesBundleID = Bundle(url: messagesURL)?.bundleIdentifier
     private let client: AppPermissionClient
 
+    // A closed Messages process leaves Automation unchecked, not denied. Keep
+    // the send gate strict, without treating app availability as a revoked grant.
+    var requiresReview: Bool {
+        history != .allowed || contacts != .allowed || (sending != .allowed && sending != .needsMessages)
+    }
+
     init(client: AppPermissionClient? = nil) { self.client = client ?? Self.systemClient() }
 
     func refresh(model: AppModel) async {
