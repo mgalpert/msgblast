@@ -1,4 +1,4 @@
-# Studio validation for PR #78
+# Pal Studio capture record for PR #78
 
 Base merged: `7676362e87e1097fa2cf933a045da8d724923bf8`.
 Application runtime source: `fd1d4212b807ae01968de0f5b48ad111191cd234`.
@@ -62,12 +62,20 @@ disabled diagnostics, and manually dismissed feedback. The original Allow access
 window remained available. No Send was pressed. `dev-feedback.png` records this
 limited live-mode check; it does not prove the success callback against production.
 
-Studio has Command Line Tools selected, Python 3.9.6 by default (3.13 also
-available), and no full Xcode discoverable in Applications, common alternate
-locations, or Spotlight. Therefore Studio-native builds and XCTest unit/controller/
-UI execution could not run. Native CI is separate validation; no native/UI suite
-was run on the user's active local desktop. The PR remains draft pending required
-native validation and resolution of this environment limit.
+At capture time, Pal Studio had Command Line Tools selected, Python 3.9.6 by
+default (3.13 also available), and no discoverable full Xcode. A subsequent
+standalone permission-controller run passed all 9 injected-response checks.
+The Swift-package test attempt failed because Command Line Tools lack XCTest;
+it is not a unit-suite pass. No native/UI suite ran on the active local desktop.
+
+The user subsequently authorized trying the alternate Studio. `msg-studio` has
+Xcode 27.0 at `/Applications/Xcode.app`; native validation continues there in an
+isolated source/build directory under a separate shared worker lock, using
+`DEVELOPER_DIR` rather than changing the machine-wide setting. The first source
+archive omitted the required release-notes resource; it was supplied from the
+same commit before retrying. The PR description records subsequent native,
+controller, UI-runner and final CI results; this Pal capture record does not
+claim their outcome.
 
 ## Media
 
