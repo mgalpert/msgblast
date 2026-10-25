@@ -77,6 +77,10 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
     @MainActor static func runFeedbackWindowChecks() async throws {
         let model = AppModel()
         model.timer?.invalidate()
+        let priorID = await model.prepareWebComparison("Earlier simulated conversation", recipientIDs: [model.state.agents[0].id], agents: [])!
+        await model.submit(priorID, retry: false)
+        precondition(model.comparison(priorID)?.members.first?.submission == .submitted,
+                     "Receipt preservation must begin with an actual simulated submission")
         model.coordinator = WindowCoordinator(model: model)
         let workspace = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 800, height: 600), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         workspace.isReleasedWhenClosed = false
