@@ -1,6 +1,19 @@
 import Foundation
 
 enum DesktopAppWorkflow {
+    struct ReplyClock: Clock {
+        typealias Instant = ContinuousClock.Instant
+        private let readNow: @Sendable () -> Instant
+        private let suspend: @Sendable (Instant, Duration?) async throws -> Void
+        let minimumResolution: Duration
+        init<C: Clock>(_ clock: C) where C.Instant == Instant, C.Duration == Duration {
+            readNow = { clock.now }
+            suspend = { try await clock.sleep(until: $0, tolerance: $1) }
+            minimumResolution = clock.minimumResolution
+        }
+        var now: Instant { readNow() }
+        func sleep(until deadline: Instant, tolerance: Duration?) async throws { try await suspend(deadline, tolerance) }
+    }
     enum Input: Equatable { case text(String), newline }
     struct TextStep {
         let input: Input
@@ -47,7 +60,7 @@ enum DesktopAppWorkflow {
     }
 
     static func transient(_ error: Error) -> Bool {
-        if error is DesktopAccessibilityError || error is ClaudeObservationError || error is ChatGPTObservationError || error is GeminiObservationError || error is WabiObservationError { return true }
+        if error is MuseObservationError || error is DesktopAccessibilityError || error is ClaudeObservationError || error is ChatGPTObservationError || error is GeminiObservationError || error is WabiObservationError { return true }
         if case DesktopAppError.incompleteSnapshot = error { return true }
         return false
     }
@@ -80,13 +93,24 @@ enum DesktopAppWorkflow {
     static func reply<C: Clock>(app: String, timing: DesktopAppConversation.Timing, timeout: Duration? = nil,
                       clock: C = ContinuousClock(),
                       isolation: isolated (any Actor)? = #isolation,
+                      onSubmitAction: () async -> Void = {},
+                      releaseFocus: () async throws -> Void = {},
+                      continueWaiting: () -> Bool = { false },
                       submit: () async throws -> Void, observe: () async throws -> String?) async throws -> String where C.Duration == Duration {
         try Task.checkCancellation()
         try await submit()
-        let deadline = clock.now.advanced(by: timeout ?? timing.replyTimeout)
+        await onSubmitAction()
+        var deadline = clock.now.advanced(by: timeout ?? timing.replyTimeout)
+        let focusDeadline = clock.now.advanced(by: .seconds(5))
+        var releasedFocus = false
         var previous: String?, since = clock.now
-        while clock.now < deadline {
+        while clock.now < deadline || continueWaiting() {
+            if clock.now >= deadline { deadline = clock.now.advanced(by: timeout ?? timing.replyTimeout) }
             try await clock.sleep(for: timing.pollInterval)
+            if !releasedFocus, clock.now >= focusDeadline {
+                try await releaseFocus()
+                releasedFocus = true
+            }
             let candidate: String?
             do { candidate = try await observe() }
             catch {

@@ -228,6 +228,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertTrue(ready)
         XCTAssertEqual(apps.opened, [appURL])
         XCTAssertEqual(session.state.museAppConversations[comparison.uuidString]?.comparisonID, comparison)
+        XCTAssertNil(session.state.museAppConversations[comparison.uuidString]?.threadID, "Opening a comparison records intent; its native side chat is created only when sending")
         XCTAssertTrue(session.state.attempts.isEmpty, "Opening a conversation must not submit a probe")
         _ = await session.openComparison(UUID())
         XCTAssertEqual(apps.opened, [appURL], "Reuse an already running app")

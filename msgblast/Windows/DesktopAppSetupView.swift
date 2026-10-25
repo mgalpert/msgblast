@@ -146,6 +146,10 @@ struct DesktopAppSetupView: View {
                     }
                     if session.loading { ProgressView().controlSize(.small) }
                 }
+                if app.requiresForegroundSubmission {
+                    Text("msgblast briefly brings \(app.name) forward to send, then returns you here.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if !session.desktopReady { Text(session.desktopStatus).font(.caption).foregroundStyle(.secondary) }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)

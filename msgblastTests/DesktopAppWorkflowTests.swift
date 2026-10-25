@@ -4,6 +4,72 @@ import XCTest
 @MainActor
 final class DesktopAppWorkflowTests: XCTestCase {
     private enum Failure: Error { case changed, refused }
+    private actor Restores {
+        private(set) var count = 0
+        func record() { count += 1 }
+    }
+
+    func testSubmittedFocusDeadlineRestoresWhileReplyReadIsSuspended() async throws {
+        let submitStarted = expectation(description: "Submit started")
+        let delayStarted = expectation(description: "Post-submit deadline started")
+        let readStarted = expectation(description: "Reply read suspended")
+        let restored = expectation(description: "Host restored during suspended read")
+        let (submitGate, submit) = AsyncStream<Void>.makeStream()
+        let (deadlineGate, deadline) = AsyncStream<Void>.makeStream()
+        let (readGate, read) = AsyncStream<Void>.makeStream()
+        defer { submit.finish(); deadline.finish(); read.finish() }
+        let events = Restores()
+        let owner = try await DesktopForegroundOwner.shared.acquire()
+        let lease = DesktopForegroundLease(owner: owner) { await events.record(); restored.fulfill() }
+        let reply = Task {
+            try await DesktopAppWorkflow.reply(app: "Fixture", timing: .init(pollInterval: .zero, stableDuration: .zero), onSubmitAction: {
+                await lease.restoreAfterSubmission(delay: {
+                    delayStarted.fulfill()
+                    for await _ in deadlineGate { break }
+                })
+            }, submit: {
+                submitStarted.fulfill()
+                for await _ in submitGate { break }
+            }, observe: {
+                readStarted.fulfill()
+                for await _ in readGate { break }
+                return "Owned reply"
+            })
+        }
+        await fulfillment(of: [submitStarted], timeout: 2)
+        let beforeSubmission = await events.count
+        XCTAssertEqual(beforeSubmission, 0)
+        submit.yield(()); submit.finish()
+        await fulfillment(of: [delayStarted, readStarted], timeout: 2)
+        deadline.yield(()); deadline.finish()
+        await fulfillment(of: [restored], timeout: 2)
+        try await lease.restore()
+        let next = try await DesktopForegroundOwner.shared.acquire()
+        await DesktopForegroundOwner.shared.release(next)
+        read.yield(()); read.finish()
+        let answer = try await reply.value
+        XCTAssertEqual(answer, "Owned reply")
+        try await lease.restore()
+        let total = await events.count
+        XCTAssertEqual(total, 1)
+    }
+
+    func testActivelyWorkingConfirmedRequestKeepsReadingPastWaitWindowWithoutResending() async throws {
+        let clock = AdvancingClock()
+        let started = clock.now
+        var submissions = 0, reads = 0
+        var working = true
+        let answer = try await DesktopAppWorkflow.reply(app: "Fixture", timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .milliseconds(20)), clock: clock,
+            continueWaiting: { working }, submit: { submissions += 1 }, observe: {
+                reads += 1
+                if reads == 7 { working = false; return "Completed reply" }
+                return nil
+            })
+        XCTAssertEqual(answer, "Completed reply")
+        XCTAssertEqual(submissions, 1)
+        XCTAssertEqual(reads, 7)
+        XCTAssertGreaterThan(clock.now - started, .milliseconds(20))
+    }
 
     func testTextEntryPreservesBlankLinesAndUnicodeWithoutOverlappingChunks() async throws {
         let prompt = "\nA\n\n" + String(repeating: "🧑🏽‍💻", count: 270) + "\n"
@@ -125,6 +191,44 @@ final class DesktopAppWorkflowTests: XCTestCase {
         XCTAssertEqual(reads, 3)
     }
 
+    func testMissingSubmissionReceiptReleasesFocusAfterFiveSecondsWithoutResending() async throws {
+        for incomplete in [false, true] {
+            let clock = AdvancingClock()
+            let began = clock.now
+            var submissions = 0, releases: [Duration] = []
+            let answer = try await DesktopAppWorkflow.reply(app: "Fixture", timing: .init(pollInterval: .seconds(1), stableDuration: .zero, replyTimeout: .seconds(10)), clock: clock,
+                releaseFocus: { releases.append(began.duration(to: clock.now)) },
+                submit: { submissions += 1 }, observe: {
+                    if began.duration(to: clock.now) < .seconds(8) {
+                        if incomplete { throw DesktopAccessibilityError.incomplete }
+                        return nil
+                    }
+                    return "Late verified answer"
+                })
+            XCTAssertEqual(answer, "Late verified answer")
+            XCTAssertEqual(releases, [.seconds(5)])
+            XCTAssertEqual(submissions, 1)
+        }
+    }
+
+    func testMuseIncompleteChatAfterSubmissionKeepsObservingWithoutResending() async throws {
+        let partial = DesktopAccessibilityNode(role: "AXWindow", children: [
+            .init(role: "AXWebArea", url: URL(string: "https://muse.ai/thread/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")),
+            .init(role: "AXGroup", label: "Chat messages")
+        ])
+        var submits = 0, reads = 0
+        let answer = try await DesktopAppWorkflow.reply(app: "Muse", timing: .init(pollInterval: .seconds(1), stableDuration: .seconds(2), replyTimeout: .seconds(20)), clock: AdvancingClock(), submit: {
+            submits += 1
+        }, observe: {
+            reads += 1
+            if reads <= 6 { _ = try MuseAppProfile.parse(partial) }
+            return "Verified owned reply"
+        })
+        XCTAssertEqual(answer, "Verified owned reply")
+        XCTAssertEqual(submits, 1)
+        XCTAssertEqual(reads, 9, "Recover the read and restart reply stability; never submit again")
+    }
+
     func testUncertainSubmitNeverObservesOrRetries() async {
         var submissions = 0, reads = 0
         do {
@@ -163,7 +267,7 @@ extension DesktopAppWorkflowTests {
 }
 
 // Sleeps advance virtual time immediately; runner scheduling never advances it.
-private final class AdvancingClock: Clock, @unchecked Sendable {
+final class AdvancingClock: Clock, @unchecked Sendable {
     typealias Instant = ContinuousClock.Instant
     private let lock = NSLock()
     private var instant = ContinuousClock.now

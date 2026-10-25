@@ -25,10 +25,35 @@ two real main windows still block ambiguous targeting.
 Text entry uses disjoint chunks and explicit Shift-Return line breaks. Each
 profile verifies its destination and draft before a chunk and confirms readback
 before the workflow advances. An unknown input result is never replayed. Submit
-runs once, followed only by observations until an owned reply is stable. Partial
-reads and loading states may be reread; foreign drafts, changed destinations and
-ambiguous replies stop the operation. The existing send-attempt ledger and saved
+runs once, followed by reply observation until an owned reply is stable. Grok Bot
+may require activating its latest-messages control when the unread count changes
+or reappears, to expose new rows in the same validated conversation; this never
+submits another message. Partial reads and loading states may be reread; changed
+destinations and ambiguous replies stop the operation. Muse and Grok Bot read
+replies independently of the input editor's focus or draft. Muse's reply reader
+requires its owned chat and transcript, without requiring a composer.
+During reply observation it retries reads within the reply deadline, without
+typing or submitting again. Unsupported URLs and foreign messages still stop.
+The existing send-attempt ledger and saved
 conversation ownership remain authoritative across restarts.
+
+Native conversations show the outgoing prompt immediately in msgblast. It is
+marked **Sending…** until the adapter observes the matching outgoing message and
+matching conversation, then **Sent** while waiting for a reply. That persisted receipt
+survives a reply-read failure. A completed reply replaces the pending presentation
+using the same message identity, without duplicating the outgoing prompt or
+retaining the Sending status.
+
+Muse, Grok Bot, and Wabi need foreground input in the currently supported app
+versions. An explicit send acquires one shared desktop transaction, brings the
+exact app window forward, and holds it through navigation, text entry, and
+submission. Once the outgoing request is observed, it
+returns focus to the exact msgblast window while reading the reply in the
+background. If submission cannot be confirmed within five seconds, focus still returns
+without resending or claiming success. Failures and cancellation also restore
+msgblast before releasing desktop ownership. Setup and passive readiness checks never acquire foreground
+control. An unverifiable background action is never retried as foreground input.
+ChatGPT, Dots, and Claude retain their existing background paths.
 
 Gemini is deferred in this build because its native controls did not pass live
 readiness checks. Its saved data and Codable identities remain intact, but it is
@@ -142,12 +167,12 @@ Muse renames the chat or msgblast restarts. Duplicate titles cannot authorize
 sending to another side chat.
 
 Creation uses a fresh accessibility button. Muse's side-chat rows advertise
-AXPress but that action does not select them. Resuming uses a background pointer
+AXPress but that action does not select them. Resuming uses an exact-window pointer
 click derived from the row's current accessibility bounds and a fresh, validated
 window capture. The saved UUID must match after selection. Preparing an empty
 composer does not require WebKit to report editor focus: it can keep focus on its
 outer web view until text arrives. The first text chunk focuses the unique current
-composer using validated screenshot coordinates and types in the same background
+composer using validated screenshot coordinates and types in the same targeted
 call, without AXPress. The driver's `type_text` call uses the session's fresh
 capture and does not accept a `capture_id` argument. Independent native draft and
 focus readback must succeed before another chunk or submission. Captures are
@@ -168,7 +193,7 @@ from a literal `Message` draft. It supports WebKit's visible-character ranges
 and preserves Unicode. A private macOS window-number lookup correlates the AX
 window with the driver's exact window ID; absence fails closed.
 
-Typing targets the exact background window without pressing that compound
+Typing targets the exact foreground window without pressing that compound
 button. Small chunks require independent draft readback. Line breaks use
 Shift-Return, because plain newline character events submit Muse's composer.
 WebKit's extra terminal line break is tolerated only between chunks; the whole
@@ -176,7 +201,7 @@ final draft must equal the requested prompt before one final Return. Unsupported
 control characters and unverifiable drafts stop input and preserve the text.
 Typing and Send use no pixel coordinates. Navigation/focus coordinates come
 from each fresh capture rather than a saved layout. No OCR, DOM injection,
-foreground fallback, or automatic replay is used. A transient failed native read is retried once without repeating
+hidden foreground escalation, or automatic replay is used. A transient failed native read is retried once without repeating
 an input action.
 
 ## Wabi dedicated chats
@@ -296,7 +321,7 @@ a prompt. A new outgoing prompt and reply must appear after that unique anchor.
 Missing or duplicate anchors, changed recent history, or another new message
 stop attribution. No usable history stops input; a completely empty new bot has
 no independently verified empty-chat contract yet. Every mutation specifies
-`delivery_mode: background`; a refusal never triggers foreground input or replay.
+`delivery_mode: background` inside an explicitly acquired foreground transaction; a refusal never triggers an input replay.
 
 ## Replies, recovery, and limits
 
@@ -424,7 +449,7 @@ that records every call. It never contacts installed apps. Coverage includes:
 - Stable-reply waits, generation controls, old echoed prompts, and foreign replies.
 - Incomplete sends across restart, explicit acknowledgement by the original
   comparison, cancellation, bounded process waits, and driver-process cleanup.
-- Exact background targets, one submission, no foreground fallback, and no replay.
+- Exact window targets, one submission, focus restoration, and no replay.
 - Resized capture geometry, explicit first-input targeting without AXPress, invalid
   or missing capture refusal, and removal of private temporary screenshots.
 - Wabi creation through the AI chooser, exact URL resume despite renamed titles,

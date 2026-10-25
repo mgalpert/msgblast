@@ -116,6 +116,39 @@ final class NativeDesktopStateTests: XCTestCase {
         }
     }
 
+    func testNativePromptAppearsDuringSubmissionAndIsNotDuplicatedAfterReply() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in WebProvider.desktopProviders {
+            let file = directory.appendingPathComponent(provider.storageFilename), id = UUID()
+            let session = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            session.setEnabled(true)
+            if provider == .grokBotApp { await session.refreshGrokBots() }
+            await session.connectDesktopConversation(botName: provider == .grokBotApp ? "Demo Bot" : nil)
+            _ = await session.openComparison(id)
+            let sending = Task { await session.send("Visible while sending", comparisonID: id) }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while session.state.attempts.first?.status != .attempting && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            let pending = try XCTUnwrap(session.pendingNativeAttempt, provider.name)
+            XCTAssertEqual(pending.text, "Visible while sending")
+            XCTAssertEqual(pending.status, .attempting)
+            XCTAssertTrue(session.snapshot.messages.isEmpty, "A pending bubble is not a claimed provider receipt")
+            let attempt = await sending.value
+            XCTAssertEqual(attempt?.status, .observed)
+            XCTAssertNil(session.pendingNativeAttempt)
+            XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["Visible while sending"])
+            XCTAssertEqual(session.snapshot.messages.first?.id, pending.id.uuidString)
+            XCTAssertEqual(session.snapshot.messages.last?.role, "assistant")
+            session.beginShutdown()
+            let reopened = WebAgentSession(provider: provider, storageURL: file, fixture: true)
+            XCTAssertNil(reopened.pendingNativeAttempt)
+            XCTAssertEqual(reopened.state.localConversations[id.uuidString]?.filter { $0.role == "user" }.count, 1)
+            reopened.beginShutdown()
+        }
+    }
+
     func testNativeCancellationExplainsRecoveryAndRetainsTheUncertainReceiptAcrossRestart() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

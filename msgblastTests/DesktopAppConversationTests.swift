@@ -54,6 +54,16 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertNil(found)
     }
 
+    func testInactiveMsgblastUsesOnlyVisibleMainWindowAndRejectsAmbiguity() throws {
+        let first = DesktopAppConversation.Target(pid: 42, window: 101)
+        let second = DesktopAppConversation.Target(pid: 42, window: 102)
+        XCTAssertEqual(try DesktopAppConversation.hostWindow(key: nil, main: nil, visible: [first]), first)
+        XCTAssertEqual(try DesktopAppConversation.hostWindow(key: second, main: first, visible: [first, second]), second)
+        XCTAssertEqual(try DesktopAppConversation.hostWindow(key: nil, main: first, visible: [first, second]), first)
+        XCTAssertThrowsError(try DesktopAppConversation.hostWindow(key: nil, main: nil, visible: []))
+        XCTAssertThrowsError(try DesktopAppConversation.hostWindow(key: nil, main: nil, visible: [first, second]))
+    }
+
     func testDesktopAgentsRemainSeparateFromExistingAccounts() {
         XCTAssertTrue(WebProvider.museApp.usesNativeConversation)
         XCTAssertTrue(WebProvider.grokBotApp.usesNativeConversation)
@@ -98,6 +108,15 @@ final class DesktopAppConversationTests: XCTestCase {
             element("AXTextArea", "Prompt", value: "Message Test Bot")
         ])
         XCTAssertThrowsError(try interrupted.reply(after: "Background test", app: .grokBot))
+    }
+
+    func testGrokWorkingStatusBelongsToSelectedBotAndCannotComeFromMessageText() throws {
+        let chat = [element("AXHeading", "Test Bot"), element("AXStaticText", "You"),
+                    element("AXStaticText", "Test Bot is working"),
+                    element("AXTextArea", "Prompt", value: "Message Test Bot")]
+        XCTAssertFalse(try decode(chat).grokIsWorking)
+        XCTAssertFalse(try decode(chat + [element("AXStaticText", "Other Bot is working")]).grokIsWorking)
+        XCTAssertTrue(try decode(chat + [element("AXStaticText", "Test Bot is working")]).grokIsWorking)
     }
 
     func testGrokTimeDividerBeforeNewOutgoingDoesNotCountAsForeignMessage() throws {
@@ -615,23 +634,229 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
-    func testBotDiscoveryIsReadOnlyAndSelectionOpensOnlyTheChosenBot() async throws {
+    func testBotDiscoveryAndSelectionAreReadOnly() async throws {
         let initial = grok(name: "Other Bot", bots: ["Other Bot", "Fixture Bot"])
         let discovery = try driver([apps(), windows(), snapshot(initial)])
         defer { discovery.remove() }
         let names = try await adapter(discovery).availableGrokBots()
         XCTAssertEqual(names, ["Fixture Bot", "Other Bot"])
         assertNoInput(try await finishedCalls(discovery))
-        let fixture = try driver([apps(), windows(), snapshot(initial),
-                                  step("click", [:], arguments: ["element_token": "s00000001:bot1"]),
-                                  snapshot(grok())])
+        let fixture = try driver([apps(), windows(), snapshot(initial)])
         defer { fixture.remove() }
         let selected = try await adapter(fixture).connectGrokBot(named: "Fixture Bot")
         XCTAssertEqual(selected.name, "Fixture Bot")
         let calls = try await finishedCalls(fixture)
+        assertNoInput(calls)
+    }
+
+    func testGrokSetupWithDraftOrActiveResponseListsSelectsAndRestoresWithoutInput() async throws {
+        for generating in [false, true] {
+            let current = grok(draft: "Keep this external draft", name: "Other Bot",
+                               generating: generating, bots: ["Other Bot", "Fixture Bot"])
+            let read = [apps(), windows(), snapshot(current)]
+            let fixture = try driver(read + read + read + read)
+            defer { fixture.remove() }
+            let file = fixture.directory.appendingPathComponent("state.json")
+            let session = WebAgentSession(provider: .grokBotApp, storageURL: file, fixture: false,
+                                          museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture))
+            session.setEnabled(true)
+            await session.refreshGrokBots()
+            XCTAssertEqual(session.grokBotNames, ["Fixture Bot", "Other Bot"])
+            await session.connectDesktopConversation(botName: "Fixture Bot")
+            XCTAssertTrue(session.isReadyForOnboarding, session.desktopStatus)
+            XCTAssertEqual(session.state.desktopConversation?.name, "Fixture Bot")
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            session.beginShutdown()
+            let reopened = WebAgentSession(provider: .grokBotApp, storageURL: file, fixture: false,
+                                           museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture))
+            await reopened.refreshGrokBots()
+            XCTAssertTrue(reopened.isReadyForOnboarding, reopened.desktopStatus)
+            XCTAssertEqual(reopened.state.desktopConversation?.name, "Fixture Bot")
+            XCTAssertTrue(reopened.state.attempts.isEmpty)
+            assertNoInput(try await finishedCalls(fixture, cleanupCount: 4))
+            reopened.beginShutdown()
+        }
+    }
+
+    private let fixtureHost = DesktopAppConversation.Target(pid: 9001, window: 201)
+    private func activation(_ target: DesktopAppConversation.Target = .init(pid: 4242, window: 101), verified: Bool = true) -> [String: Any] {
+        ["tool": "bring_to_front", "arguments": ["pid": target.pid, "window_id": target.window],
+         "result": ["activated": verified, "pid": target.pid, "window_id": target.window,
+                    "exact_window_effect": ["verified": verified]]]
+    }
+    private func focusSteps(_ app: DesktopAppProvider = .grokBot) -> [[String: Any]] {
+        [apps(app), windows(), activation()]
+    }
+    func testForegroundGrokRestoresHostBeforeReplyCompletesAndSubmitsOnce() async throws {
+        let fixture = try driver(focusSteps() + sendSteps() + [snapshot(grok(reply: "", generating: true)),
+            activation(fixtureHost), snapshot(grok(reply: "Foreground answer"), repeating: true)])
+        defer { fixture.remove() }
+        let driver = adapter(fixture, delivery: .foreground)
+        let focusValue = try await driver.beginForeground(.grokBot, session: "fixture-focus", host: fixtureHost)
+        let focus = try XCTUnwrap(focusValue)
+        let answer = try await driver.reply(prompt, app: .grokBot, binding: binding, releaseFocus: { try await focus.restore() })
+        try await focus.restore()
+        XCTAssertEqual(answer, "Foreground answer")
+        let calls = try await finishedCalls(fixture)
+        assertFocusTransaction(calls)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
-        XCTAssertFalse(calls.contains { $0.tool == "type_text" })
-        assertBackgroundTargets(calls)
+    }
+    func testHostRestoreFailureDoesNotPreventOwnedReplyCollectionOrReplayInput() async throws {
+        let fixture = try driver(focusSteps() + sendSteps() + [snapshot(grok(reply: "", generating: true)),
+            activation(fixtureHost, verified: false), snapshot(grok(reply: "Owned reply"), repeating: true)])
+        defer { fixture.remove() }
+        let driver = adapter(fixture, delivery: .foreground)
+        let started = try await driver.beginForeground(.grokBot, session: "fixture-focus-refusal", host: fixtureHost)
+        let focus = try XCTUnwrap(started)
+        let answer = try await driver.reply(prompt, app: .grokBot, binding: binding, releaseFocus: { _ = try? await focus.restore() })
+        XCTAssertEqual(answer, "Owned reply")
+        let issue = await failure { try await focus.restore() }
+        XCTAssertTrue(issue.contains("could not regain focus"))
+        let next = try await DesktopForegroundOwner.shared.acquire()
+        await DesktopForegroundOwner.shared.release(next)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+    func testGrokReplyReaderPreservesNewDraftWithoutDependingOnIt() async throws {
+        let fixture = try driver(sendSteps() + [snapshot(grok(draft: "New external draft", reply: "Owned reply", focused: false), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Owned reply")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Reading the reply must not alter the new draft")
+    }
+    func testGrokReplyRevealsNewMessagesOnceWithoutResubmitting() async throws {
+        var stale = grok(reply: "", token: "s00000004")
+        var elements = stale["elements"] as! [[String: Any]]
+        let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+        elements.insert(element("AXButton", "2 new messages", token: "s00000004:latest"), at: composer)
+        stale["elements"] = elements
+        stale["returned_element_count"] = elements.count
+        stale["total_element_count"] = elements.count
+        let reveal: [String: Any] = ["tool": "click", "arguments": ["element_token": "s00000004:latest", "delivery_mode": "background"], "result": [:]]
+        let fixture = try driver(sendSteps() + [snapshot(stale), reveal, snapshot(grok(reply: "Newly visible answer"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Newly visible answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" && $0.arguments["element_token"] as? String == "s00000004:latest" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "One submit and one read-only jump to the latest messages")
+    }
+    func testGrokRevealsLaterReplyWhenNewMessageCountChangesWithoutResubmitting() async throws {
+        func unread(_ label: String, token: String) throws -> [String: Any] {
+            var value = grok(reply: "", token: token)
+            var elements = value["elements"] as! [[String: Any]]
+            let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+            elements.insert(element("AXButton", label, token: token + ":latest"), at: composer)
+            value["elements"] = elements; value["returned_element_count"] = elements.count; value["total_element_count"] = elements.count
+            return value
+        }
+        for countResets in [false, true] {
+            let first = try unread("1 new message", token: "s00000004")
+            let afterFirstClick = countResets ? grok(reply: "") : first
+            let later = try unread(countResets ? "1 new message" : "2 new messages", token: "s00000005")
+            let fixture = try driver(sendSteps() + [snapshot(first), step("click", [:]), snapshot(afterFirstClick), snapshot(later), step("click", [:]), snapshot(grok(reply: "Later answer"), repeating: true)])
+            defer { fixture.remove() }
+            let answer = try await adapter(fixture, replyClock: .init(AdvancingClock())).reply(prompt, app: .grokBot, binding: binding)
+            XCTAssertEqual(answer, "Later answer")
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 3, "One submit; reveal each observed new-message transition once")
+        }
+    }
+    func testForegroundWabiRestoresHostBeforeReplyCompletesAndKeepsDedicatedThread() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt)
+        var sent = step("click", [:]); sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt)])
+        var returned = activation(fixtureHost)
+        returned["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Foreground answer")])
+        let fixture = try driver(focusSteps(.wabi) + [apps(.wabi), initial, capturedNavigation(wabi()), typed,
+            snapshot(wabi(draft: prompt)), sent, snapshot(wabi()), returned, snapshot(wabi(reply: "Foreground answer"), repeating: true)])
+        defer { fixture.remove() }
+        let control = adapter(fixture, delivery: .foreground)
+        let focusValue = try await control.beginForeground(.wabi, session: "fixture-focus", host: fixtureHost)
+        let focus = try XCTUnwrap(focusValue)
+        let answer = try await wabiAdapter(fixture).reply(prompt, in: wabiURL, releaseFocus: { try await focus.restore() })
+        try await focus.restore()
+        XCTAssertEqual(answer, "Foreground answer")
+        let calls = try await finishedCalls(fixture)
+        assertFocusTransaction(calls)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+    func testForegroundMuseKeepsMultilineFocusAndRestoresOnOutgoingBeforeReply() async throws {
+        let thread = UUID(), multiline = "First line 😀\nSecond line"
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        var returned = activation(fixtureHost)
+        returned["native"] = try object(museObservation(thread: thread, messages: [.init(role: .user, text: multiline), .init(role: .assistant, text: "Foreground answer")]))
+        let fixture = try driver(focusSteps(.muse) + [apps(.muse), initial, museComposerCapture(),
+            try museStep("type_text", observation: museObservation(thread: thread, draft: "First line 😀")),
+            try museStep("press_key", observation: museObservation(thread: thread, draft: "First line 😀\n\n")),
+            try museStep("type_text", observation: museObservation(thread: thread, draft: multiline)),
+            try museStep("press_key", observation: museObservation(thread: thread, messages: [.init(role: .user, text: multiline)])), returned])
+        defer { fixture.remove() }
+        let control = adapter(fixture, delivery: .foreground)
+        let focusValue = try await control.beginForeground(.muse, session: "fixture-focus", host: fixtureHost)
+        let focus = try XCTUnwrap(focusValue)
+        let answer = try await museAdapter(fixture).reply(multiline, binding: .init(comparisonID: UUID(), threadID: thread, title: "Side chat"), releaseFocus: { try await focus.restore() }) { _ in }
+        try await focus.restore()
+        XCTAssertEqual(answer, "Foreground answer")
+        let calls = try await finishedCalls(fixture)
+        assertFocusTransaction(calls)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 2)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+    }
+    func testForegroundCancellationAndRepeatedCleanupRestoreHostAndReleaseOwnership() async throws {
+        for cancelled in [false, true] {
+            let fixture = try driver(focusSteps() + [activation(fixtureHost)] + focusSteps(.wabi) + [activation(fixtureHost)])
+            defer { fixture.remove() }
+            let control = adapter(fixture, delivery: .foreground)
+            let focusValue = try await control.beginForeground(.grokBot, session: "fixture-focus", host: fixtureHost)
+        let focus = try XCTUnwrap(focusValue)
+            let task = Task {
+                if cancelled { withUnsafeCurrentTask { $0?.cancel() } }
+                try await focus.restore()
+            }
+            try await task.value
+            try await focus.restore()
+            let nextValue = try await control.beginForeground(.wabi, session: "fixture-next", host: fixtureHost)
+            let next = try XCTUnwrap(nextValue)
+            try await next.restore()
+            let calls = try fixture.calls()
+            XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 4)
+            XCTAssertFalse(calls.contains { ["click", "press_key", "type_text"].contains($0.tool) })
+        }
+    }
+    func testForegroundRejectsConcurrentOwnerAndRestoresAfterPartialActivation() async throws {
+        let fixture = try driver(focusSteps() + [activation(fixtureHost)] +
+            [apps(), windows(), activation(verified: false), activation(fixtureHost)])
+        defer { fixture.remove() }
+        let control = adapter(fixture, delivery: .foreground)
+        let focusValue = try await control.beginForeground(.grokBot, session: "fixture-focus", host: fixtureHost)
+        let focus = try XCTUnwrap(focusValue)
+        let busy = await failure { try await control.beginForeground(.wabi, session: "collision", host: self.fixtureHost) }
+        XCTAssertTrue(busy.contains("Another App Agent"), busy)
+        try await focus.restore()
+        let partial = await failure { try await control.beginForeground(.grokBot, session: "partial", host: self.fixtureHost) }
+        XCTAssertTrue(partial.contains("could not be focused"), partial)
+        let calls = try fixture.calls()
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 4)
+        XCTAssertFalse(calls.contains { ["click", "press_key", "type_text"].contains($0.tool) })
+    }
+
+    func testGrokSetupRejectsMissingAndDuplicateDestinationsWithoutInput() async throws {
+        for bots in [["Other Bot"], ["Fixture Bot", "Fixture Bot"]] {
+            let fixture = try driver([apps(), windows(), snapshot(grok(bots: bots))])
+            defer { fixture.remove() }
+            let error = await failure { _ = try await self.adapter(fixture).connectGrokBot(named: "Fixture Bot") }
+            XCTAssertTrue(error.contains("missing or has a duplicate name"), error)
+            assertNoInput(try await finishedCalls(fixture))
+        }
     }
 
     func testSavedBotIsOpenedBeforeTypingAndDuplicateOrDraftedTargetsStop() async throws {
@@ -661,6 +886,22 @@ final class DesktopAppDriverTests: XCTestCase {
         let draftedCalls = try await finishedCalls(drafted)
         XCTAssertEqual(draftedCalls.filter { $0.tool == "click" }.count, 1, "Only bot navigation is allowed")
         XCTAssertFalse(draftedCalls.contains { $0.tool == "type_text" })
+    }
+
+    func testGrokCanSendToChosenBotWhileAnotherBotKeepsItsDraft() async throws {
+        let initial = grok(draft: "Keep the other bot's draft", name: "Other Bot", bots: ["Other Bot", "Fixture Bot"])
+        let fixture = try driver([apps(), windows(), snapshot(initial),
+            step("click", [:], arguments: ["element_token": "s00000001:bot1"]), snapshot(grok()),
+            step("type_text", [:], arguments: ["text": prompt]), snapshot(grok(draft: prompt)),
+            step("click", [:], arguments: ["element_token": "s00000001:send"]), snapshot(grok(reply: "Chosen bot answer"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Chosen bot answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.compactMap { $0.arguments["text"] as? String }, [prompt])
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "Navigate once and submit once; never clear the other draft")
+        XCTAssertFalse(calls.contains { ["hotkey", "press_key", "set_value"].contains($0.tool) })
+        assertBackgroundTargets(calls)
     }
 
     func testNativeBotOrDraftDisagreementAndReadFailurePreventAllInput() async throws {
@@ -752,26 +993,40 @@ final class DesktopAppDriverTests: XCTestCase {
     func testGrokDiscoveryAndSelectionWaitForReadinessRefresh() async throws {
         for choosing in [false, true] {
             let initial = grok(bots: ["Fixture Bot", "Other Bot"])
-            var waiting = windows(); waiting["wait_for_release"] = true
+            let entered = expectation(description: "Readiness reached window discovery")
+            let (releaseGate, release) = AsyncStream<Void>.makeStream()
+            defer { release.finish() }
+            let firstWindow = FirstCall()
+            let run: DesktopAppConversation.ProcessRunner = { executable, arguments, environment, timeout, cancellation in
+                if arguments.dropFirst().first == "list_windows", firstWindow.take() {
+                    entered.fulfill()
+                    for await _ in releaseGate { break }
+                }
+                try Task.checkCancellation()
+                return try await DesktopAppConversation.execute(executable, arguments, environment, timeout, cancellation)
+            }
             let afterRefresh = choosing
-                ? [apps(), windows(), snapshot(initial), step("click", [:]), snapshot(grok(name: "Other Bot", bots: ["Fixture Bot", "Other Bot"]))]
+                ? [apps(), windows(), snapshot(initial)]
                 : [apps(), windows(), snapshot(initial), apps(), windows(), snapshot(initial)]
-            let fixture = try driver([apps(), waiting, snapshot(initial)] + afterRefresh)
+            let fixture = try driver([apps(), windows(), snapshot(initial)] + afterRefresh)
             defer { fixture.remove() }
             let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
-                                          museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture))
+                                          museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture, runProcess: run))
             defer { session.beginShutdown() }
             session.setEnabled(true)
             session.updateState { $0.desktopConversation = binding }
             session.connect(automaticallyRefresh: false)
             let readiness = Task { await session.refresh() }
-            try await waitForCall("list_windows", in: fixture)
+            await fulfillment(of: [entered], timeout: 5)
             let setup = Task {
                 if choosing { await session.connectDesktopConversation(botName: "Other Bot") }
                 else { await session.refreshGrokBots() }
             }
-            try await Task.sleep(for: .milliseconds(50))
-            try Data().write(to: fixture.directory.appendingPathComponent("release"))
+            let setupDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while !session.loading && ContinuousClock.now < setupDeadline { await Task.yield() }
+            XCTAssertTrue(session.loading, "Setup must enter its wait before readiness is released")
+            XCTAssertEqual(try fixture.calls().map(\.tool), ["list_apps"], "No setup driver call may overtake readiness")
+            release.yield(()); release.finish()
             await readiness.value
             await setup.value
             XCTAssertEqual(session.state.desktopConversation?.name, choosing ? "Other Bot" : "Fixture Bot")
@@ -785,9 +1040,9 @@ final class DesktopAppDriverTests: XCTestCase {
     }
 
     func testSendingWhileBotSelectionIsInProgressCannotUseTheOldBinding() async throws {
-        var switching = step("click", [:]); switching["wait_for_release"] = true
-        let fixture = try driver([apps(), windows(), snapshot(grok()),
-                                  apps(), windows(), snapshot(grok(bots: ["Fixture Bot", "Other Bot"])), switching])
+        var switching = snapshot(grok(bots: ["Fixture Bot", "Other Bot"]))
+        switching["wait_for_release"] = true
+        let fixture = try driver([apps(), windows(), snapshot(grok()), apps(), windows(), switching])
         defer { fixture.remove() }
         let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
                                       museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture))
@@ -796,7 +1051,7 @@ final class DesktopAppDriverTests: XCTestCase {
         await session.connectDesktopConversation(botName: "Fixture Bot")
         XCTAssertTrue(session.snapshot.ready)
         let changing = Task { await session.connectDesktopConversation(botName: "Other Bot") }
-        try await waitForCall("click", in: fixture)
+        try await waitForCall("get_window_state", in: fixture, count: 2)
         XCTAssertTrue(session.loading)
         let sent = await session.send(prompt, comparisonID: UUID())
         XCTAssertNil(sent)
@@ -1066,7 +1321,14 @@ final class DesktopAppDriverTests: XCTestCase {
     }
 
     func testWabiCreatesAIThreadThroughChooserAndResumesExactSidebarURL() async throws {
-        let fixture = try driver(wabiCreationSteps())
+        var creation = wabiCreationSteps()
+        var blank = creation[6]["result"] as! [String: Any]
+        var elements = blank["elements"] as! [[String: Any]]
+        let sidebar = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXSplitter" })
+        elements.insert(element("AXStaticText", "A new version of Wabi is ready."), at: sidebar + 1)
+        blank["elements"] = elements; blank["returned_element_count"] = elements.count; blank["total_element_count"] = elements.count
+        creation[6]["result"] = blank
+        let fixture = try driver(creation)
         defer { fixture.remove() }
         let created = try await wabiAdapter(fixture).prepare(savedURL: nil)
         XCTAssertEqual(created, otherWabiURL)
@@ -1083,6 +1345,18 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(resumed, otherWabiURL)
         let resumeCalls = try await finishedCalls(saved)
         XCTAssertEqual(resumeCalls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiResumesAnAlreadyOpenEmptyAIChooserWithoutReopeningIt() async throws {
+        let creation = wabiCreationSteps()
+        var initial = windows(); initial["native"] = wabiNative(draft: nil)
+        let fixture = try driver([apps(.wabi), initial] + Array(creation[4...]))
+        defer { fixture.remove() }
+        let created = try await wabiAdapter(fixture).prepare(savedURL: nil)
+        XCTAssertEqual(created, otherWabiURL)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.compactMap { $0.arguments["element_token"] as? String }, ["s00000002:new"])
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" })
     }
 
     func testWabiChooserTargetsAIOptionWhenToolbarRemainsAccessible() async throws {
@@ -2053,6 +2327,9 @@ final class DesktopAppDriverTests: XCTestCase {
         let session = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
         let result = await session.send(prompt, comparisonID: owner)
         XCTAssertEqual(result?.status, .uncertain)
+        XCTAssertEqual(result?.messageID, result?.id.uuidString, "A missing reply must retain the verified outgoing receipt")
+        XCTAssertNil(session.pendingNativeAttempt, "A confirmed outgoing prompt is now in the transcript")
+        XCTAssertEqual(session.snapshot.messages.first?.id, result?.id.uuidString)
         XCTAssertEqual(session.state.museAppConversations[owner.uuidString]?.threadID, thread)
         session.beginShutdown()
         let reopened = WebAgentSession(provider: .museApp, storageURL: stateURL, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
@@ -2069,6 +2346,32 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture, cleanupCount: 2)
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
         assertMuseBackground(calls)
+        reopened.beginShutdown()
+    }
+
+    func testMuseConfirmedPromptSurvivesMissingReplyAcknowledgementAndRestart() async throws {
+        let owner = UUID(), thread = UUID()
+        let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
+        try JSONEncoder().encode(saved).write(to: file)
+        let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        let sent = await session.send(prompt, comparisonID: owner)
+        let result = try XCTUnwrap(sent)
+        XCTAssertEqual(result.status, .uncertain)
+        XCTAssertEqual(result.messageID, result.id.uuidString)
+        XCTAssertEqual(session.snapshot.messages, [.init(id: result.id.uuidString, role: "user", text: prompt)])
+        session.acknowledgeIncompleteRequest()
+        XCTAssertNil(session.pendingNativeAttempt)
+        XCTAssertEqual(session.snapshot.messages.map(\.text), [prompt])
+        session.beginShutdown()
+        let reopened = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        XCTAssertEqual(reopened.state.localConversations[owner.uuidString]?.map(\.id), [result.id.uuidString])
+        XCTAssertEqual(reopened.state.localConversations[owner.uuidString]?.map(\.text), [prompt])
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
         reopened.beginShutdown()
     }
 
@@ -2481,9 +2784,16 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
-    private func adapter(_ fixture: DriverFixture, replyTimeout: Duration = .seconds(3), callTimeout: TimeInterval = 3) -> DesktopAppConversation {
+    private final class FirstCall: @unchecked Sendable {
+        private let lock = NSLock()
+        private var available = true
+        func take() -> Bool { lock.withLock { defer { available = false }; return available } }
+    }
+    private func adapter(_ fixture: DriverFixture, replyTimeout: Duration = .seconds(3), callTimeout: TimeInterval = 3, delivery: DesktopAppConversation.Delivery = .background,
+                         replyClock: DesktopAppWorkflow.ReplyClock = .init(ContinuousClock()),
+                         runProcess: @escaping DesktopAppConversation.ProcessRunner = DesktopAppConversation.execute) -> DesktopAppConversation {
         let file = fixture.directory.appendingPathComponent("grok-native.json")
-        return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout)) { target in
+        return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout, replyClock: replyClock), delivery: delivery, runProcess: runProcess) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             let data = try Data(contentsOf: file)
             let raw = try JSONDecoder().decode(GrokBotNativeState.self, from: data)
@@ -2567,6 +2877,24 @@ final class DesktopAppDriverTests: XCTestCase {
     private func assertNoInput(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(calls.allSatisfy { ["list_apps", "list_windows", "get_window_state", "end_session"].contains($0.tool) }, "Unexpected driver mutation: \(calls.map(\.tool))", file: file, line: line)
     }
+    private func assertFocusTransaction(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {
+        let focus = calls.filter { $0.tool == "bring_to_front" }
+        XCTAssertEqual(focus.count, 2, "Return exactly once, including final cleanup", file: file, line: line)
+        XCTAssertEqual(focus.first?.arguments["pid"] as? Int, 4242, file: file, line: line)
+        XCTAssertEqual(focus.first?.arguments["window_id"] as? Int, 101, file: file, line: line)
+        XCTAssertEqual(focus.last?.arguments["pid"] as? Int, fixtureHost.pid, file: file, line: line)
+        XCTAssertEqual(focus.last?.arguments["window_id"] as? Int, fixtureHost.window, file: file, line: line)
+        let mutations = calls.enumerated().filter { ["type_text", "click", "press_key"].contains($0.element.tool) }
+        let activated = calls.firstIndex { $0.tool == "bring_to_front" }!
+        let restored = calls.lastIndex { $0.tool == "bring_to_front" }!
+        for (index, call) in mutations {
+            XCTAssertGreaterThan(index, activated, file: file, line: line)
+            XCTAssertLessThan(index, restored, file: file, line: line)
+            XCTAssertEqual(call.arguments["pid"] as? Int, 4242, file: file, line: line)
+            XCTAssertEqual(call.arguments["window_id"] as? Int, 101, file: file, line: line)
+            XCTAssertEqual(call.arguments["delivery_mode"] as? String, "background", "Keep foreground ownership across calls instead of restoring between chunks", file: file, line: line)
+        }
+    }
     private func assertBackgroundTargets(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {
         for call in calls where ["type_text", "click", "press_key"].contains(call.tool) {
             XCTAssertEqual(call.arguments["pid"] as? Int, 4242, file: file, line: line)
@@ -2575,10 +2903,10 @@ final class DesktopAppDriverTests: XCTestCase {
         }
         XCTAssertEqual(Set(calls.compactMap { $0.arguments["session"] as? String }).count, 1, file: file, line: line)
     }
-    private func waitForCall(_ tool: String, in fixture: DriverFixture) async throws {
+    private func waitForCall(_ tool: String, in fixture: DriverFixture, count: Int = 1) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while ContinuousClock.now < deadline {
-            if try fixture.calls().contains(where: { $0.tool == tool }) { return }
+            if try fixture.calls().filter({ $0.tool == tool }).count >= count { return }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Fake driver did not reach \(tool)")
