@@ -88,9 +88,31 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if !storageFailed && error != page.error { error = page.error }
         if avatar != page.avatar { avatar = page.avatar }
     }
+    @Published public private(set) var desktopReady = false
+    public var desktopRecoveryMessage: String? {
+        guard let app = provider.desktopApp, isEnabled, !desktopReady else { return nil }
+        if !desktopInstallation.isInstalled { return "Install \(app.name) to continue." }
+        if let error, !error.isEmpty { return error }
+        // A saved chat reconnects during the next explicit send. Only an
+        // observed failure needs a recovery action; stale readiness is normal.
+        return nil
+    }
+    @Published public private(set) var desktopStatus = "Connect an open app conversation."
+    @Published public private(set) var desktopInstallation = DesktopAppInstallation(url: nil, processID: nil)
+    @Published public private(set) var grokBotNames: [String] = []
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
+    private let museApp: MuseAppConversation
+    private let claudeApp: ClaudeAppConversation
+    private let chatgptApp: ChatGPTAppConversation
+    private var chatgptKind: ChatGPTAppKind? { provider == .chatgptApp ? .chatgpt : provider == .dotsApp ? .dots : nil }
+    private let geminiApp: GeminiAppConversation
+    @Published public private(set) var geminiOptions = GeminiOptions()
+    private var geminiConfigurationError: String?
+    private let wabiApp: WabiAppConversation
+    private let desktopApps: DesktopAppInstallationClient
+    private let desktopDriver: DesktopAppConversation
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
     private var grokBotReceiver: GrokBotCallbackReceiver?
@@ -121,13 +143,30 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var isStorageAvailable: Bool { !storageFailed }
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
+    public var canSubmitNativePrompt: Bool {
+        guard isEnabled, !storageFailed, !loading, !isSending, !shuttingDown else { return false }
+        return snapshot.ready || (provider.desktopApp != nil && desktopInstallation.isInstalled &&
+            state.desktopConversation != nil &&
+            !hasIncompleteNativeRequest(for: state.comparisonID))
+    }
+
     public var isReadyForOnboarding: Bool {
         guard isEnabled, connected, !storageFailed, !loading else { return false }
         if provider.usesNativeConversation { return snapshot.ready }
         return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true
     }
 
-    public init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
+    public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
+        self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
+    }
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation = .shared, geminiApp: GeminiAppConversation = .shared, claudeApp: ClaudeAppConversation = .shared, chatgptApp: ChatGPTAppConversation = .shared) {
+        self.museApp = museApp
+        self.claudeApp = claudeApp
+        self.chatgptApp = chatgptApp
+        self.geminiApp = geminiApp
+        self.wabiApp = wabiApp
+        self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
+        self.desktopDriver = desktopDriver
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
         self.storageURL = storageURL
@@ -166,7 +205,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             setGrokBotConnectionActivity(.readingKey)
             Task { [weak self] in _ = await self?.restoreGrokBotConnection() }
         }
-        if provider.usesNativeConversation { updateNativeSnapshot() }
+        if provider.desktopApp != nil { refreshDesktopInstallation() }
+        else if provider.usesNativeConversation { updateNativeSnapshot() }
         if failure == nil { persist() }
     }
 
@@ -194,6 +234,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             browserImportCookieBaseline = nil
             comparisonGeneration += 1
+            if provider.desktopApp != nil { desktopReady = false }
             if !provider.usesNativeConversation { selectPage(previous: previous) }
         }
         if provider.usesNativeConversation {
@@ -211,12 +252,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         persist()
     }
 
-    public var isEnabled: Bool { !provider.usesNativeConversation || state.enabled == true }
+    public var isEnabled: Bool { provider.isAvailableInBuild && (provider.usesNativeConversation ? state.enabled == true : state.websiteEnabled != false) }
 
     public func setEnabled(_ enabled: Bool) {
-        guard provider.usesNativeConversation else { return }
+        if enabled, provider.desktopApp != nil {
+            refreshDesktopInstallation()
+            guard desktopInstallation.isInstalled else { return }
+        }
         updateState {
-            $0.enabled = enabled
+            if provider.usesNativeConversation { $0.enabled = enabled }
+            else { $0.websiteEnabled = enabled }
             if !enabled { $0.selected = false }
         }
         if !enabled { cancelNativeRequest() }
@@ -287,8 +332,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             return
         }
-        if provider.personalAgentProvider != nil {
-            Task { await refresh() }
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil {
+            if automaticallyRefresh { Task { await refresh() } }
             return
         }
         loadComparisonChat()
@@ -448,6 +493,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public var locationLabel: String {
+        if provider.desktopApp != nil {
+            if fixture { return "Simulated desktop app · no app contacted" }
+            switch provider {
+            case .chatgptApp: return "ChatGPT app · Dedicated chat"
+            case .claudeApp: return "Claude app · Dedicated chat"
+            case .dotsApp: return "ChatGPT app · Your continuing dot"
+            case .museApp: return "Muse app · Side chat"
+            case .geminiApp: return "Gemini · Dedicated \(geminiPreferences.mode.name.lowercased())"
+            case .wabi: return "Wabi · Dedicated chat"
+            default: return "Desktop app · Shared conversation"
+            }
+        }
         if provider == .grokbot { return fixture ? "Simulated webhook · no Bot contacted" : "Webhook connection" }
         if let agent = provider.personalAgentProvider { return fixture ? "\(agent.name) · Simulated local account" : "\(agent.name) · Local account" }
         let host = webView.url?.host ?? provider.homeURL.host!
@@ -455,14 +512,36 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return provider == .dots ? "\(host) · Your dot" : provider == .muse && webView.url.map(provider.isChatURL) == true ? "\(host) · Side chat" : host
     }
 
+    /// Only an explicit first submission may launch an app without a comparison ID.
     @discardableResult
-    public func openComparison(_ id: UUID?) async -> Bool {
+    public func openComparison(_ id: UUID?, startNativeApp: Bool = false) async -> Bool {
         guard !isSending else { return false }
-        if state.comparisonID != id { updateState { $0.comparisonID = id } }
-        connect()
+        if state.comparisonID != id {
+            if provider == .geminiApp { geminiConfigurationError = nil; geminiOptions = .init() }
+            updateState { $0.comparisonID = id }
+        }
+        connect(automaticallyRefresh: !provider.usesNativeConversation)
         if provider.usesNativeConversation {
+            // An explicit first shared prompt is prepared before it has a
+            // comparison ID. Passive blank selection must remain read-only.
+            if provider.desktopApp != nil, id != nil || startNativeApp {
+                do { try await launchDesktopAppForConversation() }
+                catch is CancellationError { return false }
+                catch { self.error = error.localizedDescription; return false }
+            }
+            while provider.desktopApp != nil && refreshing {
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { return false }
+                guard state.comparisonID == id, !shuttingDown else { return false }
+            }
+            guard state.comparisonID == id, !shuttingDown else { return false }
             await refresh()
-            return snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
+            if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
+            if snapshot.ready { await prepareAdditionalDesktopConversation() }
+            let ready = snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
+            if ready { error = nil }
+            else if !snapshot.ready || hasIncompleteNativeRequest(for: id) { error = snapshot.reason }
+            else { error = "\(provider.name) has an unsent draft. It was preserved." }
+            return ready
         }
         do {
             let readyBeforeSetup = try await prepareConversation()
@@ -609,6 +688,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func refresh() async {
         guard connected else { return }
+        if provider.desktopApp != nil {
+            await refreshDesktop(); return
+        }
         if provider == .grokbot {
             guard !loading, !refreshing else { return }
             await refreshGrokBot(); return
@@ -870,11 +952,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @discardableResult
     public func send(_ text: String, comparisonID: UUID? = nil) async -> WebSendAttempt? {
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID) }
-        if provider.personalAgentProvider != nil { return await sendNative(text, comparisonID: comparisonID) }
-        guard !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID) }
+        guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
-        guard !isSending else { return nil }
+        guard isEnabled, !isSending else { return nil }
         guard !hasUnresolvedSend(text) else { error = "An earlier send of this text is unconfirmed. Check \(provider.name); MsgBlast will not resend it automatically."; return nil }
         isSending = true
         defer { isSending = false }
@@ -1050,10 +1132,408 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { self.error = "Could not save the recovered conversation. Repair storage before sending." }
     }
 
+    public var geminiPreferences: GeminiPreferences {
+        state.comparisonID.flatMap { state.geminiComparisonPreferences[$0.uuidString] } ?? state.geminiPreferences
+    }
+    public var geminiModeLocked: Bool {
+        state.comparisonID.flatMap { state.geminiConversations[$0.uuidString]?.firstPrompt } != nil
+    }
+    public func configureGemini(_ preferences: GeminiPreferences) async {
+        guard provider == .geminiApp, provider.isAvailableInBuild, !loading, !isSending, !storageFailed, !shuttingDown else { return }
+        guard !geminiModeLocked || preferences.mode == geminiPreferences.mode else { return }
+        guard !hasIncompleteNativeRequest(for: state.comparisonID) else { return }
+        loading = true; desktopReady = false
+        defer { loading = false; updateNativeSnapshot() }
+        do {
+            try await waitForDesktopRefresh()
+            try await prepareGemini(preferences)
+            desktopReady = true; desktopStatus = "Gemini ready · \(geminiPreferences.mode.name) · background input"; error = nil
+        } catch { self.error = error.localizedDescription; desktopStatus = error.localizedDescription }
+    }
+    private func prepareGemini(_ desired: GeminiPreferences? = nil) async throws {
+        let comparison = state.comparisonID
+        let binding = try comparison.flatMap { try state.geminiBinding(for: $0) }
+        guard binding != nil || comparison.flatMap({ state.localConversations[$0.uuidString] })?.isEmpty != false else {
+            throw WebSessionFailure.notReady("This comparison has Gemini history without a tracked conversation. Start a new comparison; its history was preserved.")
+        }
+        let requested = desired ?? geminiPreferences
+        let result: (GeminiPreferences, GeminiOptions)
+        if fixture {
+            let models = requested.mode == .chat ? ["3.5 Flash-Lite, Fastest answers", "3.8 Flash, All-around help", "3.1 Pro, Advanced reasoning", "4 Argon, Complex tasks"] : ["3.8 Flash, All-around help", "4 Argon, Complex tasks"]
+            var selected = requested
+            selected.model = selected.model ?? models[0]
+            let levels = requested.mode == .chat && selected.model == "4 Argon, Complex tasks" ? ["Low, Quick and efficient", "Medium, Balanced depth", "High, Extra thorough"] : []
+            selected.thinking = levels.isEmpty ? nil : selected.thinking ?? levels[0]
+            result = (selected, .init(models: models, thinkingLevels: levels))
+        } else {
+            do { result = try await geminiApp.prepare(binding: binding, preferences: requested) }
+            catch let problem as GeminiSelectionError {
+                guard state.comparisonID == comparison else { throw CancellationError() }
+                geminiOptions = problem.options
+                geminiConfigurationError = problem.localizedDescription
+                throw problem
+            }
+        }
+        guard state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+        if let comparison { state.geminiComparisonPreferences[comparison.uuidString] = result.0 }
+        else { state.geminiPreferences = result.0 }
+        geminiOptions = result.1
+        geminiConfigurationError = nil
+        try save()
+    }
+    private func recordGeminiSubmission(_ binding: GeminiConversationBinding) throws {
+        try state.recordGeminiBinding(binding)
+        try save()
+    }
+
+    public var desktopConnectionConfirmation: String? {
+        guard isReadyForOnboarding, desktopReady, let app = provider.desktopApp, let binding = state.desktopConversation else { return nil }
+        if app == .dots { return "Your comparisons continue your existing dot in the ChatGPT Mac app. This check didn’t send a message." }
+        if app == .chatgpt || app == .claude { return "Each comparison gets its own \(app.name) chat. msgblast opens the installed app when a conversation starts. This check didn’t send a message." }
+        if app == .gemini { return "Each comparison gets its own Gemini conversation. Choose Chat or Task, model, and available thinking level here. This check didn’t send a message." }
+        if app == .wabi { return "Your first prompt in a new comparison starts a dedicated AI chat in Wabi. Follow-ups stay in that chat. This check didn’t send a message." }
+        if app == .grokBot { return "Messages go to “\(binding.name)” in Grok Bot, using that bot’s existing chat. No message was sent." }
+        return app == .muse
+            ? "Your first prompt in a new comparison starts a new side chat in Muse. This check didn’t send a message."
+            : "Your prompts will go to “\(binding.name)” in \(app.name). Comparisons share that conversation. This check didn’t send a message."
+    }
+
+    public func refreshGrokBots() async {
+        guard provider == .grokBotApp, !loading, !isSending, !shuttingDown, !storageFailed else { return }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { grokBotNames = []; return }
+        let installation = desktopInstallation
+        desktopReady = false
+        desktopStatus = "Finding your bots…"
+        loading = true
+        updateNativeSnapshot()
+        do {
+            try await waitForDesktopRefresh()
+            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await desktopDriver.availableGrokBots()
+            refreshDesktopInstallation()
+            guard desktopInstallation == installation, !shuttingDown else { throw CancellationError() }
+            grokBotNames = names
+            desktopStatus = "Choose a bot to start chatting."
+        } catch {
+            grokBotNames = []
+            desktopReady = false
+            desktopStatus = error.localizedDescription
+        }
+        loading = false
+        if let name = state.desktopConversation?.name, grokBotNames.contains(name), isEnabled {
+            connected = true
+            await refreshDesktop()
+        }
+        updateNativeSnapshot()
+    }
+
+    private func waitForDesktopRefresh() async throws {
+        while refreshing && !shuttingDown { try await Task.sleep(for: .milliseconds(20)) }
+        try Task.checkCancellation()
+        guard !shuttingDown else { throw CancellationError() }
+    }
+
+    public func refreshDesktopInstallation() {
+        guard let app = provider.desktopApp else { return }
+        let fresh = desktopApps.inspect(app)
+        let changed = fresh != desktopInstallation
+        if changed { desktopReady = false; grokBotNames = [] }
+        desktopInstallation = fresh
+        if !fresh.isInstalled { desktopStatus = "Install \(app.name) on this Mac to connect." }
+        else if !fresh.isRunning { desktopStatus = app == .grokBot ? "Open Grok Bot and sign in to choose your bot." : "Open \(app.name) and sign in, then check the connection." }
+        else if !desktopReady && (changed || desktopStatus.isEmpty) { desktopStatus = "Check the connection to get ready for your first prompt." }
+        updateNativeSnapshot()
+    }
+
+    public func openDesktopApp() async {
+        guard provider.desktopApp != nil, !loading, !isSending else { return }
+        refreshDesktopInstallation()
+        guard let url = desktopInstallation.url else { return }
+        loading = true
+        defer { loading = false }
+        do { try await desktopApps.open(url); refreshDesktopInstallation() }
+        catch { desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
+    }
+
+    /// An explicit Connect may reopen a closed window; passive refreshes never do.
+    public func prepareDesktopConnection() async -> Bool {
+        do {
+            try await launchDesktopAppForConversation()
+            return true
+        } catch is CancellationError { return false }
+        catch {
+            desktopReady = false
+            desktopStatus = error.localizedDescription
+            self.error = error.localizedDescription
+            updateNativeSnapshot()
+            return false
+        }
+    }
+
+    private func launchDesktopAppForConversation() async throws {
+        guard let app = provider.desktopApp else { return }
+        try Task.checkCancellation()
+        guard isEnabled, !storageFailed, !shuttingDown else { throw CancellationError() }
+        guard !loading else { throw WebSessionFailure.notReady("Wait for the app connection check to finish before starting a conversation.") }
+        refreshDesktopInstallation()
+        if desktopInstallation.isRunning, fixture { return }
+        guard let url = desktopInstallation.url else { throw WebSessionFailure.notReady(desktopStatus) }
+        let generation = comparisonGeneration
+        func checkCurrent() throws {
+            try Task.checkCancellation()
+            guard !shuttingDown, isEnabled, comparisonGeneration == generation else { throw CancellationError() }
+        }
+        loading = true
+        desktopStatus = "Opening \(app.name)…"
+        updateNativeSnapshot()
+        defer { loading = false }
+        do {
+            if desktopInstallation.isRunning {
+                do {
+                    _ = try await desktopDriver.target(app)
+                    try checkCurrent()
+                    return
+                } catch is CancellationError { throw CancellationError() }
+                catch { try checkCurrent() }
+            }
+            try await desktopApps.open(url)
+            try checkCurrent()
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            repeat {
+                refreshDesktopInstallation()
+                if desktopInstallation.isRunning {
+                    if fixture { return }
+                    do {
+                        _ = try await desktopDriver.target(app)
+                        try checkCurrent()
+                        return
+                    } catch is CancellationError { throw CancellationError() }
+                    catch { /* Window creation may lag behind the process launch. */ }
+                }
+                try checkCurrent()
+                guard ContinuousClock.now < deadline else { break }
+                try await Task.sleep(for: .milliseconds(200))
+            } while true
+            throw WebSessionFailure.notReady("\(app.name) opened, but its main window is not ready. Finish signing in or dismiss any dialogs, then try again.")
+        } catch {
+            try checkCurrent()
+            desktopStatus = error.localizedDescription
+            updateNativeSnapshot()
+            throw error
+        }
+    }
+
+    private func recordClaudeSubmission(_ binding: ClaudeConversationBinding) throws {
+        try state.recordClaudeBinding(binding)
+        try save()
+    }
+    private func recordChatGPTSubmission(_ binding: ChatGPTConversationBinding) throws {
+        try state.recordChatGPTBinding(binding)
+        try save()
+    }
+    private func prepareAdditionalDesktopConversation() async {
+        guard provider == .claudeApp || chatgptKind != nil, let comparison = state.comparisonID,
+              !loading, !shuttingDown else { return }
+        let generation = comparisonGeneration
+        loading = true
+        defer { loading = false }
+        do {
+            if provider == .claudeApp {
+                let saved = try state.claudeBinding(for: comparison)
+                let prepared = fixture ? saved ?? .init(comparisonID: comparison) : try await claudeApp.prepare(comparisonID: comparison, binding: saved)
+                guard !shuttingDown, comparisonGeneration == generation else { throw CancellationError() }
+                try recordClaudeSubmission(prepared)
+            } else if let kind = chatgptKind {
+                let saved = try state.chatgptBinding(for: comparison, kind: kind)
+                let prepared = fixture ? saved ?? .init(comparisonID: comparison, kind: kind) : try await chatgptApp.prepare(comparisonID: comparison, kind: kind, binding: saved)
+                guard !shuttingDown, comparisonGeneration == generation else { throw CancellationError() }
+                try recordChatGPTSubmission(prepared)
+            }
+        } catch {
+            desktopReady = false
+            desktopStatus = error.localizedDescription
+            self.error = error.localizedDescription
+        }
+        updateNativeSnapshot()
+    }
+
+    public func connectDesktopConversation(botName: String? = nil) async {
+        guard let app = provider.desktopApp, !isSending, !storageFailed, !loading, !shuttingDown else { return }
+        refreshDesktopInstallation()
+        guard isEnabled, desktopInstallation.isRunning else { return }
+        if app == .grokBot, hasIncompleteNativeRequest(for: state.comparisonID) {
+            desktopReady = false
+            desktopStatus = "Review the previous incomplete request before changing bots."
+            updateNativeSnapshot()
+            return
+        }
+        if app == .grokBot, botName == nil {
+            desktopStatus = "Choose your bot in msgblast."
+            return
+        }
+        let installation = desktopInstallation
+        desktopReady = false
+        desktopStatus = "Checking \(app.name)'s conversation…"
+        loading = true
+        updateNativeSnapshot()
+        defer { loading = false }
+        do {
+            try await waitForDesktopRefresh()
+            guard isEnabled else { throw CancellationError() }
+            let binding: DesktopConversationBinding
+            if app == .muse {
+                if !fixture { try await museApp.checkAvailable() }
+                binding = DesktopConversationBinding(name: "Muse")
+            } else if app == .claude {
+                if !fixture { try await claudeApp.checkAvailable() }
+                binding = .init(name: "Claude")
+            } else if let kind = chatgptKind {
+                if !fixture { try await chatgptApp.checkAvailable(kind: kind) }
+                binding = .init(name: app.name)
+            } else if app == .gemini {
+                if !fixture { try await geminiApp.checkAvailable() }
+                binding = .init(name: "Gemini")
+            } else if app == .wabi {
+                if !fixture { try await wabiApp.checkAvailable() }
+                binding = DesktopConversationBinding(name: "Wabi")
+            } else if let botName {
+                if fixture {
+                    guard grokBotNames.contains(botName) else { throw DesktopAppError.unavailable("Refresh the bots and choose your bot again.") }
+                    binding = .init(name: botName)
+                } else { binding = try await desktopDriver.connectGrokBot(named: botName) }
+            } else { throw DesktopAppError.unavailable("Choose your bot in msgblast.") }
+            refreshDesktopInstallation()
+            guard isEnabled, !shuttingDown else { throw CancellationError() }
+            guard desktopInstallation == installation else { throw DesktopAppError.unavailable("\(app.name) changed while checking. Check the connection again.") }
+            state.desktopConversation = binding
+            try save()
+            connected = true
+            desktopReady = true
+            desktopStatus = "Connected to \(binding.name) · background input"
+            error = nil
+        } catch { desktopReady = false; desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
+        updateNativeSnapshot()
+    }
+
+    private func refreshDesktop() async {
+        guard let app = provider.desktopApp, provider.isAvailableInBuild, !loading, !refreshing, !shuttingDown else { return }
+        refreshing = true
+        let generation = comparisonGeneration
+        defer { refreshing = false }
+        refreshDesktopInstallation()
+        desktopReady = false
+        guard desktopInstallation.isRunning else { updateNativeSnapshot(); return }
+        if let binding = state.desktopConversation {
+            do {
+                if app == .claude || chatgptKind != nil {
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous native app request before continuing.") }
+                    if let comparison = state.comparisonID {
+                        if app == .claude {
+                            let saved = try state.claudeBinding(for: comparison)
+                            guard saved?.firstPrompt == nil || saved?.url != nil else { throw WebSessionFailure.notReady("Claude’s first submission was interrupted. Review it before starting a new comparison.") }
+                            guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("Claude’s history has no tracked native chat. Start a new comparison; its history was preserved.") }
+                        } else if let kind = chatgptKind {
+                            let saved = try state.chatgptBinding(for: comparison, kind: kind)
+                            guard saved?.firstPrompt == nil || saved?.title != nil else { throw WebSessionFailure.notReady("The first native ChatGPT submission was interrupted. Review it before starting a new comparison.") }
+                            guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("This history has no tracked native chat. Start a new comparison; its history was preserved.") }
+                        }
+                    }
+                    if !fixture {
+                        if app == .claude { try await claudeApp.checkAvailable() }
+                        else if let kind = chatgptKind { try await chatgptApp.checkAvailable(kind: kind) }
+                    }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
+                    desktopReady = true
+                    desktopStatus = app == .dots ? "Your continuing dot is ready · background input" : "\(app.name) ready · dedicated chat · background input"
+                    updateNativeSnapshot()
+                    return
+                }
+                if app == .gemini {
+                    if let geminiConfigurationError { throw WebSessionFailure.notReady(geminiConfigurationError) }
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous Gemini request before navigating.") }
+                    if let comparison = state.comparisonID {
+                        let saved = try state.geminiBinding(for: comparison)
+                        guard saved?.firstPrompt == nil || saved?.title != nil else { throw WebSessionFailure.notReady("Gemini’s first submission was interrupted. Review it before starting a new comparison.") }
+                        guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else { throw WebSessionFailure.notReady("Gemini’s saved history has no tracked conversation. Start a new comparison; its history was preserved.") }
+                    }
+                    if !fixture { try await geminiApp.checkAvailable(binding: try state.comparisonID.flatMap { try state.geminiBinding(for: $0) }) }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
+                    desktopReady = true
+                    desktopStatus = "Gemini ready · \(geminiPreferences.mode.name) · background input"
+                    updateNativeSnapshot()
+                    return
+                }
+                if app == .wabi {
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete Wabi request before navigating to another chat.") }
+                    if let comparison = state.comparisonID {
+                        let saved = try state.wabiConversation(for: comparison)
+                        guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else {
+                            throw WebSessionFailure.notReady("This comparison has Wabi history without a tracked dedicated chat. Its history was preserved; start a new comparison.")
+                        }
+                        let url: URL
+                        if fixture { url = saved ?? URL(string: "wabi://app/threads/\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))")! }
+                        else { url = try await wabiApp.prepare(savedURL: saved) }
+                        guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                        try state.recordWabiConversation(url, for: comparison)
+                        try save()
+                    } else if !fixture { try await wabiApp.checkAvailable() }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
+                    desktopReady = true
+                    desktopStatus = state.comparisonID == nil ? "Connected to Wabi · each comparison gets its own AI chat" : "Dedicated Wabi chat ready · background input"
+                    updateNativeSnapshot()
+                    return
+                }
+                if app == .muse {
+                    guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete Muse request before navigating to another side chat.") }
+                    let comparison = state.comparisonID
+                    if let comparison {
+                        let saved = try state.museAppBinding(for: comparison)
+                        guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else {
+                            throw WebSessionFailure.notReady("This comparison has Muse history without a tracked side chat. Its history was preserved; no replacement chat was created.")
+                        }
+                        let pending = state.attempts.first { $0.comparisonID == comparison && $0.recoveryConversationURL != nil }
+                        let prepared: MuseSideChatBinding
+                        if fixture { prepared = saved ?? MuseSideChatBinding(comparisonID: comparison, threadID: nil, title: "Simulated side chat") }
+                        else if saved?.threadID == nil, let pending, let candidate = pending.recoveryConversationURL {
+                            prepared = try await museApp.recover(comparisonID: comparison, candidateURL: candidate, prompt: pending.text, requestID: pending.id)
+                        } else { prepared = try await museApp.prepare(comparisonID: comparison, binding: saved) }
+                        guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                        try state.recordMuseAppBinding(prepared)
+                        if prepared.threadID != nil, saved?.threadID == nil, let pending {
+                            try recordMuseAppSubmission(prepared, attemptID: pending.id)
+                        } else { try save() }
+                    } else if !fixture { try await museApp.checkAvailable() }
+                    guard generation == comparisonGeneration, !shuttingDown else { return }
+                    desktopReady = true
+                    desktopStatus = comparison == nil ? "Connected to Muse · each comparison gets its own side chat" : "Muse side chat ready · background input"
+                    updateNativeSnapshot()
+                    return
+                }
+                guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous incomplete request before changing bots.") }
+                if !fixture { try await desktopDriver.checkGrokBot(named: binding.name) }
+                guard generation == comparisonGeneration, !shuttingDown else { return }
+                desktopReady = true
+                desktopStatus = "Connected to \(binding.name) · background input"
+            } catch {
+                guard generation == comparisonGeneration, !shuttingDown else { return }
+                desktopStatus = error.localizedDescription
+            }
+        } else { desktopStatus = app == .grokBot ? "Choose your bot in msgblast." : "Open the intended conversation in \(app.name), then connect it here." }
+        updateNativeSnapshot()
+    }
+
     private func updateNativeSnapshot() {
         var fresh = snapshot
         fresh.messages = state.comparisonID.flatMap { state.localConversations[$0.uuidString] } ?? []
         fresh.draft = state.draft
+        if provider.desktopApp != nil {
+            if provider == .museApp { fresh.url = state.comparisonID.flatMap { state.museAppConversations[$0.uuidString]?.url?.absoluteString } ?? "" }
+            if provider == .wabi { fresh.url = state.comparisonID.flatMap { state.conversationURLs[$0.uuidString]?.absoluteString } ?? "" }
+            fresh.ready = isEnabled && !storageFailed && desktopInstallation.isRunning && desktopReady && !hasIncompleteNativeRequest(for: state.comparisonID)
+            fresh.reason = !isEnabled ? "Enable \(provider.name) to send." : hasIncompleteNativeRequest(for: state.comparisonID) ? "Review the previous incomplete request before continuing." : desktopStatus
+            if fresh != snapshot { snapshot = fresh }
+            return
+        }
         if provider == .grokbot {
             fresh.ready = isEnabled && !storageFailed && !configuringGrokBot && (fixture || (grokBotConnectionReady == true && grokBotCredentials != nil)) && !hasIncompleteNativeRequest(for: state.comparisonID)
             fresh.reason = !isEnabled ? "Enable Grok Bot in Settings to send." : hasIncompleteNativeRequest(for: state.comparisonID) ? "Waiting for the previous request. No automatic resend." : grokBotConnectionActivity?.title ?? (fresh.ready ? "Grok Bot ready" : "Connect Grok Bot's webhook in Settings.")
@@ -1065,16 +1545,22 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if fresh != snapshot { snapshot = fresh }
     }
 
-    public func acknowledgeIncompleteRequest() {
+    public var incompleteDesktopAttempt: WebSendAttempt? {
+        guard provider.desktopApp != nil else { return nil }
+        return state.attempts.first { $0.status.isUnresolved }
+    }
+
+    public func acknowledgeIncompleteRequest(attemptID: UUID? = nil) {
         guard provider.usesNativeConversation, !isSending else { return }
         updateState { state in
-            for i in state.attempts.indices where state.attempts[i].comparisonID == state.comparisonID && [.waiting, .uncertain].contains(state.attempts[i].status) {
+            for i in state.attempts.indices where (attemptID.map { state.attempts[i].id == $0 } ?? (state.attempts[i].comparisonID == state.comparisonID)) && [.waiting, .uncertain].contains(state.attempts[i].status) {
                 state.attempts[i].status = .dismissed
             }
         }
     }
 
     public func hasUnresolvedSend(_ text: String) -> Bool {
+        if provider.desktopApp != nil { return hasIncompleteNativeRequest(for: state.comparisonID) }
         if provider.sharesOneConversation {
             return state.attempts.contains { $0.status.isUnresolved && Self.normalized($0.text) == Self.normalized(text) }
         }
@@ -1082,7 +1568,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return hasIncompleteNativeRequest(for: state.comparisonID)
     }
     private func hasIncompleteNativeRequest(for id: UUID?) -> Bool {
-        state.attempts.contains { $0.comparisonID == id && $0.status.isUnresolved }
+        state.attempts.contains { (provider.desktopApp != nil || $0.comparisonID == id) && $0.status.isUnresolved }
     }
 
     public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
@@ -1099,6 +1585,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: id) else {
             error = "An earlier request did not complete. Review it before explicitly allowing another request; usage may have been consumed."
@@ -1108,6 +1595,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         requestCancelled = false
         defer { nativeRequest = nil; isSending = false }
         error = nil
+        if provider.desktopApp != nil {
+            do {
+                try await launchDesktopAppForConversation()
+                guard !requestCancelled else { throw CancellationError() }
+            } catch is CancellationError { return nil }
+            catch { self.error = error.localizedDescription; return nil }
+        }
         var attempt = WebSendAttempt(text: text)
         attempt.comparisonID = id
         updateState { $0.comparisonID = id }
@@ -1125,14 +1619,96 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let user = WebPageMessage(role: "user", text: text)
             let history = (state.localConversations[id.uuidString] ?? []) + [user]
             attempt.status = .attempting
+            let wabiURL = provider == .wabi ? try state.wabiConversation(for: id) : nil
+            if provider == .wabi { attempt.conversationURL = wabiURL }
             try store(attempt)
             started = true
             let savedSessionID = state.resumableLocalSessionID(for: id)
             let workingDirectory = conversationWorkingDirectory(id)
-            let request = Task { [fixture, provider, installedAgent] in
+            let binding = state.desktopConversation
+            let museBinding = provider == .museApp ? try state.museAppBinding(for: id) : nil
+            var geminiBinding: GeminiConversationBinding?
+            let geminiPreferences = self.geminiPreferences
+            let claudeBinding = provider == .claudeApp ? try state.claudeBinding(for: id) ?? ClaudeConversationBinding(comparisonID: id) : nil
+            let nativeKind = chatgptKind
+            let chatgptBinding = try nativeKind.map { try state.chatgptBinding(for: id, kind: $0) ?? ChatGPTConversationBinding(comparisonID: id, kind: $0) }
+            if provider == .geminiApp {
+                geminiBinding = try state.geminiBinding(for: id) ?? GeminiConversationBinding(comparisonID: id, mode: geminiPreferences.mode)
+            }
+            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
+                    if var saved = claudeBinding {
+                        saved.firstPrompt = saved.firstPrompt ?? saved.firstMessage(text)
+                        saved.url = saved.url ?? URL(string: "https://claude.ai/chat/\(UUID().uuidString.lowercased())")!
+                        try self.recordClaudeSubmission(saved)
+                    }
+                    if var saved = chatgptBinding {
+                        saved.firstPrompt = saved.firstPrompt ?? saved.firstMessage(text)
+                        saved.title = saved.title ?? (saved.kind == .dots ? "Simulated dot" : saved.dedicatedTitle)
+                        try self.recordChatGPTSubmission(saved)
+                    }
+                    if provider == .museApp {
+                        let simulated = MuseSideChatBinding(comparisonID: id, threadID: museBinding?.threadID ?? UUID(), title: "Simulated side chat")
+                        try self.recordMuseAppSubmission(simulated, attemptID: attempt.id)
+                    }
+                    if provider == .geminiApp, var saved = geminiBinding {
+                        saved.firstPrompt = saved.firstPrompt ?? saved.firstMessage(text)
+                        saved.title = saved.dedicatedTitle
+                        try self.recordGeminiSubmission(saved)
+                    }
                     return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
+                }
+                if provider == .museApp {
+                    guard let museBinding else { throw WebSessionFailure.notSent("Prepare this comparison's Muse side chat first.") }
+                    let attemptID = attempt.id
+                    let answer = try await museApp.reply(text, binding: museBinding, requestID: attemptID, onCandidate: { [weak self] url in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordMuseAppCandidate(url, comparisonID: id, attemptID: attemptID)
+                    }, onBinding: { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordMuseAppSubmission(discovered, attemptID: attemptID)
+                    })
+                    return PersonalAgentReply(text: answer, sessionID: "Muse side chat")
+                }
+                if provider == .wabi {
+                    guard let wabiURL else { throw WebSessionFailure.notSent("Prepare this comparison's dedicated Wabi chat first.") }
+                    return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL), sessionID: "Dedicated Wabi chat")
+                }
+                if provider == .geminiApp {
+                    guard let saved = geminiBinding else { throw WebSessionFailure.notSent("Prepare Gemini first.") }
+                    let answer = try await geminiApp.reply(text, binding: saved, preferences: geminiPreferences, onPrepared: { [weak self] prepared in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordGeminiSubmission(prepared)
+                    }) { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordGeminiSubmission(discovered)
+                    }
+                    return PersonalAgentReply(text: answer, sessionID: "Dedicated Gemini conversation")
+                }
+                if let saved = claudeBinding {
+                    let answer = try await claudeApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordClaudeSubmission(pending)
+                    }, onBinding: { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordClaudeSubmission(discovered)
+                    })
+                    return PersonalAgentReply(text: answer, sessionID: "Dedicated Claude chat")
+                }
+                if let saved = chatgptBinding {
+                    let answer = try await chatgptApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordChatGPTSubmission(pending)
+                    }, onBinding: { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordChatGPTSubmission(discovered)
+                    })
+                    return PersonalAgentReply(text: answer, sessionID: saved.kind == .dots ? "Your continuing dot" : "Dedicated ChatGPT chat")
+                }
+                if let app = provider.desktopApp {
+                    guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
+                    return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding), sessionID: binding.name)
                 }
                 guard let installedAgent else { throw PersonalAgentError.unavailable(provider.name) }
                 return try await LocalPersonalAgent.reply(to: history, using: installedAgent, sessionID: savedSessionID, workingDirectory: workingDirectory)
@@ -1141,20 +1717,58 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let answer = try await withTaskCancellationHandler { try await request.value } onCancel: { request.cancel() }
             try Task.checkCancellation()
             state.localConversations[id.uuidString] = history + [WebPageMessage(role: "assistant", text: answer.text)]
-            state.recordLocalSession(answer.sessionID, for: id)
+            if provider.desktopApp == nil { state.recordLocalSession(answer.sessionID, for: id) }
             if state.draft == text { state.draft = "" }
             state.localDrafts[id.uuidString] = state.draft
+            if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
+            if provider == .museApp {
+                attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
+                attempt.recoveryConversationURL = state.attempts.first { $0.id == attempt.id }?.recoveryConversationURL
+            }
             attempt.status = .observed; attempt.messageID = user.id
-            attempt.detail = fixture ? "Simulated reply. No local CLI or provider was contacted." : "Completed reply from the local CLI."
+            attempt.detail = fixture ? "Simulated reply. No app, local CLI or provider was contacted." : provider.desktopApp != nil ? "Reply text observed in the background and stable for three seconds. The app may continue working." : "Completed reply from the local CLI."
             try store(attempt)
         } catch {
-            attempt.status = started ? .uncertain : .notSent
-            attempt.detail = error.localizedDescription
-            self.error = error.localizedDescription
+            if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
+            if provider == .museApp {
+                attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
+                attempt.recoveryConversationURL = state.attempts.first { $0.id == attempt.id }?.recoveryConversationURL
+            }
+            if provider == .geminiApp, let problem = error as? GeminiSelectionError {
+                geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
+            }
+            attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
+            let detail = error is CancellationError
+                ? started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
+                : error.localizedDescription
+            attempt.detail = detail
+            self.error = detail
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
         }
         updateNativeSnapshot()
         return attempt
+    }
+
+    private func recordMuseAppCandidate(_ url: URL, comparisonID: UUID, attemptID: UUID) throws {
+        guard !storageFailed, MuseSideChatBinding.threadID(in: url) != nil,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].comparisonID == comparisonID,
+              state.attempts[index].recoveryConversationURL == nil || state.attempts[index].recoveryConversationURL == url else {
+            throw WebSessionFailure.notSent("Muse's pending side-chat address could not be saved. Review Muse before continuing.")
+        }
+        state.attempts[index].recoveryConversationURL = url
+        try save()
+    }
+
+    private func recordMuseAppSubmission(_ binding: MuseSideChatBinding, attemptID: UUID) throws {
+        guard !storageFailed, let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].comparisonID == binding.comparisonID else {
+            throw WebSessionFailure.notSent("Muse's side-chat receipt could not be saved. Review Muse before continuing.")
+        }
+        try state.recordMuseAppBinding(binding)
+        state.attempts[index].conversationURL = binding.url
+        state.attempts[index].recoveryConversationURL = nil
+        try save()
     }
 
     private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int) async throws {

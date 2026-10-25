@@ -245,7 +245,7 @@ struct DiscoverAccessView: View {
     var body: some View {
         Group {
             if !model.databaseAvailable {
-                MessagesAccessRow(guide: guide, check: { model.refresh() })
+                MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable)
             } else if !model.contactsAvailable {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 12) {

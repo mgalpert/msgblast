@@ -25,6 +25,7 @@ struct SharingChoiceView: View {
                 }.buttonStyle(.borderedProminent).controlSize(.large)
                     .keyboardShortcut(.defaultAction).disabled(saving)
             }
+            .padding(.trailing, 8)
             .frame(maxWidth: 640).padding(.horizontal, 40).padding(.vertical, 20)
             .frame(maxWidth: .infinity)
         }
@@ -32,6 +33,7 @@ struct SharingChoiceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .frame(minWidth: 740, minHeight: 560)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { preferences = model.state.sharingConsent?.preferences ?? SharingPreferences() }
     }
 }
 

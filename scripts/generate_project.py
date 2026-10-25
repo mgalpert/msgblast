@@ -32,11 +32,13 @@ onboarding = obj('msgblast/Resources/Onboarding', '{isa = PBXFileReference; last
 release_notes = obj('release-notes', '{isa = PBXFileReference; lastKnownFileType = folder; path = "release-notes"; sourceTree = SOURCE_ROOT;}')
 cloudflared_manifest = obj('scripts/cloudflared.json', '{isa = PBXFileReference; lastKnownFileType = text.json; path = "scripts/cloudflared.json"; sourceTree = SOURCE_ROOT;}')
 cloudflared_notices = obj('msgblast/Resources/CloudflaredNotices.txt', '{isa = PBXFileReference; lastKnownFileType = text; path = "msgblast/Resources/CloudflaredNotices.txt"; sourceTree = SOURCE_ROOT;}')
+cua_manifest = obj('scripts/cua-driver.json', '{isa = PBXFileReference; lastKnownFileType = text.json; path = "scripts/cua-driver.json"; sourceTree = SOURCE_ROOT;}')
+cua_notices = obj('msgblast/Resources/CuaDriverNotices.txt', '{isa = PBXFileReference; lastKnownFileType = text; path = "msgblast/Resources/CuaDriverNotices.txt"; sourceTree = SOURCE_ROOT;}')
 products = {}
 for name, kind, ext in [('msgblastCore','wrapper.framework','.framework'),('msgblast','wrapper.application','.app'),('msgblastTests','wrapper.cfbundle','.xctest'),('msgblastUITests','wrapper.cfbundle','.xctest')]:
     products[name] = obj(name+'product', '{isa = PBXFileReference; explicitFileType = '+kind+'; path = '+name+ext+'; sourceTree = BUILT_PRODUCTS_DIR;}')
 product_group = obj('products', '{isa = PBXGroup; name = Products; sourceTree = "<group>"; children = '+seq(list(products.values()))+';}')
-main_group = obj('mainGroup', '{isa = PBXGroup; sourceTree = "<group>"; children = '+seq(list(files.values())+[icon, demo_icon, notice, discover, muse_avatar, web_agent_icons, onboarding, release_notes, cloudflared_manifest, cloudflared_notices, product_group])+';}')
+main_group = obj('mainGroup', '{isa = PBXGroup; sourceTree = "<group>"; children = '+seq(list(files.values())+[icon, demo_icon, notice, discover, muse_avatar, web_agent_icons, onboarding, release_notes, cloudflared_manifest, cloudflared_notices, cua_manifest, cua_notices, product_group])+';}')
 sparkle_package = obj('SparklePackage', '{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/sparkle-project/Sparkle"; requirement = {kind = exactVersion; version = 2.10.0;};}')
 sparkle_product = obj('SparkleProduct', '{isa = XCSwiftPackageProductDependency; package = '+sparkle_package+'; productName = Sparkle;}')
 cookie_package = obj('SweetCookieKitPackage', '{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/steipete/SweetCookieKit"; requirement = {kind = revision; revision = 29e7af6bb71f1b624380ab556330e8be8f7ddd65;};}')
@@ -77,9 +79,13 @@ for name in products:
         release_notes_build = obj('releaseNotesBuild', '{isa = PBXBuildFile; fileRef = '+release_notes+';}')
         cloudflared_manifest_build = obj('cloudflaredManifestBuild', '{isa = PBXBuildFile; fileRef = '+cloudflared_manifest+';}')
         cloudflared_notices_build = obj('cloudflaredNoticesBuild', '{isa = PBXBuildFile; fileRef = '+cloudflared_notices+';}')
-        phases.append(obj('appResources', '{isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = '+seq([icon_build, demo_icon_build, notice_build, discover_build, muse_avatar_build, web_agent_icons_build, quick_access_build, onboarding_build, release_notes_build, cloudflared_manifest_build, cloudflared_notices_build])+'; runOnlyForDeploymentPostprocessing = 0;}'))
+        cua_manifest_build = obj('cuaManifestBuild', '{isa = PBXBuildFile; fileRef = '+cua_manifest+';}')
+        cua_notices_build = obj('cuaNoticesBuild', '{isa = PBXBuildFile; fileRef = '+cua_notices+';}')
+        phases.append(obj('appResources', '{isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = '+seq([icon_build, demo_icon_build, notice_build, discover_build, muse_avatar_build, web_agent_icons_build, quick_access_build, onboarding_build, release_notes_build, cloudflared_manifest_build, cloudflared_notices_build, cua_manifest_build, cua_notices_build])+'; runOnlyForDeploymentPostprocessing = 0;}'))
         helper_command = '/usr/bin/env python3 "${SRCROOT}/scripts/bundle_cloudflared.py" --archs "${ARCHS}" --destination "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/cloudflared" --cache "${PROJECT_TEMP_DIR}/cloudflared"'
         phases.append(obj('bundleCloudflared', '{isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = '+seq(['"$(SRCROOT)/scripts/bundle_cloudflared.py"', '"$(SRCROOT)/scripts/cloudflared.json"'])+'; name = "Bundle pinned cloudflared"; outputPaths = '+seq(['"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/cloudflared"'])+'; runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = '+json.dumps(helper_command)+';}'))
+        cua_command = '/usr/bin/env python3 "${SRCROOT}/scripts/bundle_cua_driver.py" --archs "${ARCHS}" --destination "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/cua-driver" --cache "${PROJECT_TEMP_DIR}/cua-driver"'
+        phases.append(obj('bundleCuaDriver', '{isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = '+seq(['"$(SRCROOT)/scripts/bundle_cua_driver.py"', '"$(SRCROOT)/scripts/cua-driver.json"'])+'; name = "Bundle pinned CuaDriver"; outputPaths = '+seq(['"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/cua-driver"'])+'; runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = '+json.dumps(cua_command)+';}'))
         embed = obj('embedCoreBuild','{isa = PBXBuildFile; fileRef = '+products['msgblastCore']+'; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy,);};}')
         phases.append(obj('embedCore','{isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = '+seq([embed])+'; name = "Embed Frameworks"; runOnlyForDeploymentPostprocessing = 0;}'))
     config = configs(name, settings)

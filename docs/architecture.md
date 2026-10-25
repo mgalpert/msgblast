@@ -23,6 +23,7 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Contacts and permission UI | `msgblast/Contacts/`, `msgblast/Permissions/`, `Core/PermissionHandoff.swift` | Contacts lookup and explicit macOS permission handoff |
 | Provider sessions | `msgblast/Core/WebAgents.swift`, `WebServices.swift`, `WebAgentSession.swift` | WebKit/CLI session state, identity migration, comparison membership, and receipts |
 | Website adaptation | `msgblast/Core/WebPageScript.swift`, `MusePageScript.swift` | Page interaction, sign-in detection, composer preparation, and submission checks |
+| Desktop app conversations | `msgblast/Core/EmbeddedCuaDriver.swift`, `DesktopAccessibility.swift`, `DesktopAppWorkflow.swift`, `DesktopAppConversation.swift`, and app profiles | Private embedded runtime, shared bounded native metadata capture and single-submit workflow, exact-window background input, and per-comparison destination/receipt checks |
 | Local CLI execution | `msgblast/Core/LocalPersonalAgent.swift`, `LocalAgentDetection.swift` | Executable/account detection, conversation adapters, restricted reports, and process cleanup |
 | Grok Bot | `msgblast/Core/GrokBot*.swift` | Webhook requests, secure storage, loopback replies, and bundled tunnel process |
 | Feedback | `Core/DiagnosticReport.swift`, `FeedbackSubmission.swift`, `Windows/FeedbackView.swift` under `msgblast/` | Explicit feedback note, allowed diagnostics, and private intake submission |
@@ -209,29 +210,35 @@ See [documentation index](README.md#maintainer-operations) for each operation.
 
 ## Onboarding permission checklist
 
-New installs start with Messages, Apps, and CLIs connector cards. Apps and CLIs
-continue through their existing account and local setup flows; Messages opens
-the permission checklist and contact discovery. The first screen has no Back
-action. The connector choice is saved across relaunch, and older onboarding
-states retain their current step. The contribution screen stays before chatting.
+New installs show sharing choices, then one **Allow access** screen before
+agent selection. It lists msgblast’s Full Disk Access, Contacts, Automation,
+Device Control and Data Access, and Screen Recording permissions. The bundled
+CuaDriver runs in private embedded mode under msgblast’s permission identity;
+there is no separate driver installation or driver permission checklist.
 
-Setup choices determine agent-grid membership, not shared-send recipients. New
-web sessions and newly added Messages contacts start unchecked; finishing setup
-keeps those agents visible without selecting recipients. Explicit saved recipient
-choices and existing comparison membership are retained. New Blast appears after
-the first saved conversation, while the initial agent grid offers Edit without
-an onboarding shortcut or a bulk restore action.
+Continue requires all five grants and an available bundled helper. **Skip for
+now** keeps missing access optional and records only the groups actually usable:
+Full Disk Access, Contacts, and Automation for Messages; app control and Screen
+Recording for App Agents. A skip never authorizes a missing grant.
 
-Messages setup uses a uniform permission checklist (history access,
-Contacts, and sending), using the same native permission checks as Settings.
-Each checklist row opens its permission request or Settings recovery action.
-Continue appears only after all three permissions are allowed. Users can set up Messages
-later and continue to agent selection. Full Disk Access opens System Settings;
-Restart & check access saves state before requesting the existing safe quit flow.
-The app relaunches only after termination is approved and resumes the checklist.
-Completed agent setup is retained across launch; the final readiness check still
-runs before entering the workspace. Existing saved onboarding states without the
-optional checklist field resume their previous step.
+Startup rechecks access without blocking the workspace. Missing permissions reopen
+Allow access unless the user explicitly skipped them. Settings saves the same
+checkpoint before a permission handoff, clearing an earlier skip, so a
+macOS-requested restart returns to the access screen. Completed users return
+directly to their saved workspace after approving or skipping; unfinished setup
+keeps its existing agent and connection step. Checks also refresh when the app
+regains focus; saved approvals are never treated as current OS grants.
+
+The chooser detects installed Mac apps before enabling them. Existing Messages
+agents are added automatically when messaging access is available. Website
+alternatives for native agents are available in Settings. App connections are
+checked without sending a prompt, and users can connect or skip each selected
+agent before continuing to the contribution screen and workspace.
+
+Setup choices determine agent-grid membership, not shared-send recipients.
+Explicit saved recipient choices, drafts, and existing comparison membership
+are retained. A failed native conversation preparation preserves the prompt and
+shows its error with a Reconnect action, including for an empty first chat.
 
 ## Closing conversations
 

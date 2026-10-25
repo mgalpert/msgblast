@@ -63,7 +63,7 @@ The script copies the working tree to a temporary workspace, selects preview
 artwork there, builds both apps, ad-hoc signs them, verifies signatures and
 compiled icons, and creates ZIPs plus `preview-manifest.json`. It does not publish,
 use Apple credentials, read release secrets, or change the committed green icon.
-The first run needs network access for pinned Sparkle and cloudflared assets.
+The first run needs network access for pinned Sparkle, cloudflared, and CuaDriver assets.
 It builds both variants by default; `--variant development` or `--variant demo`
 builds just one.
 
@@ -128,7 +128,9 @@ xcodebuild -project msgblast.xcodeproj -scheme msgblast \
 This is a compile check. Blue artwork does not enable Demo mode; signing-disabled
 output is not the runnable packaged Demo. Use the preview script for runnable apps
 with explicit mode and state isolation. Intel Macs can attempt this native-
-destination compile path, but the two-app packager currently hardcodes `arm64`.
+destination compile path. Preview packaging defaults to `arm64`; add `--universal`
+to build and verify arm64/x86_64 app, framework, and embedded helper slices. The
+feature testing-build workflow requires this universal package before signing.
 
 For debugging, open `msgblast.xcodeproj`, select **msgblast**, and use Debug.
 The unmodified scheme uses the production bundle ID and support folder; plain
@@ -148,6 +150,13 @@ Info.plist, entitlements, frameworks, resources, and helper.
   in `scripts/cloudflared.json`, checks SHA-256, and embeds the matching executable.
   It caches assets in derived data. No Homebrew cloudflared or running tunnel is
   needed to build; the app starts its helper only for Grok Bot setup.
+- The build runs `scripts/bundle_cua_driver.py` and verifies the official upstream
+  **CuaDriver 0.38.0** asset against `scripts/cua-driver.json`. It extracts only
+  the exact regular executable, verifies its architecture, selects the requested
+  architecture(s), and signs `Contents/Helpers/cua-driver` with the app's build
+  identity. No separate CuaDriver app or SDK dylib is bundled. The pinned manifest
+  and upstream license/third-party notices ship in Resources. The first build
+  needs network access; checksum-verified archives are cached in derived data.
 - Usual app/preview builds use Python's standard library. Installer DMG tooling
   additionally needs `scripts/installer-requirements.txt`; see the release guide.
 - After adding/removing Swift files or changing targets, resources, or settings,
@@ -168,6 +177,25 @@ configuration. Neither a CLI nor a provider account is needed to build or use De
 rabbit OS3 is available in onboarding and the featured grid. It continues the
 account's single conversation across comparisons, including earlier context.
 See [conversations and reports](personal-agent-reports.md) and [Grok Bot](grokbot.md).
+
+Optional **ChatGPT App**, **Dots App**, **Claude App**, **Muse App**, **Grok Bot App**,
+**Wabi**, and **Gemini** entries appear under Mac apps in onboarding and More agents. They use native msgblast conversation panes and the bundled CuaDriver
+executable in private embedded mode, while authentication stays in the desktop
+app. No separate CuaDriver installation is needed. Device Control and Data Access
+(or Accessibility on older macOS) and Screen Recording are approved for msgblast. Muse creates a side chat
+per comparison and uses msgblast app-control permission and window capture. Wabi creates a dedicated AI chat per comparison and needs msgblast
+Accessibility to verify its thread address and draft. Grok Bot also needs msgblast
+Accessibility to verify the selected bot and preserve drafts. Installed apps are
+detected before they can be selected in onboarding. Select an installed agent
+and choose its **Connect** action on the connection screen. Gemini’s native pane also lets
+you choose Chat or Task, model, and available thinking levels; install it from
+[Google’s Mac download](https://gemini.google/mac). For
+Grok Bot App, choose your bot from the **Bot** menu in msgblast; the connection
+checks automatically and the saved bot reopens before sending. The check
+does not send a test prompt; it confirms readiness before your first real message.
+Native app entries keep separate saved state from their website and webhook
+counterparts; enabling one does not migrate an existing website account or history. See [desktop app conversations](desktop-app-conversations.md) for
+capabilities and limits.
 
 Dev needs its own Full Disk Access for Messages history, Contacts permission for
 contact lookup/writes, and Automation permission to send through Messages. Web
@@ -196,6 +224,10 @@ Releases are a separate maintainer workflow. Building or pushing source does not
 publish to the production update feed.
 
 ## Optional local installer preview
+
+To share a reviewed feature with outside testers, use the maintainer
+[testing-build publisher](testing-builds.md). It provides signed, notarized Dev
+downloads alongside production, including unmerged feature revisions.
 
 The selected Remotion onboarding source lives in `prototypes/remotion-onboarding`.
 Its MP4 is a standalone preview; standard Finder DMGs display a static PNG.
