@@ -94,7 +94,9 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         model.state.draft = originalDraft
         let recipients = Set(model.state.agents.prefix(2).map(\.id))
         model.state.selection = recipients
-        let comparisons = model.state.comparisons
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let comparisons = try encoder.encode(model.state.comparisons)
         controller.session.note = "Local feedback retry fixture"
         controller.session.contact = "fixture@example.com"
         controller.session.includeDiagnostics = false
@@ -112,7 +114,8 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
             precondition(FeedbackWindowProtocol.bodies.count == attempt, "Only explicit, valid sends may reach transport")
             precondition(model.state.draft == originalDraft && model.state.selection == recipients,
                          "Feedback must preserve the unsent workspace draft and recipients")
-            precondition(model.state.comparisons == comparisons, "Feedback must not change conversation receipts")
+            let currentComparisons = try encoder.encode(model.state.comparisons)
+            precondition(currentComparisons == comparisons, "Feedback must not change conversation receipts")
             if attempt < 3 {
                 precondition(feedback.isVisible && FeedbackWindowController.current === controller,
                              "HTTP failure or mismatched receipt must keep the form open")
