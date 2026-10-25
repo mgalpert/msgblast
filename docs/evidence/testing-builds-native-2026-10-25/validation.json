@@ -1,0 +1,65 @@
+{
+  "source_revision": "cae4d75abdc5250581644eff86d1c455c55a046f",
+  "base_sha": "7676362e87e1097fa2cf933a045da8d724923bf8",
+  "machine": "User-authorized local Apple Silicon Mac (Mac17,7), macOS 27.2, Xcode 27.0 (27A5218g)",
+  "native_inputs_match_final_source": true,
+  "native": {
+    "first_full": {
+      "result": "Failed",
+      "totalTestCount": 696,
+      "passedTests": 694,
+      "failedTests": 1,
+      "skippedTests": 1
+    },
+    "focused_rerun": {
+      "result": "Passed",
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "serial_full": {
+      "result": "Passed",
+      "totalTestCount": 696,
+      "passedTests": 695,
+      "failedTests": 0,
+      "skippedTests": 1
+    },
+    "menu_ui": {
+      "result": "Passed",
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0
+    }
+  },
+  "transient_failure": "First full local run: MultiWebAgentTests/testDotsSavesRenderedAvatarUpdatesItAndClearsOnSignOut pixel assertion failed. Unchanged focused rerun passed. Unchanged full serial rerun passed. No Swift test or product code changed.",
+  "skip": "Native Accessibility smoke requires an already-authorized host. No grants were requested.",
+  "python": {
+    "total": 115,
+    "skipped": 1,
+    "failed": 0,
+    "publisher_module_passed": 12,
+    "native_lipo_before_fix": "failed with real clang/lipo fixture",
+    "native_lipo_after_fix": "passed; thin helper rejected"
+  },
+  "fixtures": {
+    "web_and_restart_controllers": "passed",
+    "configured_cli": "passed; local executable/transport fixtures",
+    "report_shutdown_and_persistence": "passed",
+    "permission_boundaries": "9 passed; OS responses simulated",
+    "sparkle_updater_cases": 5,
+    "real_signing_rejection": "passed with nonexistent isolated signing identity/keychain; no publishable ZIP/manifest"
+  },
+  "ci": {
+    "url": "https://github.com/mgalpert/msgblast/actions/runs/40167376021",
+    "source_revision": "cae4d75abdc5250581644eff86d1c455c55a046f",
+    "result": "success"
+  },
+  "cleanup": {
+    "validation_copies_stopped": true,
+    "original_dev_demo_processes_retained": true,
+    "recording_stopped": true,
+    "production_app_and_profiles_untouched_by_validation": true
+  }
+}

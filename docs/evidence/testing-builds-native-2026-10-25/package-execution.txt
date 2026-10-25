@@ -1,0 +1,17 @@
+Source-SHA: cae4d75abdc5250581644eff86d1c455c55a046f
+
+msgblast Dev.app
+  Identity: com.msgblast.development | profile: msgblast-Dev
+  Fixture: False | production updates disabled: True
+  PASS: 11 real Mach-O files, each arm64 + x86_64; CuaDriver + cloudflared included
+  PASS: real strict/deep codesign verification; compiled blue-green artwork
+  ZIP SHA-256: c418101d5baff3bc040190da98f0a24a4ba090756cf61a83ff1be7949f7e8b46
+
+msgblast Demo.app
+  Identity: com.msgblast.demo | profile: msgblast-Demo
+  Fixture: True | production updates disabled: True
+  PASS: 11 real Mach-O files, each arm64 + x86_64; CuaDriver + cloudflared included
+  PASS: real strict/deep codesign verification; compiled blue artwork
+  ZIP SHA-256: 206c0cd1c403f1f38cbf9321eb2ad671b32b85121b8837c94d6a534b83ec7f46
+
+PASS: actual local ad-hoc packages. No Apple credentials, notarization or publication.

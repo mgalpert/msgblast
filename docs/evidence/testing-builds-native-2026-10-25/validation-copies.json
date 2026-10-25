@@ -1,0 +1,26 @@
+[
+  {
+    "variant": "dev",
+    "original": {
+      "bundle_id": "com.msgblast.development",
+      "support_directory": "msgblast-Dev"
+    },
+    "validation_bundle_id": "com.msgblast.pr75-validation-final.dev",
+    "validation_support_directory": "msgblast-PR75-dev-cae4d75",
+    "fixture": false,
+    "source_revision": "cae4d75abdc5250581644eff86d1c455c55a046f",
+    "changes": "Only bundle ID/support profile and ad-hoc signatures changed; compiled code/resources unchanged."
+  },
+  {
+    "variant": "demo",
+    "original": {
+      "bundle_id": "com.msgblast.demo",
+      "support_directory": "msgblast-Demo"
+    },
+    "validation_bundle_id": "com.msgblast.pr75-validation-final.demo",
+    "validation_support_directory": "msgblast-PR75-demo-cae4d75",
+    "fixture": true,
+    "source_revision": "cae4d75abdc5250581644eff86d1c455c55a046f",
+    "changes": "Only bundle ID/support profile and ad-hoc signatures changed; compiled code/resources unchanged."
+  }
+]

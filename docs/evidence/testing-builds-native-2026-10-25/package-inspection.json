@@ -1,0 +1,153 @@
+{
+  "source_revision": "cae4d75abdc5250581644eff86d1c455c55a046f",
+  "signing": "ad-hoc; no Apple credentials or notarization",
+  "variants": [
+    {
+      "id": "development",
+      "bundle_id": "com.msgblast.development",
+      "support_directory": "msgblast-Dev",
+      "fixture": false,
+      "disable_updates": true,
+      "feed": "",
+      "source_revision": "cae4d75abdc5250581644eff86d1c455c55a046f",
+      "compiled_icon_rgb": [
+        8.0,
+        143.0,
+        124.5
+      ],
+      "entitlements": {
+        "com.apple.security.automation.apple-events": true,
+        "com.apple.security.cs.disable-library-validation": true,
+        "com.apple.security.network.client": true,
+        "com.apple.security.personal-information.addressbook": true
+      },
+      "architectures": {
+        "Contents/MacOS/__preview.dylib": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/MacOS/msgblast.debug.dylib": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/MacOS/msgblast": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Helpers/cua-driver": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Helpers/cloudflared": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/msgblastCore.framework/Versions/A/msgblastCore": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater": [
+          "x86_64",
+          "arm64"
+        ]
+      },
+      "zip_sha256": "c418101d5baff3bc040190da98f0a24a4ba090756cf61a83ff1be7949f7e8b46",
+      "code_signature": [
+        "Identifier=com.msgblast.development",
+        "CodeDirectory v=20500 size=441 flags=0x10002(adhoc,runtime) hashes=3+7 location=embedded",
+        "Signature=adhoc",
+        "TeamIdentifier=not set"
+      ]
+    },
+    {
+      "id": "demo",
+      "bundle_id": "com.msgblast.demo",
+      "support_directory": "msgblast-Demo",
+      "fixture": true,
+      "disable_updates": true,
+      "feed": "",
+      "source_revision": "cae4d75abdc5250581644eff86d1c455c55a046f",
+      "compiled_icon_rgb": [
+        64.75,
+        38.75,
+        216.0
+      ],
+      "entitlements": {
+        "com.apple.security.automation.apple-events": true,
+        "com.apple.security.cs.disable-library-validation": true,
+        "com.apple.security.network.client": true,
+        "com.apple.security.personal-information.addressbook": true
+      },
+      "architectures": {
+        "Contents/MacOS/__preview.dylib": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/MacOS/msgblast.debug.dylib": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/MacOS/msgblast": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Helpers/cua-driver": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Helpers/cloudflared": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/msgblastCore.framework/Versions/A/msgblastCore": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader": [
+          "x86_64",
+          "arm64"
+        ],
+        "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater": [
+          "x86_64",
+          "arm64"
+        ]
+      },
+      "zip_sha256": "206c0cd1c403f1f38cbf9321eb2ad671b32b85121b8837c94d6a534b83ec7f46",
+      "code_signature": [
+        "Identifier=com.msgblast.demo",
+        "CodeDirectory v=20500 size=434 flags=0x10002(adhoc,runtime) hashes=3+7 location=embedded",
+        "Signature=adhoc",
+        "TeamIdentifier=not set"
+      ]
+    }
+  ],
+  "real_signing_failure": "PASS: nonexistent isolated signing identity/keychain rejected; no publishable ZIP or manifest"
+}

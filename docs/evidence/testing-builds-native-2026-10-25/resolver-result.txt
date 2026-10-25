@@ -1,0 +1,3 @@
+PASS: real GitHub approval environment and source branch reachability verified.
+Simulated Actions main context; no workflow, signing, approval or publication was triggered.
+source=cae4d75abdc5250581644eff86d1c455c55a046f
