@@ -1,5 +1,9 @@
 # Feedback regression evidence
 
+Current integrated-source Studio captures and limitations are in
+[studio-2026-10-25](studio-2026-10-25/README.md). The record below is historical.
+
+
 Runtime source: `40ae88e5e4b4e071cd392a352651d566166cbbab`.
 Base: `b8bf6143f4875a1b6de9372335bf77dae8035f75`.
 The subsequent evidence commit adds only these media files and this record; it does not change the tested app source.
