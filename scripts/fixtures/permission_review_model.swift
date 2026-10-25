@@ -117,15 +117,18 @@ extension SideChatModelCheck {
                      "A fully approved finished legacy profile with missing permission fields must stay in its workspace")
         precondition(approvedLegacyRestart.onboarding.state.selected == finished.selected)
         var unfinished = finished
-        unfinished.stage = .feedback
+        unfinished.stage = .connecting
         unfinished.selected.remove(.otherMessages)
+        unfinished.skipped = []
         appOnlyRestart.state.onboarding = unfinished
+        precondition(appOnlyRestart.onboarding.state.currentStep == .agent(.claudeApp))
         await appOnlyRestart.onboarding.skipPermissionSetup()
         let unfinishedRestart = AppModel()
         defer { unfinishedRestart.timer?.invalidate(); unfinishedRestart.telemetryTimer?.invalidate() }
         await unfinishedRestart.onboarding.resumePermissionsAtLaunch()
         precondition(unfinishedRestart.needsOnboarding && !unfinishedRestart.onboarding.state.needsPermissionSetup &&
-                     unfinishedRestart.onboarding.state.permissionsSkipped == true && unfinishedRestart.onboarding.state.stage == .feedback,
+                     unfinishedRestart.onboarding.state.permissionsSkipped == true && unfinishedRestart.onboarding.state.stage == .connecting &&
+                     unfinishedRestart.onboarding.state.currentStep == .agent(.claudeApp),
                      "Skipping access during unfinished setup must retain the pending step across AppModel restart")
         precondition(unfinishedRestart.onboarding.state.selected == unfinished.selected &&
                      unfinishedRestart.state.draft == "Permission review restart keeps this draft")

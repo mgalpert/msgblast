@@ -231,6 +231,21 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(restored.messageAgentIDs["fo"], messageID)
     }
 
+    func testPermissionSkipKeepsAnUnfinishedAppConnection() throws {
+        var setup = OnboardingState()
+        setup.selected = [.chatgptApp, .claudeApp]
+        setup.completed = [.chatgptApp]
+        setup.stage = .connecting
+        XCTAssertEqual(setup.currentStep, .agent(.claudeApp))
+        setup.skipPermissions(messaging: false, apps: true)
+        let restored = try JSONDecoder().decode(OnboardingState.self, from: JSONEncoder().encode(setup))
+        XCTAssertEqual(restored.currentStep, .agent(.claudeApp))
+        XCTAssertEqual(restored.stage, .connecting)
+        XCTAssertEqual(restored.completed, [.chatgptApp])
+        XCTAssertFalse(restored.needsPermissionSetup)
+        XCTAssertEqual(restored.permissionsSkipped, true)
+    }
+
     func testResumingCompletedOnboardingRequiresFreshPermissionChecks() {
         var setup = OnboardingState()
         setup.selected = [.chatgptApp]
