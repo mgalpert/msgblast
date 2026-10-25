@@ -221,7 +221,7 @@ now** keeps missing access optional and records only the groups actually usable:
 Full Disk Access, Contacts, and Automation for Messages; app control and Screen
 Recording for App Agents. A skip never authorizes a missing grant.
 
-Startup checks access before showing the workspace. Missing permissions reopen
+Startup rechecks access without blocking the workspace. Missing permissions reopen
 Allow access unless the user explicitly skipped them. Settings saves the same
 checkpoint before a permission handoff, clearing an earlier skip, so a
 macOS-requested restart returns to the access screen. Completed users return
