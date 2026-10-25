@@ -11,14 +11,20 @@ struct AgentAvatar: View {
     var body: some View {
         Group {
             if let data = AgentArtwork.avatar(for: agent, name: name), let image = NSImage(data: data) {
-                Image(nsImage: image).resizable().scaledToFill()
+                if data.starts(with: [0x69, 0x63, 0x6e, 0x73]) {
+                    // Native app icons include their own shape and transparent margins.
+                    Image(nsImage: image).resizable().scaledToFit()
+                } else {
+                    Image(nsImage: image).resizable().scaledToFill()
+                        .frame(width: size, height: size).clipShape(Circle())
+                }
             } else {
                 ZStack {
                     Circle().fill(colors[abs(agent?.colorIndex ?? 0) % colors.count].gradient)
                     Text(String(name.prefix(1))).font(.system(size: size * 0.42, weight: .medium)).foregroundStyle(.white)
                 }
             }
-        }.frame(width: size, height: size).clipShape(Circle())
+        }.frame(width: size, height: size)
     }
 }
 
@@ -316,7 +322,7 @@ private struct MessagesAccessBanner: View {
     init(model: AppModel) { self.model = model; guide = model.accessGuide }
     var body: some View {
         if !model.databaseAvailable || guide.flow.isActive || guide.flow.stage == .verified {
-            MessagesAccessRow(guide: guide, check: { model.refresh() }).padding(18).help(model.databaseStatus)
+            MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable).padding(18).help(model.databaseStatus)
             if model.permissionGuidePreview {
                 Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
             }
@@ -714,12 +720,18 @@ struct AppSettingsView: View {
             Section("Permissions") {
                 PermissionsSettingsView(model: model)
             }
+            Section("App Agents") {
+                AppAgentsSettingsView(model: model, web: model.webAgents, permissions: model.onboarding.appPermissions)
+            }
             Picker("Conversations", selection: Binding(get: { model.state.effectiveWindowStyle }, set: { model.setWindowStyle($0) })) {
                 Text("One window").tag(ComparisonWindowStyle.connected)
                 Text("Separate windows").tag(ComparisonWindowStyle.separate)
             }.pickerStyle(.radioGroup)
             Section {
                 LocalAgentSettingsView(agent: model.personalAgent, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
+            }
+            Section("Web agents") {
+                WebAgentSettingsView(model: model, web: model.webAgents)
             }
             Section("Grok Bot") {
                 GrokBotConnectionsView(model: model, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
@@ -737,5 +749,27 @@ struct AppSettingsView: View {
             }
             Section("Sharing") { SharingSettingsView(model: model) }
         }.formStyle(.grouped).padding(20).frame(width: 640, height: 650)
+    }
+}
+
+private struct WebAgentSettingsView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var web: WebAgents
+
+    var body: some View {
+        ForEach(WebProvider.settingsOnlyWebProviders) { provider in
+            Toggle(provider.name, isOn: Binding(
+                get: { web.session(for: WebAgentID(provider: provider))?.isEnabled == true },
+                set: { enabled in
+                    web.setEnabled(enabled, for: provider)
+                    if enabled {
+                        var grid = model.agentGridLayout
+                        grid.add(WebAgentID(provider: provider).gridID)
+                        _ = model.setAgentGrid(grid)
+                    }
+                }
+            )).toggleStyle(.switch).accessibilityIdentifier("enable-web-\(provider.rawValue)")
+                .disabled(model.busy || model.webBroadcastBusy)
+        }
     }
 }

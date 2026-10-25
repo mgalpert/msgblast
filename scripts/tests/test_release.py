@@ -141,11 +141,13 @@ class ReleaseTests(unittest.TestCase):
         tunnel = app / "Contents/Helpers/cloudflared"
         tunnel.parent.mkdir()
         tunnel.write_bytes(bytes.fromhex("cffaedfe") + b"synthetic tunnel helper")
+        driver = app / "Contents/Helpers/cua-driver"
+        driver.write_bytes(bytes.fromhex("cffaedfe") + b"synthetic embedded driver")
         with patch.object(release, "run", return_value="") as run:
             release.sign_nested_code(options)
         commands = [call.args[0] for call in run.call_args_list]
         paths = [cmd[-1] for cmd in commands]
-        self.assertEqual(paths, [str(executable), str(helper), str(framework), str(tunnel)])
+        self.assertEqual(paths, [str(executable), str(helper), str(framework), str(tunnel), str(driver)])
         for cmd in commands:
             self.assertIn("--preserve-metadata=entitlements", cmd)
 
@@ -205,8 +207,9 @@ class ReleaseTests(unittest.TestCase):
                 (app / "Contents/Frameworks/Sparkle.framework").mkdir()
                 (app / "Contents/Helpers").mkdir()
                 (app / "Contents/Helpers/cloudflared").write_bytes(b"synthetic helper")
+                (app / "Contents/Helpers/cua-driver").write_bytes(b"synthetic embedded driver")
                 (app / "Contents/Resources").mkdir()
-                for name in ("cloudflared.json", "CloudflaredNotices.txt"):
+                for name in ("cloudflared.json", "CloudflaredNotices.txt", "cua-driver.json", "CuaDriverNotices.txt"):
                     (app / "Contents/Resources" / name).write_text("synthetic notice")
                 info = {"CFBundleIdentifier": "com.msgblast.mac", "CFBundleName": "msgblast",
                         "CFBundleDisplayName": "msgblast", "CFBundleExecutable": "msgblast",
@@ -311,6 +314,7 @@ class ReleaseTests(unittest.TestCase):
             {"SURequireSignedFeed": False}, {"SUVerifyUpdateBeforeExtraction": False},
             {"msgblastDemo": True}, {"msgblastPermissionGuidePreview": True},
             "missing core", "missing sparkle", "missing cloudflared", "missing helper manifest", "missing helper notices",
+            "missing embedded driver", "missing driver manifest", "missing driver notices",
         ]
         for index, change in enumerate(changes):
             with self.subTest(change=change):
@@ -328,6 +332,9 @@ class ReleaseTests(unittest.TestCase):
                                 "missing cloudflared": "Contents/Helpers/cloudflared",
                                 "missing helper manifest": "Contents/Resources/cloudflared.json",
                                 "missing helper notices": "Contents/Resources/CloudflaredNotices.txt",
+                                "missing embedded driver": "Contents/Helpers/cua-driver",
+                                "missing driver manifest": "Contents/Resources/cua-driver.json",
+                                "missing driver notices": "Contents/Resources/CuaDriverNotices.txt",
                             }
                             path = app / missing[change]
                             if path.is_dir(): shutil.rmtree(path)

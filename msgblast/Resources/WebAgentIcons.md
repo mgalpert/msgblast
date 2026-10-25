@@ -63,6 +63,10 @@ The Dots demo uses synthetic SVG and CSS artwork and local conversation replies.
 
 `AgentArtwork` draws a centered crop of this source inside a circular mask for the picker, onboarding, Settings, and chat headers. The original icon file remains unchanged.
 
+## Wabi icon
+
+`WebAgentIcons/wabi.icns` is the unmodified native icon from the locally installed Wabi 0.1.11 app (`ai.wabi.desktop`), retrieved October 19, 2026 from `Contents/Resources/icon.icns`. SHA-256: `3a713eb9fc7f169d9526f6f71e1123b053cf1c9d7b5d68e91a2ce2c3dbebbc0a`. The bundled artwork identifies Wabi in onboarding, agent pickers, Settings, and chat headers, including Macs without Wabi installed. The existing circular avatar mask applies to this artwork. Wabi retains its artwork and trademark rights.
+
 ## Messages onboarding avatars
 
 `WebAgentIcons/instinct.jpg` is the updated contact photo shared by Instinct, exported from the user's Contacts at their request on October 9, 2026. The JPEG is preserved unchanged (SHA-256: `c8b5cc54b618246582c37003b52d649e139200963ffb4c241d30965a7e25a1e4`). Only the artwork is bundled; the local contact export, addresses, and identifiers are excluded.

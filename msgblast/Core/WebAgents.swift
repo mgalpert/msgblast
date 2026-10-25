@@ -7,6 +7,9 @@ public final class WebAgents: ObservableObject {
     private let workspaceSession: WebAgentSession
     private let directory: URL
     private var configurations: [WebAgentConfiguration] = []
+    private var preparation: Task<Bool, Never>?
+    private(set) var preparationID: UUID?
+    private var shuttingDown = false
     @Published public private(set) var configurationError: String?
     private var registryURL: URL { directory.appendingPathComponent("web-agent-instances.json") }
     public let fixture: Bool
@@ -18,7 +21,7 @@ public final class WebAgents: ObservableObject {
         sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) }
     }
     public var comparisonID: UUID? { workspaceSession.state.comparisonID }
-    public init(directory: URL, fixture: Bool) {
+    public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false) {
         self.fixture = fixture
         self.directory = directory
         var migrationErrors: [WebProvider: String] = [:]
@@ -30,7 +33,16 @@ public final class WebAgents: ObservableObject {
                 migrationErrors[pair.native] = message
             }
         }
-        let defaults = WebProvider.allCases.map { WebAgentSession(provider: $0, storageURL: directory.appendingPathComponent($0.storageFilename), fixture: fixture, migrationError: migrationErrors[$0]) }
+        let defaults = WebProvider.allCases.map { provider in
+            let url = directory.appendingPathComponent(provider.storageFilename)
+            let existed = FileManager.default.fileExists(atPath: url.path)
+            let session = WebAgentSession(provider: provider, storageURL: url, fixture: fixture, migrationError: migrationErrors[provider])
+            // Only fresh accounts opt in. Existing histories and explicit choices survive upgrades.
+            if websiteOptInRequired, !existed, WebProvider.settingsOnlyWebProviders.contains(provider) {
+                session.setEnabled(false)
+            }
+            return session
+        }
         sessions = defaults
         workspaceSession = defaults.first { $0.provider == .muse }!
         do {
@@ -102,7 +114,7 @@ public final class WebAgents: ObservableObject {
         for session in sessions where session.state.comparisonID != id { session.updateState { $0.comparisonID = id } }
     }
     public func setEnabled(_ enabled: Bool, for provider: WebProvider) {
-        guard let session = sessions.first(where: { $0.provider == provider }), provider.usesNativeConversation else { return }
+        guard let session = sessions.first(where: { $0.provider == provider }) else { return }
         session.setEnabled(enabled)
         if enabled { session.connect() }
     }
@@ -121,11 +133,11 @@ public final class WebAgents: ObservableObject {
         session.updateState { $0.selected.toggle() }
         if session.state.selected {
             let id = comparisonID
-            session.connect()
+            session.connect(automaticallyRefresh: !session.provider.usesNativeConversation)
             if session.provider.supportsSharedSubmissions {
                 Task {
                     guard self.comparisonID == id, session.state.selected else { return }
-                    await session.openComparison(id)
+                    await self.prepareComparison(id, for: [session])
                 }
             }
         }
@@ -145,20 +157,62 @@ public final class WebAgents: ObservableObject {
     public var hasConnectedWebSessions: Bool { sessions.contains { !$0.provider.usesNativeConversation && $0.connected } }
     public func saveBrowserDrafts() async throws { for session in sessions { try await session.saveBrowserDrafts() } }
     public var hasNativeRequests: Bool { sessions.contains { $0.provider.usesNativeConversation && $0.isSending } }
-    public func beginShutdown() { sessions.forEach { $0.beginShutdown() } }
-    public func cancelAndWait() async { for session in sessions { await session.cancelAndWait() } }
-    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession]) async -> Bool {
+    public func beginShutdown() {
+        shuttingDown = true
+        preparation?.cancel()
+        sessions.forEach { $0.beginShutdown() }
+    }
+    public func cancelAndWait() async {
+        beginShutdown()
+        _ = await preparation?.value
+        for session in sessions { await session.cancelAndWait() }
+    }
+    private static func executionGroups(_ sessions: [WebAgentSession]) -> [[WebAgentSession]] {
+        var groups: [[WebAgentSession]] = []
+        for session in sessions {
+            if session.provider.desktopApp != nil,
+               let index = groups.firstIndex(where: { $0.contains { $0.provider.desktopApp != nil } }) {
+                groups[index].append(session)
+            } else { groups.append([session]) }
+        }
+        return groups
+    }
+    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false) async -> Bool {
+        guard !shuttingDown else { return false }
         // Muse stores the workspace identity even when it is deselected.
         setComparison(id)
-        let tasks = sessions.map { session in Task { @MainActor in await session.openComparison(id) } }
-        var ready = true
-        for task in tasks { if !(await task.value) { ready = false } }
+        let previous = preparation
+        let token = UUID()
+        let task = Task { @MainActor in
+            _ = await previous?.value
+            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return false }
+            let tasks = Self.executionGroups(sessions).map { group in Task { @MainActor in
+                var ready = true
+                for session in group {
+                    guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return false }
+                    if !(await session.openComparison(id, startNativeApp: startNativeApps)) { ready = false }
+                }
+                return ready
+            } }
+            var ready = true
+            for task in tasks { if !(await task.value) { ready = false } }
+            return ready
+        }
+        preparation = task
+        preparationID = token
+        let ready = await task.value
+        if preparationID == token { preparation = nil; preparationID = nil }
         return ready
     }
+
     public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil) async -> [WebAgentID: WebSendAttempt] {
-        let tasks = sessions.map { session in Task { @MainActor in (session.id, await session.send(text, comparisonID: comparisonID)) } }
+        let tasks = executionGroups(sessions).map { group in Task { @MainActor in
+            var results: [WebAgentID: WebSendAttempt] = [:]
+            for session in group { results[session.id] = await session.send(text, comparisonID: comparisonID) }
+            return results
+        } }
         var results: [WebAgentID: WebSendAttempt] = [:]
-        for task in tasks { let (provider, attempt) = await task.value; results[provider] = attempt }
+        for task in tasks { results.merge(await task.value, uniquingKeysWith: { _, latest in latest }) }
         return results
     }
 }

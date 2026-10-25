@@ -3,10 +3,10 @@ import msgblastCore
 
 extension AppModel {
     var needsSharingChoice: Bool {
-        state.sharingConsent == nil &&
+        reviewingSharingChoice || (state.sharingConsent == nil &&
         (TelemetryCollector.endpoint(demo: demo) != nil ||
          (ProcessInfo.processInfo.arguments.contains("--sharing-preview") &&
-          (demo || Bundle.main.bundleIdentifier == "com.msgblast.development")))
+          (demo || Bundle.main.bundleIdentifier == "com.msgblast.development"))))
     }
     @discardableResult
     func saveSharingChoices(_ preferences: SharingPreferences) async -> Bool {
@@ -14,6 +14,7 @@ extension AppModel {
         state.sharingConsent = SharingConsent(preferences: preferences, previous: previous)
         do { try save() }
         catch { state.sharingConsent = previous; self.error = "Could not save sharing choices: \(error.localizedDescription)"; return false }
+        reviewingSharingChoice = false
         await telemetry.configure(state.sharingConsent)
         lastTelemetryInventory = nil
         lastTelemetryActivityDay = nil
