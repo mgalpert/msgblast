@@ -93,15 +93,15 @@ sharing choices intact.
 2. Install the desktop app on this Mac and sign in. Onboarding labels each app
    **Installed** or **Install** before it can be selected.
    Settings also checks installation before allowing an app to be enabled.
-   If it is installed but closed, the app's **Open** button
-   opens it normally. Keep one main window available and dismiss dialogs. The window can be on
+   **Connect** checks installation, opens a closed app, and verifies its destination
+   in one action. Keep one main window available and dismiss dialogs. The window can be on
    another desktop; users do not need to move it. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
 3. Choose your agents after completing the access screen. Native apps share one
    compact connection checklist: choose **Connect** beside each selected app.
    Continue stays disabled until every selected app is connected. Grok Bot keeps its bot picker in its row. These checks send no messages. Each
    connected row confirms it is ready for the first prompt. A restart preserves
    selected agents but requires fresh connection checks. Settings keeps the
-   full installation and permission controls for later changes.
+   the same Connect action and permission controls for later changes.
 4. Select the agent and use the private or shared msgblast message box.
    Starting a conversation opens its installed app automatically if it is closed,
    waits for one main window, then performs the existing connection and chat checks.

@@ -6,9 +6,13 @@ actor ChatGPTAppConversation {
     private let driver: DesktopAppConversation
     private let timing: DesktopAppConversation.Timing
     private let readNative: NativeRead
+    private let readNavigation: @Sendable (DesktopAppConversation.Target) throws -> ChatGPTAppNavigation
     private var occupied = false
-    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = ChatGPTAppProfile.capture) {
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(),
+         readNavigation: @escaping @Sendable (DesktopAppConversation.Target) throws -> ChatGPTAppNavigation = ChatGPTAppProfile.captureNavigation,
+         readNative: @escaping NativeRead = ChatGPTAppProfile.capture) {
         driver = DesktopAppConversation(executable: executable, timing: timing); self.timing = timing; self.readNative = readNative
+        self.readNavigation = readNavigation
     }
     private func read(_ target: DesktopAppConversation.Target) async throws -> ChatGPTAppObservation {
         let reader = readNative
@@ -123,9 +127,13 @@ actor ChatGPTAppConversation {
         return recovered
     }
     private func open(_ binding: ChatGPTConversationBinding, target: DesktopAppConversation.Target, session: String) async throws -> ChatGPTAppObservation {
-        var native = try await read(target)
-        try idle(native)
         guard binding.title != nil || binding.firstPrompt == nil else { throw DesktopAppError.unavailable("The first native ChatGPT submission was interrupted. Review its conversation; nothing will be resent.") }
+        var native: ChatGPTAppObservation
+        do { native = try await read(target) }
+        catch ChatGPTObservationError.composerUnavailable where binding.kind == .dots {
+            native = try await openDotFromSidebar(target: target, session: session)
+        }
+        try idle(native)
         if native.codexBootstrap {
             let codexMode = native.nodes.filter { $0.role == "AXPopUpButton" && $0.label == "Switch mode, current mode: Codex" }
             if !codexMode.isEmpty {
@@ -196,7 +204,15 @@ actor ChatGPTAppConversation {
         guard !occupied else { throw DesktopAppError.unavailable("ChatGPT is already handling a request.") }
         occupied = true; defer { occupied = false }
         let target = try await driver.target(kind == .dots ? .dots : .chatgpt)
-        let native = try await read(target)
+        let native: ChatGPTAppObservation
+        do { native = try await read(target) }
+        catch ChatGPTObservationError.composerUnavailable where kind == .dots {
+            let session = "msgblast-dot-check-\(UUID())"
+            defer { Task { await driver.endSession(session) } }
+            let dot = try await openDotFromSidebar(target: target, session: session)
+            try idle(dot)
+            return
+        }
         try idle(native)
         if kind == .dots || native.dotSetup {
             guard kind != .dots || !native.dotSetup else { throw DesktopAppError.unavailable("Create your Dot in ChatGPT, then connect Dots.") }
@@ -204,6 +220,30 @@ actor ChatGPTAppConversation {
             defer { Task { await driver.endSession(session) } }
             _ = try await open(.init(comparisonID: UUID(), kind: kind), target: target, session: session)
         }
+    }
+    private func openDotFromSidebar(target: DesktopAppConversation.Target, session: String) async throws -> ChatGPTAppObservation {
+        let reader = readNavigation
+        let before = try await Task.detached { try reader(target).dotButton() }.value
+        let snapshot = try await driver.snapshot(target, session: session)
+        try snapshot.checkReadable()
+        let after = try await Task.detached { try reader(target).dotButton() }.value
+        guard snapshot.pid == target.pid, snapshot.window_id == target.window,
+              before.label == after.label, before.id == after.id, before.frame == after.frame else {
+            throw DesktopAppError.unavailable("ChatGPT’s Dot navigation changed. Nothing was clicked.")
+        }
+        let matches = snapshot.body.filter {
+            $0.role == after.role && $0.label == after.label && $0.frame == after.frame && $0.enabled != false && $0.element_token != nil
+        }
+        guard matches.count == 1, let token = matches[0].element_token else {
+            throw DesktopAppError.unavailable("ChatGPT’s Dot navigation could not be verified. Nothing was clicked.")
+        }
+        _ = try await driver.call("click", ["session": session, "delivery_mode": "background", "element_token": token],
+                                  numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
+        let dot = try await DesktopAppWorkflow.wait(timeout: .seconds(5), interval: timing.pollInterval,
+            failure: "Your Dot did not open in ChatGPT. Nothing was sent.", read: { try await self.read(target) },
+            ready: { $0.kind == .dots })
+        guard !dot.dotSetup else { throw DesktopAppError.unavailable("Create your Dot in ChatGPT, then connect Dots.") }
+        return dot
     }
     func prepare(comparisonID: UUID, kind: ChatGPTAppKind, binding: ChatGPTConversationBinding?) async throws -> ChatGPTConversationBinding {
         guard !occupied else { throw DesktopAppError.unavailable("ChatGPT is already handling a request.") }
