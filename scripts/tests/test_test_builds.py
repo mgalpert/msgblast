@@ -4,6 +4,8 @@ import io
 import json
 from pathlib import Path
 import plistlib
+import shutil
+import subprocess
 import stat
 import sys
 import tempfile
@@ -113,8 +115,8 @@ class TestBuildTests(unittest.TestCase):
         with patch.object(builds.builder, "run") as run:
             builds.builder.verify_universal_bundle(app)
         self.assertEqual({call.args[0][-1] for call in run.call_args_list}, set(map(str, binaries)))
-        self.assertTrue(all(call.args[0][:5] == ["xcrun", "lipo", "-verify_arch", "arm64", "x86_64"]
-                            for call in run.call_args_list))
+        self.assertEqual({(call.args[0][3], call.args[0][-1]) for call in run.call_args_list},
+                         {(arch, str(binary)) for arch in ("arm64", "x86_64") for binary in binaries})
         with patch.object(builds.builder, "run", side_effect=SystemExit("missing x86_64")), \
              self.assertRaisesRegex(SystemExit, "missing x86_64"):
             builds.builder.verify_universal_bundle(app)
@@ -125,6 +127,34 @@ class TestBuildTests(unittest.TestCase):
         binaries[2].write_text("an executable script cannot replace embedded Mach-O")
         binaries[2].chmod(0o755)
         with self.assertRaisesRegex(RuntimeError, "cua-driver"):
+            builds.builder.verify_universal_bundle(app)
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "requires macOS clang/lipo")
+    def test_real_lipo_accepts_universal_code_and_rejects_a_thin_helper(self):
+        # Real cross-compiled Mach-O fixtures; no feature code or fixture binary
+        # is executed. This catches lipo argument parsing that mocks cannot.
+        universal = self.directory / "universal.dylib"
+        subprocess.run(["xcrun", "clang", "-arch", "arm64", "-arch", "x86_64", "-dynamiclib",
+                        "-x", "c", "-", "-o", str(universal)], input=b"int fixture(void) { return 1; }", check=True)
+        app = self.directory / "msgblast Dev.app"
+        info = app / "Contents/Info.plist"
+        info.parent.mkdir(parents=True)
+        info.write_bytes(plistlib.dumps({"CFBundleExecutable": "msgblast"}))
+        for name in ("Contents/MacOS/msgblast", "Contents/Helpers/cua-driver", "Contents/Helpers/cloudflared"):
+            target = app / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(universal, target)
+            target.chmod(0o755)
+        resources = app / "Contents/Resources"
+        resources.mkdir()
+        for name in ("cua-driver.json", "CuaDriverNotices.txt", "cloudflared.json", "CloudflaredNotices.txt"):
+            (resources / name).write_text("fixture")
+        builds.builder.verify_universal_bundle(app)
+        helper = app / "Contents/Helpers/cua-driver"
+        helper.unlink()
+        subprocess.run(["xcrun", "lipo", str(universal), "-thin", "arm64", "-output", str(helper)], check=True)
+        helper.chmod(0o755)
+        with self.assertRaises(SystemExit):
             builds.builder.verify_universal_bundle(app)
 
     def test_rejected_notarization_never_produces_a_publishable_manifest(self):

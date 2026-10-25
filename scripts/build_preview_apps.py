@@ -139,7 +139,8 @@ def verify_universal_bundle(app):
         raise RuntimeError("Missing Mach-O app executable")
     for binary in app.rglob("*"):
         if binary.is_file() and not binary.is_symlink() and is_mach_o(binary):
-            run(["xcrun", "lipo", "-verify_arch", "arm64", "x86_64", str(binary)], app.parent)
+            for architecture in ("arm64", "x86_64"):
+                run(["xcrun", "lipo", "-verify_arch", architecture, str(binary)], app.parent)
     for name in ("cua-driver.json", "CuaDriverNotices.txt", "cloudflared.json", "CloudflaredNotices.txt"):
         if not (app / "Contents/Resources" / name).is_file():
             raise RuntimeError(f"Missing embedded helper resource: {name}")
