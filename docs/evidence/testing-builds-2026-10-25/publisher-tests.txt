@@ -1,0 +1,16 @@
+test_bad_upload_or_tag_never_publishes_draft (test_test_builds.TestBuildTests.test_bad_upload_or_tag_never_publishes_draft) ... ok
+test_extracts_framework_links_and_preserves_executable_permissions (test_test_builds.TestBuildTests.test_extracts_framework_links_and_preserves_executable_permissions) ... ok
+test_prepare_records_source_install_feedback_and_unique_nonproduction_tag (test_test_builds.TestBuildTests.test_prepare_records_source_install_feedback_and_unique_nonproduction_tag) ... ok
+test_publishes_only_after_download_and_tag_verification (test_test_builds.TestBuildTests.test_publishes_only_after_download_and_tag_verification) ... ok
+test_rejected_notarization_never_produces_a_publishable_manifest (test_test_builds.TestBuildTests.test_rejected_notarization_never_produces_a_publishable_manifest) ... ok
+test_rejects_missing_or_bypassable_signing_approval (test_test_builds.TestBuildTests.test_rejects_missing_or_bypassable_signing_approval) ... ok
+test_rejects_wrong_source_production_identity_unsigned_and_changed_bytes (test_test_builds.TestBuildTests.test_rejects_wrong_source_production_identity_unsigned_and_changed_bytes) ... ok
+test_rejects_zip_traversal_escape_links_and_children_of_links (test_test_builds.TestBuildTests.test_rejects_zip_traversal_escape_links_and_children_of_links) ... ok
+test_signer_checks_actual_bundle_before_using_signing_tools (test_test_builds.TestBuildTests.test_signer_checks_actual_bundle_before_using_signing_tools) ... ok
+test_universal_verification_checks_packaged_helpers_and_nested_code (test_test_builds.TestBuildTests.test_universal_verification_checks_packaged_helpers_and_nested_code) ... ok
+test_wrong_public_download_is_reported_after_publication (test_test_builds.TestBuildTests.test_wrong_public_download_is_reported_after_publication) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.101s
+
+OK
