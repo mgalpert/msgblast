@@ -31,7 +31,7 @@ Recheck it before publishing. Ordinary PR validation and ad-hoc previews stay un
    A workflow from `main` supplies the trusted signing and publishing scripts.
 2. Write a short feature title and public instructions describing what to try,
    expected results, and known limits. Do not put private reports or account data
-   in the notes. The first version supports Apple Silicon Macs running macOS 15+.
+   in the notes. Testing builds support Apple Silicon and Intel Macs running macOS 15+.
 3. Dispatch from the default branch, using a JSON file so multiline notes and
    user text are not interpreted by a shell:
 
@@ -63,7 +63,8 @@ Recheck it before publishing. Ordinary PR validation and ad-hoc previews stay un
    approve that deployment in GitHub. An agent should leave this decision to the
    maintainer; do not automatically approve its own pending deployment.
 6. Trusted default-branch code extracts the bundle as data, verifies its Dev
-   identity, source, blue-green icon, and disabled updater, then signs and notarizes
+   identity, source, blue-green icon, disabled updater, and universal binaries
+   (app, frameworks, cloudflared, and embedded CuaDriver), then signs and notarizes
    it with the existing Apple identity. It never executes feature scripts or the
    feature app while credentials are available. A separate job with a write token
    publishes the signed package.
@@ -114,3 +115,20 @@ interactions, real Messages sends, Contacts writes, or permission retention.
 
 The reusable agent skill is [msgblast-test-build](../skills/msgblast-test-build/SKILL.md).
 Copy that directory to your Codex skills directory for personal discovery.
+
+## First hosted activation check (after merge)
+
+Pre-merge Python checks cannot establish a successful hosted prerelease. After
+this workflow lands on main, a maintainer must request one testing build using
+the full reviewed source SHA and approve `test-build-signing` for that exact run.
+Do not dispatch the production release workflow or bypass approval to test this.
+Record both the trusted workflow SHA and selected-source SHA. Require the build,
+sign, and publish jobs to succeed; verify the reserved `test-*` tag, all downloaded
+asset hashes, Accepted notarization, and the anonymously downloaded ZIP. Extract
+that ZIP and inspect its Dev identity/support profile, disabled production feed,
+blue-green compiled icon, signatures/entitlements, and arm64/x86_64 slices of the
+app, frameworks, cloudflared, and CuaDriver. Launch it on an authorized test Mac
+without Demo flags, preserve production state and existing Dev drafts, and check
+manual replacement/relaunch before reporting the hosted path verified. Any new
+macOS permission approval belongs to the user. No real messages or paid calls
+are needed for this activation check.

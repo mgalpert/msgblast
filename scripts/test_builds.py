@@ -164,6 +164,7 @@ def sign(args):
         with (app / "Contents/Info.plist").open("rb") as file:
             info = plistlib.load(file)
         preview.verify_configured_info(info, VARIANT, args.source)
+        builder.verify_universal_bundle(app)
         icon = preview.compiled_icon_path(app, info, VARIANT["icon_name"])
         red, green, blue, _ = preview.sample_icns(icon)
         require(preview.classify_icon_color(red, green, blue) == "blue-green", "Dev icon must be blue-green")
@@ -186,7 +187,7 @@ def sign(args):
 
 def release_notes(source, title, notes, run_url, record):
     return (f"# msgblast Dev: {title}\n\n{notes.strip()}\n\n"
-            "## Install\n\nApple Silicon Mac running macOS 15 or later required. Unzip and drag **msgblast Dev.app** to Applications. "
+            "## Install\n\nApple Silicon or Intel Mac running macOS 15 or later required. Unzip and drag **msgblast Dev.app** to Applications. "
             "Keep your regular **msgblast.app** installed. Open Dev and connect the integrations you want to test; "
             "macOS permissions are separate from the regular app. Dev uses real accounts and data.\n\n"
             "Dev has a blue-green icon and separate saved data. All Dev testing builds share that Dev profile; "

@@ -80,7 +80,7 @@ jobs:
             -only-testing:msgblastTests test
       - name: Package Dev without publishing or signing secrets
         run: |
-          python3 scripts/build_preview_apps.py --variant development \
+          python3 scripts/build_preview_apps.py --variant development --universal \
             --sha "$REVIEW_SHA" --output build/testing-preview \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
       - name: Pass only Dev ZIP and public metadata to signing

@@ -92,6 +92,63 @@ class TestBuildTests(unittest.TestCase):
             builds.sign(self.args)
         signer.assert_not_called()
 
+    def test_universal_verification_checks_packaged_helpers_and_nested_code(self):
+        # Header fixtures are deliberately not runnable code. lipo is the only
+        # substituted boundary; a missing architecture must abort before signing.
+        app = self.directory / "msgblast Dev.app"
+        info = app / "Contents/Info.plist"
+        info.parent.mkdir(parents=True)
+        info.write_bytes(plistlib.dumps({"CFBundleExecutable": "msgblast"}))
+        binaries = [app / name for name in ("Contents/MacOS/msgblast",
+                    "Contents/MacOS/msgblast.debug.dylib", "Contents/Helpers/cua-driver",
+                    "Contents/Helpers/cloudflared")]
+        for binary in binaries:
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_bytes(bytes.fromhex("cffaedfe") + b"header fixture")
+            binary.chmod(0o755)
+        resources = app / "Contents/Resources"
+        resources.mkdir()
+        for name in ("cua-driver.json", "CuaDriverNotices.txt", "cloudflared.json", "CloudflaredNotices.txt"):
+            (resources / name).write_text("fixture")
+        with patch.object(builds.builder, "run") as run:
+            builds.builder.verify_universal_bundle(app)
+        self.assertEqual({call.args[0][-1] for call in run.call_args_list}, set(map(str, binaries)))
+        self.assertTrue(all(call.args[0][:5] == ["xcrun", "lipo", "-verify_arch", "arm64", "x86_64"]
+                            for call in run.call_args_list))
+        with patch.object(builds.builder, "run", side_effect=SystemExit("missing x86_64")), \
+             self.assertRaisesRegex(SystemExit, "missing x86_64"):
+            builds.builder.verify_universal_bundle(app)
+        binaries[2].unlink()
+        with patch.object(builds.builder, "run") as run, self.assertRaisesRegex(RuntimeError, "cua-driver"):
+            builds.builder.verify_universal_bundle(app)
+        run.assert_not_called()
+        binaries[2].write_text("an executable script cannot replace embedded Mach-O")
+        binaries[2].chmod(0o755)
+        with self.assertRaisesRegex(RuntimeError, "cua-driver"):
+            builds.builder.verify_universal_bundle(app)
+
+    def test_rejected_notarization_never_produces_a_publishable_manifest(self):
+        # Exercise the signer orchestration, but label signing/icon/lipo as
+        # synthetic. The rejection originates at the actual notary boundary.
+        app = self.directory / "fixture.app"
+        info = app / "Contents/Info.plist"
+        info.parent.mkdir(parents=True)
+        info.write_bytes(plistlib.dumps(preview.configure_info({}, builds.VARIANT, SOURCE)))
+        self.args.output = self.directory / "rejected"
+        environment = {"MSGBLAST_DEVELOPER_ID_IDENTITY": "fixture identity", "MSGBLAST_APPLE_TEAM_ID": "fixture",
+                       "MSGBLAST_NOTARY_KEYCHAIN": "/fixture", "MSGBLAST_NOTARY_PROFILE": "fixture"}
+        with patch.dict(builds.os.environ, environment), patch.object(builds, "extract_app", return_value=app), \
+             patch.object(builds.builder, "verify_universal_bundle"), \
+             patch.object(preview, "compiled_icon_path", return_value=Path("fixture.icns")), \
+             patch.object(preview, "sample_icns", return_value=(0, 120, 130, "fixture")), \
+             patch.object(builds.builder, "sign_bundle") as signer, \
+             patch.object(builds.builder, "notarize_preview", side_effect=RuntimeError("not Accepted")), \
+             self.assertRaisesRegex(RuntimeError, "not Accepted"):
+            builds.sign(self.args)
+        signer.assert_called_once()
+        self.assertFalse((self.args.output / "preview-manifest.json").exists())
+        self.assertEqual(list(self.args.output.iterdir()), [])
+
     def make_zip(self, entries):
         path = self.directory / "bundle.zip"
         with zipfile.ZipFile(path, "w") as zipped:

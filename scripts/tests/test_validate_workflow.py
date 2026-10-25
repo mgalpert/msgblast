@@ -105,6 +105,7 @@ class ValidateWorkflowTests(unittest.TestCase):
         signing = text.split("\n  sign:\n", 1)[1].split("\n  publish:\n", 1)[0]
         publishing = text.split("\n  publish:\n", 1)[1]
         self.assertNotIn("secrets.", build)
+        self.assertIn("--variant development --universal", build)
         self.assertNotIn("contents: write", build + signing)
         self.assertIn("environment: test-build-signing", signing)
         self.assertIn("ref: ${{ github.sha }}", signing)
