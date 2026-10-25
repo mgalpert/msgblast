@@ -34,8 +34,14 @@ struct AgentsWorkspaceView: View {
     }
     private var attachmentComparisonID: UUID? { showingComparison ? nativeComparison?.id : nil }
     private var attachments: [MessageAttachment] { model.attachmentDraft(comparisonID: attachmentComparisonID) }
+    private var preparingDesktopSessions: [WebAgentSession] {
+        selectedWebSessions.filter { $0.provider.desktopApp != nil && $0.loading }
+    }
     private var sharedSendDisabledReason: String? {
         guard !busy else { return nil }
+        if !preparingDesktopSessions.isEmpty {
+            return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
+        }
         let drafts = selectedWebSessions.filter { $0.snapshot.hasDraft }.map { $0.name }
         guard !drafts.isEmpty else { return nil }
         let names = drafts.formatted(.list(type: .and))
@@ -43,7 +49,7 @@ struct AgentsWorkspaceView: View {
     }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return nativeComparison?.endedAt == nil && !busy && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
+        return nativeComparison?.endedAt == nil && !busy && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
             && selectedWebSessions.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
@@ -258,7 +264,7 @@ struct AgentsWorkspaceView: View {
         }
         model.webBroadcastBusy = true
         session.updateState { $0.selected = true }
-        session.connect()
+        if !session.provider.usesNativeConversation { session.connect() }
         Task { @MainActor in
             defer { model.webBroadcastBusy = false }
             _ = await model.joinWebAgent(session, comparisonID: comparison.id)
@@ -273,6 +279,7 @@ struct AgentsWorkspaceView: View {
 
     private func send() {
         guard canSend else { return }
+        let model = model
         let sessions = selectedWebSessions
         let recipients = Set(nativeRecipients.map(\.id))
         if !showingComparison {
@@ -292,7 +299,6 @@ struct AgentsWorkspaceView: View {
         let originalDraft = model.state.draft
         let sentAttachments = attachments
         let broadcastCreated = Date()
-        let model = model
         let existingID = showingComparison ? nativeComparison?.id : nil
         model.webBroadcastBusy = true
         showingComparison = true
@@ -304,7 +310,7 @@ struct AgentsWorkspaceView: View {
                 showingConnectionIntro = true
                 return
             }
-            guard await web.prepareComparison(existingID, for: sessions),
+            guard await web.prepareComparison(existingID, for: sessions, startNativeApps: true),
                   existingID.flatMap({ model.comparison($0)?.endedAt }) == nil else { return }
             let comparisonID: UUID
             if let existingID { comparisonID = existingID }
@@ -415,7 +421,7 @@ struct LocalAgentSettingsView: View {
                     .accessibilityLabel("Refresh accounts")
                     .disabled(isBusy || agent.checkingAccounts || agent.detectingLocalAgents)
             }.padding(.bottom, 12)
-            Text("ChatGPT and Claude use their websites by default. Enable a CLI below to add it as a separate agent.")
+            Text("Enable a CLI to add it as a separate agent.")
                 .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
             ForEach(WebProvider.optionalProviders) { webProvider in
                 let provider = webProvider.personalAgentProvider!
@@ -588,6 +594,7 @@ private struct LocalAgentSetupView: View {
 private struct WebAgentPane: View {
     @ObservedObject var session: WebAgentSession
     @ObservedObject var account: PersonalAgentController
+    @State private var showingDesktopOptions = false
     let busy: Bool
     var endedMessages: [WebPageMessage]? = nil
     var removalDisabled = false
@@ -603,6 +610,20 @@ private struct WebAgentPane: View {
                 }
                 Spacer()
                 if session.loading { ProgressView().controlSize(.small) }
+                if session.provider.desktopApp != nil {
+                    Button { showingDesktopOptions = true } label: { Image(systemName: "gearshape") }
+                        .help("\(session.name) options").accessibilityLabel("\(session.name) options")
+                        .popover(isPresented: $showingDesktopOptions) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack {
+                                    Text("\(session.name) options").font(.headline)
+                                    Spacer()
+                                    Button("Done") { showingDesktopOptions = false }
+                                }
+                                DesktopAppSetupView(session: session, busy: busy, showConnectionConfirmation: false)
+                            }.padding(20).frame(width: 440)
+                        }
+                }
                 if session.provider == .grokbot {
                     SettingsLink { Image(systemName: "gearshape") }
                         .help("Grok Bot settings").accessibilityLabel("Grok Bot settings")
@@ -629,7 +650,9 @@ private struct WebAgentPane: View {
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityElement(children: .contain)
             }
-            if let error = session.error { Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading) }
+            if let error = session.error, endedMessages != nil || session.desktopRecoveryMessage != error {
+                Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }
             if let draft = session.draftRecoveryText {
                 HStack {
                     Text("Your saved draft is retained. Copy it into this chat to continue.").font(.caption).foregroundStyle(.secondary)
@@ -689,10 +712,28 @@ private struct WebAgentPane: View {
 
     private func nativeConversation(_ provider: PersonalAgentProvider?) -> some View {
         VStack(spacing: 12) {
-            let connected = session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
-            if !session.isEnabled {
+            let connected = session.provider.desktopApp != nil ? session.desktopReady : session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
+            if !session.provider.isAvailableInBuild {
+                Text("\(session.name) is unavailable in this build. Your saved conversation is preserved.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if !session.isEnabled {
                 Text("Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
                     .font(.caption).foregroundStyle(.secondary)
+            } else if let app = session.provider.desktopApp, !connected,
+                      let recovery = session.desktopRecoveryMessage {
+                HStack {
+                    Text(recovery)
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if session.desktopInstallation.isInstalled {
+                        Button("Reconnect") { Task {
+                            if !session.desktopInstallation.isRunning { await session.openDesktopApp() }
+                            await session.connectDesktopConversation(botName: session.state.desktopConversation?.name)
+                        } }.disabled(busy || session.loading || session.isSending)
+                    } else {
+                        Link("Get \(app.name)", destination: session.provider.homeURL)
+                    }
+                }.accessibilityIdentifier("desktop-connection-recovery")
             } else if session.provider == .grokbot {
                 if session.fixture {
                     Text("Simulated webhook and callback · no Bot contacted")
@@ -721,7 +762,7 @@ private struct WebAgentPane: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         if session.snapshot.messages.isEmpty {
-                            Text(connected ? "Ready to chat. Send a message below, or use the shared message box to ask your selected agents." : "Sign in to \(session.name) to start chatting. Your request stays in the message box until you send it.")
+                            Text(session.provider.desktopApp != nil ? "Send a message to start a conversation." : connected ? "Ready to chat. Send a message below, or use the shared message box to ask your selected agents." : "Sign in to \(session.name) to start chatting. Your request stays in the message box until you send it.")
                                 .foregroundStyle(.secondary).padding(.vertical, 20)
                         }
                         ForEach(session.snapshot.messages) { message in
@@ -739,7 +780,14 @@ private struct WebAgentPane: View {
                     if let id { proxy.scrollTo(id, anchor: .bottom) }
                 }
             }
-            if session.isSending, provider != nil { Button("Cancel \(session.name) reply") { session.cancelNativeRequest() } }
+            if session.isSending, provider != nil || session.provider.desktopApp != nil { Button("Cancel \(session.name) reply") { session.cancelNativeRequest() } }
+            if let attempt = session.incompleteDesktopAttempt, attempt.comparisonID != session.state.comparisonID {
+                let origin = "“" + String(attempt.text.prefix(80)) + "”"
+                Text("An incomplete request in \(origin) is blocking this app. Review its reply in the native app before continuing.")
+                    .font(.caption).foregroundStyle(.orange)
+                Button("Acknowledge that incomplete request") { session.acknowledgeIncompleteRequest(attemptID: attempt.id) }
+                    .disabled(busy || session.isSending)
+            }
             if session.latestComparisonAttempt?.status == .uncertain {
                 Text("The last request was incomplete. Continuing may consume provider usage again.").font(.caption).foregroundStyle(.orange)
                 Button("Acknowledge incomplete request") { session.acknowledgeIncompleteRequest() }.disabled(busy)
@@ -751,7 +799,7 @@ private struct WebAgentPane: View {
             MessageInput(text: Binding(get: { session.state.draft }, set: { text in session.updateState { $0.draft = text } }),
                 attachments: [], addAttachments: { _ in }, removeAttachment: { _ in }, placeholder: "Message \(session.name)",
                 accessibilityName: "Message \(session.name)", sendLabel: "Send to \(session.name)",
-                disabled: busy || !session.snapshot.ready, attachmentsEnabled: false) {
+                disabled: busy || !session.canSubmitNativePrompt, attachmentsEnabled: false) {
                     sendNative(session.state.draft)
                 }
         }.padding(14)

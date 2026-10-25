@@ -22,13 +22,15 @@ struct SharingPreferencesView: View {
             if showTitle {
                 VStack(spacing: 24) {
                     if let appIcon = Self.appIcon {
-                        Image(nsImage: appIcon).resizable().frame(width: 80, height: 80)
+                        Image(nsImage: appIcon).resizable().interpolation(.high).antialiased(true)
+                            .scaledToFit().frame(width: 80, height: 80)
                             .accessibilityHidden(true)
                     }
                     VStack(spacing: 16) {
                         Text("Help improve msgblast").font(.system(size: 30, weight: .bold))
                         Text("Choose what anonymous data you share to improve open source msgblast.")
-                            .font(.body).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.body).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .multilineTextAlignment(.center)
@@ -121,12 +123,16 @@ struct SharingPreferencesView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Button(expanded.wrappedValue ? "Done" : "Customize") {
+                Button {
                     expanded.wrappedValue.toggle()
+                } label: {
+                    Image(systemName: expanded.wrappedValue ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).foregroundStyle(.blue).font(.callout)
-                .frame(width: 70, alignment: .trailing)
-                .accessibilityLabel("\(expanded.wrappedValue ? "Collapse" : "Customize") \(title.lowercased())")
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel("\(expanded.wrappedValue ? "Collapse" : "Expand") \(title.lowercased())")
             }
             if expanded.wrappedValue {
                 GridRow {

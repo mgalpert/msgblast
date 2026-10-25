@@ -115,6 +115,17 @@ final class AgentGridTests: XCTestCase {
         XCTAssertEqual(grid.shown(in: [.web(.muse), contactID, .web(.claude)]), [.web(.claude), contactID, .web(.muse)])
     }
 
+    func testMessagesAccessFiltersGridWithoutLosingSavedAgentsOrOrder() {
+        let tiny = AgentGridID.messages(UUID())
+        let fo = AgentGridID.featuredMessages(.fo)
+        let catalog: [AgentGridID] = [.web(.geminiApp), tiny, fo, .web(.wabi)]
+        let grid = AgentGridLayout(visibleIDs: catalog)
+        XCTAssertEqual(grid.shown(in: catalog, availableMessages: []), [.web(.geminiApp), .web(.wabi)])
+        XCTAssertEqual(grid.shown(in: catalog, availableMessages: [fo]), [.web(.geminiApp), fo, .web(.wabi)])
+        XCTAssertEqual(grid.shown(in: catalog, availableMessages: [tiny, fo]), catalog)
+        XCTAssertEqual(grid.visibleIDs, catalog, "Access changes must preserve saved positions")
+    }
+
     func testNewAgentTakesFirstPositionAndShiftsTheExistingOrder() {
         var grid = AgentGridLayout(visibleIDs: AgentGridLayout.featured)
         grid.add(.web(.grokbot))

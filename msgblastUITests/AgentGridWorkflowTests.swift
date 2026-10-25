@@ -119,6 +119,20 @@ final class AgentGridWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testMessagesAccessOffHidesContactsAndUsesPermissionToggle() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo", "--permission-guide-preview"]
+        app.launch()
+        defer { app.terminate() }
+        let access = app.switches["enable-messages-history-permission"]
+        XCTAssertTrue(access.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Open Settings"].exists)
+        XCTAssertFalse(app.buttons["Cedar"].exists, "Saved Messages contacts stay hidden until history is available")
+        XCTAssertTrue(app.buttons["Add ChatGPT"].exists, "Native apps remain available while Messages access is off")
+        capture(app, name: "Messages access toggle with unavailable contacts hidden — isolated fixture")
+    }
+
+    @MainActor
     private func capture(_ app: XCUIApplication, name: String) {
         let evidence = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         evidence.name = name

@@ -61,6 +61,10 @@ bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
 
 - Web fixtures compile actual app/controller code with local website/Messages
   substitutes, checking comparison and broadcast lifecycle.
+  Native CI also runs these fixtures, including same-store app restarts that
+  check all five permissions, retain setup and drafts, remember Skip for now,
+  and resume Allow access after a Settings handoff. Injected grants do not
+  prove real macOS consent.
 - Configured CLI fixtures invoke the real adapter with a deterministic local
   executable and temporary configuration. They test new/resumed sessions,
   configuration transport, denied writes, restricted reports, and legacy history.
@@ -78,6 +82,87 @@ the actual Settings permission controller with injected native responses and a
 minimal model substitute. It verifies checks without consent, explicit Enable
 requests, denied recovery, changed access, Messages launch failure, and demo
 isolation without reading user data or requesting a real OS grant.
+
+The six shipping integrations (Muse, Grok Bot, Wabi, ChatGPT, Dots, and
+Claude) use `DesktopNativeWindowLookup`. Its tests in `DesktopAppConversationTests`
+simulate an empty macOS `AXWindows` list, verify exact process/window identity,
+reject wrong-window/control candidates, and bound fallback discovery. Each app
+has a named `FindsOtherDesktopAndRejectsAmbiguousMainWindows` regression in
+`DesktopAppDriverTests`: an off-screen main window is accepted, helper/login
+windows are ignored, and a second main window on either desktop blocks selection.
+The native adapter executable fixtures also enumerate windows on another Space,
+covering connection checks, saved chat identity, drafts, and submission receipts.
+Run both desktop classes plus the ChatGPT, Gemini, and Claude conversation/driver
+classes (including `ChatGPTAppSubmissionTests`) when changing this shared path.
+
+These fixtures do not create or switch real macOS Spaces and inject native
+observations; they cannot prove every installed app's current AX implementation.
+For an authorized live check, leave an app on another desktop and connect it from
+msgblast; verify readiness while the active desktop and existing draft stay
+unchanged. Do not send a prompt solely to validate window discovery.
+
+`OnboardingTests.testOnboardingOffersNativeAppsAndRetainsLegacyWebCheckpoints`
+covers the offered catalog and resumable older setup state. `WebAgentInstanceTests`
+covers new-user website opt-in, disabled sends, Settings toggles across reload,
+and preservation of existing website identity/history. The Demo UI regression
+`OnboardingWorkflowTests.testNativeChoicesReplaceWebAlternativesInOnboarding`
+checks the actual chooser.
+
+For manual Demo capture without command-line launch arguments, Debug Demo builds
+also recognize `msgblastOnboardingPreview`, `msgblastIsolatedDemo`, and
+`msgblastOnboardingPermissionsPreview` Boolean bundle settings. The last setting
+starts simulated app-control and capture access off. Combined with the existing
+`msgblastPermissionGuidePreview`, Messages history is also simulated unavailable,
+so Continue stays blocked until a complete permission group is enabled. These
+settings never change macOS access and are ignored for live app-control grants.
+Label captures as simulated and retain the compiled source revision.
+
+## Shared native app engine
+
+`DesktopAccessibilityTests` covers exact draft/URL metadata, bounded incomplete
+reads, Gemini virtualized sidebar references, and isolation from embedded foreign
+ChatGPT web content. Raw attribute fixtures exercise the production conversion,
+including string-valued URLs, native AX error slots, and exact text/geometry.
+A test-owned local WebKit editor also exercises native capture when the test host
+already has Accessibility access. It skips without requesting or changing access
+when that grant is absent; record that skip separately from fixture passes.
+`DesktopAppWorkflowTests` covers multiline/Unicode entry,
+foreign draft refusal, stopping after failed readback, read-only transition
+recovery, nonzero reply-stability intervals, and single submission through reply recovery. Existing per-profile
+adapter fixtures retain destination, sender, nonce, draft and uncertain-send
+assertions. They exercise the common workflow, not copies of its implementation.
+Muse's cold-start connection regression supplies multiple inconsistent native
+composer reads before a stable result. Recovery is read-only and bounded to five
+seconds; a readable unsent draft still blocks connection immediately.
+
+The seven retained `FindsOtherDesktopAndRejectsAmbiguousMainWindows` cases also include
+Claude's layer-1000 full-display overlay with membership in multiple Spaces. The
+same fixture still rejects a second real layer-zero window on either desktop.
+
+## Embedded app-control runtime
+
+`EmbeddedCuaDriverTests` exercises private daemon startup, shared concurrent
+connections, observed host identity rejection, shutdown during startup, socket
+cleanup, host-grant generation changes, startup grant races, and missing-helper/
+timeout failures without using a global driver.
+`CuaPermissionsTests` checks host-only grants and revocation without requesting
+real OS access; `OnboardingTests` covers complete permission-group readiness.
+
+After a Debug build, this read-only integration check uses the actual bundled
+helper and a temporary ad-hoc signed host app:
+
+```sh
+bash scripts/test_embedded_cua_runtime.sh build/contributor-tests
+```
+
+It verifies the driver's observed parent application and PID, exercises the default
+native adapter's private-socket routing and permission-response decoding, and checks
+shutdown cleanup. A second, explicitly simulated run verifies that the default
+adapter requests `tree_format=elements` and decodes its structured snapshot.
+Neither run requests permissions, starts provider apps, or sends messages.
+It proves runtime attribution metadata, not approval retention across signed
+updates or live provider delivery. Packaging/release checks are available with
+`python3 -m unittest scripts.tests.test_bundle_cua_driver scripts.tests.test_release`.
 
 ## Native UI tests and manual checks
 
@@ -210,3 +295,6 @@ For manual evidence, launch the packaged blue Demo with `--isolated-demo --busin
 Live native action requires the exact app's Accessibility permission. Inspecting native controls without pressing them verifies only their availability; Demo and matcher fixtures do not establish real Business submission or delivery. Preserve the user's active Business choices unless they authorize that live selection.
 
 For private-send scrolling evidence, launch the blue Demo with `--isolated-demo --no-demo-replies`. This keeps automatic simulated replies from moving the transcript after submission. The native UI regression sends a long reply through Cedar's own composer and checks that its end is visible without manual scrolling. The AppKit controller fixture covers overflowing joined panes and a late tapback; it does not reproduce the real composer timing failure by itself.
+
+Gemini is deferred: its compatibility fixtures remain, but public session tests
+prove saved state survives while connection, configuration and sending stay blocked.

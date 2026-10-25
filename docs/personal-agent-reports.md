@@ -6,7 +6,7 @@ and [Testing](testing.md). The source map is in [Architecture](architecture.md).
 
 ## Website chats and optional CLI conversations
 
-ChatGPT and Claude use embedded websites by default, alongside Muse and Grok. These four web agents are selected on a new installation. Each website keeps its own sign-in and saved chat for each comparison. Browser cookies and CLI accounts are separate.
+Onboarding offers native Mac apps for Muse, ChatGPT, Claude, Dots, and Grok Bot. The Muse, ChatGPT, Claude, Dots, and Grok websites are hidden from onboarding and start off for new users. Enable them in **Settings → Web agents** if needed. Existing enabled accounts, sign-ins, and saved chats are preserved. Browser cookies and CLI accounts are separate.
 
 In **Settings → Your local accounts**, turn on **Enable Codex CLI** or **Enable Claude Code** to add a separate agent to the picker. You can select both a website and its CLI in the same blast. Enabling a CLI never replaces the website. Account status, refresh, installation links, and **Switch account** live in Settings; connected conversation columns contain only the conversation and composer.
 

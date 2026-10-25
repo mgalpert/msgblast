@@ -26,7 +26,7 @@ import msgblastCore
         application.setActivationPolicy(.regular)
         Task { @MainActor in
             do {
-                if ProcessInfo.processInfo.arguments.contains("--permission-review-relaunch-fixture") { try runPermissionReviewRelaunchChecks() }
+                if ProcessInfo.processInfo.arguments.contains("--permission-review-relaunch-fixture") { try await runPermissionReviewRelaunchChecks() }
                 else { try await runChecks() }
             }
             catch { fatalError("Isolated model fixture failed: \(error)") }
@@ -35,29 +35,6 @@ import msgblastCore
             application.postEvent(wake, atStart: true)
         }
         application.run()
-    }
-    @MainActor static func runPermissionReviewRelaunchChecks() throws {
-        let model = AppModel()
-        let root = model.local.url.deletingLastPathComponent()
-        precondition(root.lastPathComponent.hasPrefix("msgblast-PermissionReview-"))
-        defer { try? FileManager.default.removeItem(at: root) }
-        model.state.onboarding = nil
-        model.state.agentGrid = nil
-        model.state.draft = "Permission review restart keeps this draft"
-        let agent = model.state.agents[0]
-        model.state.selection = [agent.id]
-        model.webAgents.session(for: .grok)!.updateState { $0.selected = true }
-        let grid = model.agentGridLayout
-        let counts = model.telemetryAgentCounts
-        try model.save()
-        model.onboarding.reviewMessagesAgents()
-        let relaunched = AppModel()
-        precondition(relaunched.state.selection == [agent.id])
-        precondition(relaunched.webAgents.session(for: .grok)!.state.selected)
-        precondition(relaunched.state.draft == "Permission review restart keeps this draft")
-        precondition(relaunched.state.agentGrid == grid)
-        precondition(relaunched.telemetryAgentCounts == counts)
-        print("PASS: actual same-store AppModel relaunch preserves Messages and website recipients, draft, inferred grid, and adoption baseline during permission review.")
     }
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared
@@ -114,6 +91,7 @@ import msgblastCore
         lifecycleModel.coordinator?.open(lifecycleID)
         precondition(window.windowNumber == originalNumber && window.frame == originalFrame && window.isVisible)
         precondition(lifecycleModel.comparison(lifecycleID)!.members.count == 2)
+        lifecycleModel.webAgents.setEnabled(true, for: .chatgpt)
         let lifecycleWeb = lifecycleModel.webAgents.session(for: .chatgpt)!
         lifecycleModel.coordinator?.prepareJoiningWebAgent(lifecycleID)
         lifecycleWeb.updateState { $0.selected = true }
@@ -252,6 +230,8 @@ import msgblastCore
         let showcase = AppModel()
         let shown = showcase.state.agents[0]
         let hidden = showcase.state.agents[1]
+        showcase.webAgents.setEnabled(true, for: .muse)
+        showcase.webAgents.setEnabled(true, for: .chatgpt)
         let original = showcase.webAgents.session(for: WebAgentID.chatgpt)!
         let copy = try showcase.webAgents.duplicate(original, name: "Hidden website copy")
         showcase.state.agentGrid = AgentGridLayout(visibleIDs: [.web(.muse), showcase.gridID(for: shown)])
@@ -262,6 +242,18 @@ import msgblastCore
         showcaseComparison.setWebAgents([copy.id])
         precondition(Set(showcase.recipientMessageAgents(for: showcaseComparison).map(\.id)) == Set([shown.id, hidden.id]), "Existing hidden members remain available")
         precondition(Set(showcase.recipientWebSessions(for: showcaseComparison).map(\.id)) == Set([.muse, copy.id]))
+        let deferredGemini = showcase.webAgents.session(for: WebAgentID(provider: .geminiApp))!
+        deferredGemini.updateState { $0.enabled = true; $0.selected = true; $0.draft = "Preserve deferred Gemini draft" }
+        let savedGrid = showcase.state.agentGrid
+        showcase.state.agentGrid?.add(.web(.geminiApp))
+        var deferredComparison = showcaseComparison
+        deferredComparison.setWebAgents([copy.id, deferredGemini.id])
+        precondition(!showcase.agentGridCatalog.contains { $0.id == .web(.geminiApp) })
+        precondition(!showcase.recipientWebSessions(for: deferredComparison).contains { $0.id == deferredGemini.id })
+        precondition(!showcase.webAgents.selected.contains { $0.id == deferredGemini.id })
+        precondition(deferredGemini.state.enabled == true && deferredGemini.state.draft == "Preserve deferred Gemini draft")
+        showcase.state.agentGrid = savedGrid
+        print("PASS: deferred Gemini stays outside the catalog and recipients, including saved memberships, without erasing its saved preference or draft.")
         showcase.state.comparisons.insert(showcaseComparison, at: 0)
         let showcaseMuse = showcase.webAgents.session(for: WebAgentID.muse)!
         showcaseMuse.updateState { $0.selected = true }; showcaseMuse.connect()
@@ -276,6 +268,87 @@ import msgblastCore
         print("PASS: Send to offers only showcase agents plus saved members; unselected Muse can join a Messages comparison with simulated shared context, without adding hidden contacts.")
         showcase.webAgents.beginShutdown()
         await showcase.webAgents.cancelAndWait()
+        let nativeJoinModel = AppModel()
+        nativeJoinModel.timer?.invalidate()
+        var nativeJoinComparison = Comparison(prompt: "Native join original context", members: [])
+        nativeJoinComparison.sharedContext = [.init(text: "Shared follow-up before native join")]
+        nativeJoinModel.state.comparisons.insert(nativeJoinComparison, at: 0)
+        let expectedNativeContext = "Native join original context\n\nShared follow-up before native join"
+        for provider in [WebProvider.chatgptApp, .dotsApp, .claudeApp] {
+            let native = nativeJoinModel.webAgents.session(for: WebAgentID(provider: provider))!
+            native.setEnabled(true)
+            await native.connectDesktopConversation()
+            precondition(native.snapshot.ready, "The simulated native app connection must be ready before joining")
+            precondition(!nativeJoinModel.comparison(nativeJoinComparison.id)!.resolvedWebAgentIDs.contains(native.id))
+            let attemptsBeforeJoin = native.state.attempts.count
+            let nativeJoined = await nativeJoinModel.joinWebAgent(native, comparisonID: nativeJoinComparison.id)
+            precondition(nativeJoined, "A native app must join through the same recipient flow as a website")
+            precondition(nativeJoinModel.webAgents.comparisonID == nativeJoinComparison.id, "Joining must prepare the whole comparison, including its workspace identity")
+            precondition(native.state.comparisonID == nativeJoinComparison.id)
+            let attempts = native.state.attempts.filter { $0.comparisonID == nativeJoinComparison.id }
+            precondition(native.state.attempts.count == attemptsBeforeJoin + 1 && attempts.count == 1)
+            precondition(attempts[0].status == .observed && attempts[0].text == expectedNativeContext)
+            let outgoing = native.state.localConversations[nativeJoinComparison.id.uuidString]!.filter { $0.role == "user" }
+            precondition(outgoing.count == 1 && outgoing[0].text == expectedNativeContext, "Joining submits the accumulated shared context exactly once")
+            let savedNativeJoin = try nativeJoinModel.local.load().comparisons.first { $0.id == nativeJoinComparison.id }!
+            precondition(savedNativeJoin.resolvedWebAgentIDs.contains(native.id), "Successful native membership must survive a store reload")
+            let joinedAgain = await nativeJoinModel.joinWebAgent(native, comparisonID: nativeJoinComparison.id)
+            precondition(joinedAgain && native.state.attempts.count == attemptsBeforeJoin + 1, "Reopening an existing native recipient must not send its joining context again")
+        }
+        precondition(Set(nativeJoinModel.comparison(nativeJoinComparison.id)!.resolvedWebAgentIDs) == Set([WebAgentID(provider: .chatgptApp), .init(provider: .dotsApp), .init(provider: .claudeApp)]))
+        nativeJoinModel.webAgents.beginShutdown()
+        await nativeJoinModel.webAgents.cancelAndWait()
+        print("PASS: ChatGPT App, Dots App and Claude App join through actual AppModel preparation, preserve comparison membership on reload, and submit the full simulated shared context exactly once across repeated joins.")
+        let automaticMessages = AppModel()
+        automaticMessages.state.selection = []
+        await automaticMessages.onboarding.refreshPermissions()
+        var automaticSetup = OnboardingState()
+        automaticSetup.completePermissions(messaging: true, apps: true)
+        automaticMessages.state.onboarding = automaticSetup
+        let foundFo = Agent(contactID: "auto-fo", name: "Fo", handles: ["auto-fo@example.com"])
+        let missingSzn = Agent(contactID: "auto-szn", name: "Szn", handles: ["no-chat@example.com"])
+        let unsavedContact = Agent(name: "Instinct", handles: ["manual@example.com"])
+        automaticMessages.chats += [Chat(id: "auto-fo", handle: "auto-fo@example.com", lastActivity: 1),
+                                    Chat(id: "manual", handle: "manual@example.com", lastActivity: 1)]
+        await automaticMessages.onboarding.addMessagesAutomatically(suggestions: [foundFo, missingSzn, unsavedContact])
+        let added = automaticMessages.savedAgent(matching: foundFo)!
+        precondition(automaticMessages.state.onboarding?.selected == [.fo])
+        precondition(automaticMessages.state.onboarding?.completed == [.fo])
+        precondition(automaticMessages.state.onboarding?.messagesAutomaticallyAdded == true)
+        precondition(automaticMessages.savedAgent(matching: missingSzn) == nil)
+        precondition(automaticMessages.savedAgent(matching: unsavedContact) == nil, "Automatic setup must never create Contacts")
+        precondition(automaticMessages.state.selection.isEmpty && automaticMessages.webAgents.selected.isEmpty)
+        automaticMessages.onboarding.toggleChoice(.fo)
+        precondition(automaticMessages.state.onboarding?.selected.isEmpty == true)
+        precondition(automaticMessages.state.onboarding?.selectedMessageAgentIDs.isEmpty == true)
+        await automaticMessages.onboarding.finishPermissionSetup()
+        precondition(automaticMessages.state.onboarding?.selected.isEmpty == true, "Permission review must retain opt-outs")
+        automaticMessages.state.onboarding = try automaticMessages.local.load().onboarding
+        await automaticMessages.onboarding.addMessagesAutomatically(suggestions: [foundFo])
+        precondition(automaticMessages.state.onboarding?.selected.isEmpty == true, "Relaunch must not reselect an automatically added agent")
+        automaticMessages.onboarding.toggleChoice(.fo)
+        automaticMessages.onboarding.begin()
+        precondition(automaticMessages.state.onboarding?.stage == .feedback, "Connected Messages agents go straight to the final screen")
+        precondition(automaticMessages.state.onboarding?.messageAgentIDs["fo"] == added.id)
+        var appsOnly = OnboardingState()
+        appsOnly.permissionsCompleted = true
+        appsOnly.revalidatePermissionSections([.apps])
+        automaticMessages.state.onboarding = appsOnly
+        await automaticMessages.onboarding.addMessagesAutomatically(suggestions: [foundFo])
+        precondition(automaticMessages.state.onboarding == appsOnly, "App-only approval cannot authorize Messages discovery")
+        var legacyMessages = OnboardingState()
+        legacyMessages.completePermissions(messaging: true, apps: true)
+        legacyMessages.selected = [.fo, .szn, .otherMessages]
+        legacyMessages.messageAgentIDs["fo"] = added.id
+        legacyMessages.stage = .connecting
+        legacyMessages.messagesDiscoveryReviewed = false
+        automaticMessages.state.onboarding = legacyMessages
+        await automaticMessages.onboarding.resolveMessagesAutomatically()
+        precondition(automaticMessages.state.onboarding?.stage == .feedback)
+        precondition(automaticMessages.state.onboarding?.completed == [.fo])
+        precondition(automaticMessages.state.onboarding?.skipped == [.szn, .otherMessages])
+        precondition(automaticMessages.state.selection.isEmpty)
+        print("PASS: automatic Messages setup adds only existing routable contacts, preserves opt-outs across permission review and store reload, never selects recipients, and resumes legacy discovery without another picker.")
         let onboardingModel = AppModel()
         let connectedContact = Agent(contactID: "fixture-connected-fo", name: "Fo", handles: ["fo@example.com"])
         onboardingModel.state.selection = []
@@ -307,6 +380,7 @@ import msgblastCore
         onboardingModel.onboarding.edit { $0.finish() }
         precondition(onboardingModel.state.agentGrid?.visibleIDs == [.featuredMessages(.fo), .web(.claude), .web(.chatgpt)])
         onboardingModel.state.selection = [connectedContact.id]
+        onboardingModel.webAgents.setEnabled(true, for: .chatgpt)
         let optedIn = onboardingModel.webAgents.session(for: .chatgpt)!
         optedIn.updateState { $0.selected = true }
         onboardingModel.onboarding.edit { _ in }
@@ -334,6 +408,7 @@ import msgblastCore
         photoModel.state.agents[photoModel.state.agents.count - 1] = instinct
         precondition(displayedInstinctPhoto() == currentPhoto, "A saved contact without a photo must use featured artwork")
         print("PASS: Instinct's legacy cached placeholder upgrades to current artwork; custom contact photos retain priority and absent photos fall back.")
+        gridModel.webAgents.setEnabled(true, for: .chatgpt)
         let hiddenContact = gridModel.state.agents[0]
         let draftBeforeGrid = gridModel.state.draft
         var grid = gridModel.agentGridLayout
@@ -370,6 +445,7 @@ import msgblastCore
         precondition(quickModel.state.selection == [quickContact.id])
         precondition(quickModel.webAgents.selected.isEmpty)
         precondition(quickModel.isVisibleInAgentGrid(.messages(quickContact.id)))
+        quickModel.webAgents.setEnabled(true, for: .chatgpt)
         let quickWeb = quickModel.webAgents.session(for: WebAgentID(provider: .chatgpt))!
         quickWeb.connect()
         try await waitUntil { quickWeb.isReadyForOnboarding }
@@ -412,7 +488,7 @@ import msgblastCore
         var comparisonSessions: [WebAgentSession] {
             model.webAgents.availableSessions.filter { $0.provider.supportsSharedSubmissions }
         }
-        WebProvider.optionalProviders.forEach { model.webAgents.setEnabled(true, for: $0) }
+        (WebProvider.webDefaults + WebProvider.optionalProviders).forEach { model.webAgents.setEnabled(true, for: $0) }
         let first = await model.prepareWebComparison("First comparison", recipientIDs: [recipient.id], agents: (WebProvider.webDefaults + WebProvider.optionalProviders).map { WebAgentID(provider: $0) })!
         let muse = model.webAgents.sessions.first { $0.provider == .muse }!
         precondition(muse.fixture)
@@ -613,6 +689,7 @@ import msgblastCore
         precondition(model.transcript(safe, member: safeMember).filter(\.outgoing).map(\.text) == ["Delayed broadcast original", "Delayed shared ask"])
         print("PASS: deterministic delayed web completion preserves the exact broadcast UUID; private send is blocked with draft retained, injected later private ledger remains unmarked, and a new agent receives only Original + Shared. Actual AgentBroadcast + AppModel with simulated transport.")
         let instanceModel = AppModel()
+        instanceModel.webAgents.setEnabled(true, for: .chatgpt)
         let originalWeb = instanceModel.webAgents.session(for: WebAgentID.chatgpt)!
         let copiedWeb = try instanceModel.webAgents.duplicate(originalWeb, name: "ChatGPT fixture copy")
         let unusedWeb = try instanceModel.webAgents.duplicate(originalWeb, name: "Unselected fixture copy")
@@ -636,6 +713,32 @@ import msgblastCore
         instanceModel.webAgents.beginShutdown()
         await instanceModel.webAgents.cancelAndWait()
         print("PASS: actual AppModel + LocalStore + WebAgents preserve two ChatGPT identities in one comparison, separate chat URLs/private follow-ups, and exact restored membership. Local website fixtures only.")
+        let nativeModel = AppModel()
+        let nativeProviders: [WebProvider] = [.chatgptApp, .dotsApp, .claudeApp]
+        let nativeSessions = nativeProviders.map { nativeModel.webAgents.session(for: WebAgentID(provider: $0))! }
+        for session in nativeSessions {
+            session.setEnabled(true)
+            await session.connectDesktopConversation()
+        }
+        let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: nativeSessions.map(\.id))!
+        let nativeReplies = await WebAgents.send("Native comparison fixture", to: nativeSessions, comparisonID: nativeID)
+        precondition(nativeReplies.count == 3 && nativeReplies.values.allSatisfy { $0.status == .observed })
+        let savedBindings = nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] }
+        let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
+        nativeModel.webAgents.setComparison(nil)
+        nativeModel.openWebComparison(nativeID)
+        for _ in 0..<100 where !nativeSessions.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        precondition(nativeSessions.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
+        precondition(nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] } == savedBindings)
+        precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
+        precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(nativeSessions.map(\.id)))
+        let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
+        precondition(savedNativeComparison.resolvedWebAgentIDs == nativeSessions.map(\.id))
+        nativeModel.webAgents.beginShutdown()
+        await nativeModel.webAgents.cancelAndWait()
+        print("PASS: actual AppModel + LocalStore reopen the three native providers with the same owned bindings and exact membership. Demo simulation; no live apps or sends.")
         let choiceModel = AppModel()
         let businessAddress = "urn:biz:00000000-0000-0000-0000-000000000001"
         let businessChat = Chat(id: "iMessage;-;" + businessAddress, handle: businessAddress, lastActivity: 0, displayName: "Fixture Poke", businessConversation: true)

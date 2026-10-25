@@ -1,6 +1,6 @@
 import AppKit
 import Combine
-import msgblastCore
+@testable import msgblastCore
 @preconcurrency import Sparkle
 
 // Controlled local model. The production AppLifecycle implementation is compiled unchanged.
@@ -38,6 +38,25 @@ import msgblastCore
 @main struct WebLifecycleCheck {
     @MainActor static func main() async throws {
         let application = NSApplication.shared
+        do {
+            let model = AppModel(), lifecycle = AppLifecycle()
+            lifecycle.configure(model: model)
+            var reply: Bool?
+            lifecycle.terminationReplyHandler = { reply = $0 }
+            precondition(lifecycle.applicationShouldTerminate(application) == .terminateLater,
+                         "Idle Quit must wait for embedded runtime cleanup")
+            for _ in 0..<50 where reply == nil { try await Task.sleep(for: .milliseconds(10)) }
+            precondition(reply == true && model.webAgents.shutdownStarted)
+            do {
+                _ = try await EmbeddedCuaDriver.shared.connection()
+                preconditionFailure("Quit approved before stopping embedded app control")
+            } catch is CancellationError {
+                // The stopped runtime must reject every subsequent request.
+            } catch {
+                preconditionFailure("Embedded app control was not stopped: \(error)")
+            }
+            print("PASS: idle Quit awaits terminal embedded-runtime cleanup before approval. No actual app termination.")
+        }
         do {
             let model = AppModel(), lifecycle = AppLifecycle()
             lifecycle.configure(model: model)

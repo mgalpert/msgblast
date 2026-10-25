@@ -151,33 +151,95 @@ final class WorkflowTests: XCTestCase {
     }
 
     @MainActor
-    func testSettingsCanEnableContactsWhileMessagesAccessIsOff() {
+    func testSettingsSharesOnboardingPermissionsAndEnablesContactsIndependently() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "--isolated-demo", "--permission-guide-preview", "--contacts-access-preview"]
+        app.launchArguments = ["--demo", "--isolated-demo", "--permission-guide-preview", "--contacts-access-preview", "--onboarding-permissions-preview"]
         app.launch()
         defer { app.terminate() }
         app.typeKey(",", modifierFlags: .command)
-        let history = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Messages access")).firstMatch
-        guard history.waitForExistence(timeout: 5) else { return XCTFail("Settings must show the permissions table") }
-        XCTAssertTrue(history.label.contains("Not connected"))
-        let contacts = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Contacts")).firstMatch
-        XCTAssertTrue(contacts.label.contains("Not requested"))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Sending Messages")).firstMatch.label.contains("Allowed"))
-        XCTAssertTrue(app.staticTexts["Demo permissions are simulated. No system access is changed."].exists)
-        let before = XCTAttachment(screenshot: app.windows["com_apple_SwiftUI_Settings_window"].screenshot())
-        before.name = "Permissions — simulated Contacts not requested"
-        before.lifetime = .keepAlways
-        add(before)
-        app.buttons["enable-contacts-permission"].click()
-        let allowed = NSPredicate(format: "label CONTAINS %@", "Allowed")
-        expectation(for: allowed, evaluatedWith: contacts)
+        let history = app.switches["enable-messages-history-permission"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5))
+        for id in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-capture"] {
+            XCTAssertTrue(app.switches["enable-\(id)-permission"].exists, "Settings must expose the same five switches as onboarding")
+        }
+        XCTAssertFalse(app.buttons["Manage"].exists)
+        XCTAssertFalse(app.buttons["Check again"].exists)
+        XCTAssertFalse(app.switches["enable-cua-driver-permission"].exists)
+        XCTAssertEqual(String(describing: history.value ?? ""), "0")
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        let chatGPT = settings.switches["enable-app-chatgptApp"]
+        for _ in 0..<12 where !chatGPT.isHittable { settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -180) }
+        XCTAssertTrue(chatGPT.isHittable)
+        if String(describing: chatGPT.value ?? "") != "1" { chatGPT.click() }
+        XCTAssertEqual(String(describing: chatGPT.value ?? ""), "1")
+        let setup = settings.buttons["setup-app-chatgptApp"]
+        XCTAssertFalse(setup.isEnabled, "An enabled app still needs both app permissions before setup")
+        settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 10000)
+        let contacts = app.switches["enable-messages-contacts-permission"]
+        XCTAssertEqual(String(describing: contacts.value ?? ""), "0")
+        contacts.click()
+        expectation(for: NSPredicate(format: "value == 1"), evaluatedWith: contacts)
         waitForExpectations(timeout: 5)
-        XCTAssertTrue(history.label.contains("Not connected"), "Contacts must be manageable independently of Messages access")
-        XCTAssertEqual(app.sheets.count, 0, "The fixture must never ask for real system access")
+        XCTAssertEqual(String(describing: history.value ?? ""), "0")
+        let host = app.switches["enable-cua-host-permission"]
+        host.click()
+        XCTAssertEqual(String(describing: host.value ?? ""), "1")
+        XCTAssertFalse(setup.isEnabled, "Device Control alone must not allow setup")
+        XCTAssertEqual(String(describing: app.switches["enable-cua-capture-permission"].value ?? ""), "0")
+        app.switches["enable-cua-capture-permission"].click()
+        XCTAssertEqual(String(describing: app.switches["enable-cua-capture-permission"].value ?? ""), "1")
+        XCTAssertTrue(setup.isEnabled, "Setup must become available when both app permissions are enabled")
+        XCTAssertEqual(app.sheets.count, 0, "Demo must never request real system access")
         let screenshot = XCTAttachment(screenshot: app.windows["com_apple_SwiftUI_Settings_window"].screenshot())
-        screenshot.name = "Permissions — simulated Contacts enabled independently"
+        screenshot.name = "Shared permission switches — simulated independent grants"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        app.windows["com_apple_SwiftUI_Settings_window"].buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(app.textViews["Shared prompt"].exists)
+        XCTAssertFalse(app.staticTexts["Allow access"].exists, "Changing access in Settings must not restart onboarding")
+    }
+
+    @MainActor
+    func testSettingsSetsUpEveryAvailableAppWithoutChangingDraftOrStartingOnboarding() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        let draft = app.textViews["Shared prompt"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        draft.click(); draft.typeKey("a", modifierFlags: .command); draft.typeText("Keep this unsent draft")
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        for (provider, name) in [("chatgptApp", "ChatGPT"), ("dotsApp", "Dots"), ("claudeApp", "Claude"), ("museApp", "Muse"), ("grokBotApp", "Grok Bot"), ("wabi", "Wabi")] {
+            let enable = settings.switches["enable-app-\(provider)"]
+            XCTAssertTrue(enable.exists)
+            settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 10000)
+            for _ in 0..<12 where !enable.isHittable { settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -180) }
+            XCTAssertTrue(enable.isHittable)
+            if String(describing: enable.value ?? "") != "1" { enable.click() }
+            settings.buttons["setup-app-\(provider)"].click()
+            let sheet = settings.sheets.firstMatch
+            XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+            let connect = sheet.buttons["Connect \(name)"].firstMatch
+            XCTAssertTrue(connect.waitForExistence(timeout: 5))
+            connect.click()
+            if provider == "grokBotApp" {
+                let picker = sheet.popUpButtons["grok-bot-picker"]
+                XCTAssertTrue(picker.waitForExistence(timeout: 5))
+                picker.click()
+                app.menuItems["Research Bot"].click()
+            }
+            XCTAssertTrue(sheet.staticTexts["Ready for your first prompt"].waitForExistence(timeout: 5))
+            XCTAssertTrue(sheet.staticTexts["Demo connections are simulated. No app is contacted."].exists)
+            sheet.buttons["Done"].click()
+            XCTAssertFalse(settings.sheets.firstMatch.exists)
+        }
+        XCTAssertTrue(settings.staticTexts["Unavailable in this build"].exists, "Deferred Gemini must remain visibly unavailable")
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertEqual(draft.value as? String, "Keep this unsent draft")
+        XCTAssertFalse(app.staticTexts["Allow access"].exists, "Settings must not reopen onboarding")
+        XCTAssertTrue(app.staticTexts["No comparisons"].exists, "Connecting must not send a prompt")
     }
 
     @MainActor

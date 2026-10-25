@@ -1,0 +1,18 @@
+{
+  "version": "0.38.0",
+  "source_revision": "85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19",
+  "source_url": "https://github.com/trycua/cua/tree/cua-driver-rs-v0.38.0/libs/cua-driver",
+  "mode": "embedded",
+  "assets": {
+    "arm64": {
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.38.0/cua-driver-rs-0.38.0-darwin-arm64.tar.gz",
+      "sha256": "5f71191c082ca07c9dfc13b7c9a6eec60a82818c245a93534cc0eb7911471d72",
+      "member": "cua-driver-rs-0.38.0-darwin-arm64/cua-driver"
+    },
+    "x86_64": {
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.38.0/cua-driver-rs-0.38.0-darwin-x86_64.tar.gz",
+      "sha256": "68721a916f2d9b20233a14623e0f663caf6130ba9018465a57a178120d96bc4e",
+      "member": "cua-driver-rs-0.38.0-darwin-x86_64/cua-driver"
+    }
+  }
+}

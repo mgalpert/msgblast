@@ -49,6 +49,12 @@ final class AppPermissions: ObservableObject {
     nonisolated private static let messagesBundleID = Bundle(url: messagesURL)?.bundleIdentifier
     private let client: AppPermissionClient
 
+    // A closed Messages process leaves Automation unchecked, not denied. Keep
+    // the send gate strict, without treating app availability as a revoked grant.
+    var requiresReview: Bool {
+        history != .allowed || contacts != .allowed || (sending != .allowed && sending != .needsMessages)
+    }
+
     init(client: AppPermissionClient? = nil) { self.client = client ?? Self.systemClient() }
 
     func refresh(model: AppModel) async {
@@ -77,6 +83,7 @@ final class AppPermissions: ObservableObject {
     func enableContacts(model: AppModel) async {
         guard !requestingContacts else { return }
         message = nil
+        if model.demo, contacts != .notRequested { return }
         guard contacts == .notRequested else { openSettings("Privacy_Contacts"); return }
         requestingContacts = true
         defer { requestingContacts = false }
@@ -88,14 +95,13 @@ final class AppPermissions: ObservableObject {
     func enableSending(model: AppModel, requestAfterOpening: Bool = false) async {
         guard !checkingSending else { return }
         message = nil
+        if model.demo { sending = .allowed; return }
         guard sending == .notRequested || sending == .needsMessages else {
             openSettings("Privacy_Automation")
             return
         }
         checkingSending = true
         defer { checkingSending = false }
-        // The demo never requests real system access.
-        if model.demo { sending = .allowed; return }
         let client = client
         guard client.messagesAvailable else {
             message = "Messages isn’t available on this Mac."

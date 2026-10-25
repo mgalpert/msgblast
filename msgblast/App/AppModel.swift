@@ -30,8 +30,16 @@ final class AppModel: ObservableObject {
         false
         #endif
     }
+    var onboardingPermissionsPreview: Bool {
+        #if DEBUG
+        demo && (ProcessInfo.processInfo.arguments.contains("--onboarding-permissions-preview") || Bundle.main.object(forInfoDictionaryKey: "msgblastOnboardingPermissionsPreview") as? Bool == true)
+        #else
+        false
+        #endif
+    }
+    @Published var reviewingSharingChoice = false
     var onboardingRestartRequested = false
-    var needsOnboarding: Bool { state.onboarding.map { !$0.isFinished } ?? false }
+    var needsOnboarding: Bool { state.onboarding.map { !$0.isFinished || $0.permissionsCompleted == false } ?? false }
     var usesMessages: Bool {
         (state.onboarding?.stage == .connecting && state.onboarding?.currentStep == .messages) || !state.agents.isEmpty ||
         state.comparisons.contains { !$0.members.isEmpty } || accessGuide.flow.isActive
@@ -51,7 +59,7 @@ final class AppModel: ObservableObject {
     var lastTelemetryInventory: [String: Int]?
     var lastTelemetryActivityDay: Int?
     var telemetryTimer: Timer?
-    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true)
+    lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     var database: MessagesDatabase?
     var timer: Timer?
     var coordinator: WindowCoordinator?
@@ -75,6 +83,7 @@ final class AppModel: ObservableObject {
         do {
             state = try local.load()
             if !existingStore && (!demo || onboardingPreview) { state.onboarding = OnboardingState() }
+            state.onboarding?.reconcileBuildAvailability()
             // Preserve completed setup across permission restarts. The final
             // connection check verifies readiness before opening chats.
             try local.save(state)
@@ -512,7 +521,7 @@ final class AppModel: ObservableObject {
                 session.updateState { $0.selected = false }
                 return false
             }
-            guard await session.openComparison(comparisonID),
+            guard await webAgents.prepareComparison(comparisonID, for: [session]),
                   comparison(comparisonID)?.endedAt == nil else { return false }
             // Save membership before sending so an interrupted join is never automatically repeated.
             state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])
@@ -553,13 +562,11 @@ final class AppModel: ObservableObject {
         selectWorkspace(id)
         state.selection = Set(comparison.members.map(\.id))
         webAgents.restoreSelection(forAgentIDs: comparison.resolvedWebAgentIDs)
-        webAgents.connectSelected()
         if present { webComparisonRequest = UUID() }
-        for session in webAgents.selected {
-            Task {
-                guard webAgents.comparisonID == id else { return }
-                await session.openComparison(id)
-            }
+        let sessions = webAgents.selected
+        Task {
+            guard webAgents.comparisonID == id else { return }
+            await webAgents.prepareComparison(id, for: sessions)
         }
     }
     @discardableResult

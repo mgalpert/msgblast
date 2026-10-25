@@ -76,7 +76,12 @@ final class UpdateProbe: NSObject, SPUUserDriver {
     }
     func showInstallingUpdate(withApplicationTerminated applicationTerminated: Bool, retryTerminatingApplication: @escaping () -> Void) { Self.log("installing; terminated: \(applicationTerminated)")
         // A command-line fixture is not registered with Launch Services to receive Sparkle's quit event.
-        if !applicationTerminated { NSApp.terminate(nil) }
+        if !applicationTerminated {
+            // Sparkle invokes this callback on the main dispatch queue. Quit
+            // from the run loop so asynchronous draft saving can use that queue
+            // while AppKit waits for its terminateLater reply.
+            NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
+        }
     }
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) { Self.log("installed; relaunched: \(relaunched)"); acknowledgement(); exit(0) }
     func dismissUpdateInstallation() {}

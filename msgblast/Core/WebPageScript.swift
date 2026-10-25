@@ -7,7 +7,7 @@ struct WebPageScript {
     private var helpers: String {
         let selectors: (editor: String, send: String, messages: String, account: String)
         switch provider {
-        case .codexCLI, .claudeCode, .grokbot: preconditionFailure("Native agents do not use page scripts")
+        case .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: preconditionFailure("Native agents do not use page scripts")
         case .muse: return MusePageScript.helpers
         case .hark:
             // The authenticated layout is not verified. Recognize a chat composer
