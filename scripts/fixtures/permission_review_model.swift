@@ -110,6 +110,7 @@ extension SideChatModelCheck {
         try appOnlyRestart.save()
         let approvedLegacyRestart = AppModel()
         defer { approvedLegacyRestart.timer?.invalidate(); approvedLegacyRestart.telemetryTimer?.invalidate() }
+        await approvedLegacyRestart.onboarding.refreshPermissions()
         await approvedLegacyRestart.onboarding.messagesPermissions.enableContacts(model: approvedLegacyRestart)
         await approvedLegacyRestart.onboarding.resumePermissionsAtLaunch()
         precondition(approvedLegacyRestart.onboarding.permissionSetupReady && !approvedLegacyRestart.needsOnboarding,
