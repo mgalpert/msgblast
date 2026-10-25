@@ -50,6 +50,97 @@ import msgblastCore
         let grid = model.agentGridLayout
         let counts = model.telemetryAgentCounts
         try model.save()
+        precondition(model.onboarding.checkpointPermissionChange())
+        let legacyRestart = AppModel()
+        defer { legacyRestart.timer?.invalidate(); legacyRestart.telemetryTimer?.invalidate() }
+        precondition(legacyRestart.needsOnboarding && legacyRestart.onboarding.state.needsPermissionSetup,
+                     "Settings permission handoff must reopen Allow access for users whose saved setup predates onboarding")
+        precondition(legacyRestart.onboarding.state.isFinished,
+                     "Permission recovery must not restart agent selection or connection setup")
+        precondition(legacyRestart.state.selection == [agent.id] && legacyRestart.state.agentGrid == grid)
+        precondition(legacyRestart.state.draft == "Permission review restart keeps this draft")
+        precondition(legacyRestart.webAgents.session(for: .grok)!.state.selected)
+        await legacyRestart.onboarding.refreshPermissions()
+        precondition(!legacyRestart.onboarding.permissionSetupReady,
+                     "Existing Messages agents require their complete access group, even when App access is available")
+        await legacyRestart.onboarding.messagesPermissions.enableContacts(model: legacyRestart)
+        await legacyRestart.onboarding.finishPermissionSetup()
+        precondition(!legacyRestart.needsOnboarding,
+                     "Completing access must return a previously finished user directly to their workspace")
+        precondition(legacyRestart.state.selection == [agent.id] && legacyRestart.state.agentGrid == grid)
+        print("PASS: Settings permission handoff for a pre-onboarding profile survives a real AppModel restart, opens Allow access, and returns to the preserved workspace without repeating setup.")
+
+        var finished = legacyRestart.onboarding.state
+        finished.selected = [.chatgptApp, .claudeApp, .otherMessages]
+        finished.completed = [.chatgptApp]
+        finished.skipped = [.claudeApp]
+        finished.stage = .finished
+        legacyRestart.state.onboarding = finished
+        precondition(legacyRestart.onboarding.checkpointPermissionChange())
+        let finishedRestart = AppModel()
+        defer { finishedRestart.timer?.invalidate(); finishedRestart.telemetryTimer?.invalidate() }
+        precondition(finishedRestart.needsOnboarding && finishedRestart.onboarding.state.needsPermissionSetup,
+                     "The main scene must honor a permission checkpoint even when setup is finished")
+        precondition(finishedRestart.onboarding.state.selected == finished.selected &&
+                     finishedRestart.onboarding.state.completed == finished.completed &&
+                     finishedRestart.onboarding.state.skipped == finished.skipped)
+        precondition(finishedRestart.state.draft == "Permission review restart keeps this draft")
+        precondition(finishedRestart.state.selection == [agent.id] && finishedRestart.state.agentGrid == grid)
+        print("PASS: finished setup restarts at Allow access with selected, connected and skipped agents, recipients, draft and layout intact.")
+
+        finishedRestart.state.agentGrid = AgentGridLayout(visibleIDs: [.web(.chatgptApp)])
+        finishedRestart.webAgents.session(for: .web(.chatgptApp))!.updateState { $0.enabled = true }
+        finishedRestart.state.onboarding = finished
+        try finishedRestart.save()
+        let appOnlyRestart = AppModel()
+        defer { appOnlyRestart.timer?.invalidate(); appOnlyRestart.telemetryTimer?.invalidate() }
+        await appOnlyRestart.onboarding.resumePermissionsAtLaunch()
+        precondition(appOnlyRestart.needsOnboarding && !appOnlyRestart.onboarding.permissionSetupReady,
+                     "Startup must require all five grants even when only App Agents are enabled")
+        await appOnlyRestart.onboarding.skipPermissionSetup()
+        precondition(!appOnlyRestart.needsOnboarding && appOnlyRestart.onboarding.state.permissionsSkipped == true)
+        let skippedRestart = AppModel()
+        defer { skippedRestart.timer?.invalidate(); skippedRestart.telemetryTimer?.invalidate() }
+        await skippedRestart.onboarding.resumePermissionsAtLaunch()
+        precondition(!skippedRestart.needsOnboarding && skippedRestart.onboarding.state.permissionsSkipped == true,
+                     "An explicit Skip for now must survive a real restart without nagging again")
+        precondition(skippedRestart.state.draft == "Permission review restart keeps this draft" &&
+                     skippedRestart.state.selection == [agent.id])
+        precondition(skippedRestart.onboarding.checkpointPermissionChange())
+        let retriedCheckpoint = try skippedRestart.local.load().onboarding
+        precondition(retriedCheckpoint?.needsPermissionSetup == true && retriedCheckpoint?.permissionsSkipped == false,
+                     "Retrying access from Settings must save a new restart checkpoint and clear the previous skip")
+        appOnlyRestart.state.onboarding = retriedCheckpoint
+        appOnlyRestart.onboarding = OnboardingController(model: appOnlyRestart, appPermissions: CuaPermissionsController(demoInitiallyAllowed: false))
+        await appOnlyRestart.onboarding.resumePermissionsAtLaunch()
+        precondition(appOnlyRestart.needsOnboarding && !appOnlyRestart.onboarding.permissionSetupReady,
+                     "Startup must also require missing App access")
+        precondition(appOnlyRestart.onboarding.state.selected == finished.selected &&
+                     appOnlyRestart.onboarding.state.completed == finished.completed &&
+                     appOnlyRestart.onboarding.state.skipped == finished.skipped,
+                     "Revoked access must not erase finished agent setup")
+        let deniedCheckpoint = try appOnlyRestart.local.load().onboarding
+        precondition(deniedCheckpoint == appOnlyRestart.state.onboarding)
+        appOnlyRestart.onboarding.appPermissions.enableHostAccessibility(demo: true)
+        await appOnlyRestart.onboarding.finishPermissionSetup()
+        precondition(appOnlyRestart.needsOnboarding, "Device Control alone must not bypass Screen Recording")
+        appOnlyRestart.onboarding.appPermissions.enableScreenCapture(demo: true)
+        await appOnlyRestart.onboarding.finishPermissionSetup()
+        precondition(appOnlyRestart.needsOnboarding, "Both App grants must not bypass missing Contacts access")
+        await appOnlyRestart.onboarding.messagesPermissions.enableContacts(model: appOnlyRestart)
+        await appOnlyRestart.onboarding.finishPermissionSetup()
+        precondition(!appOnlyRestart.needsOnboarding && appOnlyRestart.onboarding.state.stage == .finished)
+        precondition(appOnlyRestart.onboarding.state.selected == finished.selected &&
+                     appOnlyRestart.onboarding.state.completed == finished.completed &&
+                     appOnlyRestart.onboarding.state.skipped == finished.skipped)
+        precondition(appOnlyRestart.state.draft == "Permission review restart keeps this draft" &&
+                     appOnlyRestart.state.selection == [agent.id])
+        precondition(appOnlyRestart.webAgents.session(for: .web(.chatgptApp))!.state.attempts.isEmpty)
+        print("PASS: actual launch checks require all five grants, preserve Skip for now across restart, resume a Settings retry, reject partial grants, and return to the saved workspace after simulated approval without sending.")
+        appOnlyRestart.webAgents.session(for: .web(.chatgptApp))!.updateState { $0.enabled = false }
+
+        model.state.onboarding = nil
+        model.state.agentGrid = nil
         model.onboarding.reviewMessagesAgents()
         let relaunched = AppModel()
         precondition(relaunched.state.selection == [agent.id])
@@ -73,12 +164,13 @@ import msgblastCore
         let savedLegacyMigration = try relaunched.local.load().onboarding
         precondition(savedLegacyMigration == relaunched.onboarding.state)
         relaunched.onboarding.begin()
-        precondition(relaunched.onboarding.state.currentStep == .agent(.wabi), "Apps-only onboarding must continue without returning to permissions")
-        print("PASS: resumed apps-only chooser drops the hidden legacy Messages prerequisite through real permission refresh, saves the migration, retains agent identity, and starts the selected native connection.")
+        precondition(relaunched.onboarding.state.needsPermissionSetup && relaunched.onboarding.state.stage == .choosing,
+                     "A legacy partial grant must return to Allow access before connecting apps")
+        print("PASS: resumed apps-only chooser drops the hidden legacy Messages prerequisite through real permission refresh, saves the migration, retains agent identity, and requires the remaining permissions before connecting.")
 
         for completed: Set<OnboardingChoice> in [[], [.wabi]] {
             var deferred = OnboardingState()
-            deferred.completePermissions(messaging: false, apps: true)
+            deferred.completePermissions(messaging: true, apps: true)
             deferred.selected = completed.union([.geminiApp])
             deferred.completed = completed
             deferred.stage = .connecting
@@ -136,7 +228,8 @@ import msgblastCore
         resumed.onboarding.appPermissions.enableHostAccessibility(demo: true)
         resumed.onboarding.appPermissions.enableScreenCapture(demo: true)
         await resumed.onboarding.finishPermissionSetup()
-        precondition(resumed.onboarding.state.approvedPermissionSections == [.apps], "Granting one section must not replay the saved Messaging approval")
+        precondition(resumed.onboarding.state == checkpoint && !resumed.onboarding.permissionSetupReady,
+                     "Both App grants must not complete setup while Messaging access is missing")
         precondition(resumed.onboarding.state.selected == progress.selected && resumed.onboarding.state.currentStep == pendingStep)
         resumed.state.onboarding = checkpoint
         await resumed.onboarding.messagesPermissions.enableContacts(model: resumed)
@@ -530,7 +623,8 @@ import msgblastCore
         precondition(automaticMessages.state.onboarding?.stage == .feedback, "Connected Messages agents go straight to the final screen")
         precondition(automaticMessages.state.onboarding?.messageAgentIDs["fo"] == added.id)
         var appsOnly = OnboardingState()
-        appsOnly.completePermissions(messaging: false, apps: true)
+        appsOnly.permissionsCompleted = true
+        appsOnly.revalidatePermissionSections([.apps])
         automaticMessages.state.onboarding = appsOnly
         await automaticMessages.onboarding.addMessagesAutomatically(suggestions: [foundFo])
         precondition(automaticMessages.state.onboarding == appsOnly, "App-only approval cannot authorize Messages discovery")

@@ -44,6 +44,9 @@ struct OnboardingPermissionsView: View {
                 }
                 if setup.permissionChecksBusy { ProgressView().controlSize(.small) }
                 Spacer()
+                Button("Skip for now") { Task { await setup.skipPermissionSetup() } }
+                    .disabled(busy)
+                    .accessibilityIdentifier("skip-permissions")
                 Button("Continue") { Task { await setup.finishPermissionSetup() } }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled(!setup.permissionSetupReady || busy)

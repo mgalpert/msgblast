@@ -39,7 +39,7 @@ final class AppModel: ObservableObject {
     }
     @Published var reviewingSharingChoice = false
     var onboardingRestartRequested = false
-    var needsOnboarding: Bool { state.onboarding.map { !$0.isFinished } ?? false }
+    var needsOnboarding: Bool { state.onboarding.map { !$0.isFinished || $0.needsPermissionSetup } ?? false }
     var usesMessages: Bool {
         (state.onboarding?.stage == .connecting && state.onboarding?.currentStep == .messages) || !state.agents.isEmpty ||
         state.comparisons.contains { !$0.members.isEmpty } || accessGuide.flow.isActive

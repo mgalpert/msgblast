@@ -10,15 +10,12 @@ struct PermissionsSettingsView: View {
     init(model: AppModel) { self.model = model; messages = model.onboarding.messagesPermissions }
 
     var body: some View {
-        PermissionControlsView(model: model, setup: model.onboarding, checkpointOnboarding: false) {
+        PermissionControlsView(model: model, setup: model.onboarding) {
             openedHistorySettings = true
         }
         if openedHistorySettings && messages.history != .allowed {
             Button("Restart & check access") {
-                do { try model.saveForTermination() }
-                catch { model.error = "Could not save before restarting: \(error.localizedDescription)"; return }
-                model.onboardingRestartRequested = true
-                NSApp.terminate(nil)
+                model.onboarding.restartForAccess()
             }.disabled(model.busy || model.webBroadcastBusy)
         }
     }
@@ -27,7 +24,6 @@ struct PermissionsSettingsView: View {
 struct PermissionControlsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var setup: OnboardingController
-    var checkpointOnboarding = true
     var onHistorySettingsOpened: () -> Void = {}
     @ObservedObject private var messages: AppPermissions
     @ObservedObject private var apps: CuaPermissionsController
@@ -35,11 +31,10 @@ struct PermissionControlsView: View {
     @StateObject private var appGuide = MessagesAccessGuide(pendingKey: "appAccessHandoffPending")
     @State private var saveError: String?
 
-    init(model: AppModel, setup: OnboardingController, checkpointOnboarding: Bool = true,
+    init(model: AppModel, setup: OnboardingController,
          onHistorySettingsOpened: @escaping () -> Void = {}) {
         self.model = model
         self.setup = setup
-        self.checkpointOnboarding = checkpointOnboarding
         self.onHistorySettingsOpened = onHistorySettingsOpened
         messages = setup.messagesPermissions
         apps = setup.appPermissions
@@ -112,18 +107,14 @@ struct PermissionControlsView: View {
     }
 
     private func refresh() async {
-        if checkpointOnboarding { await setup.refreshPermissions() }
-        else {
-            await messages.refresh(model: model)
-            await apps.refresh(demo: model.demo)
-        }
+        await setup.refreshPermissions()
     }
 
     private func checkpoint() -> Bool {
         guard !busy else { return false }
-        if checkpointOnboarding { return setup.checkpointPermissionChange() }
-        do { try model.saveForTermination(); saveError = nil; return true }
-        catch { saveError = "Could not save before changing access: \(error.localizedDescription)"; return false }
+        let saved = setup.checkpointPermissionChange()
+        saveError = saved ? nil : setup.error
+        return saved
     }
 
     private func showAppAccessGuide(capture: Bool) {

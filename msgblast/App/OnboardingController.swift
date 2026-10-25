@@ -65,6 +65,13 @@ final class OnboardingController: ObservableObject {
         appPermissions.hostAccessibility == .checking || appPermissions.windowCapture == .checking
     }
 
+    func resumePermissionsAtLaunch() async {
+        await refreshPermissions()
+        guard model.state.onboarding == nil || state.isFinished,
+              state.permissionsSkipped != true, !permissionSetupReady else { return }
+        checkpointPermissionChange()
+    }
+
     func refreshPermissions() async {
         guard !checkingPermissions else { return }
         checkingPermissions = true
@@ -76,12 +83,14 @@ final class OnboardingController: ObservableObject {
         if state.permissionsCompleted == true {
             let sections = permissionReadiness.completedSections
             var next = state
-            if sections.isEmpty { next.preparePermissionChange() }
+            if !permissionSetupReady && next.permissionsSkipped != true { next.preparePermissionChange() }
             next.revalidatePermissionSections(sections)
-            next.completed = next.completed.filter { choice in
-                if choice.isMessages { return sections.contains(.messaging) }
-                if choice.provider?.desktopApp != nil { return sections.contains(.apps) }
-                return true
+            if !next.isFinished {
+                next.completed = next.completed.filter { choice in
+                    if choice.isMessages { return sections.contains(.messaging) }
+                    if choice.provider?.desktopApp != nil { return sections.contains(.apps) }
+                    return true
+                }
             }
             if next != state {
                 // Revoked access must stay revoked in memory even when storage
@@ -97,21 +106,39 @@ final class OnboardingController: ObservableObject {
         guard !permissionChecksBusy, !model.busy, !model.webBroadcastBusy else { return }
         await refreshPermissions()
         let ready = permissionReadiness
-        guard ready.canContinue else { return }
+        guard permissionSetupReady else { return }
         error = nil
         edit { $0.completePermissions(messaging: ready.messagingReady, apps: ready.appsReady) }
         await addMessagesAutomatically()
     }
 
+    func skipPermissionSetup() async {
+        guard !permissionChecksBusy, !model.busy, !model.webBroadcastBusy else { return }
+        await refreshPermissions()
+        let ready = permissionReadiness
+        error = nil
+        edit { $0.skipPermissions(messaging: ready.messagingReady, apps: ready.appsReady) }
+        await addMessagesAutomatically()
+    }
+
     @discardableResult
     func checkpointPermissionChange() -> Bool {
-        guard !model.busy, !model.webBroadcastBusy, var next = model.state.onboarding else { return false }
+        guard !model.busy, !model.webBroadcastBusy else { return false }
         let previous = model.state.onboarding
+        let previousGrid = model.state.agentGrid
+        var next = previous ?? OnboardingState()
+        if previous == nil {
+            // Existing users may predate onboarding. A permission restart must
+            // preserve their inferred workspace, not treat them as a new user.
+            model.state.agentGrid = previousGrid ?? model.agentGridLayout
+            next.stage = .finished
+        }
         next.preparePermissionChange()
         model.state.onboarding = next
         do { try model.saveForTermination(); error = nil; return true }
         catch {
             model.state.onboarding = previous
+            model.state.agentGrid = previousGrid
             self.error = "Could not save setup progress: \(error.localizedDescription)"
             return false
         }
@@ -319,7 +346,7 @@ final class OnboardingController: ObservableObject {
         defer { if checkGeneration == generation { checking = false } }
         await refreshPermissions()
         guard checkGeneration == generation, !state.needsPermissionSetup,
-              permissionReadiness.canContinue else { return }
+              permissionReadiness.canContinue || state.permissionsSkipped == true else { return }
         model.refresh()
         var hasUsableAgent = false
         var checkedChoices: Set<OnboardingChoice> = []

@@ -216,12 +216,18 @@ Device Control and Data Access, and Screen Recording permissions. The bundled
 CuaDriver runs in private embedded mode under msgblast’s permission identity;
 there is no separate driver installation or driver permission checklist.
 
-Continue requires one complete usable permission group: Full Disk Access,
-Contacts, and Automation for Messages, or host app control, Screen Recording,
-and an available bundled helper for Mac apps. These groups are readiness rules,
-not additional user-facing setup steps. Checks refresh when the app regains
-focus. Onboarding progress is saved before permission handoffs and survives
-macOS-requested restarts; saved approvals are revalidated against current access.
+Continue requires all five grants and an available bundled helper. **Skip for
+now** keeps missing access optional and records only the groups actually usable:
+Full Disk Access, Contacts, and Automation for Messages; app control and Screen
+Recording for App Agents. A skip never authorizes a missing grant.
+
+Startup checks access before showing the workspace. Missing permissions reopen
+Allow access unless the user explicitly skipped them. Settings saves the same
+checkpoint before a permission handoff, clearing an earlier skip, so a
+macOS-requested restart returns to the access screen. Completed users return
+directly to their saved workspace after approving or skipping; unfinished setup
+keeps its existing agent and connection step. Checks also refresh when the app
+regains focus; saved approvals are never treated as current OS grants.
 
 The chooser detects installed Mac apps before enabling them. Existing Messages
 agents are added automatically when messaging access is available. Website
