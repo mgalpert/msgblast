@@ -1,0 +1,95 @@
+{
+  "source_revision": "27ef612cdc6c08b2be045cac39a6f8d2c19d1cc6",
+  "base_revision": "132d964f4977f5acd7533e9e81447035ed9b73e9",
+  "app_identity": "com.msgblast.pr80-current-demo",
+  "support_profile": "msgblast-PR80-27ef612",
+  "fixture": true,
+  "updates_enabled": false,
+  "telemetry_enabled": false,
+  "native_core": {
+    "passed": 706,
+    "skipped": 1,
+    "failed": 0,
+    "skip": "DesktopAccessibilityTests/testNativeCaptureReadsTestOwnedWebKitEditorWhenAccessIsGranted: required permission unavailable",
+    "note": "Core source and unit tests unchanged by subsequent app-controller/release fixes. Final source compiled successfully; controller fixtures compiled final app-view source directly."
+  },
+  "worker": {
+    "passed": 15,
+    "failed": 0
+  },
+  "release_and_workflow_tests": {
+    "automate_release": 28,
+    "workflow_policy": 7,
+    "failed": 0
+  },
+  "native_ui_automation": {
+    "result": "runner unavailable",
+    "reason": "XCTest timed out enabling automation mode before any test assertion; no permission reset or approval performed."
+  },
+  "manual_pal_studio": {
+    "result": "pass",
+    "before_send": {
+      "requests": [],
+      "stored": 0,
+      "held": false
+    },
+    "after": {
+      "requests": [
+        {
+          "id": "F6F1B25E-0789-47E1-8460-06F4309B7FB0",
+          "note": "Synthetic close while sending"
+        },
+        {
+          "id": "F6F1B25E-0789-47E1-8460-06F4309B7FB0",
+          "note": "Synthetic close while sending"
+        }
+      ],
+      "stored": 1,
+      "held": false
+    },
+    "coverage": [
+      "synthetic prior-crash offer",
+      "review payload and context before explicit Send",
+      "held response while window closes",
+      "pending journal retained without dismissal",
+      "Help reopen and identical retry",
+      "confirmed receipt disables duplicate Send"
+    ],
+    "driver_note": "Retry AXPress returned -25200 despite dispatch. Fresh Sending state and exactly one additional request proved its effect; no action was replayed."
+  },
+  "controller_fixture": {
+    "result": "pass",
+    "transport": "actual CrashReviewSession and actual Worker handler over loopback",
+    "coverage": [
+      "zero requests before Send",
+      "503 after durable storage",
+      "identical receipt/context across reopening",
+      "one stored report",
+      "duplicate blocking",
+      "oversized context editable",
+      "held response confirms after review close",
+      "empty review receives delayed incident",
+      "refresh preserves unsent draft and in-flight selection",
+      "completed report advances to next incident"
+    ]
+  },
+  "review": {
+    "result": "three findings fixed and independently rechecked",
+    "findings": [
+      "retain symbols before publication",
+      "closing review preserves consented upload",
+      "refresh an open review when a delayed report arrives"
+    ]
+  },
+  "production": {
+    "handler_deployed": false,
+    "release_executed": false,
+    "macos_generated_crash_verified": false
+  },
+  "python": {
+    "passed": 121,
+    "skipped": 0,
+    "failed": 0,
+    "interpreter": "existing pinned installer virtual environment"
+  }
+}
