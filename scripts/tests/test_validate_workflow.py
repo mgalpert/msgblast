@@ -23,6 +23,7 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: xcode-27", text)
         self.assertIn("DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer", text)
         self.assertIn("-only-testing:msgblastTests", text)
+        self.assertIn("-p test_test_builds.py -k real_lipo -v", text)
         self.assertIn("python3 scripts/test_updates.py --derived-data build/updater-validation", text)
         self.assertIn("ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo", text)
         self.assertIn(CHECKOUT, text)
