@@ -128,7 +128,9 @@ xcodebuild -project msgblast.xcodeproj -scheme msgblast \
 This is a compile check. Blue artwork does not enable Demo mode; signing-disabled
 output is not the runnable packaged Demo. Use the preview script for runnable apps
 with explicit mode and state isolation. Intel Macs can attempt this native-
-destination compile path, but the two-app packager currently hardcodes `arm64`.
+destination compile path. Preview packaging defaults to `arm64`; add `--universal`
+to build and verify arm64/x86_64 app, framework, and embedded helper slices. The
+feature testing-build workflow requires this universal package before signing.
 
 For debugging, open `msgblast.xcodeproj`, select **msgblast**, and use Debug.
 The unmodified scheme uses the production bundle ID and support folder; plain
