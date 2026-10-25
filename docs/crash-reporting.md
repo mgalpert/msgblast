@@ -10,8 +10,9 @@ days, future-dated, malformed, empty, or over 2 MiB are ignored. Collection retr
 at 5 and 30 seconds after launch for delayed macOS writes; Help can rescan later.
 
 The app matches its exact bundle identifier and executable path. The bundled
-cloudflared helper must have the exact current app's `Contents/Helpers/cloudflared`
-path; other copies and unrelated apps are excluded. Moving the app since a crash
+cloudflared and embedded CuaDriver helpers must have the exact current app's
+`Contents/Helpers/cloudflared` or `Contents/Helpers/cua-driver` path; standalone
+CuaDriver installations, other copies, and unrelated apps are excluded. Moving the app since a crash
 can make its old report ineligible. macOS path redaction can also prevent matching.
 There is no crash signal handler, process termination injection, SDK, or paid
 service. State, Messages, Contacts, and permission grants are never modified.
@@ -85,7 +86,7 @@ For an arm64 frame, symbolicate its image-relative offset with a matching dSYM:
 `atos -arch arm64 -o FILE.dSYM/Contents/Resources/DWARF/EXECUTABLE -l 0 OFFSET`.
 Use the frame's architecture and offset (convert decimal to hex if needed).
 System frames require matching OS symbols; helper frames need the matching
-upstream cloudflared symbols/binary. This compact report deliberately omits
+upstream cloudflared or CuaDriver symbols/binary. This compact report deliberately omits
 registers, raw exception reason, noncrashing threads, and OS inventories, so some
 memory corruption, deadlocks, resource terminations, and contextual failures
 will require a user-approved follow-up. There is no promise of complete crash

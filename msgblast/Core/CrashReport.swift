@@ -41,7 +41,7 @@ public struct CrashReport: Codable, Equatable, Sendable {
         let process: String
         if info["CFBundleIdentifier"] as? String == bundleIdentifier,
            path == appPath + "/Contents/MacOS/msgblast" { process = "app" }
-        else if path == appPath + "/Contents/Helpers/cloudflared" { process = "helper" }
+        else if ["cloudflared", "cua-driver"].contains(where: { path == appPath + "/Contents/Helpers/" + $0 }) { process = "helper" }
         else { return nil }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -81,13 +81,12 @@ public struct CrashReport: Codable, Equatable, Sendable {
         var reports: [CrashReport] = []
         for folder in [directory, directory.appendingPathComponent("Retired")] {
             let urls = (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])) ?? []
-            for url in urls where url.pathExtension == "ips" && (url.lastPathComponent.lowercased().hasPrefix("msgblast") || url.lastPathComponent.hasPrefix("cloudflared")) {
+            for url in urls where url.pathExtension == "ips" && ["msgblast", "cloudflared", "cua-driver"].contains(where: { url.lastPathComponent.lowercased().hasPrefix($0) }) {
                 guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]),
                       values.isRegularFile == true, values.isSymbolicLink != true,
                       let size = values.fileSize, size <= maximumFileBytes,
                       let modified = values.contentModificationDate, now.timeIntervalSince(modified) <= 31 * 86400,
                       let handle = try? FileHandle(forReadingFrom: url) else { continue }
-                // Bounded read even if the file grows after stat.
                 let data = try? handle.read(upToCount: maximumFileBytes + 1)
                 try? handle.close()
                 if let data, let report = parse(data, bundleIdentifier: bundleIdentifier, appPath: appPath, now: now) { reports.append(report) }

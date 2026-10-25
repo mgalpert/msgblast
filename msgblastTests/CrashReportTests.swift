@@ -66,12 +66,32 @@ final class CrashReportTests: XCTestCase {
         let split = try XCTUnwrap(raw.firstIndex(of: 10))
         var body = try XCTUnwrap(JSONSerialization.jsonObject(with: raw[(split + 1)...]) as? [String: Any])
         body["bundleInfo"] = nil
-        body["procPath"] = "/Applications/msgblast.app/Contents/Helpers/cloudflared"
-        let helper = raw[..<split] + Data([10]) + (try JSONSerialization.data(withJSONObject: body))
-        let parsed = try XCTUnwrap(CrashReport.parse(helper, bundleIdentifier: "com.msgblast.mac", appPath: "/Applications/msgblast.app", now: now))
-        XCTAssertEqual(parsed.process, "helper")
-        XCTAssertEqual(parsed.version, "unknown")
-        XCTAssertNil(CrashReport.parse(helper, bundleIdentifier: "com.msgblast.mac", appPath: "/Applications/other.app", now: now))
+        for executable in ["cloudflared", "cua-driver"] {
+            body["procPath"] = "/Applications/msgblast.app/Contents/Helpers/" + executable
+            let helper = raw[..<split] + Data([10]) + (try JSONSerialization.data(withJSONObject: body))
+            let parsed = try XCTUnwrap(CrashReport.parse(helper, bundleIdentifier: "com.msgblast.mac", appPath: "/Applications/msgblast.app", now: now), executable)
+            XCTAssertEqual(parsed.process, "helper")
+            XCTAssertEqual(parsed.version, "unknown")
+            XCTAssertEqual(parsed.frames.first?.offset, 1234)
+            XCTAssertNil(CrashReport.parse(helper, bundleIdentifier: "com.msgblast.mac", appPath: "/Applications/other.app", now: now))
+        }
+    }
+    func testCollectorIncludesEmbeddedDriverButExcludesStandaloneDriver() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let raw = try report()
+        let split = try XCTUnwrap(raw.firstIndex(of: 10))
+        var body = try XCTUnwrap(JSONSerialization.jsonObject(with: raw[(split + 1)...]) as? [String: Any])
+        body["bundleInfo"] = nil
+        body["procPath"] = "/Applications/msgblast.app/Contents/Helpers/cua-driver"
+        try (raw[..<split] + Data([10]) + JSONSerialization.data(withJSONObject: body)).write(to: root.appendingPathComponent("cua-driver-embedded.ips"))
+        body["procPath"] = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+        let otherHeader: [String: Any] = ["bug_type": "309", "incident_id": "87654321-1234-1234-1234-123456789abc"]
+        try (JSONSerialization.data(withJSONObject: otherHeader) + Data([10]) + JSONSerialization.data(withJSONObject: body)).write(to: root.appendingPathComponent("cua-driver-standalone.ips"))
+        let reports = CrashReport.collect(directory: root, bundleIdentifier: "com.msgblast.mac", appPath: "/Applications/msgblast.app", now: now)
+        XCTAssertEqual(reports.map(\.incident), ["12345678-1234-1234-1234-123456789abc"])
+        XCTAssertFalse(try XCTUnwrap(reports.first).preview.contains("/Applications"))
     }
     func testMalformedJournalFailsClosedAndNeverChangesApplicationState() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

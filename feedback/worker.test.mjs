@@ -36,6 +36,15 @@ test('rejects malformed fields and unknown input',async()=>{
  for(const value of [{...report,id:'../file'},{...report,kind:'other'},{...report,note:' '},{...report,note:'x'.repeat(16001)},{...report,contact:'bad'},{...report,contact:'a'.repeat(121)+'@x.com'},{...report,files:[]},[],null])assert.equal((await send(value)).status,400);
  assert.equal((await send({id,kind:'bug',note:'🐈'.repeat(8000)})).status,201);
 });
+test('accepts bounded native-app provider counts while retaining the private diagnostics allowlist',async()=>{
+ const env=environment();
+ const counts={museApp:1,grokBotApp:1,wabi:1,geminiApp:1,chatgptApp:2,dotsApp:1,claudeApp:1,os3:1,hark:1};
+ const input={...report,diagnostics:JSON.stringify({...diagnostics,webProviderCounts:counts})};
+ assert.equal((await send(input,env)).status,201);
+ assert.deepEqual(JSON.parse(env.objects.get(`reports/${id}.json`).value).diagnostics.webProviderCounts,counts);
+ for(const bad of [{unknownApp:1},{chatgptApp:-1},{wabi:'private text'},{dotsApp:1000001}])
+  assert.equal((await send({...report,diagnostics:JSON.stringify({...diagnostics,webProviderCounts:bad})})).status,400);
+});
 test('diagnostics allowlist rejects arbitrary fields, types and categories',async()=>{
  for(const value of [{...diagnostics,transcript:'secret'},{...diagnostics,agentCount:-1},{...diagnostics,agentCount:1000001},{...diagnostics,fixtureMode:'true'},{...diagnostics,messagesStatus:'private text'},{...diagnostics,webProviderCounts:{unknown:1}},{...diagnostics,supportFolder:'/Users/private'},{...diagnostics,updatesReason:'a token'},{...diagnostics,version:'secret with spaces'},{}])assert.equal((await send({...report,diagnostics:JSON.stringify(value)})).status,400);
  assert.equal((await send({...report,diagnostics})).status,400);

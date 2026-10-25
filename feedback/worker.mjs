@@ -21,7 +21,7 @@ const diagnosticFields = {
   supportFolder: value => typeof value === 'string' && (['msgblast','MsgBlast-WebPreview','unknown'].includes(value) || /^msgblast-[A-Za-z0-9][A-Za-z0-9-]{0,40}$/.test(value)),
   updatesReason: choice(['','Updates are disabled in previews and test runs.','This development build has no configured update service.','unavailable']),
   variant: choice(['production','development','demo','other']),
-  webProviderCounts: value => object(value) && Object.entries(value).every(([key,value]) => ['muse','chatgpt','claude','grok','codexCLI','claudeCode','dots','grokbot'].includes(key) && count(value) && value > 0),
+  webProviderCounts: value => object(value) && Object.entries(value).every(([key,value]) => ['muse','chatgpt','claude','grok','codexCLI','claudeCode','dots','grokbot','os3','hark','museApp','grokBotApp','wabi','geminiApp','chatgptApp','dotsApp','claudeApp'].includes(key) && count(value) && value > 0),
   windowStyle: choice(['connected','separate','unknown'])
 };
 
