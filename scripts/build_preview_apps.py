@@ -25,7 +25,8 @@ def run(command, cwd):
 
 def is_mach_o(path):
     try:
-        magic = path.open("rb").read(4)
+        with path.open("rb") as file:
+            magic = file.read(4)
     except OSError:
         return False
     return magic in {bytes.fromhex(value) for value in (
@@ -127,6 +128,24 @@ def notarize_preview(app, options, bundle_id):
             "designated_requirement": requirement, "notarization": result}
 
 
+def verify_universal_bundle(app):
+    """Inspect packaged code without executing any feature binary."""
+    for relative in ("Contents/Helpers/cua-driver", "Contents/Helpers/cloudflared"):
+        helper = app / relative
+        if not helper.is_file() or helper.is_symlink() or not os.access(helper, os.X_OK) or not is_mach_o(helper):
+            raise RuntimeError(f"Missing regular executable helper: {relative}")
+    executable = bundle_executable(app)
+    if executable is None or not executable.is_file() or not is_mach_o(executable):
+        raise RuntimeError("Missing Mach-O app executable")
+    for binary in app.rglob("*"):
+        if binary.is_file() and not binary.is_symlink() and is_mach_o(binary):
+            for architecture in ("arm64", "x86_64"):
+                run(["xcrun", "lipo", "-verify_arch", architecture, str(binary)], app.parent)
+    for name in ("cua-driver.json", "CuaDriverNotices.txt", "cloudflared.json", "CloudflaredNotices.txt"):
+        if not (app / "Contents/Resources" / name).is_file():
+            raise RuntimeError(f"Missing embedded helper resource: {name}")
+
+
 def retain_icon_diagnostic(output, variant, icns):
     destination = output / "diagnostics" / f"{variant['id']}-{icns.name}"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -135,16 +154,17 @@ def retain_icon_diagnostic(output, variant, icns):
     return destination
 
 
-def package_variant(workspace, variant, source_revision, output, enable_dev_telemetry=False, signing=None):
+def package_variant(workspace, variant, source_revision, output, enable_dev_telemetry=False, signing=None, universal=False):
     derived = workspace / "derived" / variant["id"]
     if derived.exists():
         shutil.rmtree(derived)
+    architecture_settings = ["ARCHS=arm64 x86_64", "ONLY_ACTIVE_ARCH=NO"] if universal else []
     run([
         "xcodebuild", "-project", str(workspace / "msgblast.xcodeproj"), "-scheme", "msgblast",
         "-configuration", "Debug", "-derivedDataPath", str(derived),
         "-destination", "platform=macOS,arch=arm64",
         f"ASSETCATALOG_COMPILER_APPICON_NAME={variant['icon_name']}",
-        "CODE_SIGNING_ALLOWED=NO",
+        "CODE_SIGNING_ALLOWED=NO", *architecture_settings,
         f"MSGBLAST_APP_BUNDLE_IDENTIFIER={variant['bundle_id']}",
         "SPARKLE_FEED_URL=", "SPARKLE_PUBLIC_ED_KEY=",
         "-quiet", "build",
@@ -186,6 +206,8 @@ def package_variant(workspace, variant, source_revision, output, enable_dev_tele
             f"{variant['id']} compiled icon {icns.name} representation {representation} "
             f"RGB {red:.1f} {green:.1f} {blue:.1f} looks {kind}, expected {expected}"
         )
+    if universal:
+        verify_universal_bundle(app)
     sign_bundle(app, workspace / "msgblast/msgblastDebug.entitlements",
                 signing.signing_identity if signing else "-", signing.keychain if signing else None)
     signing_record = notarize_preview(app, signing, variant["bundle_id"]) if signing else {"mode": "ad-hoc"}
@@ -246,6 +268,7 @@ def main():
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--enable-dev-telemetry", action="store_true", help="Enable consent-controlled real Dev statistics through Cloudflare; Demo remains disabled")
+    parser.add_argument("--universal", action="store_true", help="Build and verify arm64 and x86_64 app, frameworks, and helpers")
     parser.add_argument("--variant", choices=("all", "development", "demo"), default="all")
     parser.add_argument("--signing-identity", help="Maintainer Developer ID Application identity; never falls back to ad-hoc")
     parser.add_argument("--team-id")
@@ -274,7 +297,7 @@ def main():
         workspace = preview.copy_workspace(Path(temporary) / "src")
         for variant in preview.VARIANTS.values():
             if args.variant == "all" or args.variant == variant["id"]:
-                records.append(package_variant(workspace, variant, args.sha, output, args.enable_dev_telemetry, signing))
+                records.append(package_variant(workspace, variant, args.sha, output, args.enable_dev_telemetry, signing, args.universal))
     if len({record["compiled_icon_sha256"] for record in records}) != len(records):
         raise SystemExit("Compiled preview icons are identical, so artwork selection did not change the app")
     if len({record["compiled_icon"] for record in records}) != len(records):
