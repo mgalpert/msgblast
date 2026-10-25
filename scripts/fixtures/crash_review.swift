@@ -17,6 +17,12 @@ struct CrashReviewFixture {
         let secondRaw = String(decoding: raw, as: UTF8.self).replacingOccurrences(of: "12345678-1234-1234-1234-123456789abc", with: "87654321-1234-1234-1234-123456789abc")
         guard let second = CrashReport.parse(Data(secondRaw.utf8), bundleIdentifier: "com.msgblast.demo", appPath: "/Applications/msgblast.app") else { fatalError("Second report did not parse") }
         let store = try CrashReportStore(directory: root)
+        let delayed = CrashReviewSession(reports: [], store: store)
+        delayed.refresh(reports: [second], store: store)
+        precondition(delayed.report == second && delayed.preview == second.preview, "An open empty review must receive a newly detected report")
+        delayed.note = "Keep this unsent context"
+        delayed.refresh(reports: [crash, second], store: store)
+        precondition(delayed.report == second && delayed.note == "Keep this unsent context", "Refreshing reports must preserve the selected incident and its draft")
         let selection = CrashReviewSession(reports: [crash, second], store: store)
         selection.note = "Context for the first report"
         selection.selection = 1
@@ -46,7 +52,33 @@ struct CrashReviewFixture {
         oversized.send()
         precondition(oversizedStore.attempt(crash) == nil, "Oversized context must remain editable rather than becoming a frozen retry")
         try await checkRequests(2, stored: 1)
-        print("PASS: review sends nothing; explicit send; uncertain acknowledgement; frozen retry after relaunch; one stored report; duplicate send blocked; oversized context remains editable")
+        let closing = CrashReviewSession(reports: [second], store: store)
+        closing.note = "Synthetic close while sending"
+        closing.send()
+        var held = false
+        for _ in 0..<150 {
+            let (data, _) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:8128/fixture-status")!)
+            let status = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            if status["held"] as? Bool == true { held = true; break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        precondition(held && closing.sending, "The response must still be in flight")
+        closing.refresh(reports: [crash, second], store: store)
+        precondition(closing.report == second && closing.pending?.note == "Synthetic close while sending", "Refreshing cannot replace an in-flight incident or frozen context")
+        closing.close()
+        precondition(store.shouldOffer(second), "Closing an in-flight upload must not dismiss its incident")
+        _ = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:8128/fixture-release")!)
+        await finished(closing)
+        precondition(closing.sent, "Closing the window must let its consented upload confirm")
+        let confirmedStore = try CrashReportStore(directory: root)
+        precondition(confirmedStore.isSubmitted(second), "Confirmation must survive reopening")
+        try await checkRequests(3, stored: 2)
+        closing.refresh(reports: [crash, second], store: store)
+        precondition(closing.report == crash && closing.note.isEmpty, "A finished report must not hide the next incident")
+        let dismissed = CrashReviewSession(reports: [crash], store: try CrashReportStore(directory: root.appendingPathComponent("dismissed")))
+        dismissed.close()
+        precondition(dismissed.store?.shouldOffer(crash) == false, "Closing an untouched review still remembers dismissal without sending")
+        print("PASS: review sends nothing; explicit send; uncertain acknowledgement; frozen retry after relaunch; one stored report; duplicate send blocked; oversized context remains editable; closing an in-flight upload preserves confirmation")
     }
     @MainActor private static func finished(_ session: CrashReviewSession) async {
         for _ in 0..<150 {

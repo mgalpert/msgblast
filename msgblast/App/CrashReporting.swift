@@ -31,7 +31,6 @@ final class CrashReporting {
         }
     }
     func show() {
-        guard !CrashReportWindowController.focusIfOpen() else { return }
         Task { await scan(); CrashReportWindowController.show(reports: reports, store: store, error: error) }
     }
     private func scan() async {

@@ -18,10 +18,16 @@ There is no crash signal handler, process termination injection, SDK, or paid
 service. State, Messages, Contacts, and permission grants are never modified.
 
 The launch offer has **Review report** and **Not now**. Neither uploads anything.
-Not now and closing/dismissing the review remember the incident locally. Help →
+Not now, Dismiss, and closing an untouched review remember the incident locally. Help →
 **Review Crash Reports…**, also linked from feedback, allows later review of
 eligible reports including dismissed reports. Only **Send crash report** submits.
 Optional context is user-authored; the form asks users to omit private content.
+
+Closing the review after Send hides the window while the consented upload
+finishes and journals its receipt. An unconfirmed attempt remains available for
+an identical retry, including at the next launch. A delayed crash refreshes an
+already-open review; active uploads and unsent context keep their selected
+incident while newly detected reports become available in the Crash picker.
 
 The complete crash summary is visible before submission. It is reconstructed
 from an allowlist: format version, incident UUID, app/helper category, app bundle
@@ -72,9 +78,10 @@ version/build numbers may be reused: UUID verification is essential. Historical
 reports without retained matching binaries/symbols may remain unsymbolicated.
 
 Release builds explicitly generate dSYMs for the app and core framework.
-The release workflow verifies both expected dSYMs, then retains the archive's dSYMs together with release JSON
-in a separate `msgblast-symbols-RUN-ATTEMPT` Actions artifact for 90 days (subject
-to repository retention policy). Download it before expiration and retain it in
+The release workflow prepares the signed build, verifies both expected dSYMs,
+and retains them with release JSON in a separate `msgblast-symbols-RUN-ATTEMPT`
+Actions artifact before publishing. Artifacts expire after 90 days (subject to
+repository retention policy). Download them before expiration and retain them in
 maintainer-controlled storage for the supported lifetime of that build. The
 existing public release ZIP/feed is unchanged. This source change does not create
 symbols for old releases, execute a release, or prove retention in a future run.
@@ -99,7 +106,8 @@ Run the controller/intake fixture on the dedicated build Mac after building core
 private intake handler in a loopback server and simulates a 503 acknowledgement
 after a successful write; no production service is contacted. It verifies zero
 requests before Send, persisted exact retry after reopening, one stored report,
-duplicate blocking, and oversized context remaining editable.
+duplicate blocking, oversized context remaining editable, a held acknowledgement
+finishing after the review closes, and refreshed reports preserving active work.
 
 Native regression tests use synthetic IPS data, temporary journals, unrelated
 app/path cases, and state-preservation checks. Worker tests use private in-memory

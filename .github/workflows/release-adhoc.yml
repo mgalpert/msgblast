@@ -122,7 +122,8 @@ jobs:
           MSGBLAST_NOTARY_ISSUER_ID: ${{ vars.MSGBLAST_NOTARY_ISSUER_ID }}
         run: python3 scripts/ci_signing.py setup
 
-      - name: Prepare and publish signed release
+      - name: Prepare signed release
+        id: prepare
         env:
           MSGBLAST_ED_KEY_FILE: ${{ runner.temp }}/msgblast-sparkle-private-key
           MSGBLAST_SPARKLE_PRIVATE_KEY: ${{ secrets.MSGBLAST_SPARKLE_PRIVATE_KEY }}
@@ -139,27 +140,18 @@ jobs:
           Path(os.environ['MSGBLAST_ED_KEY_FILE']).write_text(os.environ['MSGBLAST_SPARKLE_PRIVATE_KEY'].strip() + '\n')
           PY
           unset MSGBLAST_SPARKLE_PRIVATE_KEY
-          python3 scripts/automate_release.py --version "$MSGBLAST_RELEASE_VERSION"
-
-      - name: Retain successful release artifacts
-        if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: msgblast-release-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build/releases/*/publish/
-          if-no-files-found: error
-          retention-days: 30
+          python3 scripts/automate_release.py --version "$MSGBLAST_RELEASE_VERSION" --prepare-only
 
       - name: Verify crash symbolication inputs
         if: success()
+        env:
+          MSGBLAST_PREPARED_OUTPUT: ${{ steps.prepare.outputs.prepared-output }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import os
           import subprocess
-          archives = list(Path('build/releases').glob('*/msgblast.xcarchive'))
-          if len(archives) != 1:
-              raise SystemExit('Expected one reviewed release archive')
-          archive = archives[0]
+          archive = Path(os.environ['MSGBLAST_PREPARED_OUTPUT']) / 'msgblast.xcarchive'
           for executable, symbol in (
               ('Contents/MacOS/msgblast', 'msgblast.app.dSYM/Contents/Resources/DWARF/msgblast'),
               ('Contents/Frameworks/msgblastCore.framework/msgblastCore', 'msgblastCore.framework.dSYM/Contents/Resources/DWARF/msgblastCore'),
@@ -181,10 +173,30 @@ jobs:
         with:
           name: msgblast-symbols-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            build/releases/*/msgblast.xcarchive/dSYMs/
-            build/releases/*/publish/*.json
+            ${{ steps.prepare.outputs.prepared-output }}/msgblast.xcarchive/dSYMs/
+            ${{ steps.prepare.outputs.prepared-output }}/publish/*.json
           if-no-files-found: error
           retention-days: 90
+
+      - name: Publish prepared signed release
+        env:
+          MSGBLAST_PREPARED_OUTPUT: ${{ steps.prepare.outputs.prepared-output }}
+          MSGBLAST_ED_KEY_FILE: ${{ runner.temp }}/msgblast-sparkle-private-key
+          AWS_ACCESS_KEY_ID: ${{ secrets.MSGBLAST_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MSGBLAST_R2_SECRET_ACCESS_KEY }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        run: python3 scripts/automate_release.py --version "$MSGBLAST_RELEASE_VERSION" --publish-prepared "$MSGBLAST_PREPARED_OUTPUT"
+
+      - name: Retain successful release artifacts
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msgblast-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prepare.outputs.prepared-output }}/publish/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Remove temporary Apple signing credentials
         if: always() && env.MSGBLAST_SIGNING_MODE == 'developer-id'

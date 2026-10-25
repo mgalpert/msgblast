@@ -4,8 +4,8 @@ import msgblastCore
 
 @MainActor
 final class CrashReviewSession: ObservableObject {
-    let reports: [CrashReport]
-    let store: CrashReportStore?
+    @Published private(set) var reports: [CrashReport]
+    private(set) var store: CrashReportStore?
     @Published var selection = 0 {
         didSet { if selection != oldValue { note = ""; message = nil } }
     }
@@ -24,6 +24,18 @@ final class CrashReviewSession: ObservableObject {
     var preview: String { (pending?.report ?? report)?.preview ?? "No supported msgblast crash report was found in the last 30 days." }
     init(reports: [CrashReport], store: CrashReportStore?, error: String? = nil) {
         self.reports = reports; self.store = store; self.message = error
+    }
+    func refresh(reports incoming: [CrashReport], store: CrashReportStore?, error: String? = nil) {
+        let selected = report
+        let savedNote = note, savedMessage = message
+        let preserve = sending || pending != nil || (!sent && !note.isEmpty)
+        var updated = incoming
+        if preserve, let selected, !updated.contains(where: { $0.incident == selected.incident }) { updated.append(selected) }
+        self.store = store
+        reports = updated
+        selection = preserve ? updated.firstIndex(where: { $0.incident == selected?.incident }) ?? 0 : 0
+        note = preserve ? savedNote : ""
+        message = preserve ? savedMessage : error
     }
     func send() {
         guard !sending, !sent, let report, let store else { return }
@@ -64,6 +76,9 @@ final class CrashReviewSession: ObservableObject {
         catch { message = "Could not remember dismissal. Nothing was sent." }
     }
     func cleanup() { task?.cancel() }
+    func close() {
+        if !sending && pending == nil && !sent { dismiss() }
+    }
 }
 
 @MainActor
@@ -72,7 +87,11 @@ final class CrashReportWindowController: NSObject, NSWindowDelegate {
     private let session: CrashReviewSession
     private var hostedWindow: NSWindow?
     static func show(reports: [CrashReport], store: CrashReportStore?, error: String? = nil) {
-        guard !focusIfOpen() else { return }
+        if let current, current.hostedWindow != nil {
+            current.session.refresh(reports: reports, store: store, error: error)
+            _ = focusIfOpen()
+            return
+        }
         let controller = CrashReportWindowController(session: CrashReviewSession(reports: reports, store: store, error: error))
         current = controller
         controller.hostedWindow?.makeKeyAndOrderFront(nil)
@@ -95,7 +114,7 @@ final class CrashReportWindowController: NSObject, NSWindowDelegate {
     }
     nonisolated func windowWillClose(_ notification: Notification) {
         Task { @MainActor in
-            self.session.dismiss(); self.session.cleanup()
+            self.session.close()
             self.hostedWindow?.delegate = nil; self.hostedWindow = nil
             if Self.current === self { Self.current = nil }
         }

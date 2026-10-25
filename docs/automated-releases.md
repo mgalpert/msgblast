@@ -99,8 +99,30 @@ The README uses [the latest-download URL](https://updates.msgblast.app/latest.zi
 6. Packages the app and signs/verifies both archive and feed with the persistent
    Sparkle key. The manifest records the selected signing mode, notarization result
    (null for ad-hoc), hashes, and source revision.
-7. Uploads the ZIP with an immutable filename, downloads it anonymously and checks its SHA-256, then uploads an immutable version/build manifest. It never overwrites an existing archive.
-8. Publishes the signed appcast **last**, conditional on the prior feed's ETag (or its absence for the first release), then anonymously downloads and checks the feed hash. A concurrent publisher cannot replace a newer feed. A failed archive/download check leaves the previous feed intact.
+7. Before publication, compares the app and msgblastCore binary UUIDs against their
+   dSYMs and successfully uploads the matching symbols plus release JSON to a
+   90-day Actions artifact. A failed UUID check or symbol upload prevents public
+   artifact and feed publication.
+8. Reauthenticates the current signed feed and signing history, checks that the
+   prepared version/source match the requested version and current run SHA, and
+   requires the original feed snapshot (including ETag). It reuses the prepared
+   build and reserved counter, without rebuilding or reserving again. Uploads
+   the ZIP with an immutable filename, downloads it anonymously and checks its
+   SHA-256, then uploads an immutable version/build manifest. It never overwrites
+   an existing archive.
+9. Publishes the signed appcast **last**, conditional on the prior feed's ETag (or its absence for the first release), then anonymously downloads and checks the feed hash. A concurrent publisher cannot replace a newer feed. A failed archive/download check leaves the previous feed intact.
+
+The workflow calls `scripts/automate_release.py --version VERSION --prepare-only`
+first. This writes `prepared-output` to `GITHUB_OUTPUT`, reserving one counter and
+creating signed local artifacts but publishing no ZIP, installer, manifest, or
+feed. The counter reservation is the only R2 write in this phase. After symbol
+verification and retention succeed, `--version VERSION --publish-prepared OUTPUT`
+publishes that output. The modes are mutually exclusive and both require a
+version. `OUTPUT/publication-snapshot.json` is local preparation metadata; it is
+not uploaded to R2. A changed published feed requires fresh preparation, consuming
+a new counter as usual. Calling the script without either mode retains its
+single-command preparation/publication behavior for maintainers; it does not run
+the workflow's symbol-retention gate.
 
 The final anonymous feed check occurs after its conditional upload. If that check fails, the release may already be published even though Actions reports failure. Inspect the authenticated feed and immutable manifest before rerunning; do not assume the prior feed remains after this final-step failure.
 
