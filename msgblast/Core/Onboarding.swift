@@ -97,7 +97,7 @@ public struct OnboardingPermissionReadiness: Equatable, Sendable {
 
     public var messagingReady: Bool { fullDiskAccess && contacts && automation }
     public var appsReady: Bool { hostAccessibility && screenCapture && driverInstalled }
-    public var canContinue: Bool { messagingReady || appsReady }
+    public var canContinue: Bool { messagingReady && appsReady }
     public var completedSections: Set<OnboardingPermissionSection> {
         var sections: Set<OnboardingPermissionSection> = []
         if messagingReady { sections.insert(.messaging) }
@@ -117,6 +117,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
 
     // Optional for compatibility: older saved setups continue at their existing step.
     public var permissionsCompleted: Bool? = false
+    public var permissionsSkipped: Bool?
     public var approvedPermissionSections: Set<OnboardingPermissionSection>?
     public var connectorStartCompleted: Bool? = false
     public var connector: OnboardingConnector?
@@ -138,11 +139,23 @@ public struct OnboardingState: Codable, Equatable, Sendable {
     /// Save the permission-screen checkpoint before handing control to System Settings.
     public mutating func preparePermissionChange() {
         permissionsCompleted = false
+        permissionsSkipped = false
     }
 
     @discardableResult
     public mutating func completePermissions(messaging: Bool, apps: Bool) -> Bool {
-        guard messaging || apps else { return false }
+        guard messaging && apps else { return false }
+        recordPermissionReview(messaging: messaging, apps: apps)
+        permissionsSkipped = false
+        return true
+    }
+
+    public mutating func skipPermissions(messaging: Bool, apps: Bool) {
+        recordPermissionReview(messaging: messaging, apps: apps)
+        permissionsSkipped = true
+    }
+
+    private mutating func recordPermissionReview(messaging: Bool, apps: Bool) {
         var sections: Set<OnboardingPermissionSection> = []
         if messaging { sections.insert(.messaging) }
         if apps { sections.insert(.apps) }
@@ -154,7 +167,6 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         if stage == .choosing, messagesDiscoveryReviewed != true {
             messagesDiscoveryReviewed = true
         }
-        return true
     }
 
     public mutating func revalidatePermissionSections(_ sections: Set<OnboardingPermissionSection>) {
@@ -162,7 +174,7 @@ public struct OnboardingState: Codable, Equatable, Sendable {
         // This legacy picker is hidden now that Messages agents are discovered
         // automatically. Without Messaging access it cannot remain an invisible
         // selected prerequisite. Keep its saved agent identity and discovery data.
-        if sections.contains(.apps), !sections.contains(.messaging) { selected.remove(.otherMessages) }
+        if !isFinished, sections.contains(.apps), !sections.contains(.messaging) { selected.remove(.otherMessages) }
     }
 
     public mutating func chooseConnector(_ connector: OnboardingConnector) {

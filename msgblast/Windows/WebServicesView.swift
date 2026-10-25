@@ -279,6 +279,7 @@ struct AgentsWorkspaceView: View {
 
     private func send() {
         guard canSend else { return }
+        let model = model
         let sessions = selectedWebSessions
         let recipients = Set(nativeRecipients.map(\.id))
         if !showingComparison {
@@ -298,7 +299,6 @@ struct AgentsWorkspaceView: View {
         let originalDraft = model.state.draft
         let sentAttachments = attachments
         let broadcastCreated = Date()
-        let model = model
         let existingID = showingComparison ? nativeComparison?.id : nil
         model.webBroadcastBusy = true
         showingComparison = true

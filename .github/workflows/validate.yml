@@ -97,6 +97,9 @@ jobs:
       - name: Verify Settings permission checks and consent boundaries
         run: bash scripts/test_app_permissions.sh
 
+      - name: Verify controller state and permission recovery across app restarts
+        run: bash scripts/test_web_comparisons.sh build/updater-validation
+
   preview:
     if: >-
       github.event_name == 'workflow_dispatch' ||

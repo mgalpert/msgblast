@@ -196,6 +196,11 @@ private final class AppStartup: ObservableObject {
         // Keep comparison menus in sync without constructing the model for an
         // uninstalled copy (its initializer starts Messages history polling).
         observation = model?.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        if let model {
+            Task {
+                await model.onboarding.resumePermissionsAtLaunch()
+            }
+        }
     }
 }
 

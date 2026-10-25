@@ -61,6 +61,10 @@ bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
 
 - Web fixtures compile actual app/controller code with local website/Messages
   substitutes, checking comparison and broadcast lifecycle.
+  Native CI also runs these fixtures, including same-store app restarts that
+  check all five permissions, retain setup and drafts, remember Skip for now,
+  and resume Allow access after a Settings handoff. Injected grants do not
+  prove real macOS consent.
 - Configured CLI fixtures invoke the real adapter with a deterministic local
   executable and temporary configuration. They test new/resumed sessions,
   configuration transport, denied writes, restricted reports, and legacy history.
