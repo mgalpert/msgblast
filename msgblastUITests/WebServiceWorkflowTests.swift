@@ -3,18 +3,18 @@ import XCTest
 final class WebServiceWorkflowTests: XCTestCase {
     @MainActor
     private func selectWebFixtureRecipients(_ app: XCUIApplication) {
+        // New profiles explicitly enable website alternatives in Settings.
+        app.typeKey(",", modifierFlags: .command)
+        for provider in ["muse", "chatgpt", "claude", "grok"] {
+            let toggle = app.switches["enable-web-\(provider)"]
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            let enabled = (toggle.value as? NSNumber)?.boolValue ??
+                ["1", "on"].contains(toggle.value as? String ?? "")
+            if !enabled { toggle.click() }
+        }
+        app.typeKey("w", modifierFlags: .command)
         for name in ["Muse", "ChatGPT", "Claude", "Grok"] {
             let button = app.buttons[name]
-            if !button.exists {
-                app.buttons["Edit agents"].click()
-                let search = app.textFields["Search available agents"]
-                XCTAssertTrue(search.waitForExistence(timeout: 5))
-                search.click(); search.typeKey("a", modifierFlags: .command); search.typeText(name)
-                app.buttons["Add \(name)"].click()
-                let done = app.buttons["Done setting up \(name)"]
-                if done.waitForExistence(timeout: 1) { done.click() }
-                app.buttons["Done editing agents"].click()
-            }
             XCTAssertTrue(button.waitForExistence(timeout: 5))
             if button.value as? String != "Selected" { button.click() }
             XCTAssertEqual(button.value as? String, "Selected")
