@@ -35,6 +35,8 @@ building locally does not need to activate them.
 
 - [Automated releases](automated-releases.md): Actions publishing, immutable
   archives, counters, signing modes, and public hosting.
+- [Feature testing builds](testing-builds.md): approved signed Dev prereleases,
+  direct tester downloads, and the publishing skill.
 - [Updater and local release preparation](updates.md): Sparkle configuration,
   update fixtures, and direct-script diagnostics.
 - [Developer ID signing](developer-id-signing.md): production Apple signing and

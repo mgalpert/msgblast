@@ -1,0 +1,4 @@
+interface:
+  display_name: "msgblast Testing Builds"
+  short_description: "Publish signed Dev downloads for feature testers"
+  default_prompt: "Use $msgblast-test-build to publish a reviewed feature revision for testers."

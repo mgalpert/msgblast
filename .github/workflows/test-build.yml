@@ -1,0 +1,171 @@
+name: Publish testing build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Full reviewed commit SHA on a branch in this repository
+        type: string
+        required: true
+      feature_title:
+        description: Short name of the feature being tested
+        type: string
+        required: true
+      testing_notes:
+        description: What testers should try, expected results, and known limits (public)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msgblast-testing-builds
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source: ${{ steps.source.outputs.source }}
+    steps:
+      - name: Check out trusted workflow tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve exact source and require configured approval
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE: ${{ inputs.source_revision }}
+          TITLE: ${{ inputs.feature_title }}
+          NOTES: ${{ inputs.testing_notes }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          python3 scripts/test_builds.py resolve --source "$SOURCE" \
+            --repo "$GITHUB_REPOSITORY" --default-branch "$DEFAULT_BRANCH" \
+            --title "$TITLE" --notes "$NOTES"
+
+  build:
+    needs: resolve
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      REVIEW_SHA: ${{ needs.resolve.outputs.source }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      # Feature code runs here without signing credentials or a write token.
+      - name: Check out the exact feature source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+      - name: Verify source and run tooling checks
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEW_SHA"
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+      - name: Run native core regressions in an isolated test app
+        run: |
+          xcodebuild -project msgblast.xcodeproj -scheme msgblast \
+            -configuration Debug -derivedDataPath build/testing-checks \
+            -destination 'platform=macOS,arch=arm64' \
+            MSGBLAST_APP_BUNDLE_IDENTIFIER=com.msgblast.testing-checks \
+            ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
+            -only-testing:msgblastTests test
+      - name: Package Dev without publishing or signing secrets
+        run: |
+          python3 scripts/build_preview_apps.py --variant development --universal \
+            --sha "$REVIEW_SHA" --output build/testing-preview \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+      - name: Pass only Dev ZIP and public metadata to signing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-build-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/testing-preview/*.zip
+            build/testing-preview/preview-manifest.json
+          retention-days: 14
+          if-no-files-found: error
+
+  sign:
+    name: Approve and sign ${{ needs.resolve.outputs.source }}
+    needs: [resolve, build]
+    runs-on: xcode-27
+    timeout-minutes: 60
+    environment: test-build-signing
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+      REVIEW_SHA: ${{ needs.resolve.outputs.source }}
+      MSGBLAST_APPLE_TEAM_ID: ${{ vars.MSGBLAST_APPLE_TEAM_ID }}
+      MSGBLAST_DEVELOPER_ID_IDENTITY: ${{ vars.MSGBLAST_DEVELOPER_ID_IDENTITY }}
+      MSGBLAST_NOTARY_KEY_ID: ${{ vars.MSGBLAST_NOTARY_KEY_ID }}
+      MSGBLAST_NOTARY_ISSUER_ID: ${{ vars.MSGBLAST_NOTARY_ISSUER_ID }}
+    steps:
+      # Never check out or execute the selected feature scripts in this job.
+      - name: Check out trusted signing tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download the feature app as data
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: test-build-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/testing-input
+      - name: Install temporary Apple signing credentials
+        env:
+          MSGBLAST_DEVELOPER_ID_P12: ${{ secrets.MSGBLAST_DEVELOPER_ID_P12 }}
+          MSGBLAST_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MSGBLAST_DEVELOPER_ID_P12_PASSWORD }}
+          MSGBLAST_NOTARY_API_KEY: ${{ secrets.MSGBLAST_NOTARY_API_KEY }}
+        run: python3 scripts/ci_signing.py setup
+      - name: Verify Dev identity, sign, notarize, and verify the final ZIP
+        run: |
+          python3 scripts/test_builds.py sign --source "$REVIEW_SHA" \
+            --directory build/testing-input --output build/testing-signed
+      - name: Remove temporary credentials
+        if: always()
+        run: python3 scripts/ci_signing.py cleanup
+      - name: Pass the signed package to publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-build-signed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/testing-signed/*.zip
+            build/testing-signed/preview-manifest.json
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out trusted publication tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download signed Dev
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: test-build-signed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/testing-publish
+      - name: Publish prerelease and verify the anonymous tester download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE: ${{ needs.resolve.outputs.source }}
+          TITLE: ${{ inputs.feature_title }}
+          NOTES: ${{ inputs.testing_notes }}
+        run: |
+          python3 scripts/test_builds.py publish --source "$SOURCE" \
+            --directory build/testing-publish --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" --notes "$NOTES" --run "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

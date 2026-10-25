@@ -6,6 +6,44 @@ import msgblastCore
     var messagesFinished = false
 }
 
+private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
+    // Intercept every request: this fixture must never reach a live service.
+    private final class Requests: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Data] = []
+        func append(_ data: Data) -> Int { lock.withLock { values.append(data); return values.count } }
+        var all: [Data] { lock.withLock { values } }
+    }
+    private static let requests = Requests()
+    static var bodies: [Data] { requests.all }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        let payload = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let attempt = Self.requests.append(data)
+        let status = attempt == 1 ? 503 : 201
+        // A 201 for another request is not a successful submission.
+        let receiptID: Any = attempt == 2 ? UUID().uuidString : payload["id"]!
+        let body = try! JSONSerialization.data(withJSONObject: ["id": receiptID])
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 @main struct SideChatModelCheck {
     @MainActor static func waitUntil(file: StaticString = #fileID, line: UInt = #line, _ check: () -> Bool) async throws {
         for _ in 0..<100 { if check() { return }; try await Task.sleep(for: .milliseconds(100)) }
@@ -36,8 +74,86 @@ import msgblastCore
         }
         application.run()
     }
+    @MainActor static func runFeedbackWindowChecks() async throws {
+        let model = AppModel()
+        model.timer?.invalidate()
+        let priorID = await model.prepareWebComparison("Earlier simulated conversation", recipientIDs: [model.state.agents[0].id], agents: [])!
+        await model.submit(priorID, retry: false)
+        precondition(model.comparison(priorID)?.members.first?.submission == .submitted,
+                     "Receipt preservation must begin with an actual simulated submission")
+        model.coordinator = WindowCoordinator(model: model)
+        let workspace = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 800, height: 600), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        workspace.isReleasedWhenClosed = false
+        model.coordinator?.workspaceWindow = workspace
+        let configuration = FeedbackSubmission.sessionConfiguration()
+        configuration.protocolClasses = [FeedbackWindowProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        defer { transport.invalidateAndCancel(); workspace.orderOut(nil) }
+        let controller = FeedbackWindowController(model: model, updater: AppUpdater(), transport: transport)
+        FeedbackWindowController.current = controller
+        let feedback = NSApp.windows.first { $0.title == "Send Feedback" }!
+        NSApp.activate()
+        feedback.makeKeyAndOrderFront(nil)
+        let originalDraft = "Unsent workspace draft stays private"
+        model.state.draft = originalDraft
+        let recipients = Set(model.state.agents.prefix(2).map(\.id))
+        model.state.selection = recipients
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let comparisons = try encoder.encode(model.state.comparisons)
+        controller.session.note = "Local feedback retry fixture"
+        controller.session.contact = "fixture@example.com"
+        controller.session.includeDiagnostics = false
+        _ = controller.session.diagnosticsPreview
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(FeedbackWindowProtocol.bodies.isEmpty, "Opening/editing/previewing feedback must not send it")
+        controller.session.contact = "invalid address"
+        controller.session.send()
+        precondition(FeedbackWindowProtocol.bodies.isEmpty, "Invalid feedback must not reach transport")
+        controller.session.contact = "fixture@example.com"
+        for attempt in 1...3 {
+            controller.session.send()
+            controller.session.send() // An in-flight click must not duplicate the request.
+            try await waitUntil { !controller.session.isSending }
+            precondition(FeedbackWindowProtocol.bodies.count == attempt, "Only explicit, valid sends may reach transport")
+            precondition(model.state.draft == originalDraft && model.state.selection == recipients,
+                         "Feedback must preserve the unsent workspace draft and recipients")
+            let currentComparisons = try encoder.encode(model.state.comparisons)
+            precondition(currentComparisons == comparisons, "Feedback must not change conversation receipts")
+            if attempt < 3 {
+                precondition(feedback.isVisible && FeedbackWindowController.current === controller,
+                             "HTTP failure or mismatched receipt must keep the form open")
+                precondition(controller.session.note == "Local feedback retry fixture" &&
+                             controller.session.contact == "fixture@example.com" &&
+                             !controller.session.includeDiagnostics && controller.session.canSend,
+                             "Failure must retain the complete editable form for retry")
+            }
+        }
+        let payloads = try FeedbackWindowProtocol.bodies.map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+        let requestID = payloads[0]["id"] as! String
+        precondition(UUID(uuidString: requestID) != nil)
+        for payload in payloads {
+            precondition(Set(payload.keys) == ["id", "kind", "note", "contact"],
+                         "Opted-out diagnostics and workspace data must never be uploaded")
+            precondition(payload["id"] as? String == requestID, "Unchanged retries must reuse the original request ID")
+            precondition(payload["kind"] as? String == "feedback" &&
+                         payload["note"] as? String == "Local feedback retry fixture" &&
+                         payload["contact"] as? String == "fixture@example.com")
+        }
+        precondition(!feedback.isVisible, "A confirmed feedback receipt must close its window")
+        try await waitUntil { FeedbackWindowController.current == nil && workspace.isKeyWindow }
+        precondition(workspace.isVisible && workspace.isKeyWindow, "Successful feedback must restore the main workspace")
+        controller.session.send()
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(FeedbackWindowProtocol.bodies.count == 3, "An already confirmed request must not be resent")
+        model.webAgents.beginShutdown()
+        await model.webAgents.cancelAndWait()
+        print("PASS: explicit feedback submission only; opt-out payload privacy; failure and mismatched receipt retain form/draft/recipients/receipts; unchanged retries reuse ID; confirmed receipt closes feedback and restores workspace. Local URLProtocol fixture; no feedback uploaded.")
+    }
+
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared
+        try await runFeedbackWindowChecks()
         let scrollModel = AppModel()
         let scrollAgent = scrollModel.state.agents[0]
         let scrollID = await scrollModel.prepareWebComparison("Scroll fixture original", recipientIDs: Set(scrollModel.state.agents.prefix(3).map(\.id)), agents: [])!

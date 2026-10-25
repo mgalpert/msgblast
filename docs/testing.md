@@ -60,7 +60,11 @@ bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
 ```
 
 - Web fixtures compile actual app/controller code with local website/Messages
-  substitutes, checking comparison and broadcast lifecycle.
+  substitutes, checking comparison and broadcast lifecycle. They also verify
+  that feedback is sent only on explicit submission, unchanged retries reuse
+  their request ID, and failures retain the form and workspace draft. A matching
+  receipt closes feedback and restores the workspace. All feedback transport is
+  intercepted by a local URLProtocol fixture; no report is uploaded.
   Native CI also runs these fixtures, including same-store app restarts that
   check all five permissions, retain setup and drafts, remember Skip for now,
   and resume Allow access after a Settings handoff. Injected grants do not
