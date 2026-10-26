@@ -19,11 +19,33 @@ public struct RemoteConversation: Codable, Hashable, Sendable, Identifiable {
     public var unresolvedAttemptCount: Int
     public var lastActivity: Date
     public var report: RemoteReport?
-    public init(id: UUID, title: String, prompt: String, created: Date, endedAt: Date?, agentIDs: [String], canEnd: Bool, unresolvedAttemptCount: Int, lastActivity: Date, report: RemoteReport? = nil) {
+    /// Unresolved app, CLI and bot requests in this conversation. The agent stays `ready`
+    /// elsewhere; inside this conversation the phone disables it and offers acknowledge.
+    public var incompleteAttempts: [RemoteIncompleteAttempt]
+    public init(id: UUID, title: String, prompt: String, created: Date, endedAt: Date?, agentIDs: [String], canEnd: Bool, unresolvedAttemptCount: Int, lastActivity: Date,
+                report: RemoteReport? = nil, incompleteAttempts: [RemoteIncompleteAttempt] = []) {
         self.id = id; self.title = title; self.prompt = prompt; self.created = created; self.endedAt = endedAt
         self.agentIDs = agentIDs; self.canEnd = canEnd; self.unresolvedAttemptCount = unresolvedAttemptCount; self.lastActivity = lastActivity
-        self.report = report
+        self.report = report; self.incompleteAttempts = incompleteAttempts
     }
+    private enum CodingKeys: String, CodingKey { case id, title, prompt, created, endedAt, agentIDs, canEnd, unresolvedAttemptCount, lastActivity, report, incompleteAttempts }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id); title = try c.decode(String.self, forKey: .title); prompt = try c.decode(String.self, forKey: .prompt)
+        created = try c.decode(Date.self, forKey: .created); endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+        agentIDs = try c.decode([String].self, forKey: .agentIDs); canEnd = try c.decode(Bool.self, forKey: .canEnd)
+        unresolvedAttemptCount = try c.decode(Int.self, forKey: .unresolvedAttemptCount); lastActivity = try c.decode(Date.self, forKey: .lastActivity)
+        report = try c.decodeIfPresent(RemoteReport.self, forKey: .report)
+        // Added in phase 1 review; older Macs omit it.
+        incompleteAttempts = try c.decodeIfPresent([RemoteIncompleteAttempt].self, forKey: .incompleteAttempts) ?? []
+    }
+}
+
+public struct RemoteIncompleteAttempt: Codable, Hashable, Sendable {
+    public var agentID: String
+    public var attemptID: String
+    public var reasonCode: AvailabilityReasonCode
+    public init(agentID: String, attemptID: String, reasonCode: AvailabilityReasonCode) { self.agentID = agentID; self.attemptID = attemptID; self.reasonCode = reasonCode }
 }
 
 /// A comparison report produced on the Mac by the configured local agent.

@@ -48,6 +48,21 @@ final class RemoteProjectionTests: XCTestCase {
         XCTAssertEqual(Set(state.attempts.map(\.status)), [.submitted, .uncertain, .waiting])
     }
 
+    func testIncompleteNativeRequestsAreListedPerConversation() throws {
+        var (input, comparison, _) = fixture()
+        var stuck = WebSendAttempt(text: "Compare approaches", status: .uncertain); stuck.comparisonID = comparison.id
+        var done = WebSendAttempt(text: "Earlier", status: .observed); done.comparisonID = comparison.id
+        input.webAttempts[comparison.id]?[.codexCLI] = [stuck, done]
+        let conversation = try XCTUnwrap(RemoteProjectionBuilder.state(from: input).conversations.first)
+        XCTAssertEqual(conversation.incompleteAttempts, [RemoteIncompleteAttempt(agentID: "codexCLI", attemptID: "wa:\(stuck.id.uuidString)", reasonCode: .incompleteRequestBlocking)],
+                       "The waiting website attempt is not a block; only the native request is")
+        let decoded = try RemoteProtocol.decoder().decode(RemoteConversation.self, from: RemoteProtocol.encoder().encode(conversation))
+        XCTAssertEqual(decoded, conversation)
+        var legacy = try JSONSerialization.jsonObject(with: RemoteProtocol.encoder().encode(conversation)) as! [String: Any]
+        legacy["incompleteAttempts"] = nil
+        XCTAssertEqual(try RemoteProtocol.decoder().decode(RemoteConversation.self, from: JSONSerialization.data(withJSONObject: legacy)).incompleteAttempts, [])
+    }
+
     func testJournalDiffsUpdatesInPlaceAndResumes() throws {
         var (input, comparison, _) = fixture()
         let journal = RemoteChangeJournal(capacity: 50, startingSeq: 1000)
