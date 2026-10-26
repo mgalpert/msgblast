@@ -19,8 +19,9 @@ final class DesktopAppWorkflowTests: XCTestCase {
         let (readGate, read) = AsyncStream<Void>.makeStream()
         defer { submit.finish(); deadline.finish(); read.finish() }
         let events = Restores()
+        let handoffs = Restores()
         let owner = try await DesktopForegroundOwner.shared.acquire()
-        let lease = DesktopForegroundLease(owner: owner) { await events.record(); restored.fulfill() }
+        let lease = DesktopForegroundLease(owner: owner, onRestored: { await handoffs.record() }) { await events.record(); restored.fulfill() }
         let reply = Task {
             try await DesktopAppWorkflow.reply(app: "Fixture", timing: .init(pollInterval: .zero, stableDuration: .zero), onSubmitAction: {
                 await lease.restoreAfterSubmission(delay: {
@@ -52,6 +53,8 @@ final class DesktopAppWorkflowTests: XCTestCase {
         try await lease.restore()
         let total = await events.count
         XCTAssertEqual(total, 1)
+        let releasedInputs = await handoffs.count
+        XCTAssertEqual(releasedInputs, 1, "The deadline and final cleanup share one input handoff")
     }
 
     func testActivelyWorkingConfirmedRequestKeepsReadingPastWaitWindowWithoutResending() async throws {

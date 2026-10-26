@@ -957,9 +957,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     @discardableResult
-    public func send(_ text: String, comparisonID: UUID? = nil) async -> WebSendAttempt? {
+    public func send(_ text: String, comparisonID: UUID? = nil,
+                     onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {}) async -> WebSendAttempt? {
+        defer { onSubmissionFinished() }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID) }
-        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID) }
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished) }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
@@ -1283,7 +1285,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard isEnabled, !storageFailed, !shuttingDown else { throw CancellationError() }
         guard !loading else { throw WebSessionFailure.notReady("Wait for the app connection check to finish before starting a conversation.") }
         refreshDesktopInstallation()
-        if desktopInstallation.isRunning, fixture { return }
+        if desktopInstallation.isRunning, fixture, !desktopApps.isHidden(app) { return }
         guard let url = desktopInstallation.url else { throw WebSessionFailure.notReady(desktopStatus) }
         let generation = comparisonGeneration
         func checkCurrent() throws {
@@ -1295,7 +1297,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
         defer { loading = false }
         do {
-            if desktopInstallation.isRunning {
+            if desktopInstallation.isRunning, !desktopApps.isHidden(app) {
                 do {
                     _ = try await desktopDriver.target(app)
                     try checkCurrent()
@@ -1601,7 +1603,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         storageURL.deletingLastPathComponent().appendingPathComponent("local-conversations/\(provider.localConversationDirectoryName)/\(id.uuidString)", isDirectory: true)
     }
 
-    private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
+    private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
@@ -1629,7 +1631,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do {
             try save()
             if !fixture, let app = provider.desktopApp, app.requiresForegroundSubmission {
-                foreground = try await desktopDriver.beginForeground(app, session: "msgblast-foreground-\(attempt.id)")
+                foreground = try await desktopDriver.beginForeground(app, session: "msgblast-foreground-\(attempt.id)", onRestored: { await onSubmissionFinished() })
             }
             connected = true
             await refresh()
@@ -1726,7 +1728,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     return PersonalAgentReply(text: answer, sessionID: "Dedicated Claude chat")
                 }
                 if let saved = chatgptBinding {
-                    let answer = try await chatgptApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                    let answer = try await chatgptApp.reply(text, binding: saved, onSubmitAction: submitAction, onPrepared: { [weak self] pending in
                         guard let self else { throw CancellationError() }
                         try await self.recordChatGPTSubmission(pending)
                     }, onBinding: { [weak self] discovered in

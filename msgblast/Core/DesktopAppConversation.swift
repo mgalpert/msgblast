@@ -14,7 +14,7 @@ public enum DesktopAppProvider: String, Codable, Sendable {
         case .claude: ["com.anthropic.claudefordesktop"]
     } }
     var bundleID: String { bundleIDs[0] }
-    public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi].contains(self) }
+    public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi, .chatgpt, .dots].contains(self) }
 }
 
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {
@@ -420,13 +420,13 @@ actor DesktopAppConversation {
         return only
     }
     func beginForeground(_ app: DesktopAppProvider, session: String,
-                         host: Target? = nil) async throws -> DesktopForegroundLease? {
+                         host: Target? = nil, onRestored: @escaping @Sendable () async -> Void = {}) async throws -> DesktopForegroundLease? {
         guard delivery == .foreground else { return nil }
         let owner = try await DesktopForegroundOwner.shared.acquire()
         let returnTo: Target
         do { if let host { returnTo = host } else { returnTo = try await Self.hostWindow() } }
         catch { await DesktopForegroundOwner.shared.release(owner); throw error }
-        let lease = DesktopForegroundLease(owner: owner) {
+        let lease = DesktopForegroundLease(owner: owner, onRestored: onRestored) {
             do { try await self.activate(returnTo, session: session) }
             catch { await self.endSession(session); throw error }
             await self.endSession(session)
@@ -694,10 +694,11 @@ actor DesktopForegroundOwner {
 actor DesktopForegroundLease {
     private let owner: UUID
     private let returnFocus: @Sendable () async throws -> Void
+    private let onRestored: @Sendable () async -> Void
     private var restoration: Task<Void, Error>?
     private var delayedRestoration: Task<Void, Never>?
-    init(owner: UUID, returnFocus: @escaping @Sendable () async throws -> Void) {
-        self.owner = owner; self.returnFocus = returnFocus
+    init(owner: UUID, onRestored: @escaping @Sendable () async -> Void = {}, returnFocus: @escaping @Sendable () async throws -> Void) {
+        self.owner = owner; self.onRestored = onRestored; self.returnFocus = returnFocus
     }
     func restoreAfterSubmission(delay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(5)) }) {
         guard restoration == nil, delayedRestoration == nil else { return }
@@ -712,15 +713,17 @@ actor DesktopForegroundLease {
     func restore() async throws {
         if restoration == nil {
             delayedRestoration?.cancel(); delayedRestoration = nil
-            let returnFocus = returnFocus, owner = owner
+            let returnFocus = returnFocus, onRestored = onRestored, owner = owner
             restoration = Task.detached {
+                var failure: Error?
                 do {
                     try await returnFocus()
-                    await DesktopForegroundOwner.shared.release(owner)
                 } catch {
-                    await DesktopForegroundOwner.shared.release(owner)
-                    throw DesktopAppError.unavailable("msgblast could not regain focus. Open msgblast to continue; nothing will be resent automatically.")
+                    failure = DesktopAppError.unavailable("msgblast could not regain focus. Open msgblast to continue; nothing will be resent automatically.")
                 }
+                await DesktopForegroundOwner.shared.release(owner)
+                await onRestored()
+                if let failure { throw failure }
             }
         }
         try await restoration!.value

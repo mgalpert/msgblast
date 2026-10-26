@@ -95,7 +95,7 @@ actor ChatGPTAppConversation {
                 return current
             }, ready: { try $0.requiredComposer().focused })
     }
-    private func action(_ tool: String = "click", control: ChatGPTAXNode, text: String? = nil, key: String? = nil, target: DesktopAppConversation.Target, session: String, expected: ChatGPTAppObservation, pixel: Bool = false, semanticNavigation: Bool = false, verifyImage: Bool = false, modifiers: [String] = [], focusedInput: Bool = false) async throws {
+    private func action(_ tool: String = "click", control: ChatGPTAXNode, text: String? = nil, key: String? = nil, target: DesktopAppConversation.Target, session: String, expected: ChatGPTAppObservation, pixel: Bool = false, semanticNavigation: Bool = false, verifyImage: Bool = false, modifiers: [String] = [], focusedInput: Bool = false, beforeDelivery: @Sendable () async -> Void = {}) async throws {
         let image = pixel || verifyImage ? FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-chatgpt-\(UUID()).png") : nil
         defer { if let image { try? FileManager.default.removeItem(at: image) } }
         let (state, element) = try await element(control, target: target, session: session, expected: expected, imageURL: image, semanticNavigation: semanticNavigation)
@@ -114,6 +114,7 @@ actor ChatGPTAppConversation {
             guard control.focused else { throw DesktopAppError.unavailable("ChatGPT’s composer lost focus. Nothing was retried.") }
             args.removeValue(forKey: "element_token")
         }
+        await beforeDelivery()
         do { _ = try await driver.call(tool, args, numbers: numbers, arrays: modifiers.isEmpty ? [:] : ["modifiers": modifiers], as: DesktopAppConversation.Action.self) }
         catch { try Task.checkCancellation() }
     }
@@ -278,7 +279,7 @@ actor ChatGPTAppConversation {
               !current.generating, current.composer?.focused == true, current.draft == expected else { throw DesktopAppError.unavailable("ChatGPT did not confirm the exact prepared draft. Send was not pressed; review the preserved text.") }
         return current
     }
-    func reply(_ text: String, binding: ChatGPTConversationBinding, onPrepared: @Sendable (ChatGPTConversationBinding) async throws -> Void, onBinding: @Sendable (ChatGPTConversationBinding) async throws -> Void) async throws -> String {
+    func reply(_ text: String, binding: ChatGPTConversationBinding, onSubmitAction: @Sendable () async -> Void = {}, onPrepared: @Sendable (ChatGPTConversationBinding) async throws -> Void, onBinding: @Sendable (ChatGPTConversationBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("ChatGPT is already handling a request.") }
         occupied = true; defer { occupied = false }
         let session = "msgblast-chatgpt-send-\(UUID())"
@@ -316,7 +317,7 @@ actor ChatGPTAppConversation {
         let typed = try await read(target)
         guard typed.kind == native.kind, typed.title == native.title, typed.messages == baseline, typed.draft == prompt else { throw DesktopAppError.unavailable("ChatGPT’s prepared prompt changed. It was not submitted or retried.") }
         let answer = try await DesktopAppWorkflow.reply(app: binding.kind == .dots ? "Dots" : "ChatGPT", timing: timing, submit: {
-            try await self.action(control: typed.control(label: "Send"), target: target, session: session, expected: typed)
+            try await self.action(control: typed.control(label: "Send"), target: target, session: session, expected: typed, beforeDelivery: onSubmitAction)
         }, observe: {
             native = try await self.read(target)
             guard native.kind == binding.kind, (pending.title == nil || native.title == openedTitle), native.draft.isEmpty || native.draft == prompt,

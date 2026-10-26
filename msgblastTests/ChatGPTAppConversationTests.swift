@@ -276,8 +276,10 @@ final class ChatGPTAppDriverTests: XCTestCase {
 private actor ChatGPTRecordedBindings {
     var prepared: [ChatGPTConversationBinding] = []
     var bound: [ChatGPTConversationBinding] = []
-    func prepare(_ value: ChatGPTConversationBinding) { prepared.append(value) }
-    func bind(_ value: ChatGPTConversationBinding) { bound.append(value) }
+    var events: [String] = []
+    func prepare(_ value: ChatGPTConversationBinding) { prepared.append(value); events.append("prepared") }
+    func submit() { events.append("submit") }
+    func bind(_ value: ChatGPTConversationBinding) { bound.append(value); events.append("bound") }
 }
 
 final class ChatGPTAppSubmissionTests: XCTestCase {
@@ -663,12 +665,18 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
     func testNativeChatGPTSingleSendRenamesAndPersistsOwnedThread() async throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let recorded = ChatGPTRecordedBindings()
-        let answer = try await fixture.adapter().reply("First question", binding: fixture.binding, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
+        let answer = try await fixture.adapter().reply("First question", binding: fixture.binding, onSubmitAction: {
+            XCTAssertEqual(try? String(contentsOf: fixture.directory.appendingPathComponent("native-draft"), encoding: .utf8), fixture.binding.firstMessage("First question"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("submitted-draft").path))
+            await recorded.submit()
+        }, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
         XCTAssertEqual(answer, "ANSWER")
         let prepared = await recorded.prepared, bound = await recorded.bound
         XCTAssertEqual(prepared.count, 1); XCTAssertNil(prepared[0].title)
         XCTAssertEqual(prepared[0].firstPrompt, fixture.binding.firstMessage("First question"))
         XCTAssertEqual(bound.count, 1); XCTAssertEqual(bound[0].title, fixture.binding.dedicatedTitle)
+        let events = await recorded.events
+        XCTAssertEqual(events, ["prepared", "submit", "bound"])
         XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 2)
         XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "press_key" }.count, 3)
         XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "8")
@@ -685,11 +693,17 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         for followup in [false, true] {
             let fixture = try fixture(kind: .dots, followup: followup); defer { try? FileManager.default.removeItem(at: fixture.directory) }
             let recorded = ChatGPTRecordedBindings()
-            let answer = try await fixture.adapter().reply(followup ? "Follow-up" : "First question", binding: fixture.binding, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
+            let answer = try await fixture.adapter().reply(followup ? "Follow-up" : "First question", binding: fixture.binding, onSubmitAction: {
+                XCTAssertEqual(try? String(contentsOf: fixture.directory.appendingPathComponent("native-draft"), encoding: .utf8), followup ? "Follow-up" : fixture.binding.firstMessage("First question"))
+                XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("submitted-draft").path))
+                await recorded.submit()
+            }, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
             XCTAssertEqual(answer, "ANSWER")
             let bound = await recorded.bound
             XCTAssertEqual(bound.first?.title, "Example Dot")
             XCTAssertEqual(bound.first?.firstPrompt, fixture.binding.firstMessage("First question"))
+            let events = await recorded.events
+            XCTAssertEqual(events, ["prepared", "submit", "bound"])
             XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 1)
             XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "type_text" }.count, followup ? 1 : 2)
         }

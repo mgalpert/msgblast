@@ -3,6 +3,120 @@ import XCTest
 
 @MainActor
 final class NativeDesktopStateTests: XCTestCase {
+    func testNextAppSubmitsAfterInputHandoffWhilePreviousReplyIsPending() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessions = [WebProvider.grokBotApp, .wabi].map {
+            WebAgentSession(provider: $0, storageURL: directory.appendingPathComponent($0.storageFilename), fixture: true)
+        }
+        defer { sessions.forEach { $0.beginShutdown() } }
+        let firstStarted = expectation(description: "Grok submission started")
+        let secondStarted = expectation(description: "Wabi submitted while Grok reply is pending")
+        let (inputGate, input) = AsyncStream<Void>.makeStream()
+        let (replyGate, reply) = AsyncStream<Void>.makeStream()
+        defer { input.finish(); reply.finish() }
+        var events: [String] = []
+        let broadcast = Task {
+            await WebAgents.send(to: sessions) { session, handoff in
+                if session.provider == .grokBotApp {
+                    events.append("grok input")
+                    firstStarted.fulfill()
+                    for await _ in inputGate { break }
+                    events.append("grok restored")
+                    handoff()
+                    for await _ in replyGate { break }
+                    events.append("grok reply")
+                } else {
+                    events.append("wabi input")
+                    secondStarted.fulfill()
+                }
+                var attempt = WebSendAttempt(text: "Controlled scheduling input")
+                attempt.status = .observed
+                return attempt
+            }
+        }
+        await fulfillment(of: [firstStarted], timeout: 2)
+        XCTAssertEqual(events, ["grok input"], "The next app must not race the previous app’s input")
+        input.yield(()); input.finish()
+        await fulfillment(of: [secondStarted], timeout: 2)
+        XCTAssertEqual(events, ["grok input", "grok restored", "wabi input"])
+        reply.yield(()); reply.finish()
+        let results = await broadcast.value
+        XCTAssertEqual(Set(results.keys), Set(sessions.map(\.id)))
+        XCTAssertEqual(events.last, "grok reply")
+    }
+
+    func testChatGPTAndDotsDoNotSwitchTheirSharedAppWhileAReplyIsPending() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessions = [WebProvider.chatgptApp, .wabi, .dotsApp].map {
+            WebAgentSession(provider: $0, storageURL: directory.appendingPathComponent($0.storageFilename), fixture: true)
+        }
+        defer { sessions.forEach { $0.beginShutdown() } }
+        let otherAppStarted = expectation(description: "An independent app can submit")
+        let (replyGate, reply) = AsyncStream<Void>.makeStream()
+        defer { reply.finish() }
+        var events: [String] = []
+        let broadcast = Task {
+            await WebAgents.send(to: sessions) { session, handoff in
+                events.append("\(session.provider.rawValue) input")
+                handoff()
+                if session.provider == .chatgptApp {
+                    for await _ in replyGate { break }
+                    events.append("chatgpt reply")
+                } else if session.provider == .wabi { otherAppStarted.fulfill() }
+                else { XCTAssertTrue(events.contains("chatgpt reply"), "Dots must not navigate away from ChatGPT’s pending reply") }
+                return WebSendAttempt(text: "Controlled scheduling input")
+            }
+        }
+        await fulfillment(of: [otherAppStarted], timeout: 2)
+        reply.yield(()); reply.finish()
+        let results = await broadcast.value
+        XCTAssertEqual(results.count, 3)
+        XCTAssertEqual(events, ["chatgptApp input", "wabi input", "chatgpt reply", "dotsApp input"])
+    }
+
+    func testCancelledNativeBroadcastDoesNotStartTheNextApp() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessions = [WebProvider.grokBotApp, .wabi].map {
+            WebAgentSession(provider: $0, storageURL: directory.appendingPathComponent($0.storageFilename), fixture: true)
+        }
+        defer { sessions.forEach { $0.beginShutdown() } }
+        let started = expectation(description: "First app is preparing input")
+        let (inputGate, input) = AsyncStream<Void>.makeStream()
+        defer { input.finish() }
+        var submissions: [WebProvider] = []
+        let broadcast = Task {
+            await WebAgents.send(to: sessions) { session, _ in
+                submissions.append(session.provider)
+                if session.provider == .grokBotApp {
+                    started.fulfill()
+                    for await _ in inputGate { break }
+                }
+                return nil
+            }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        broadcast.cancel()
+        let results = await broadcast.value
+        XCTAssertTrue(results.isEmpty)
+        XCTAssertEqual(submissions, [.grokBotApp])
+    }
+
+    func testRejectedNativeSendFinishesHandoffWithoutClaimingSubmission() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.setEnabled(false)
+        var handoffs = 0
+        let attempt = await session.send("Do not submit", onSubmissionFinished: { handoffs += 1 })
+        XCTAssertNil(attempt)
+        XCTAssertEqual(handoffs, 1)
+        XCTAssertTrue(session.state.attempts.isEmpty)
+    }
+
     func testNativeBindingsMigrateAndKeepImmutableOwnership() throws {
         var old = WebWorkspaceState()
         old.draft = "Keep this draft"

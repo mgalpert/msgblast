@@ -44,16 +44,21 @@ survives a reply-read failure. A completed reply replaces the pending presentati
 using the same message identity, without duplicating the outgoing prompt or
 retaining the Sending status.
 
-Muse, Grok Bot, and Wabi need foreground input in the currently supported app
-versions. An explicit send acquires one shared desktop transaction, brings the
+Muse, Grok Bot, Wabi, ChatGPT, and Dots use foreground input. An explicit send
+acquires one shared desktop transaction, brings the
 exact app window forward, and holds it through navigation, text entry, and
 submission. Once the outgoing request is observed, it
 returns focus to the exact msgblast window while reading the reply in the
 background. If submission cannot be confirmed within five seconds, focus still returns
 without resending or claiming success. Failures and cancellation also restore
-msgblast before releasing desktop ownership. Setup and passive readiness checks never acquire foreground
-control. An unverifiable background action is never retried as foreground input.
-ChatGPT, Dots, and Claude retain their existing background paths.
+msgblast before releasing desktop ownership. After focus restoration, the next
+independent app may submit while earlier replies are still being collected.
+ChatGPT/Dots and copies of the same app retain their shared surface until reply
+collection finishes. Claude retains its background path.
+An explicit Connect or conversation start reopens hidden apps as well as closed
+apps; a running process and a WindowServer entry alone do not prove the app is
+readable. Passive readiness checks never open or activate apps. An unverifiable
+background action is never retried as foreground input.
 
 Gemini is deferred in this build because its native controls did not pass live
 readiness checks. Its saved data and Codable identities remain intact, but it is
@@ -93,7 +98,7 @@ sharing choices intact.
 2. Install the desktop app on this Mac and sign in. Onboarding labels each app
    **Installed** or **Install** before it can be selected.
    Settings also checks installation before allowing an app to be enabled.
-   **Connect** checks installation, opens a closed app, and verifies its destination
+   **Connect** checks installation, opens a closed or hidden app, and verifies its destination
    in one action. Keep one main window available and dismiss dialogs. The window can be on
    another desktop; users do not need to move it. Wabi creates a dedicated AI chat rather than selecting a contact conversation.
 3. Choose your agents after completing the access screen. Native apps share one
