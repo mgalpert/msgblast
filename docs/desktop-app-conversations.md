@@ -60,6 +60,14 @@ apps; a running process and a WindowServer entry alone do not prove the app is
 readable. Passive readiness checks never open or activate apps. An unverifiable
 background action is never retried as foreground input.
 
+An explicit Connect first checks the native controls without input. If a cold
+app has not exposed them yet, the check uses the same foreground lease to
+activate that exact window once and retry the read while it is active. It then
+returns to the original msgblast window, including its original setup sheet.
+Draft, destination, and generation checks still apply; this recovery never types
+or sends a message. Tests cover controls that appear only after activation,
+rather than merely after a delay.
+
 Gemini is deferred in this build because its native controls did not pass live
 readiness checks. Its saved data and Codable identities remain intact, but it is
 not offered in onboarding or the agent catalog and cannot connect or send.
@@ -106,7 +114,7 @@ sharing choices intact.
    Continue stays disabled until every selected app is connected. Grok Bot keeps its bot picker in its row. These checks send no messages. Each
    connected row confirms it is ready for the first prompt. A restart preserves
    selected agents but requires fresh connection checks. Settings keeps the
-   the same Connect action and permission controls for later changes.
+   same Connect action and permission controls for later changes.
 4. Select the agent and use the private or shared msgblast message box.
    Starting a conversation opens its installed app automatically if it is closed,
    waits for one main window, then performs the existing connection and chat checks.
@@ -257,9 +265,15 @@ available. A direct first send follows the same path.
 Already running apps are reused when their main window is available; starting a
 conversation reopens an app whose window is closed or on another Space. Native
 app requests run in sequence so window launches do not compete for the active
-desktop. Website requests can run in parallel. Polling, onboarding checks, and selecting a
+desktop. Website requests can run in parallel. Passive polling and selecting a
 blank draft do not launch apps. First-time sign-in stays in the native app.
 If launch or readiness fails, no prompt is submitted and the draft stays saved.
+
+Claude connection checks and initial navigation inspect the current surface,
+composer, draft, and generation state without requiring unrelated older messages
+to be loaded. After opening the intended chat, the adapter reads its full exposed
+conversation again before any input. Incomplete owned history still blocks a
+follow-up; navigation does not relax send or reply attribution.
 
 Each ChatGPT and Claude comparison gets a dedicated chat. The first native
 prompt includes a comparison reference while the local transcript keeps the

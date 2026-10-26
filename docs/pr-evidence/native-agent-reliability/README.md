@@ -1,5 +1,14 @@
 # Native agent reliability evidence
 
+Live follow-up evidence:
+
+- [Closed-app Wabi and Grok Bot connection, first replies, and follow-ups](cold-native-connect/README.md)
+  from `f08cba3dfde61bf1367b2fa86dd0c48c672ece64` on Pal’s Studio.
+- [Dots first request and consecutive follow-ups](dots-refresh/README.md), with
+  its earlier executable revision and limits recorded separately.
+
+The captures below are the earlier Demo fixture evidence.
+
 App source: `653ae15650843340d32e372a609a3935e5539509`.
 
 Captured from the packaged blue msgblast Demo app using its explicit fixture
