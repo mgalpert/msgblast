@@ -156,7 +156,8 @@ public final class RemoteCommandExecutor {
         if plan.kind == .sharedFollowUp, let members, let outsider = plan.agentIDs.first(where: { !members.contains($0) }) {
             return reject(command, .invalidCommand, "\(outsider) is not in this conversation. Add agents from the Mac.")
         }
-        let targets = plan.agentIDs.isEmpty ? (members ?? []) : plan.agentIDs
+        // "Everyone" means every member that takes shared messages (Hark does not), as on the Mac.
+        let targets = plan.agentIDs.isEmpty ? (members ?? []).filter { host.availability(for: $0)?.capabilities.sharedSend != false } : plan.agentIDs
         var messagesTargets = 0
         for agentID in targets {
             guard let availability = host.availability(for: agentID) else { return reject(command, .unknownAgent, "An agent is no longer available on the Mac.") }

@@ -51,7 +51,7 @@ extension AppModel {
 
     func remoteMacStatus(settings: RemoteSettings, power: MacPowerState, keepAwake: RemoteKeepAwake) -> MacStatus {
         let variant: MacVariant = demo ? .demo : Bundle.main.bundleIdentifier == "com.msgblast.mac" ? .production : .development
-        return MacStatus(macName: Host.current().localizedName ?? "Mac", variant: variant, locked: power.locked, awake: power.awake,
+        return MacStatus(macName: RemoteMacName.value, variant: variant, locked: power.locked, awake: power.awake,
                          databaseAvailable: databaseAvailable, databaseStatus: databaseStatus, messagesBusy: busy, broadcastBusy: webBroadcastBusy,
                          sendingAgentIDs: webAgents.sessions.filter(\.isSending).map(\.id.id), keepAwakeEnabled: settings.keepAwake,
                          keepAwakeHeld: keepAwake.held, messagesSendsAllowed: settings.allowMessagesSends, observedAt: Date())
@@ -93,4 +93,9 @@ extension AppModel {
         case .checking, .unknown, .notInstalled: .unknown
         }
     }
+}
+
+/// `Host.current()` can block on name resolution; read the Mac's name once.
+enum RemoteMacName {
+    @MainActor static let value = Host.current().localizedName ?? "Mac"
 }

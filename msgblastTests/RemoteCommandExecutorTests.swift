@@ -132,6 +132,10 @@ final class RemoteCommandExecutorTests: XCTestCase {
         do { let result = await run(.sendShared(conversationID: active, text: "More", agentIDs: ["claudeApp"], attachmentIDs: [])); XCTAssertEqual(result.code, .invalidCommand, "Shared sends go to members only") }
         do { let result = await run(.sendShared(conversationID: active, text: "More", agentIDs: [], attachmentIDs: [])); XCTAssertEqual(result.outcome, .applied) }
         XCTAssertEqual(host.sends.last?.conversationID, active)
+        host.agents["hark"] = FakeRemoteHost.agent("hark", readiness: .unavailable)
+        host.agents["hark"]!.capabilities.sharedSend = false
+        host.conversations[active] = .active(members: ["chatgptApp", "messages:A", "hark"])
+        do { let result = await run(.sendShared(conversationID: active, text: "Everyone", agentIDs: [], attachmentIDs: [])); XCTAssertEqual(result.outcome, .applied, "Members without shared sends are skipped, not a refusal") }
         do { let result = await run(.teleport()); XCTAssertEqual(result.code, .unsupported) }
         do { let result = await run(.sendPrivate(conversationID: active, agentID: "chatgptApp", text: "Only you", attachmentIDs: [])); XCTAssertEqual(result.outcome, .applied) }
         host.agents["os3"] = FakeRemoteHost.agent("os3", privateSend: false)

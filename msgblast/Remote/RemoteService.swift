@@ -55,7 +55,7 @@ final class RemoteService: ObservableObject {
     private final class SettingsReader { var value = RemoteSettings() }
     private let settingsReader: SettingsReader
 
-    var macName: String { Host.current().localizedName ?? "Mac" }
+    var macName: String { RemoteMacName.value }
     var variant: MacVariant { model.remoteMacStatus(settings: settings, power: power, keepAwake: keepAwake).variant }
     var connectedDeviceID: UUID? { server?.connectedDeviceID }
     var endpoints: [RemoteEndpoint] { listener?.endpoints ?? [] }
