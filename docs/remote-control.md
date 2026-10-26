@@ -172,7 +172,7 @@ cd scripts/remote_client && swift build
 .build/debug/msgblast-remote send --to codexCLI --conversation <uuid> --private "Only you"
 ```
 
-It keeps its device key and cursor in `./remote-client-state.json` (owner-only).
+It keeps its device key and cursor in `~/Library/Application Support/msgblast-remote-client/state.json` (file 0600, folder 0700); `--state <path>` overrides it.
 Use it only against a Demo Mac or a Mac whose owner authorized real sends.
 
 ## Source map

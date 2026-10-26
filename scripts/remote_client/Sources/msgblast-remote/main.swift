@@ -28,7 +28,7 @@ usage:
   msgblast-remote acknowledge --to AGENT [--attempt ID] [--state FILE]
   msgblast-remote keep-awake on|off [--state FILE]
 
-Defaults: --state ./remote-client-state.json (owner-only). --once exits after the snapshot.
+Defaults: --state ~/Library/Application Support/msgblast-remote-client/state.json (0600, folder 0700). --once exits after the snapshot.
 The client never retries a send: a lost connection reports the command as unconfirmed.
 """
 
@@ -51,7 +51,8 @@ func fail(_ message: String) -> Never {
 
 guard let verb = arguments.first else { fail(usage) }
 arguments.removeFirst()
-let statePath = URL(fileURLWithPath: option("--state") ?? "remote-client-state.json")
+let defaultStateDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/msgblast-remote-client", isDirectory: true)
+let statePath = option("--state").map { URL(fileURLWithPath: $0) } ?? defaultStateDirectory.appendingPathComponent("state.json")
 let once = flag("--once"), json = flag("--json")
 
 func loadState() -> ClientState {
@@ -63,7 +64,12 @@ func loadState() -> ClientState {
 func saveState(_ state: ClientState) {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     guard let data = try? encoder.encode(state) else { return }
+    let directory = statePath.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    if directory == defaultStateDirectory { chmod(directory.path, 0o700) }
+    // Owner-only: the file holds the client's private device key.
     FileManager.default.createFile(atPath: statePath.path, contents: data, attributes: [.posixPermissions: 0o600])
+    chmod(statePath.path, 0o600)
 }
 
 func describe(_ availability: AgentAvailability) -> String {

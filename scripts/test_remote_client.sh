@@ -39,7 +39,9 @@ xcrun swiftc -swift-version 6 -D DEBUG -parse-as-library -module-cache-path "$tm
     "${sources[@]}" "$tmp/app-support.swift" "$root/scripts/fixtures/web_comparison_model.swift" "$root/scripts/fixtures/permission_review_model.swift" \
     "$root/scripts/fixtures/remote_control_model.swift" -o "$tmp/model" 2> "$tmp/compile.log" || { cat "$tmp/compile.log"; exit 1; }
 (cd "$root/scripts/remote_client" && swift build -c debug >/dev/null)
-client="$root/scripts/remote_client/.build/debug/msgblast-remote"
+real_client="$root/scripts/remote_client/.build/debug/msgblast-remote"
+# Keep harness state in the temporary folder, never the user's default client state.
+client() { "$real_client" "$@" --state "${STATE:-$tmp/state.json}"; }
 
 MSGBLAST_REMOTE_OFFER_FILE="$tmp/offer.txt" MSGBLAST_REMOTE_DONE_FILE="$tmp/done" MSGBLAST_REMOTE_ALLOW_MESSAGES=1 \
     MSGBLAST_REMOTE_EVIDENCE_DIR="$evidence" "$tmp/model" --demo --isolated-demo --remote-listen-fixture &
@@ -50,30 +52,30 @@ cd "$tmp"
 log() { echo "\$ msgblast-remote $*" | tee -a "$tmp/session.txt"; }
 
 log pair '<link>' --name "Remote client harness" --once
-"$client" pair "$(cat offer.txt)" --name "Remote client harness" --once | tee -a session.txt
+client pair "$(cat offer.txt)" --name "Remote client harness" --once | tee -a session.txt
 grep -q "Paired with" session.txt
 grep -q "Snapshot seq" session.txt
 
 log pair '<same link again>' --once
-if "$client" pair "$(cat offer.txt)" --state second.json --once > reuse.txt 2>&1; then echo "A used code paired twice"; exit 1; fi
+if STATE="$tmp/second.json" client pair "$(cat offer.txt)" --once > reuse.txt 2>&1; then echo "A used code paired twice"; exit 1; fi
 cat reuse.txt | tee -a session.txt
 grep -q "pairingClosed" reuse.txt
 
 agent="$(grep -o "messages:[0-9A-F-]*" session.txt | head -1)"
 log send --to "$agent" "Hello from the remote client"
-"$client" send --to "$agent" "Hello from the remote client" | tee -a session.txt
+client send --to "$agent" "Hello from the remote client" | tee -a session.txt
 grep -q "applied" session.txt
 
 log keep-awake on
-"$client" keep-awake on | tee -a session.txt
+client keep-awake on | tee -a session.txt
 
 log send --to nobody "Should be refused"
-if "$client" send --to nobody "Should be refused" > refused.txt; then echo "Unknown agent was accepted"; exit 1; fi
+if client send --to nobody "Should be refused" > refused.txt; then echo "Unknown agent was accepted"; exit 1; fi
 cat refused.txt | tee -a session.txt
 grep -q "unknownAgent" refused.txt
 
 log watch --once
-"$client" watch --once | tee -a session.txt
+client watch --once | tee -a session.txt
 touch done
 wait "$server_pid"; server_pid=""
 [ -n "$evidence" ] && cp session.txt "$evidence/remote-client-session.txt"
