@@ -28,6 +28,7 @@ import msgblastCore
             do {
                 if ProcessInfo.processInfo.arguments.contains("--permission-review-relaunch-fixture") { try await runPermissionReviewRelaunchChecks() }
                 else if ProcessInfo.processInfo.arguments.contains("--remote-control-fixture") { try await runRemoteControlChecks() }
+                else if ProcessInfo.processInfo.arguments.contains("--remote-listen-fixture") { try await runRemoteListenFixture() }
                 else { try await runChecks() }
             }
             catch { fatalError("Isolated model fixture failed: \(error)") }

@@ -180,4 +180,33 @@ extension SideChatModelCheck {
         view.cacheDisplay(in: view.bounds, to: bitmap)
         try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
     }
+
+    /// Serves the Demo profile on a real TLS listener (Tailscale or LAN address, never
+    /// loopback) for scripts/test_remote_client.sh. Opens a port only for this run.
+    @MainActor static func runRemoteListenFixture() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let offerFile = environment["MSGBLAST_REMOTE_OFFER_FILE"], let doneFile = environment["MSGBLAST_REMOTE_DONE_FILE"] else {
+            preconditionFailure("Set MSGBLAST_REMOTE_OFFER_FILE and MSGBLAST_REMOTE_DONE_FILE")
+        }
+        let model = AppModel()
+        precondition(model.demo)
+        let service = model.remote
+        service.setEnabled(true)
+        try await waitUntil { service.running }
+        service.setDemoNetworkAllowed(true)
+        try await waitUntil { service.port != nil || service.listenerError != nil }
+        guard let port = service.port else { preconditionFailure(service.listenerError ?? "No listener") }
+        service.setAllowMessagesSends(environment["MSGBLAST_REMOTE_ALLOW_MESSAGES"] == "1")
+        let offer = try service.showPairingCode()
+        try offer.url.absoluteString.write(toFile: offerFile, atomically: true, encoding: .utf8)
+        FileHandle.standardError.write(Data("Demo Mac listening on \(service.endpoints.map(\.host)) port \(port)\n".utf8))
+        let deadline = Date().addingTimeInterval(180)
+        while !FileManager.default.fileExists(atPath: doneFile), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+            // Demo replies arrive asynchronously; the projection streams them to the client.
+        }
+        if environment["MSGBLAST_REMOTE_EVIDENCE_DIR"] != nil { try await renderRemoteSettings(service, name: "remote-settings-listening") }
+        print("Demo Mac: paired \(service.pairing.device?.name ?? "none"), conversations \(model.state.comparisons.count), keep-awake held \(service.keepAwake.held)")
+        service.setEnabled(false)
+    }
 }
