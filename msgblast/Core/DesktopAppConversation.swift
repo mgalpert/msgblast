@@ -426,11 +426,7 @@ actor DesktopAppConversation {
         let returnTo: Target
         do { if let host { returnTo = host } else { returnTo = try await Self.hostWindow() } }
         catch { await DesktopForegroundOwner.shared.release(owner); throw error }
-        let lease = DesktopForegroundLease(owner: owner, onRestored: onRestored) {
-            do { try await self.activate(returnTo, session: session) }
-            catch { await self.endSession(session); throw error }
-            await self.endSession(session)
-        }
+        let lease = foregroundLease(owner: owner, host: returnTo, session: session, onRestored: onRestored)
         do {
             let destination = try await target(app)
             try await activate(destination, session: session)
@@ -440,6 +436,37 @@ actor DesktopAppConversation {
             // runs outside cancellation before another app can own the desktop.
             try await lease.restore()
             throw error
+        }
+    }
+    func beginReplyRefresh(_ destination: Target, session: String, host: Target? = nil,
+                           onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in },
+                           hostIsActive: @Sendable (Target) async -> Bool = { host in await MainActor.run {
+                               NSApplication.shared.isActive && NSApplication.shared.keyWindow?.windowNumber == host.window
+                           } }) async throws -> DesktopForegroundLease? {
+        guard delivery == .foreground else { return nil }
+        let returnTo: Target
+        if let host { returnTo = host } else { returnTo = try await Self.hostWindow() }
+        guard await hostIsActive(returnTo) else { return nil }
+        guard let owner = await DesktopForegroundOwner.shared.acquireIfAvailable() else { return nil }
+        guard await hostIsActive(returnTo) else { await DesktopForegroundOwner.shared.release(owner); return nil }
+        let lease = foregroundLease(owner: owner, host: returnTo, session: session, onRestoreFailure: onRestoreFailure)
+        do {
+            try Task.checkCancellation()
+            try await activate(destination, session: session)
+            await lease.restoreAfterSubmission(delay: { try await Task.sleep(for: .seconds(1)) })
+            return lease
+        } catch {
+            try await lease.restore()
+            throw error
+        }
+    }
+    private func foregroundLease(owner: UUID, host: Target, session: String,
+                                 onRestored: @escaping @Sendable () async -> Void = {},
+                                 onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in }) -> DesktopForegroundLease {
+        DesktopForegroundLease(owner: owner, host: host, onRestored: onRestored, onRestoreFailure: onRestoreFailure) {
+            do { try await self.activate(host, session: session) }
+            catch { await self.endSession(session); throw error }
+            await self.endSession(session)
         }
     }
     private func grokState(_ state: DesktopAppSnapshot, target: Target) async throws -> GrokBotNativeState {
@@ -685,20 +712,27 @@ actor DesktopForegroundOwner {
     static let shared = DesktopForegroundOwner()
     private var owner: UUID?
     func acquire() throws -> UUID {
-        guard owner == nil else { throw DesktopAppError.unavailable("Another App Agent is sending. Wait for it to finish entering its prompt.") }
+        guard let id = acquireIfAvailable() else { throw DesktopAppError.unavailable("Another App Agent is sending. Wait for it to finish entering its prompt.") }
+        return id
+    }
+    func acquireIfAvailable() -> UUID? {
+        guard owner == nil else { return nil }
         let id = UUID(); owner = id; return id
     }
     func release(_ id: UUID) { if owner == id { owner = nil } }
 }
 
 actor DesktopForegroundLease {
+    nonisolated let host: DesktopAppConversation.Target?
     private let owner: UUID
     private let returnFocus: @Sendable () async throws -> Void
     private let onRestored: @Sendable () async -> Void
+    private let onRestoreFailure: @Sendable (String) async -> Void
     private var restoration: Task<Void, Error>?
     private var delayedRestoration: Task<Void, Never>?
-    init(owner: UUID, onRestored: @escaping @Sendable () async -> Void = {}, returnFocus: @escaping @Sendable () async throws -> Void) {
-        self.owner = owner; self.onRestored = onRestored; self.returnFocus = returnFocus
+    init(owner: UUID, host: DesktopAppConversation.Target? = nil, onRestored: @escaping @Sendable () async -> Void = {}, onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in }, returnFocus: @escaping @Sendable () async throws -> Void) {
+        self.owner = owner; self.host = host; self.onRestored = onRestored; self.returnFocus = returnFocus
+        self.onRestoreFailure = onRestoreFailure
     }
     func restoreAfterSubmission(delay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(5)) }) {
         guard restoration == nil, delayedRestoration == nil else { return }
@@ -713,7 +747,7 @@ actor DesktopForegroundLease {
     func restore() async throws {
         if restoration == nil {
             delayedRestoration?.cancel(); delayedRestoration = nil
-            let returnFocus = returnFocus, onRestored = onRestored, owner = owner
+            let returnFocus = returnFocus, onRestored = onRestored, onRestoreFailure = onRestoreFailure, owner = owner
             restoration = Task.detached {
                 var failure: Error?
                 do {
@@ -722,6 +756,7 @@ actor DesktopForegroundLease {
                     failure = DesktopAppError.unavailable("msgblast could not regain focus. Open msgblast to continue; nothing will be resent automatically.")
                 }
                 await DesktopForegroundOwner.shared.release(owner)
+                if let failure { await onRestoreFailure(failure.localizedDescription) }
                 await onRestored()
                 if let failure { throw failure }
             }

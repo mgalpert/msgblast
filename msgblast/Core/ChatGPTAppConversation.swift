@@ -279,7 +279,7 @@ actor ChatGPTAppConversation {
               !current.generating, current.composer?.focused == true, current.draft == expected else { throw DesktopAppError.unavailable("ChatGPT did not confirm the exact prepared draft. Send was not pressed; review the preserved text.") }
         return current
     }
-    func reply(_ text: String, binding: ChatGPTConversationBinding, onSubmitAction: @Sendable () async -> Void = {}, onPrepared: @Sendable (ChatGPTConversationBinding) async throws -> Void, onBinding: @Sendable (ChatGPTConversationBinding) async throws -> Void) async throws -> String {
+    func reply(_ text: String, binding: ChatGPTConversationBinding, onSubmitAction: @Sendable () async -> Void = {}, refreshUnreadReply: @Sendable (DesktopAppConversation.Target) async throws -> DesktopForegroundLease? = { _ in nil }, onPrepared: @Sendable (ChatGPTConversationBinding) async throws -> Void, onBinding: @Sendable (ChatGPTConversationBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("ChatGPT is already handling a request.") }
         occupied = true; defer { occupied = false }
         let session = "msgblast-chatgpt-send-\(UUID())"
@@ -316,18 +316,38 @@ actor ChatGPTAppConversation {
         })
         let typed = try await read(target)
         guard typed.kind == native.kind, typed.title == native.title, typed.messages == baseline, typed.draft == prompt else { throw DesktopAppError.unavailable("ChatGPT’s prepared prompt changed. It was not submitted or retried.") }
-        let answer = try await DesktopAppWorkflow.reply(app: binding.kind == .dots ? "Dots" : "ChatGPT", timing: timing, submit: {
-            try await self.action(control: typed.control(label: "Send"), target: target, session: session, expected: typed, beforeDelivery: onSubmitAction)
-        }, observe: {
-            native = try await self.read(target)
-            guard native.kind == binding.kind, (pending.title == nil || native.title == openedTitle), native.draft.isEmpty || native.draft == prompt,
-                  native.messages.count >= baseline.count else { throw DesktopAppError.unavailable("ChatGPT’s conversation changed. No reply was attributed.") }
-            let appended = try native.appendedMessages(after: baseline)
+        let requiresOpenedTitle = pending.title != nil
+        func ownedMessages(_ current: ChatGPTAppObservation) throws -> [ChatGPTMessage]? {
+            guard current.kind == binding.kind, (!requiresOpenedTitle || current.title == openedTitle), current.draft.isEmpty || current.draft == prompt,
+                  current.messages.count >= baseline.count else { throw DesktopAppError.unavailable("ChatGPT’s conversation changed. No reply was attributed.") }
+            let appended = try current.appendedMessages(after: baseline)
             if let outgoing = appended.first, outgoing != .init(role: .user, text: prompt) {
                 guard outgoing.role == .user, !outgoing.text.isEmpty, prompt.hasPrefix(outgoing.text) || outgoing.text.hasPrefix(prompt) else {
                     throw DesktopAppError.unavailable("ChatGPT’s outgoing message did not match this request.")
                 }
                 return nil
+            }
+            return appended
+        }
+        var refreshedUnreadReply = false
+        let answer = try await DesktopAppWorkflow.reply(app: binding.kind == .dots ? "Dots" : "ChatGPT", timing: timing, submit: {
+            try await self.action(control: typed.control(label: "Send"), target: target, session: session, expected: typed, beforeDelivery: onSubmitAction)
+        }, observe: {
+            native = try await self.read(target)
+            guard var appended = try ownedMessages(native) else { return nil }
+            if appended.count == 1, native.draft.isEmpty, native.hasUnreadDotReply, !refreshedUnreadReply,
+               let focus = try await refreshUnreadReply(target) {
+                refreshedUnreadReply = true
+                do {
+                    // The badge can update while the conversation remains stale.
+                    native = try await self.read(target)
+                } catch {
+                    _ = try? await focus.restore()
+                    throw error
+                }
+                _ = try? await focus.restore()
+                guard let refreshed = try ownedMessages(native) else { return nil }
+                appended = refreshed
             }
             guard appended.count == 2, let answer = appended.last, answer.role == .assistant, !native.generating, native.draft.isEmpty else { return nil }
             return answer.text

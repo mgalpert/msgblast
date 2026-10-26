@@ -1728,7 +1728,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     return PersonalAgentReply(text: answer, sessionID: "Dedicated Claude chat")
                 }
                 if let saved = chatgptBinding {
-                    let answer = try await chatgptApp.reply(text, binding: saved, onSubmitAction: submitAction, onPrepared: { [weak self] pending in
+                    let answer = try await chatgptApp.reply(text, binding: saved, onSubmitAction: submitAction, refreshUnreadReply: { target in
+                        try await desktopDriver.beginReplyRefresh(target, session: "msgblast-dot-reply-\(UUID())", host: sendFocus?.host, onRestoreFailure: { [weak self] detail in
+                            await MainActor.run { self?.error = detail }
+                        })
+                    }, onPrepared: { [weak self] pending in
                         guard let self else { throw CancellationError() }
                         try await self.recordChatGPTSubmission(pending)
                     }, onBinding: { [weak self] discovered in

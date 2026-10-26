@@ -687,6 +687,31 @@ final class DesktopAppDriverTests: XCTestCase {
     private func focusSteps(_ app: DesktopAppProvider = .grokBot) -> [[String: Any]] {
         [apps(app), windows(), activation()]
     }
+    func testReplyRefreshRestoresTheExactHostOnceWithoutInput() async throws {
+        let fixture = try driver([activation(), activation(fixtureHost)])
+        defer { fixture.remove() }
+        let control = adapter(fixture, delivery: .foreground)
+        let lease = try await control.beginReplyRefresh(.init(pid: 4242, window: 101), session: "fixture-unread", host: fixtureHost, hostIsActive: { _ in true })
+        let focus = try XCTUnwrap(lease)
+        XCTAssertEqual(focus.host, fixtureHost)
+        try await focus.restore()
+        try await focus.restore()
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.compactMap { $0.arguments["window_id"] as? Int }, [101, 201])
+        XCTAssertFalse(calls.contains { ["click", "type_text", "press_key"].contains($0.tool) })
+    }
+    func testReplyRefreshDefersWhileHostIsInactiveOrAnotherAgentOwnsFocus() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let control = adapter(fixture, delivery: .foreground)
+        let inactive = try await control.beginReplyRefresh(.init(pid: 4242, window: 101), session: "inactive", host: fixtureHost, hostIsActive: { _ in false })
+        XCTAssertNil(inactive)
+        let owner = try await DesktopForegroundOwner.shared.acquire()
+        let busy = try await control.beginReplyRefresh(.init(pid: 4242, window: 101), session: "busy", host: fixtureHost, hostIsActive: { _ in true })
+        await DesktopForegroundOwner.shared.release(owner)
+        XCTAssertNil(busy)
+        XCTAssertTrue(try fixture.calls().isEmpty)
+    }
     func testForegroundGrokRestoresHostBeforeReplyCompletesAndSubmitsOnce() async throws {
         let fixture = try driver(focusSteps() + sendSteps() + [snapshot(grok(reply: "", generating: true)),
             activation(fixtureHost), snapshot(grok(reply: "Foreground answer"), repeating: true)])

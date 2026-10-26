@@ -45,6 +45,7 @@ enum ChatGPTObservationError: LocalizedError, Sendable {
 }
 struct ChatGPTAppNavigation: Sendable {
     private let nodes: [ChatGPTAXNode]
+    fileprivate init(validatedNodes: [ChatGPTAXNode]) { nodes = validatedNodes }
     init(root: ChatGPTAXNode) throws {
         guard root.role == "AXWindow" else { throw DesktopAppError.unavailable("Open ChatGPT’s main window.") }
         let pages = root.descendants.filter { $0.role == "AXWebArea" && $0.url == "app://-/index.html" }
@@ -74,6 +75,12 @@ struct ChatGPTAppObservation: Sendable {
     let messages: [ChatGPTMessage]
     let composer: ChatGPTAXNode?
     let codexBootstrap: Bool
+    var hasUnreadDotReply: Bool {
+        guard kind == .dots, let button = try? ChatGPTAppNavigation(validatedNodes: nodes).dotButton(),
+              button.label.hasPrefix(title + " ") else { return false }
+        let badge = String(button.label.dropFirst(title.count + 1))
+        return badge.range(of: #"^[1-9][0-9]* unread messages?$"#, options: .regularExpression) != nil
+    }
     var dotSetup: Bool { composer == nil }
     var isNew: Bool { composer != nil && kind == .chatgpt && !codexBootstrap && messages.isEmpty }
     func requiredComposer() throws -> ChatGPTAXNode {

@@ -277,6 +277,15 @@ require that reference in the observed dot history. msgblast never renames,
 reboots, deletes, or approves actions for the dot. An unavailable reference or
 changed dot identity blocks input until the saved context can be verified.
 
+Dots can publish its sidebar unread badge while the conversation remains stale
+in the background. After verifying this request's outgoing message, msgblast may
+briefly activate that exact ChatGPT window once when the active Dot has unread
+messages. It reads the conversation, then restores the original msgblast window;
+a one-second watchdog restores focus even if the read stalls. This refresh waits
+while another agent owns foreground input or the user is outside the original
+msgblast window. It never types, navigates, or sends again. A visible reply needs
+no foreground refresh.
+
 Native controls select the intended chat; the native accessibility tree verifies
 sender boundaries, draft values, and ownership. Embedded browser tabs and app
 content are excluded from ChatGPT’s transcript. Screen Recording lets Cua focus

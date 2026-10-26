@@ -58,6 +58,24 @@ final class ChatGPTAppConversationTests: XCTestCase {
         var wrongApp = root; wrongApp.children[0].url = "https://chatgpt.com"
         XCTAssertThrowsError(try ChatGPTAppNavigation(root: wrongApp).dotButton())
     }
+    func testUnreadDotReplyRequiresTheActiveDotsUniqueSidebarBadge() throws {
+        func dot(_ label: String, duplicate: Bool = false) throws -> ChatGPTAppObservation {
+            let button = ChatGPTAXNode(role: "AXButton", label: label, classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
+            var root = window([.init(role: "AXGroup", classes: ["message-list"])], composer: field("Message", value: "Send a message"), extra: [
+                .init(role: "AXPopUpButton", label: "Open Example Dot’s profile"),
+                .init(role: "AXGroup", children: [.init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]), button] + (duplicate ? [button] : []))
+            ])
+            root.children[0].label = "Example Dot"
+            return try ChatGPTAppObservation(root: root)
+        }
+        XCTAssertTrue(try dot("Example Dot 1 unread message").hasUnreadDotReply)
+        XCTAssertTrue(try dot("Example Dot 12 unread messages").hasUnreadDotReply)
+        XCTAssertFalse(try dot("Other Dot 1 unread message").hasUnreadDotReply)
+        XCTAssertFalse(try dot("Example Dot 0 unread messages").hasUnreadDotReply)
+        XCTAssertFalse(try dot("Example Dot").hasUnreadDotReply)
+        XCTAssertFalse(try dot("Example Dot 1 unread message", duplicate: true).hasUnreadDotReply)
+        XCTAssertFalse(try ChatGPTAppObservation(root: window()).hasUnreadDotReply)
+    }
     func testActualPlaceholderRequiresNativePlaceholderChild() throws {
         XCTAssertEqual(try ChatGPTAppObservation(root: window()).draft, "")
         for value in ["Ask ChatGPT", "Ask ChatGPT\n", "Keep my draft"] {
@@ -279,6 +297,9 @@ private actor ChatGPTRecordedBindings {
     var events: [String] = []
     func prepare(_ value: ChatGPTConversationBinding) { prepared.append(value); events.append("prepared") }
     func submit() { events.append("submit") }
+    func refresh() { events.append("refresh") }
+    func restore() { events.append("restore") }
+    func restoreFailed() { events.append("restore-failed") }
     func bind(_ value: ChatGPTConversationBinding) { bound.append(value); events.append("bound") }
 }
 
@@ -295,7 +316,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let nativeParagraphs: Bool
         let preparation: Preparation
         var stage: URL { directory.appendingPathComponent("stage") }
-        func adapter(transientAfterTyping: Bool = false, partialOutgoingOnce: Bool = false, thinkingStatusOnce: Bool = false, renameReadFailure: Bool = false, renameReadCancellation: Bool = false, prependHistoryAfterSend: Bool = false, dotTransitionOnce: Bool = false) -> ChatGPTAppConversation {
+        func adapter(transientAfterTyping: Bool = false, partialOutgoingOnce: Bool = false, thinkingStatusOnce: Bool = false, renameReadFailure: Bool = false, renameReadCancellation: Bool = false, prependHistoryAfterSend: Bool = false, dotTransitionOnce: Bool = false, staleDotReplyUntilRefresh: Bool = false) -> ChatGPTAppConversation {
             ChatGPTAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(3), callTimeout: 3), readNavigation: { target in
                 guard target == .init(pid: 42, window: 21) else { throw DesktopAppError.unavailable("Wrong exact window") }
                 let index = Int((try? String(contentsOf: stage, encoding: .utf8)) ?? "0") ?? 0
@@ -387,6 +408,19 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
                         for child in node.children.indices { prepend(&node.children[child]) }
                     }
                     prepend(&root)
+                }
+                if staleDotReplyUntilRefresh, FileManager.default.fileExists(atPath: directory.appendingPathComponent("submitted-draft").path) {
+                    root.children[0].children.insert(.init(role: "AXGroup", children: [
+                        .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
+                        .init(role: "AXButton", label: "Example Dot 1 unread message", classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
+                    ]), at: 0)
+                    if !FileManager.default.fileExists(atPath: directory.appendingPathComponent("reply-refreshed").path) {
+                        func hideReply(_ node: inout ChatGPTAXNode) {
+                            if node.classes.contains("message-list") { node.children.removeLast() }
+                            else { for child in node.children.indices { hideReply(&node.children[child]) } }
+                        }
+                        hideReply(&root)
+                    }
                 }
                 return try ChatGPTAppObservation(root: root)
             })
@@ -707,6 +741,63 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 1)
             XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "type_text" }.count, followup ? 1 : 2)
         }
+    }
+    func testDotsUnreadFollowupRefreshesOnceAndRestoresFocusBeforeReturningReplyWithoutResending() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let recorded = ChatGPTRecordedBindings()
+        let answer = try await f.adapter(staleDotReplyUntilRefresh: true).reply("Follow-up", binding: f.binding, refreshUnreadReply: { target in
+            XCTAssertEqual(target, .init(pid: 42, window: 21))
+            XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
+            await recorded.refresh()
+            try Data().write(to: f.directory.appendingPathComponent("reply-refreshed"))
+            let owner = try await DesktopForegroundOwner.shared.acquire()
+            return DesktopForegroundLease(owner: owner) { await recorded.restore() }
+        }, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
+        XCTAssertEqual(answer, "ANSWER")
+        let events = await recorded.events
+        XCTAssertEqual(events, ["prepared", "refresh", "restore", "bound"])
+        let mutations = f.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(mutations.map { $0["tool"] as? String }, ["type_text", "click"], "Refreshing must never replay typing or Send")
+    }
+    func testDotsVisibleReplyAndForeignOutgoingNeverRequestForegroundRefresh() async throws {
+        for wrongOutgoing in [false, true] {
+            let f = try fixture(kind: .dots, followup: true, wrongOutgoing: wrongOutgoing)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            if !wrongOutgoing { try Data().write(to: f.directory.appendingPathComponent("reply-refreshed")) }
+            do {
+                let answer = try await f.adapter(staleDotReplyUntilRefresh: true).reply("Follow-up", binding: f.binding, refreshUnreadReply: { _ in
+                    XCTFail("A visible reply or an unowned outgoing cannot trigger foreground refresh")
+                    return nil
+                }, onPrepared: { _ in }, onBinding: { _ in })
+                XCTAssertFalse(wrongOutgoing)
+                XCTAssertEqual(answer, "ANSWER")
+            } catch {
+                XCTAssertTrue(wrongOutgoing)
+                XCTAssertTrue(error.localizedDescription.contains("outgoing message did not match"), error.localizedDescription)
+            }
+        }
+    }
+    func testDotsRefreshRestoreFailureKeepsOwnedReplyAndReportsFailureWithoutResending() async throws {
+        struct RestoreFailure: Error {}
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let recorded = ChatGPTRecordedBindings()
+        let answer = try await f.adapter(staleDotReplyUntilRefresh: true).reply("Follow-up", binding: f.binding, refreshUnreadReply: { _ in
+            try Data().write(to: f.directory.appendingPathComponent("reply-refreshed"))
+            let owner = try await DesktopForegroundOwner.shared.acquire()
+            return DesktopForegroundLease(owner: owner, onRestoreFailure: { detail in
+                XCTAssertTrue(detail.contains("could not regain focus"))
+                await recorded.restoreFailed()
+            }) { throw RestoreFailure() }
+        }, onPrepared: { _ in }, onBinding: { await recorded.bind($0) })
+        XCTAssertEqual(answer, "ANSWER")
+        let events = await recorded.events
+        XCTAssertEqual(events, ["restore-failed", "bound"])
+        let nextOwner = try await DesktopForegroundOwner.shared.acquire()
+        await DesktopForegroundOwner.shared.release(nextOwner)
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
     }
     func testUnknownSendResultIsObservedWithoutSecondSubmission() async throws {
         let fixture = try fixture(kind: .dots, unknownSend: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
