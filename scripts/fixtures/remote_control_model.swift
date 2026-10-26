@@ -86,12 +86,16 @@ extension SideChatModelCheck {
         let claude = model.webAgents.session(for: .claude)!
         try await waitUntil { claude.snapshot.ready }
         await model.remoteAvailabilityProbe(slow: false)
-        // The Mac workspace is on another conversation, so the first send only prepares the
-        // new chat page and, exactly as from the Mac composer, needs another explicit send.
+        // The Mac workspace is on another conversation. The phone's prepareConversation opens
+        // the new chat page (as the Mac composer does) without sending anything.
+        let prepare = await executor.execute(RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["claude"])))
+        precondition(prepare.outcome == .applied && claude.state.attempts.isEmpty, "\(prepare)")
+        // Move the Mac back to another conversation, so the send itself must prepare the page:
+        // it waits for readiness and then submits exactly once, with no "send again".
+        model.webAgents.setComparison(first)
         let website = RemoteAction.createConversation(text: "Website and Messages", agentIDs: ["claude", RemoteAgentIDs.messages(lumen.id)], attachmentIDs: [])
-        let prepared = await executor.execute(RemoteCommand(action: website))
-        precondition(prepared.code == .preparedNotSent && claude.state.attempts.isEmpty, "\(prepared)")
         let shared = await executor.execute(RemoteCommand(action: website))
+        precondition(claude.state.attempts.filter { $0.text == "Website and Messages" }.count == 1, "One submission")
         precondition(shared.outcome == .applied, "\(shared)")
         precondition(shared.agentStatuses["claude"]?.isUnresolved == false && shared.agentStatuses["claude"] != .notSent, "\(shared.agentStatuses)")
         precondition(model.comparison(shared.conversationID!)?.resolvedWebAgentIDs == [.claude])
@@ -114,7 +118,7 @@ extension SideChatModelCheck {
         precondition(keepAwake.held == false, "Send assertions are released")
         host.discardStagedAttachments()
         try await runRemoteServiceChecks(model)
-        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that, like the Mac composer, first prepares the chat and needs a second explicit send), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
+        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that prepares the chat, waits for readiness and submits once, plus prepareConversation), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
     }
 
     /// The real RemoteService in Demo: settings saved in the isolated profile, no network

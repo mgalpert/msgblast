@@ -28,6 +28,13 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     case attachStaged(uploadID: UUID, sha256: Data)
     /// Starts a comparison report on the Mac with the configured local agent.
     case requestReport(conversationID: UUID)
+    /// Sent when the phone opens a composer or changes recipients: runs the Mac's existing
+    /// prepare paths (which may navigate website pages, never launch apps or send) and
+    /// answers when the agents are ready, or with each agent's reason.
+    case prepareConversation(conversationID: UUID?, agentIDs: [String])
+    /// Asks for the result of an earlier command without running anything. After a Mac
+    /// restart an unknown id is answered with `unknownCommand`: show it as unconfirmed.
+    case queryCommand(clientCommandID: UUID)
     case unknown(kind: String)
 
     public var kind: String {
@@ -42,8 +49,15 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .uploadAttachmentChunk: "uploadAttachmentChunk"
         case .attachStaged: "attachStaged"
         case .requestReport: "requestReport"
+        case .prepareConversation: "prepareConversation"
+        case .queryCommand: "queryCommand"
         case .unknown(let kind): kind
         }
+    }
+    /// Actions that run one at a time with sends (they may navigate pages on the Mac).
+    public var isSerial: Bool {
+        if case .prepareConversation = self { return true }
+        return isSend
     }
     /// Actions that can deliver text to an agent.
     public var isSend: Bool {
@@ -51,7 +65,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256
+        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -72,6 +86,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
             self = .uploadAttachmentChunk(uploadID: try c.decode(UUID.self, forKey: .uploadID), filename: try c.decode(String.self, forKey: .filename), index: try c.decode(Int.self, forKey: .index), count: try c.decode(Int.self, forKey: .count), data: try c.decode(Data.self, forKey: .data))
         case "attachStaged": self = .attachStaged(uploadID: try c.decode(UUID.self, forKey: .uploadID), sha256: try c.decode(Data.self, forKey: .sha256))
         case "requestReport": self = .requestReport(conversationID: try c.decode(UUID.self, forKey: .conversationID))
+        case "prepareConversation": self = .prepareConversation(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentIDs: try ids(.agentIDs))
+        case "queryCommand": self = .queryCommand(clientCommandID: try c.decode(UUID.self, forKey: .clientCommandID))
         default: self = .unknown(kind: kind)
         }
     }
@@ -96,6 +112,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
             try c.encode(index, forKey: .index); try c.encode(count, forKey: .count); try c.encode(data, forKey: .data)
         case .attachStaged(let uploadID, let sha256): try c.encode(uploadID, forKey: .uploadID); try c.encode(sha256, forKey: .sha256)
         case .requestReport(let id): try c.encode(id, forKey: .conversationID)
+        case .prepareConversation(let id, let agents): try c.encodeIfPresent(id, forKey: .conversationID); try c.encode(agents, forKey: .agentIDs)
+        case .queryCommand(let id): try c.encode(id, forKey: .clientCommandID)
         case .unknown: break
         }
     }
@@ -118,7 +136,12 @@ public struct RemoteRejectionCode: RemoteOpenValue {
     public static let keepAwakeDisabled: Self = "keepAwakeDisabled"
     public static let failed: Self = "failed"
     /// The Mac navigated an agent's chat for this send and, as on the Mac, needs a new explicit send.
+    /// Kept for compatibility; current Macs wait for readiness instead (see `notReady`).
     public static let preparedNotSent: Self = "preparedNotSent"
+    /// Agents did not become ready within the wait. Nothing was submitted.
+    public static let notReady: Self = "notReady"
+    /// The Mac has no record of this command id (for example after it restarted). Unconfirmed.
+    public static let unknownCommand: Self = "unknownCommand"
 }
 
 public struct RemoteCommandResult: Codable, Hashable, Sendable {
@@ -139,11 +162,26 @@ public struct RemoteCommandResult: Codable, Hashable, Sendable {
     public var attachmentID: String?
     /// Agent id → attempt status reported by the send path, when known.
     public var agentStatuses: [String: RemoteAttemptStatus]
+    /// Agent id → why it is not ready (for `prepareConversation` and `notReady`).
+    public var agentReasons: [String: String]
     /// True when the Mac returned the stored result for a replayed `clientCommandID`.
     public var replayed: Bool
-    public init(clientCommandID: UUID, outcome: Outcome, code: RemoteRejectionCode? = nil, message: String? = nil, conversationID: UUID? = nil, attachmentID: String? = nil, agentStatuses: [String: RemoteAttemptStatus] = [:], replayed: Bool = false) {
+    public init(clientCommandID: UUID, outcome: Outcome, code: RemoteRejectionCode? = nil, message: String? = nil, conversationID: UUID? = nil, attachmentID: String? = nil, agentStatuses: [String: RemoteAttemptStatus] = [:], agentReasons: [String: String] = [:], replayed: Bool = false) {
         self.clientCommandID = clientCommandID; self.outcome = outcome; self.code = code; self.message = message
-        self.conversationID = conversationID; self.attachmentID = attachmentID; self.agentStatuses = agentStatuses; self.replayed = replayed
+        self.conversationID = conversationID; self.attachmentID = attachmentID; self.agentStatuses = agentStatuses; self.agentReasons = agentReasons; self.replayed = replayed
+    }
+    private enum CodingKeys: String, CodingKey { case clientCommandID, outcome, code, message, conversationID, attachmentID, agentStatuses, agentReasons, replayed }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        clientCommandID = try c.decode(UUID.self, forKey: .clientCommandID)
+        outcome = try c.decode(Outcome.self, forKey: .outcome)
+        code = try c.decodeIfPresent(RemoteRejectionCode.self, forKey: .code)
+        message = try c.decodeIfPresent(String.self, forKey: .message)
+        conversationID = try c.decodeIfPresent(UUID.self, forKey: .conversationID)
+        attachmentID = try c.decodeIfPresent(String.self, forKey: .attachmentID)
+        agentStatuses = try c.decodeIfPresent([String: RemoteAttemptStatus].self, forKey: .agentStatuses) ?? [:]
+        agentReasons = try c.decodeIfPresent([String: String].self, forKey: .agentReasons) ?? [:]
+        replayed = try c.decodeIfPresent(Bool.self, forKey: .replayed) ?? false
     }
     public static func rejected(_ id: UUID, _ code: RemoteRejectionCode, _ message: String) -> Self {
         Self(clientCommandID: id, outcome: .rejected, code: code, message: message)

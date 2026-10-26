@@ -73,13 +73,11 @@ final class AppRemoteHost: RemoteCommandHost {
         case .signInRequired(let ids):
             let names = ids.map { model.webAgents.name(for: $0) }.formatted(.list(type: .and))
             return .rejected(.agentUnavailable, "Sign in to \(names) in msgblast on your Mac. Nothing was sent.")
+        case .notPrepared:
+            return .rejected(.notReady, "An agent's chat was not ready on the Mac. Nothing was submitted.")
         case .stopped:
-            // Preparation can navigate a page and still require a new explicit send, as on the Mac.
             let details = sessions.compactMap { session in session.error.map { "\(session.name): \($0)" } }
-            guard details.isEmpty, RemoteErrorCapture.current?.messages.isEmpty != false else {
-                return .rejected(.failed, (["The Mac stopped before the shared send."] + details).joined(separator: " "))
-            }
-            return .rejected(.preparedNotSent, "The Mac opened this conversation's chats but did not submit, as it does for a send from the Mac. Send again to submit.")
+            return .rejected(.failed, (["The Mac stopped before the shared send."] + details).joined(separator: " "))
         case .sent(let id, let result):
             // A Messages-only follow-up the send path refused leaves nothing submitted.
             if result.web.isEmpty && result.comparisonID == nil { return .rejected(.failed, "Nothing was sent.", conversationID: id) }
@@ -97,10 +95,9 @@ final class AppRemoteHost: RemoteCommandHost {
                 }
                 return .applied(conversationID: id, statuses: statuses(id))
             }
-            model.webBroadcastBusy = true
             let text = plan.text
-            return sharedOutcome(await model.sendShared(SharedSendRequest(sessions: sessions, recipients: Set(recipients), existingID: nil, draft: text, attachments: [],
-                                                                          currentDraft: { text }, clearDraft: {}, interactive: false)), sessions: sessions, followUpsBefore: nil)
+            return await sharedSendWaitingForReadiness(SharedSendRequest(sessions: sessions, recipients: Set(recipients), existingID: nil, draft: text, attachments: [],
+                                                                         currentDraft: { text }, clearDraft: {}, interactive: false), followUpsBefore: nil)
         case .sharedFollowUp:
             guard let id = plan.conversationID, let comparison = model.comparison(id) else { return .rejected(.unknownConversation, "That conversation is no longer on the Mac.") }
             let targets = plan.agentIDs.isEmpty
@@ -108,10 +105,9 @@ final class AppRemoteHost: RemoteCommandHost {
                 : plan.agentIDs
             let (recipients, sessions) = split(targets)
             let before = comparison.followUps.count
-            model.webBroadcastBusy = true
             let text = plan.text
-            return sharedOutcome(await model.sendShared(SharedSendRequest(sessions: sessions.filter(\.isEnabled), recipients: Set(recipients), existingID: id, draft: text,
-                                                                          attachments: files, currentDraft: { text }, clearDraft: {}, interactive: false)), sessions: sessions, followUpsBefore: before)
+            return await sharedSendWaitingForReadiness(SharedSendRequest(sessions: sessions.filter(\.isEnabled), recipients: Set(recipients), existingID: id, draft: text,
+                                                                         attachments: files, currentDraft: { text }, clearDraft: {}, interactive: false), followUpsBefore: before)
         case .privateMessage:
             guard let agentID = plan.agentIDs.first else { return .rejected(.invalidCommand, "Choose an agent.") }
             if let member = RemoteAgentIDs.messagesAgent(agentID) {
@@ -133,6 +129,63 @@ final class AppRemoteHost: RemoteCommandHost {
             guard let attempt else { return .rejected(.failed, "Nothing was sent.", conversationID: id) }
             return .applied(conversationID: id, statuses: [agentID: RemoteAttemptStatus(rawValue: attempt.status.rawValue) ?? .uncertain])
         }
+    }
+
+    static let readinessWait: Duration = .seconds(20)
+
+    /// The shared send. When an agent's page had to be prepared first, nothing has been
+    /// submitted yet; wait (no new navigation) for the sessions to report ready, then make
+    /// the single send. This is not a retry: the first pass submitted nothing.
+    private func sharedSendWaitingForReadiness(_ request: SharedSendRequest, followUpsBefore: Int?) async -> RemoteHostResult {
+        model.webBroadcastBusy = true
+        let first = await model.sendShared(request)
+        guard case .notPrepared = first else { return sharedOutcome(first, sessions: request.sessions, followUpsBefore: followUpsBefore) }
+        // Keep the Mac's own composer blocked while waiting, as during any send.
+        model.webBroadcastBusy = true
+        let waiting = await notReadyReasons(request.sessions, timeout: Self.readinessWait)
+        guard waiting.isEmpty else {
+            model.webBroadcastBusy = false
+            return .rejected(.notReady, "Not every agent became ready on the Mac. Nothing was submitted.", reasons: waiting)
+        }
+        let second = await model.sendShared(request)
+        if case .notPrepared = second {
+            return .rejected(.notReady, "Not every agent became ready on the Mac. Nothing was submitted.", reasons: currentReasons(request.sessions))
+        }
+        return sharedOutcome(second, sessions: request.sessions, followUpsBefore: followUpsBefore)
+    }
+
+    private func isReady(_ session: WebAgentSession) -> Bool {
+        if session.provider.usesNativeConversation { return availabilityModel.availability(for: session.id.id)?.readiness.acceptsSend == true }
+        return session.snapshot.ready && !session.loading && !session.snapshot.hasDraft
+    }
+    private func currentReasons(_ sessions: [WebAgentSession]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: sessions.filter { !isReady($0) }.map { ($0.id.id, $0.error ?? $0.snapshot.reason) })
+    }
+    /// Polls published session state only; never navigates, launches or sends.
+    private func notReadyReasons(_ sessions: [WebAgentSession], timeout: Duration) async -> [String: String] {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if sessions.allSatisfy(isReady) { return [:] }
+            // An agent that cannot become ready by waiting (signed out, disabled) answers at once.
+            if sessions.contains(where: { availabilityModel.availability(for: $0.id.id)?.readiness.acceptsSend == false }) { break }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return currentReasons(sessions)
+    }
+
+    func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult {
+        let sessions = agentIDs.compactMap(session).filter(\.isEnabled)
+        guard !sessions.isEmpty else { return .applied(conversationID: id) }
+        let blocked = sessions.filter { availabilityModel.availability(for: $0.id.id)?.readiness.acceptsSend == false }
+        if !blocked.isEmpty {
+            let reasons = Dictionary(uniqueKeysWithValues: blocked.map { ($0.id.id, availabilityModel.availability(for: $0.id.id)?.reasons.first?.userText ?? $0.snapshot.reason) })
+            return .rejected(.notReady, "Some agents need attention on the Mac.", conversationID: id, reasons: reasons)
+        }
+        let capture = RemoteErrorCapture()
+        // The Mac composer does the same when it shows these agents: open their chats, never launch apps.
+        await RemoteErrorCapture.$current.withValue(capture) { _ = await model.webAgents.prepareComparison(id, for: sessions, startNativeApps: false) }
+        let waiting = await notReadyReasons(sessions, timeout: Self.readinessWait)
+        return waiting.isEmpty ? .applied(conversationID: id) : .rejected(.notReady, "Not every agent became ready on the Mac.", conversationID: id, reasons: waiting)
     }
 
     func endConversation(_ id: UUID) -> RemoteHostResult {

@@ -102,6 +102,7 @@ duplicate-send and unresolved-attempt guard applies:
 | Attachments | Chunked upload (256 KB chunks, 25 MB, SHA-256 checked) → `LocalStore.stage`; Messages agents only |
 | Keep awake | The phone's request; the Mac setting can refuse it |
 | Report | `PersonalAgentController.requestReport` on the Mac |
+| Prepare agents | `WebAgents.prepareComparison` without launching apps, then a readiness wait |
 
 Rules the Mac enforces:
 
@@ -115,10 +116,19 @@ Rules the Mac enforces:
 - A remote command never opens a Contacts prompt, never takes or clears the Mac's
   composer draft, and sets aside the Mac's Messages drafts and files for its own
   follow-up. Errors go to the command result, not the Mac's alert.
-- Like a send from the Mac composer, a website page the send had to navigate is not
-  submitted in the same request: the result is `preparedNotSent` and the phone sends
-  again. A remote send to an existing conversation switches the Mac's workspace to
-  it, as any send does.
+- The phone sends `prepareConversation` when it opens a composer or changes
+  recipients. The Mac runs the same prepare paths as its composer (it may open a
+  website chat page, never launches an app, never sends) and answers when the agents
+  are ready, or with each agent's reason (`notReady`). If a send still finds a page
+  that had to be prepared, nothing has been submitted; the Mac waits up to 20 seconds
+  for readiness without navigating again and then sends once, or answers `notReady`
+  with nothing submitted. The phone never has to "send again". `preparedNotSent`
+  remains only for compatibility.
+- `queryCommand` asks for an earlier command's result without running anything.
+  Results live in memory only: after msgblast restarts, an unknown id is answered
+  with `unknownCommand`, which the phone shows as unconfirmed.
+- A remote send to an existing conversation switches the Mac's workspace to it, as
+  any send does.
 
 ## Availability
 

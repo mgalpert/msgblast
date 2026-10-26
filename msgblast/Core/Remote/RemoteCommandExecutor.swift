@@ -18,11 +18,12 @@ public struct RemoteHostResult: Sendable, Equatable {
     public var message: String?
     public var conversationID: UUID?
     public var agentStatuses: [String: RemoteAttemptStatus]
+    public var agentReasons: [String: String] = [:]
     public static func applied(conversationID: UUID? = nil, statuses: [String: RemoteAttemptStatus] = [:], message: String? = nil) -> Self {
         Self(applied: true, code: nil, message: message, conversationID: conversationID, agentStatuses: statuses)
     }
-    public static func rejected(_ code: RemoteRejectionCode, _ message: String, conversationID: UUID? = nil) -> Self {
-        Self(applied: false, code: code, message: message, conversationID: conversationID, agentStatuses: [:])
+    public static func rejected(_ code: RemoteRejectionCode, _ message: String, conversationID: UUID? = nil, reasons: [String: String] = [:]) -> Self {
+        Self(applied: false, code: code, message: message, conversationID: conversationID, agentStatuses: [:], agentReasons: reasons)
     }
 }
 
@@ -39,6 +40,8 @@ public protocol RemoteCommandHost: AnyObject {
     func availability(for agentID: String) -> AgentAvailability?
     func conversation(_ id: UUID) -> RemoteConversationState?
     func performSend(_ plan: RemoteSendPlan) async -> RemoteHostResult
+    /// Runs the existing prepare paths for these agents and waits for readiness. Never sends or launches apps.
+    func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult
     func endConversation(_ id: UUID) -> RemoteHostResult
     func acknowledgeIncomplete(agentID: String, attemptID: String?) -> RemoteHostResult
     func cancelNative(agentID: String) -> RemoteHostResult
@@ -73,10 +76,11 @@ public final class RemoteCommandExecutor {
     /// waits behind another and then again with its final result.
     public func submit(_ command: RemoteCommand, reply: @escaping (RemoteCommandResult) -> Void) {
         let id = command.clientCommandID
+        if case .queryCommand(let target) = command.action { reply(status(of: target)); return }
         if var stored = ledger[id] { stored.replayed = true; reply(stored); return }
         if inProgress.contains(id) { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Already running on the Mac.", replayed: true)); return }
-        if command.action.isSend {
-            if let rejection = checkSend(command) { finish(rejection, reply); return }
+        if command.action.isSerial {
+            if let rejection = command.action.isSend ? checkSend(command) : checkPrepare(command) { finish(rejection, reply); return }
             inProgress.insert(id)
             if sending { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Waiting for the previous request on the Mac.")) }
             sendQueue.append((command, reply))
@@ -115,7 +119,7 @@ public final class RemoteCommandExecutor {
         Task { @MainActor in
             // Re-check at the head of the queue: the Mac may have locked or started its own send.
             let result: RemoteCommandResult
-            if let rejection = self.checkSend(command, atHead: true) { result = rejection }
+            if let rejection = command.action.isSend ? self.checkSend(command, atHead: true) : self.checkPrepare(command, atHead: true) { result = rejection }
             else { result = await self.runSend(command) }
             self.finish(result, reply)
             self.sending = false
@@ -181,7 +185,34 @@ public final class RemoteCommandExecutor {
         return nil
     }
 
+    /// A stored, running, or unknown command. Read-only: never runs anything.
+    public func status(of id: UUID) -> RemoteCommandResult {
+        if var stored = ledger[id] { stored.replayed = true; return stored }
+        if inProgress.contains(id) { return RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Still running on the Mac.", replayed: true) }
+        return .rejected(id, .unknownCommand, "The Mac has no record of this command, for example because msgblast restarted. Treat it as unconfirmed and check the conversation.")
+    }
+
+    private func checkPrepare(_ command: RemoteCommand, atHead: Bool = false) -> RemoteCommandResult? {
+        guard let host else { return reject(command, .failed, "Remote control stopped on the Mac.") }
+        guard !host.isLocked else { return reject(command, .macLocked, "Your Mac is locked. Unlock it first.") }
+        guard case .prepareConversation(let id, let agents) = command.action else { return reject(command, .invalidCommand, "Not a preparation.") }
+        if atHead && host.isBusy { return reject(command, .macBusy, "The Mac is sending something else. Try again when it finishes.") }
+        if let id {
+            switch host.conversation(id) {
+            case nil: return reject(command, .unknownConversation, "That conversation is no longer on the Mac.")
+            case .ended?: return reject(command, .conversationEnded, "That conversation has ended.")
+            case .active?: break
+            }
+        }
+        guard agents.allSatisfy({ host.availability(for: $0) != nil }) else { return reject(command, .unknownAgent, "An agent is no longer available on the Mac.") }
+        return nil
+    }
+
     private func runSend(_ command: RemoteCommand) async -> RemoteCommandResult {
+        if case .prepareConversation(let id, let agents) = command.action {
+            guard let host else { return reject(command, .failed, "Remote control stopped on the Mac.") }
+            return outcome(command, await host.prepareConversation(id, agentIDs: agents))
+        }
         guard let host, let plan = plan(command) else { return reject(command, .failed, "Remote control stopped on the Mac.") }
         let result = await host.performSend(plan)
         return outcome(command, result)
@@ -189,7 +220,7 @@ public final class RemoteCommandExecutor {
 
     private func outcome(_ command: RemoteCommand, _ result: RemoteHostResult, attachmentID: String? = nil) -> RemoteCommandResult {
         RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: result.applied ? .applied : .rejected, code: result.code, message: result.message,
-                            conversationID: result.conversationID, attachmentID: attachmentID, agentStatuses: result.agentStatuses)
+                            conversationID: result.conversationID, attachmentID: attachmentID, agentStatuses: result.agentStatuses, agentReasons: result.agentReasons)
     }
 
     private func apply(_ command: RemoteCommand) async -> RemoteCommandResult {
@@ -217,7 +248,7 @@ public final class RemoteCommandExecutor {
             guard Data(SHA256.hash(data: data)) == digest else { return reject(command, .attachmentRejected, "The upload was corrupted. Upload it again.") }
             do { return outcome(command, .applied(), attachmentID: try host.stageAttachment(data, filename: upload.filename)) }
             catch { return reject(command, .attachmentRejected, error.localizedDescription) }
-        case .createConversation, .sendShared, .sendPrivate: return reject(command, .invalidCommand, "Sends are queued separately.")
+        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand: return reject(command, .invalidCommand, "Handled separately.")
         case .unknown(let kind): return reject(command, .unsupported, "This Mac does not support \(kind) yet. Update msgblast on the Mac.")
         }
     }

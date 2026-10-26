@@ -34,6 +34,12 @@ final class FakeRemoteHost: RemoteCommandHost {
     func stageAttachment(_ data: Data, filename: String) throws -> String { let id = UUID().uuidString; staged[id] = (data, filename); return id }
     func hasStagedAttachment(_ id: String) -> Bool { staged[id] != nil }
     func requestReport(_ id: UUID) async -> RemoteHostResult { .applied(conversationID: id) }
+    var prepared: [[String]] = []
+    func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult {
+        prepared.append(agentIDs)
+        let waiting = agentIDs.filter { agents[$0]?.readiness.acceptsSend == false }
+        return waiting.isEmpty ? .applied(conversationID: id) : .rejected(.notReady, "Not ready", reasons: Dictionary(uniqueKeysWithValues: waiting.map { ($0, "Sign in") }))
+    }
 
     static func agent(_ id: String, form: AgentForm = .website, readiness: AgentReadiness = .ready, privateSend: Bool = true) -> AgentAvailability {
         AgentAvailability(agentID: id, product: form == .messages ? .messages : .claude, form: form, displayName: id, visibleInGrid: true, selectedForSharedSend: false,
@@ -169,6 +175,32 @@ final class RemoteCommandExecutorTests: XCTestCase {
         do { let result = await run(.createConversation(text: "See file", agentIDs: ["messages:A"], attachmentIDs: ["missing"])); XCTAssertEqual(result.code, .attachmentRejected) }
         do { let result = await run(.createConversation(text: "", agentIDs: ["messages:A"], attachmentIDs: [attachment ?? ""])); XCTAssertEqual(result.outcome, .applied, "An attachment alone is a message") }
         XCTAssertEqual(host.sends.last?.attachmentIDs, [attachment ?? ""])
+    }
+
+    func testPreparationRunsSeriallyAndQueriesNeverRun() async {
+        let host = host()
+        host.sendDelay = .milliseconds(40)
+        let executor = RemoteCommandExecutor(host: host)
+        let send = RemoteCommand(action: .createConversation(text: "One", agentIDs: ["claude"], attachmentIDs: []))
+        var order: [String] = []
+        executor.submit(send) { if $0.outcome != .accepted { order.append("send") } }
+        let prepare = RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["claude", "chatgptApp"]))
+        executor.submit(prepare) { if $0.outcome != .accepted { order.append("prepare") } }
+        for _ in 0..<100 where order.count < 2 { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(order, ["send", "prepare"], "Preparation waits behind a running send")
+        XCTAssertEqual(host.prepared, [["claude", "chatgptApp"]])
+        host.agents["claude"] = FakeRemoteHost.agent("claude", readiness: .blocked)
+        let blocked = await executor.execute(RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["claude"])))
+        XCTAssertEqual(blocked.code, .notReady); XCTAssertEqual(blocked.agentReasons, ["claude": "Sign in"])
+        do { let result = await executor.execute(RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["nobody"]))); XCTAssertEqual(result.code, .unknownAgent) }
+
+        // Queries report stored, running, or unknown commands and never run anything.
+        let stored = await executor.execute(RemoteCommand(action: .queryCommand(clientCommandID: send.clientCommandID)))
+        XCTAssertEqual(stored.clientCommandID, send.clientCommandID); XCTAssertEqual(stored.outcome, .applied); XCTAssertTrue(stored.replayed)
+        let unknown = UUID()
+        let missing = await executor.execute(RemoteCommand(action: .queryCommand(clientCommandID: unknown)))
+        XCTAssertEqual(missing.clientCommandID, unknown); XCTAssertEqual(missing.code, .unknownCommand)
+        XCTAssertEqual(host.sends.count, 1)
     }
 
     func testNonSendCommandsReachTheHost() async {

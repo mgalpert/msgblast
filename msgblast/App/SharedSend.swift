@@ -23,6 +23,9 @@ struct SharedSendRequest {
 enum SharedSendOutcome {
     /// Nothing was sent; these websites need sign-in on the Mac.
     case signInRequired([WebAgentID])
+    /// An agent's page or app was not ready for this click; preparing it may have navigated a
+    /// page. Nothing was created or submitted. The Mac composer waits for another click.
+    case notPrepared
     /// Preparation failed or the conversation ended. Errors are on the sessions or `AppModel.error`.
     case stopped
     case sent(comparisonID: UUID, result: AgentBroadcastResult)
@@ -41,8 +44,8 @@ extension AppModel {
         let broadcastCreated = request.created
         let needsSignIn = await webAgents.signInRequired(for: sessions)
         if !needsSignIn.isEmpty { return .signInRequired(needsSignIn) }
-        guard await webAgents.prepareComparison(existingID, for: sessions, startNativeApps: true),
-              existingID.flatMap({ comparison($0)?.endedAt }) == nil else { return .stopped }
+        guard await webAgents.prepareComparison(existingID, for: sessions, startNativeApps: true) else { return .notPrepared }
+        guard existingID.flatMap({ comparison($0)?.endedAt }) == nil else { return .stopped }
         let comparisonID: UUID
         if let existingID { comparisonID = existingID }
         else {
