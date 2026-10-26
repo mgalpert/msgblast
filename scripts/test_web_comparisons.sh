@@ -11,7 +11,7 @@ trap 'rm -rf "$web_tmp"' EXIT
 cp -R "$web_root/msgblast/Resources/WebAgentIcons" "$web_tmp/WebAgentIcons"
 web_flags=(-swift-version 6 -D DEBUG -parse-as-library -module-cache-path "$web_tmp/modules"
     -target "$(uname -m)-apple-macos15.0" -I "$web_frameworks" -F "$web_frameworks" -F "$web_sparkle"
-    -framework msgblastCore -framework Sparkle
+    -framework msgblastCore -framework msgblastRemoteProtocol -framework Sparkle
     -Xlinker -rpath -Xlinker "$web_frameworks" -Xlinker -rpath -Xlinker "$web_sparkle")
 web_sources=()
 while IFS= read -r source; do web_sources+=("$source"); done < <(python3 - "$web_root/msgblast" <<'PY_SOURCES'
@@ -19,7 +19,9 @@ from pathlib import Path
 import sys
 root = Path(sys.argv[1])
 for source in sorted(root.rglob("*.swift")):
-    if "Core" not in source.relative_to(root).parts and source.name != "msgblastApp.swift":
+    parts = source.relative_to(root).parts
+    # Framework sources (Core, RemoteProtocol) are linked below, not recompiled as app code.
+    if "Core" not in parts and "RemoteProtocol" not in parts and source.name != "msgblastApp.swift":
         print(source)
 PY_SOURCES
 )

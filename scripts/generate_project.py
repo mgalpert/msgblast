@@ -55,7 +55,7 @@ for name in products:
     if name not in ('msgblastCore','msgblastUITests','msgblastRemoteProtocol','msgblastRemoteProtocolTests'):
         framework_builds.append(obj(name+'linkCore', '{isa = PBXBuildFile; fileRef = '+products['msgblastCore']+';}'))
         dependencies.append(obj(name+'dep', '{isa = PBXTargetDependency; target = '+ident('msgblastCoretarget')+';}'))
-    if name in ('msgblast','msgblastRemoteProtocolTests'):
+    if name in ('msgblast','msgblastCore','msgblastTests','msgblastRemoteProtocolTests'):
         framework_builds.append(obj(name+'linkRemoteProtocol', '{isa = PBXBuildFile; fileRef = '+products['msgblastRemoteProtocol']+';}'))
         dependencies.append(obj(name+'remoteProtocolDep', '{isa = PBXTargetDependency; target = '+ident('msgblastRemoteProtocoltarget')+';}'))
     if name == 'msgblast':
