@@ -45,7 +45,7 @@ enum ChatGPTObservationError: LocalizedError, Sendable {
 }
 struct ChatGPTAppNavigation: Sendable {
     private let nodes: [ChatGPTAXNode]
-    fileprivate init(validatedNodes: [ChatGPTAXNode]) { nodes = validatedNodes }
+    init(validatedNodes: [ChatGPTAXNode]) { nodes = validatedNodes }
     init(root: ChatGPTAXNode) throws {
         guard root.role == "AXWindow" else { throw DesktopAppError.unavailable("Open ChatGPT’s main window.") }
         let pages = root.descendants.filter { $0.role == "AXWebArea" && $0.url == "app://-/index.html" }

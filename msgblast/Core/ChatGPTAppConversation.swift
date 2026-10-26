@@ -286,6 +286,20 @@ actor ChatGPTAppConversation {
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(binding.kind == .dots ? .dots : .chatgpt)
         var native = try await open(binding, target: target, session: session)
+        try idle(native)
+        if native.unreadDotReplyCount != nil {
+            let expected = native
+            let dot = try ChatGPTAppNavigation(validatedNodes: native.nodes).dotButton()
+            try await action(control: dot, target: target, session: session, expected: native, pixel: true)
+            native = try await DesktopAppWorkflow.wait(timeout: .seconds(5), interval: timing.pollInterval,
+                failure: "Dots did not clear its previous unread reply. Nothing was typed or sent.", clock: timing.replyClock, read: {
+                    let current = try await self.read(target)
+                    guard current.sameContent(as: expected), !current.generating else {
+                        throw DesktopAppError.unavailable("The Dot conversation changed before typing. Nothing was sent.")
+                    }
+                    return current
+                }, ready: { try ChatGPTAppNavigation(validatedNodes: $0.nodes).dotButton().label == expected.title })
+        }
         native = try await focusComposer(native, target: target, session: session)
         let baseline = native.messages, openedTitle = native.title, prompt = binding.firstPrompt == nil ? binding.firstMessage(text) : text
         var pending = recoveredLegacyBinding(binding, native: native) ?? binding

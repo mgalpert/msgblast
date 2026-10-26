@@ -410,6 +410,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
                     prepend(&root)
                 }
                 if staleDotReplyUntilRefresh, FileManager.default.fileExists(atPath: directory.appendingPathComponent("submitted-draft").path) {
+                    root.children[0].children.removeAll { $0.children.contains { $0.label == "New chat" && $0.classes.contains("sidebar-item") } }
                     root.children[0].children.insert(.init(role: "AXGroup", children: [
                         .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
                         .init(role: "AXButton", label: "Example Dot 1 unread message", classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
@@ -430,7 +431,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             (try? String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? []
         }
     }
-    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false, unreadableStart: Bool = false, preparation: Preparation = .ready) throws -> Fixture {
+    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false, unreadableStart: Bool = false, unreadDotStart: Bool = false, preparation: Preparation = .ready) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chatgpt-submit-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var binding = ChatGPTConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, kind: kind)
@@ -491,6 +492,19 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             actions.append(["tool": "type_text", "label": "Chat title", "role": "AXTextField", "text": binding.dedicatedTitle]); roots.append(root(sent: true, titleField: binding.dedicatedTitle))
             actions.append(["tool": "press_key", "label": "Chat title", "role": "AXTextField", "key": "return"]); roots.append(root(sent: true, saved: true))
         }
+        if unreadDotStart {
+            for index in roots.indices {
+                roots[index].children[0].children.insert(.init(role: "AXGroup", children: [
+                    .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
+                    control("AXButton", "Example Dot", x: 60)
+                ]), at: 0)
+                roots[index].children[0].children[0].children[1].classes = ["sidebar-item"]
+            }
+            var unread = roots[0]
+            unread.children[0].children[0].children[1].label = "Example Dot 1 unread message"
+            roots.insert(unread, at: 0)
+            actions.insert(["tool": "click", "label": "Example Dot 1 unread message", "role": "AXButton", "pixel": "yes"], at: 0)
+        }
         if reopen {
             let sidebar = ChatGPTAXNode(role: "AXButton", label: binding.fallbackTitle ?? binding.dedicatedTitle, classes: ["sidebar-item"], frame: zeroHeightSidebar ? .init(x: 173, y: 929, w: 391, h: 0) : nil)
             for index in roots.indices { roots[index].children[0].children.insert(sidebar, at: 0) }
@@ -515,6 +529,14 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         }
         if dotSetupDestination {
             var home = root()
+            if kind == .dots {
+                home.label = "ChatGPT"
+                func chatGPTComposer(_ node: inout ChatGPTAXNode) {
+                    if node.role == "AXTextArea" { node.label = "Ask ChatGPT"; node.value = "Ask ChatGPT\n" }
+                    for child in node.children.indices { chatGPTComposer(&node.children[child]) }
+                }
+                chatGPTComposer(&home)
+            }
             var newChat = control("AXButton", "New chat", x: 70)
             newChat.classes = ["sidebar-item"]
             var dot = control("AXButton", "Your dot", x: 80)
@@ -748,7 +770,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         }
     }
     func testDotsUnreadFollowupRefreshesOnceAndRestoresFocusBeforeReturningReplyWithoutResending() async throws {
-        let f = try fixture(kind: .dots, followup: true)
+        let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
         defer { try? FileManager.default.removeItem(at: f.directory) }
         let recorded = ChatGPTRecordedBindings()
         let control = DesktopAppConversation(executable: f.executable, delivery: .foreground)
@@ -771,7 +793,85 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let activations = f.calls().filter { $0["tool"] as? String == "bring_to_front" }
         XCTAssertEqual(activations.compactMap { ($0["arguments"] as? [String: Any])?["pid"] as? Int }, [42, 777])
         let mutations = f.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
-        XCTAssertEqual(mutations.map { $0["tool"] as? String }, ["type_text", "click"], "Refreshing must never replay typing or Send")
+        XCTAssertEqual(mutations.map { $0["tool"] as? String }, ["click", "type_text", "click"], "Acknowledge the old badge before typing; refreshing must never replay input or Send")
+    }
+    func testDotsUnchangedUnreadBadgeStopsBeforeTypingOrReservingInput() async throws {
+        let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let timing = DesktopAppConversation.Timing(pollInterval: .seconds(1), stableDuration: .zero, replyTimeout: .seconds(10), callTimeout: 3, replyClock: .init(AdvancingClock()))
+        let adapter = f.adapter(timing: timing, transformNative: { root in
+            var root = root
+            root.children[0].children[0].children[1].label = "Example Dot 1 unread message"
+            return root
+        })
+        do {
+            _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("No input is reserved until the old badge clears") }, onBinding: { _ in XCTFail("No reply can be bound") })
+            XCTFail("An unchanged unread badge must block before typing")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("unread"), error.localizedDescription) }
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path))
+    }
+    func testDotsUnreadAcknowledgementRejectsHistoryChangesAndPreservesAnExternalDraft() async throws {
+        for historyChanged in [false, true] {
+            let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let adapter = f.adapter(transformNative: { root in
+                guard ((try? String(contentsOf: f.stage, encoding: .utf8)) ?? "0") != "0" else { return root }
+                var root = root
+                func change(_ node: inout ChatGPTAXNode) {
+                    if historyChanged, node.classes.contains("message-list") {
+                        node.children.append(.init(role: "AXGroup", classes: ["message-row", "self"], children: [.init(role: "AXGroup", classes: ["message-bubble"], children: [.init(role: "AXStaticText", value: "Unrelated outgoing")])]))
+                    }
+                    if !historyChanged, node.role == "AXTextArea" { node.value = "Keep this external draft"; node.children = [] }
+                    for child in node.children.indices { change(&node.children[child]) }
+                }
+                change(&root)
+                return root
+            })
+            do {
+                _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("Changed native work must not reserve input") }, onBinding: { _ in XCTFail("Must not bind foreign work") })
+                XCTFail("Changed native work must stop before typing")
+            } catch { XCTAssertTrue(error.localizedDescription.contains("Dot conversation changed"), error.localizedDescription) }
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+            XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+        }
+    }
+    func testDotsMissingSidebarAfterAcknowledgementCannotMasqueradeAsClearedUnread() async throws {
+        let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { root in
+            guard ((try? String(contentsOf: f.stage, encoding: .utf8)) ?? "0") != "0" else { return root }
+            var root = root
+            root.children[0].children.removeAll { $0.children.contains { $0.label == "New chat" } }
+            return root
+        })
+        do {
+            _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("A missing sidebar does not prove the old badge cleared") }, onBinding: { _ in XCTFail("No reply") })
+            XCTFail("Missing acknowledgement must stop")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Dot navigation"), error.localizedDescription) }
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+    }
+    func testDotsNavigatingFromChatGPTPreservesTheDestinationsExistingDraft() async throws {
+        let f = try fixture(kind: .dots, followup: true, dotSetupDestination: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { root in
+            guard ((try? String(contentsOf: f.stage, encoding: .utf8)) ?? "0") != "0" else { return root }
+            var root = root
+            func draft(_ node: inout ChatGPTAXNode) {
+                if node.role == "AXTextArea" { node.value = "Keep this external draft"; node.children = [] }
+                for child in node.children.indices { draft(&node.children[child]) }
+            }
+            draft(&root)
+            return root
+        })
+        do {
+            _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("A drafted destination must stop before reserving input") }, onBinding: { _ in XCTFail("No reply") })
+            XCTFail("Drafted destination must stop")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("draft or active response"), error.localizedDescription) }
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
     }
     func testDotsFailedOptionalRefreshKeepsPollingWithoutResendingAndPreservesCancellation() async throws {
         for cancelled in [false, true] {
@@ -804,11 +904,12 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             var root = root
             let submitted = FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path)
             let read = submitted ? (Int((try? String(contentsOf: reads, encoding: .utf8)) ?? "0") ?? 0) + 1 : 0
+            let draft = (try? String(contentsOf: f.directory.appendingPathComponent("native-draft"), encoding: .utf8)) ?? ""
             if submitted { try String(read).write(to: reads, atomically: true, encoding: .utf8) }
             root.children[0].children.removeAll { $0.children.contains { $0.label == "New chat" && $0.classes.contains("sidebar-item") } }
             root.children[0].children.insert(.init(role: "AXGroup", children: [
                 .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
-                .init(role: "AXButton", label: read == 2 ? "Example Dot" : "Example Dot 1 unread message", classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
+                .init(role: "AXButton", label: read == 2 || (read == 0 && draft.isEmpty) ? "Example Dot" : "Example Dot 1 unread message", classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
             ]), at: 0)
             return root
         })

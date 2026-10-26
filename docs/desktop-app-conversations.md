@@ -278,7 +278,10 @@ reboots, deletes, or approves actions for the dot. An unavailable reference or
 changed dot identity blocks input until the saved context can be verified.
 
 Dots can publish its sidebar unread badge while the conversation remains stale
-in the background. After verifying this request's outgoing message, msgblast may
+in the background. Before typing, msgblast acknowledges an existing badge by
+clicking the same verified Dot and checks that its identity and history are
+unchanged and the badge clears. This happens within the foreground send transaction;
+it never selects another Dot or dismisses a draft. After verifying this request's outgoing message, msgblast may
 briefly activate that exact ChatGPT window once when the active Dot's unread
 badge changes after submission. An unchanged pre-send badge does not trigger it.
 It reads the conversation, then restores the original msgblast window;
