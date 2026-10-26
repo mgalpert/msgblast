@@ -64,6 +64,17 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try DesktopAppConversation.hostWindow(key: nil, main: nil, visible: [first, second]))
     }
 
+    func testNativeHostFocusRequiresThisProcessAndExactUnblockedKeyWindow() {
+        let host = DesktopAppConversation.Target(pid: 42, window: 101)
+        XCTAssertTrue(DesktopAppConversation.hostHasFocus(host, processID: 42, keyWindow: 101, active: true, blocked: false))
+        for (pid, window, active, blocked): (Int, Int?, Bool, Bool) in [
+            (43, 101, true, false), (42, 102, true, false), (42, nil, true, false),
+            (42, 101, false, false), (42, 101, true, true)
+        ] {
+            XCTAssertFalse(DesktopAppConversation.hostHasFocus(host, processID: pid, keyWindow: window, active: active, blocked: blocked))
+        }
+    }
+
     func testDesktopAgentsRemainSeparateFromExistingAccounts() {
         XCTAssertTrue(WebProvider.museApp.usesNativeConversation)
         XCTAssertTrue(WebProvider.grokBotApp.usesNativeConversation)
@@ -699,6 +710,49 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.compactMap { $0.arguments["window_id"] as? Int }, [101, 201])
         XCTAssertFalse(calls.contains { ["click", "type_text", "press_key"].contains($0.tool) })
+    }
+    func testAuxiliaryWindowCannotRejectExactNativeHostRestorationOrReplayActivation() async throws {
+        var partial = activation(fixtureHost, verified: false)
+        partial["exit_code"] = 1
+        partial["result"] = ["activated": false, "code": "bring_to_front_exact_window_unverified",
+                             "exact_window_effect": ["focused": true, "verified": false],
+                             "observed": ["focused_window_id": fixtureHost.window, "frontmost_ordinary_window_id": 202]]
+        let fixture = try driver(focusSteps() + [partial])
+        defer { fixture.remove() }
+        let expected = fixtureHost, confirmation = FirstCall()
+        let control = adapter(fixture, delivery: .foreground, confirmHostFocus: { host in
+            XCTAssertEqual(host, expected)
+            XCTAssertTrue(confirmation.take(), "Repeated cleanup must share the original native confirmation")
+            return DesktopAppConversation.hostHasFocus(host, processID: expected.pid, keyWindow: expected.window, active: true, blocked: false)
+        })
+        let started = try await control.beginForeground(.grokBot, session: "host-tooltip", host: fixtureHost)
+        let lease = try XCTUnwrap(started)
+        try await lease.restore()
+        try await lease.restore()
+        let next = try await DesktopForegroundOwner.shared.acquire()
+        await DesktopForegroundOwner.shared.release(next)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.compactMap { $0.arguments["window_id"] as? Int }, [101, 201])
+        XCTAssertFalse(calls.contains { ["click", "type_text", "press_key"].contains($0.tool) })
+    }
+    func testPartialRestorationWithoutExactNativeHostFocusStillFails() async throws {
+        var partial = activation(fixtureHost, verified: false)
+        partial["exit_code"] = 1
+        let fixture = try driver(focusSteps() + [partial])
+        defer { fixture.remove() }
+        let expected = fixtureHost
+        let control = adapter(fixture, delivery: .foreground, confirmHostFocus: { host in
+            XCTAssertEqual(host, expected)
+            return DesktopAppConversation.hostHasFocus(host, processID: expected.pid, keyWindow: expected.window + 1, active: true, blocked: false)
+        })
+        let started = try await control.beginForeground(.grokBot, session: "host-not-focused", host: fixtureHost)
+        let lease = try XCTUnwrap(started)
+        let error = await failure { try await lease.restore() }
+        XCTAssertTrue(error.contains("could not regain focus"), error)
+        let next = try await DesktopForegroundOwner.shared.acquire()
+        await DesktopForegroundOwner.shared.release(next)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 2)
     }
     func testReplyRefreshDefersWhileHostIsInactiveOrAnotherAgentOwnsFocus() async throws {
         let fixture = try driver([])
@@ -2816,9 +2870,10 @@ final class DesktopAppDriverTests: XCTestCase {
     }
     private func adapter(_ fixture: DriverFixture, replyTimeout: Duration = .seconds(3), callTimeout: TimeInterval = 3, delivery: DesktopAppConversation.Delivery = .background,
                          replyClock: DesktopAppWorkflow.ReplyClock = .init(ContinuousClock()),
+                         confirmHostFocus: @escaping @Sendable (DesktopAppConversation.Target) async -> Bool = { _ in false },
                          runProcess: @escaping DesktopAppConversation.ProcessRunner = DesktopAppConversation.execute) -> DesktopAppConversation {
         let file = fixture.directory.appendingPathComponent("grok-native.json")
-        return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout, replyClock: replyClock), delivery: delivery, runProcess: runProcess) { target in
+        return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout, replyClock: replyClock), delivery: delivery, runProcess: runProcess, confirmHostFocus: confirmHostFocus) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             let data = try Data(contentsOf: file)
             let raw = try JSONDecoder().decode(GrokBotNativeState.self, from: data)
@@ -3052,5 +3107,6 @@ final class DesktopAppDriverTests: XCTestCase {
             png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b"")
             capture_path.write_bytes(png)
     print(json.dumps(result))
+    raise SystemExit(expected.get("exit_code", 0))
     """#
 }

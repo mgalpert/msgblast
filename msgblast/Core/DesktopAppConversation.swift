@@ -335,8 +335,10 @@ actor DesktopAppConversation {
     private let timing: Timing
     private let readGrok: @Sendable (Target) throws -> GrokBotNativeState
     private let runProcess: ProcessRunner
+    private let confirmHostFocus: @Sendable (Target) async -> Bool
     init(executable: URL? = nil, timing: Timing = Timing(), delivery: Delivery = .background,
          runProcess: @escaping ProcessRunner = DesktopAppConversation.execute,
+         confirmHostFocus: @escaping @Sendable (Target) async -> Bool = { await DesktopAppConversation.hostHasFocus($0) },
          readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
         self.executable = executable ?? Self.findDriver()
         self.embedded = executable == nil
@@ -344,6 +346,7 @@ actor DesktopAppConversation {
         self.timing = timing
         self.readGrok = readGrok
         self.runProcess = runProcess
+        self.confirmHostFocus = confirmHostFocus
     }
     nonisolated static func execute(_ executable: URL, _ arguments: [String], _ environment: [String: String], _ timeout: TimeInterval, _ cancellation: AgentCancellation) async throws -> AgentProcess.Result {
         try await Task.detached {
@@ -405,9 +408,7 @@ actor DesktopAppConversation {
         let app = NSApplication.shared
         let pid = Int(ProcessInfo.processInfo.processIdentifier)
         func target(_ window: NSWindow?) -> Target? {
-            guard let window, window.isVisible, !window.isMiniaturized, window.canBecomeMain,
-                  window.level == .normal else { return nil }
-            return Target(pid: pid, window: window.windowNumber)
+            hostWindowNumber(window).map { Target(pid: pid, window: $0) }
         }
         return try hostWindow(key: target(app.keyWindow), main: target(app.mainWindow),
                               visible: app.windows.compactMap(target))
@@ -418,6 +419,21 @@ actor DesktopAppConversation {
             throw DesktopAppError.unavailable("Keep one msgblast conversation window open before sending to an App Agent.")
         }
         return only
+    }
+    @MainActor private static func hostWindowNumber(_ window: NSWindow?) -> Int? {
+        guard let window, window.isVisible, !window.isMiniaturized, window.canBecomeMain,
+              window.level == .normal else { return nil }
+        return window.windowNumber
+    }
+    @MainActor private static func hostHasFocus(_ target: Target) -> Bool {
+        let app = NSApplication.shared
+        let key = app.keyWindow
+        return hostHasFocus(target, processID: Int(ProcessInfo.processInfo.processIdentifier),
+                            keyWindow: hostWindowNumber(key), active: app.isActive,
+                            blocked: app.modalWindow != nil || key?.attachedSheet != nil)
+    }
+    static func hostHasFocus(_ target: Target, processID: Int, keyWindow: Int?, active: Bool, blocked: Bool) -> Bool {
+        target.pid == processID && target.window == keyWindow && active && !blocked
     }
     func beginForeground(_ app: DesktopAppProvider, session: String,
                          host: Target? = nil, onRestored: @escaping @Sendable () async -> Void = {}) async throws -> DesktopForegroundLease? {
@@ -466,7 +482,11 @@ actor DesktopAppConversation {
                                  onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in }) -> DesktopForegroundLease {
         DesktopForegroundLease(owner: owner, host: host, onRestored: onRestored, onRestoreFailure: onRestoreFailure) {
             do { try await self.activate(host, session: session) }
-            catch { await self.endSession(session); throw error }
+            catch {
+                // Auxiliary host windows can confuse the driver's front-window
+                // check. The app can independently verify its own key window.
+                guard await self.confirmHostFocus(host) else { await self.endSession(session); throw error }
+            }
             await self.endSession(session)
         }
     }
