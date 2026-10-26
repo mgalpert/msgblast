@@ -15,6 +15,11 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     public var supportsSharedSubmissions: Bool { self != .hark }
     public var usesNativeConversation: Bool { personalAgentProvider != nil || self == .grokbot || desktopApp != nil }
     public var supportsCopies: Bool { [.muse, .chatgpt, .claude, .grok].contains(self) }
+    /// Native app authentication is owned by that app. Extra accounts use its website integration.
+    public var accountWebsiteProvider: Self? {
+        if supportsCopies { return self }
+        switch self { case .chatgptApp: return .chatgpt; case .claudeApp: return .claude; case .museApp: return .muse; default: return nil }
+    }
     public var personalAgentProvider: PersonalAgentProvider? {
         switch self { case .codexCLI: .codex; case .claudeCode: .claude; default: nil }
     }

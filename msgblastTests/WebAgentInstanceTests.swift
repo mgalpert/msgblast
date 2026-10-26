@@ -78,11 +78,18 @@ final class WebAgentInstanceTests: XCTestCase {
         let otherAccount = try agents.duplicate(copy, name: "ChatGPT — work", separateAccount: true)
         XCTAssertNotEqual(otherAccount.state.sessionID, copy.state.sessionID)
         XCTAssertNotEqual(copy.id.gridID, original.id.gridID)
+        otherAccount.setEnabled(false)
+        XCTAssertTrue(original.isEnabled)
+        XCTAssertTrue(copy.isEnabled)
         let reopened = WebAgents(directory: directory, fixture: true)
         let restored = try XCTUnwrap(reopened.session(for: copy.id))
         XCTAssertEqual(restored.name, "ChatGPT — deep")
         XCTAssertEqual(restored.state.sessionID, original.state.sessionID)
         XCTAssertEqual(reopened.session(for: otherAccount.id)?.state.sessionID, otherAccount.state.sessionID)
+        XCTAssertFalse(try XCTUnwrap(reopened.session(for: otherAccount.id)).isEnabled)
+        XCTAssertTrue(restored.isEnabled)
+        XCTAssertTrue(try XCTUnwrap(reopened.session(for: original.id)).isEnabled)
+        XCTAssertFalse(reopened.availableSessions.contains { $0.id == otherAccount.id })
     }
 
     func testSharedSignInUsesSameCookieStoreAndOtherAccountIsIsolated() async throws {
@@ -98,14 +105,33 @@ final class WebAgentInstanceTests: XCTestCase {
             originalStore.setCookie(cookie) { continuation.resume() }
         }
         let sharedCookies = await shared.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-        let isolatedCookies = await isolated.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        let isolatedStore = isolated.webView.configuration.websiteDataStore.httpCookieStore
+        let otherCookie = try XCTUnwrap(HTTPCookie(properties: [.domain: "chatgpt.com", .path: "/", .name: cookie.name, .value: "other-account", .secure: "TRUE"]))
+        await withCheckedContinuation { continuation in
+            isolatedStore.setCookie(otherCookie) { continuation.resume() }
+        }
+        isolated.updateState { $0.draft = "Work draft" }
+        let isolatedCookies = await isolatedStore.allCookies()
         XCTAssertTrue(sharedCookies.contains { $0.name == cookie.name && $0.value == cookie.value })
-        XCTAssertFalse(isolatedCookies.contains { $0.name == cookie.name })
+        XCTAssertFalse(isolatedCookies.contains { $0.name == cookie.name && $0.value == cookie.value })
+        XCTAssertTrue(isolatedCookies.contains { $0.name == cookie.name && $0.value == "other-account" })
         await withCheckedContinuation { continuation in
             originalStore.delete(cookie) { continuation.resume() }
         }
-        agents.beginShutdown()
-        await agents.cancelAndWait()
+        let reopened = WebAgents(directory: directory, fixture: false)
+        let restored = try XCTUnwrap(reopened.session(for: isolated.id))
+        XCTAssertEqual(restored.name, "Other account")
+        XCTAssertEqual(restored.state.draft, "Work draft")
+        let restoredStore = restored.webView.configuration.websiteDataStore.httpCookieStore
+        let restoredCookies = await restoredStore.allCookies()
+        XCTAssertTrue(restoredCookies.contains { $0.name == cookie.name && $0.value == "other-account" }, "Signing out of one account must not sign out another, including after reload")
+        let signedOutCookies = await shared.webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        XCTAssertFalse(signedOutCookies.contains { $0.name == cookie.name })
+        await withCheckedContinuation { continuation in
+            restoredStore.delete(otherCookie) { continuation.resume() }
+        }
+        agents.beginShutdown(); reopened.beginShutdown()
+        await agents.cancelAndWait(); await reopened.cancelAndWait()
     }
 
     func testSelectionRenameAndComparisonIdentitySurviveReload() throws {
