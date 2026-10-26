@@ -204,6 +204,7 @@ class ReleaseTests(unittest.TestCase):
                 app = (options.output / "msgblast.xcarchive/Products/Applications/msgblast.app"
                        if options.signing_mode == "ad-hoc" else options.output / "export/msgblast.app")
                 (app / "Contents/Frameworks/msgblastCore.framework").mkdir(parents=True)
+                (app / "Contents/Frameworks/msgblastRemoteProtocol.framework").mkdir()
                 (app / "Contents/Frameworks/Sparkle.framework").mkdir()
                 (app / "Contents/Helpers").mkdir()
                 (app / "Contents/Helpers/cloudflared").write_bytes(b"synthetic helper")
@@ -313,7 +314,7 @@ class ReleaseTests(unittest.TestCase):
             {"CFBundleExecutable": "WrongName"}, {"CFBundleVersion": "1"}, {"SUFeedURL": "https://wrong.example/feed.xml"},
             {"SURequireSignedFeed": False}, {"SUVerifyUpdateBeforeExtraction": False},
             {"msgblastDemo": True}, {"msgblastPermissionGuidePreview": True},
-            "missing core", "missing sparkle", "missing cloudflared", "missing helper manifest", "missing helper notices",
+            "missing core", "missing remote protocol", "missing sparkle", "missing cloudflared", "missing helper manifest", "missing helper notices",
             "missing embedded driver", "missing driver manifest", "missing driver notices",
         ]
         for index, change in enumerate(changes):
@@ -328,6 +329,7 @@ class ReleaseTests(unittest.TestCase):
                         if isinstance(change, str):
                             missing = {
                                 "missing core": "Contents/Frameworks/msgblastCore.framework",
+                                "missing remote protocol": "Contents/Frameworks/msgblastRemoteProtocol.framework",
                                 "missing sparkle": "Contents/Frameworks/Sparkle.framework",
                                 "missing cloudflared": "Contents/Helpers/cloudflared",
                                 "missing helper manifest": "Contents/Resources/cloudflared.json",

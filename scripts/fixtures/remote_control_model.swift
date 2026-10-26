@@ -112,6 +112,55 @@ extension SideChatModelCheck {
         precondition(off.code == .messagesSendsOff)
         precondition(keepAwake.held == false, "Send assertions are released")
         host.discardStagedAttachments()
-        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that, like the Mac composer, first prepares the chat and needs a second explicit send), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off. Isolated Demo profile; simulated Messages and local website fixtures only.")
+        try await runRemoteServiceChecks(model)
+        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that, like the Mac composer, first prepares the chat and needs a second explicit send), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
+    }
+
+    /// The real RemoteService in Demo: settings saved in the isolated profile, no network
+    /// port, a phone paired over memory through the same server, projection and executor.
+    @MainActor static func runRemoteServiceChecks(_ model: AppModel) async throws {
+        let service = model.remote
+        precondition(!service.settings.enabled && !service.running, "Remote control starts off")
+        service.setEnabled(true)
+        try await waitUntil { service.running }
+        precondition(service.listener == nil, "The Demo app opens no port unless asked")
+        precondition(FileManager.default.fileExists(atPath: model.local.url.deletingLastPathComponent().appendingPathComponent("remote-settings.json").path))
+        let offer = try service.showPairingCode()
+        let connection = service.connectInMemory()!
+        let phoneKey = P256.Signing.PrivateKey()
+        let driver = RemoteClientDriver(mode: .pair(offer: offer, deviceName: "Fixture iPhone", deviceKey: phoneKey))
+        var events: [RemoteClientDriver.Event] = []
+        connection.onReceive = { bytes in
+            let (outgoing, received) = try! driver.receive(bytes)
+            events += received
+            outgoing.forEach(connection.send)
+        }
+        connection.send(try driver.start())
+        try await waitUntil { events.contains { if case .snapshot = $0 { true } else { false } } }
+        let snapshot = events.compactMap { if case .snapshot(let s) = $0 { s } else { nil } }.first!
+        precondition(snapshot.macStatus.variant == .demo && !snapshot.macStatus.locked)
+        precondition(snapshot.conversations.count == model.state.comparisons.count, "Every conversation is projected")
+        precondition(snapshot.agents.contains { $0.agentID == "claude" && $0.form == .website })
+        precondition(snapshot.agents.contains { $0.form == .messages })
+        precondition(snapshot.turns.contains { $0.text == "Remote ask" && $0.origin == .sharedPrompt })
+        precondition(service.connectedDeviceID != nil && service.pairing.device?.name == "Fixture iPhone")
+        precondition(service.keepAwake.held == false, "Keep-awake waits for the phone's request")
+        connection.send(try driver.frame(.command(RemoteCommand(action: .setKeepAwake(enabled: true)))))
+        try await waitUntil { service.keepAwake.held }
+        let before = events.count
+        connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
+        try await waitUntil { events.dropFirst(before).contains { if case .commandResult(let r) = $0 { r.outcome == .rejected } else { false } } }
+        let refused = events.dropFirst(before).compactMap { if case .commandResult(let r) = $0 { r } else { nil } }.last!
+        precondition(refused.code == .messagesSendsOff, "The saved setting keeps iMessage sends off: \(refused)")
+        service.setAllowMessagesSends(true)
+        connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
+        try await waitUntil { events.contains { if case .events(let list, _) = $0 { list.contains { if case .turnUpsert(let t) = $0.change { t.text == "From the in-memory phone" } else { false } } } else { false } } }
+        service.setKeepAwake(false)
+        precondition(!service.keepAwake.held, "The Mac setting turns keep-awake off")
+        service.forget()
+        try await waitUntil { service.connectedDeviceID == nil }
+        precondition(service.pairing.device == nil)
+        service.setEnabled(false)
+        precondition(!service.running)
     }
 }

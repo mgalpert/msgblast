@@ -70,6 +70,8 @@ final class AppModel: ObservableObject {
     var telemetryTimer: Timer?
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     var database: MessagesDatabase?
+    /// Created on first use. The app starts it at launch; fixtures never touch it.
+    lazy var remote = RemoteService(model: self)
     var timer: Timer?
     var coordinator: WindowCoordinator?
     var demoRow: Int64 = 100

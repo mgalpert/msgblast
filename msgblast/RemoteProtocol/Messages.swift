@@ -76,6 +76,9 @@ public struct RemoteErrorMessage: Codable, Hashable, Sendable {
         public static let protocolViolation: Self = "protocolViolation"
         public static let forgotten: Self = "forgotten"
         public static let serviceStopped: Self = "serviceStopped"
+        /// The Mac is locked: treat it as disconnected. The session stays open and resumes on unlock.
+        public static let macLocked: Self = "macLocked"
+        public static let handshakeTimeout: Self = "handshakeTimeout"
     }
     public var code: Code
     public var message: String
