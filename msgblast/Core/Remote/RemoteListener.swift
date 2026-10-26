@@ -92,9 +92,12 @@ final class NetworkRemoteConnection: RemoteConnection {
             MainActor.assumeIsolated { if error != nil { self?.close() } }
         })
     }
+    /// Flushes queued frames (such as a final error) before cancelling.
     func close() {
         guard !closed else { return }
-        connection.cancel()
+        let connection = connection
+        connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { connection.cancel() }
         finish()
     }
     private func finish() {
