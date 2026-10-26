@@ -163,7 +163,7 @@ public struct AgentAvailability: Codable, Hashable, Sendable, Identifiable {
         self.readiness = readiness; self.reasons = reasons; self.observedAt = observedAt; self.source = source
     }
     /// "ChatGPT · Mac app". Messages agents show their contact name alone.
-    public var formLabel: String { form == .messages ? displayName : "\(displayName) · \(form.label)" }
+    public var formLabel: String { form == .messages || displayName.hasSuffix(form.label) ? displayName : "\(displayName) · \(form.label)" }
     /// Equality ignoring `observedAt`, so a repeated probe does not emit an event.
     public func sameContent(as other: AgentAvailability) -> Bool {
         var a = self, b = other
