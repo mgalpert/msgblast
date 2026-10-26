@@ -2,7 +2,7 @@ import Foundation
 
 actor ClaudeAppConversation {
     static let shared = ClaudeAppConversation()
-    typealias NativeRead = @Sendable (DesktopAppConversation.Target) throws -> ClaudeAppObservation
+    typealias NativeRead = @Sendable (DesktopAppConversation.Target, ClaudeAppObservation.ReadMode) throws -> ClaudeAppObservation
     private let driver: DesktopAppConversation
     private let timing: DesktopAppConversation.Timing
     private let readNative: NativeRead
@@ -12,16 +12,16 @@ actor ClaudeAppConversation {
         driver = DesktopAppConversation(executable: executable, timing: timing)
         self.timing = timing; self.readNative = readNative
     }
-    private func native(_ target: DesktopAppConversation.Target) async throws -> ClaudeAppObservation {
+    private func native(_ target: DesktopAppConversation.Target, mode: ClaudeAppObservation.ReadMode = .conversation) async throws -> ClaudeAppObservation {
         try Task.checkCancellation()
         let read = readNative
-        return try await Task.detached { try read(target) }.value
+        return try await Task.detached { try read(target, mode) }.value
     }
-    private func observe(_ target: DesktopAppConversation.Target, session: String, screenshotURL: URL? = nil) async throws -> (DesktopAppSnapshot, ClaudeAppObservation) {
-        let before = try await native(target)
+    private func observe(_ target: DesktopAppConversation.Target, session: String, mode: ClaudeAppObservation.ReadMode = .conversation, screenshotURL: URL? = nil) async throws -> (DesktopAppSnapshot, ClaudeAppObservation) {
+        let before = try await native(target, mode: mode)
         let state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL)
         try state.checkReadable()
-        let after = try await native(target)
+        let after = try await native(target, mode: mode)
         guard before.url == after.url, before.draft == after.draft, before.windowBounds == after.windowBounds, before.composerFrame == after.composerFrame else { throw DesktopAppError.unavailable("Claude changed while verifying its conversation. No action was replayed.") }
         guard state.pid == target.pid, state.window_id == target.window else { throw DesktopAppError.unavailable("Claude's driver snapshot belongs to a different window.") }
         return (state, after)
@@ -52,7 +52,7 @@ actor ClaudeAppConversation {
         _ = try await driver.call("click", ["element_token": element.element_token!, "session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
     }
     private func opened(_ binding: ClaudeConversationBinding, target: DesktopAppConversation.Target, session: String) async throws -> ClaudeAppObservation {
-        var (state, observation) = try await observe(target, session: session)
+        var (state, observation) = try await observe(target, session: session, mode: .navigation)
         try empty(state, observation)
         if let url = binding.url {
             guard ClaudeChatURL.isChat(url), let first = binding.firstPrompt, first.hasPrefix("[msgblast comparison \(binding.comparisonID.uuidString)]\n\n") else { throw DesktopAppError.unavailable("Claude's saved conversation binding is invalid. No replacement was created.") }
@@ -75,6 +75,9 @@ actor ClaudeAppConversation {
                 }
                 (state, observation) = try await settled(target, session: session) { $0.url == url }
                 try empty(state, observation)
+            } else {
+                (state, observation) = try await observe(target, session: session)
+                try empty(state, observation)
             }
             guard observation.url == url, observation.messages.first == .init(role: .user, text: first) else { throw DesktopAppError.unavailable("Claude's saved chat does not contain this comparison's first message. Nothing was sent.") }
             return observation
@@ -83,6 +86,9 @@ actor ClaudeAppConversation {
         if !ClaudeChatURL.isNew(observation.url) {
             try await click(control(state, label: "New"), target: target, session: session)
             (state, observation) = try await settled(target, session: session) { ClaudeChatURL.isNew($0.url) }
+            try empty(state, observation)
+        } else {
+            (state, observation) = try await observe(target, session: session)
             try empty(state, observation)
         }
         guard ClaudeChatURL.isNew(observation.url), observation.messages.isEmpty else { throw DesktopAppError.unavailable("Claude's new conversation could not be confirmed.") }
@@ -103,7 +109,7 @@ actor ClaudeAppConversation {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
             do {
-                let (state, observation) = try await observe(target, session: session)
+                let (state, observation) = try await observe(target, session: session, mode: .navigation)
                 try empty(state, observation)
                 _ = try control(state, label: "New")
                 return
