@@ -23,7 +23,8 @@ Turning it off disconnects the phone and closes every listener.
 ## Pairing
 
 1. Settings → Remote → **Pair a phone…** shows a QR code and a `msgblast://pair`
-   link. It contains the Mac's name, candidate addresses and port, the SHA-256 of
+   link (handled by the phone app in phase 2; nothing on the Mac registers the
+   `msgblast://` scheme). It contains the Mac's name, candidate addresses and port, the SHA-256 of
    the TLS key, the SHA-256 of the Mac identity key, and a 128-bit one-time code.
 2. The code works once and expires after two minutes. Five wrong answers close
    pairing; show a new code.
@@ -57,7 +58,9 @@ two Tailscale daemons gets both addresses.
 Security does not depend on the route:
 
 - **Mac identity.** One long-lived P-256 key, created on first use, signs every
-  session and serves the TLS certificate. At rest it is encrypted under a Secure
+  session and serves the TLS certificate. It is a software key wrapped by a Secure
+  Enclave key rather than an Enclave key, because the Enclave cannot hold a TLS
+  server key. At rest it is encrypted under a Secure
   Enclave key (as the Grok Bot vault does), otherwise kept in the data-protection
   Keychain, otherwise session-only and labeled as such in Settings (the phone must
   pair again after msgblast restarts).

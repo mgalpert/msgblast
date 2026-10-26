@@ -488,4 +488,21 @@ session's supervision, as atomic commits on the `ios-controller` branch cut
 from 0.10.0 (`7676362e87`). Phases are reviewed in order; no push or PR
 without the owner's say-so.
 
+Decisions 2026-10-26 (phase 1 review):
+
+1. **No "send again".** A `prepareConversation` command runs the existing prepare
+   paths when the phone opens a composer or selects agents. Inside a send, when a
+   page had to be prepared, the Mac waits up to 20 s for readiness (no new
+   navigation) and then sends once, or refuses with `notReady` and submits nothing.
+   `preparedNotSent` stays in the enum for compatibility only.
+2. **Grok Bot webhook while its tunnel starts:** `blocked` with `tunnelStarting`
+   (`fixOn: none`); it becomes `ready` by itself.
+3. **Unresolved CLI/webhook request in one conversation:** the agent stays `ready`;
+   the conversation projection lists `{agentID, attemptID, reasonCode}` for its
+   incomplete attempts so the phone disables that agent there and offers acknowledge.
+4. **Command results stay in memory.** After a Mac restart an unknown
+   `clientCommandID` is answered with `unknownCommand`; the phone shows it as
+   unconfirmed.
+5. **No MagicDNS in v1;** pairing offers IPv4 addresses.
+
 No questions are open. New ones are added here as the work raises them.
