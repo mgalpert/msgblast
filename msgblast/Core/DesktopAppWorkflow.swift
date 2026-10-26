@@ -65,6 +65,24 @@ enum DesktopAppWorkflow {
         return false
     }
 
+    static func connection<Value: Sendable>(_ app: DesktopAppProvider, driver: DesktopAppConversation?,
+                                           isolation: isolated (any Actor)? = #isolation,
+                                           check: () async throws -> Value) async throws -> Value {
+        do { return try await check() }
+        catch {
+            guard transient(error), let driver,
+                  let focus = try await driver.beginForeground(app, session: "msgblast-connect-\(UUID())") else { throw error }
+            let result: Value
+            do { result = try await check() }
+            catch {
+                try await focus.restore()
+                throw error
+            }
+            try await focus.restore()
+            return result
+        }
+    }
+
     static func wait<Value, C: Clock>(timeout: Duration, interval: Duration, failure: String,
                             retry: (Error) -> Bool = transient,
                             clock: C = ContinuousClock(),

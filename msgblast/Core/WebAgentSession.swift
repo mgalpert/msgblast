@@ -1218,7 +1218,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
         do {
             try await waitForDesktopRefresh()
-            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await desktopDriver.availableGrokBots()
+            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await DesktopAppWorkflow.connection(.grokBot, driver: desktopDriver) {
+                try await self.desktopDriver.availableGrokBots()
+            }
             refreshDesktopInstallation()
             guard desktopInstallation == installation, !shuttingDown else { throw CancellationError() }
             grokBotNames = names
@@ -1389,28 +1391,29 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do {
             try await waitForDesktopRefresh()
             guard isEnabled else { throw CancellationError() }
-            let binding: DesktopConversationBinding
-            if app == .muse {
-                if !fixture { try await museApp.checkAvailable() }
-                binding = DesktopConversationBinding(name: "Muse")
-            } else if app == .claude {
-                if !fixture { try await claudeApp.checkAvailable() }
-                binding = .init(name: "Claude")
-            } else if let kind = chatgptKind {
-                if !fixture { try await chatgptApp.checkAvailable(kind: kind) }
-                binding = .init(name: app.name)
-            } else if app == .gemini {
-                if !fixture { try await geminiApp.checkAvailable() }
-                binding = .init(name: "Gemini")
-            } else if app == .wabi {
-                if !fixture { try await wabiApp.checkAvailable() }
-                binding = DesktopConversationBinding(name: "Wabi")
-            } else if let botName {
-                if fixture {
-                    guard grokBotNames.contains(botName) else { throw DesktopAppError.unavailable("Refresh the bots and choose your bot again.") }
-                    binding = .init(name: botName)
-                } else { binding = try await desktopDriver.connectGrokBot(named: botName) }
-            } else { throw DesktopAppError.unavailable("Choose your bot in msgblast.") }
+            let binding = try await DesktopAppWorkflow.connection(app, driver: fixture ? nil : desktopDriver) { () async throws -> DesktopConversationBinding in
+                if app == .muse {
+                    if !fixture { try await museApp.checkAvailable() }
+                    return DesktopConversationBinding(name: "Muse")
+                } else if app == .claude {
+                    if !fixture { try await claudeApp.checkAvailable() }
+                    return .init(name: "Claude")
+                } else if let kind = chatgptKind {
+                    if !fixture { try await chatgptApp.checkAvailable(kind: kind) }
+                    return .init(name: app.name)
+                } else if app == .gemini {
+                    if !fixture { try await geminiApp.checkAvailable() }
+                    return .init(name: "Gemini")
+                } else if app == .wabi {
+                    if !fixture { try await wabiApp.checkAvailable() }
+                    return DesktopConversationBinding(name: "Wabi")
+                } else if let botName {
+                    if fixture {
+                        guard grokBotNames.contains(botName) else { throw DesktopAppError.unavailable("Refresh the bots and choose your bot again.") }
+                        return .init(name: botName)
+                    } else { return try await desktopDriver.connectGrokBot(named: botName) }
+                } else { throw DesktopAppError.unavailable("Choose your bot in msgblast.") }
+            }
             refreshDesktopInstallation()
             guard isEnabled, !shuttingDown else { throw CancellationError() }
             guard desktopInstallation == installation else { throw DesktopAppError.unavailable("\(app.name) changed while checking. Check the connection again.") }

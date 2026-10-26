@@ -75,6 +75,17 @@ final class DesktopAppConversationTests: XCTestCase {
         }
     }
 
+    func testHostSetupSheetRestorationRequiresTheOriginalAttachedSheet() {
+        let host = DesktopAppConversation.Target(pid: 42, window: 101, expectedSheet: 102)
+        XCTAssertTrue(DesktopAppConversation.hostHasFocus(host, processID: 42, keyWindow: 102, active: true, blocked: false))
+        for (pid, window, active, blocked): (Int, Int?, Bool, Bool) in [
+            (42, 101, true, false), (42, 103, true, false), (42, nil, true, false),
+            (43, 102, true, false), (42, 102, false, false), (42, 102, true, true)
+        ] {
+            XCTAssertFalse(DesktopAppConversation.hostHasFocus(host, processID: pid, keyWindow: window, active: active, blocked: blocked))
+        }
+    }
+
     func testDesktopAgentsRemainSeparateFromExistingAccounts() {
         XCTAssertTrue(WebProvider.museApp.usesNativeConversation)
         XCTAssertTrue(WebProvider.grokBotApp.usesNativeConversation)
@@ -659,6 +670,81 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture)
         assertNoInput(calls)
     }
+
+    func testGrokSetupInitializesColdNativeControlsAndRestoresHostWithoutSending() async throws {
+        try await assertColdNativeSetup(.grokBotApp)
+    }
+
+    func testWabiSetupInitializesColdNativeControlsAndRestoresHostWithoutSending() async throws {
+        try await assertColdNativeSetup(.wabi)
+    }
+
+    func testColdNativeSetupPreservesExternalDraftAndRestoresHostAfterRefusal() async throws {
+        try await assertColdNativeSetup(.wabi, externalDraft: "Keep the native app draft")
+    }
+
+    private func assertColdNativeSetup(_ provider: WebProvider, externalDraft: String = "") async throws {
+        let app = try XCTUnwrap(provider.desktopApp)
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let ready = app == .grokBot ? grok(bots: ["Fixture Bot"]) : wabiWith([element("AXButton", "New chat")], draft: externalDraft)
+        try JSONSerialization.data(withJSONObject: ready).write(to: fixture.directory.appendingPathComponent("ready.json"))
+        try Data(app.bundleID.utf8).write(to: fixture.directory.appendingPathComponent("bundle"))
+        try Data(Self.coldSetupDriverScript.utf8).write(to: fixture.executable)
+        let host = fixtureHost
+        let control = DesktopAppConversation(executable: fixture.executable, delivery: .foreground, captureHostWindow: { host })
+        let warmed = fixture.directory.appendingPathComponent("warmed")
+        let wabi = WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5))) { _, _ in
+            guard FileManager.default.fileExists(atPath: warmed.path) else { throw WabiObservationError.transient("Native controls are not initialized") }
+            return WabiAppObservation(url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, draft: externalDraft, links: [], messages: [], composerFocused: false)
+        }
+        let session = WebAgentSession(provider: provider, storageURL: fixture.directory.appendingPathComponent("state.json"),
+                                      fixture: false, museApp: .shared, desktopApps: .demo, wabiApp: wabi, desktopDriver: control)
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.draft = "Keep this msgblast draft" }
+        if app == .grokBot {
+            await session.refreshGrokBots()
+            XCTAssertEqual(session.grokBotNames, ["Fixture Bot"], session.desktopStatus)
+        } else {
+            await session.connectDesktopConversation()
+            if externalDraft.isEmpty { XCTAssertTrue(session.isReadyForOnboarding, session.desktopStatus) }
+            else {
+                XCTAssertFalse(session.isReadyForOnboarding)
+                XCTAssertTrue(session.desktopStatus.contains("unsent draft"), session.desktopStatus)
+            }
+        }
+        XCTAssertEqual(session.state.draft, "Keep this msgblast draft")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertTrue(session.state.localConversations.isEmpty)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.compactMap { $0.arguments["window_id"] as? Int }, [101, 201])
+        XCTAssertFalse(calls.contains { ["click", "type_text", "set_value", "press_key"].contains($0.tool) })
+    }
+
+    private static let coldSetupDriverScript = #"""
+    #!/usr/bin/env python3
+    import json,os,pathlib,sys
+    root=pathlib.Path(__file__).parent
+    tool=sys.argv[2];args=json.loads(sys.argv[3])
+    with (root/'calls.jsonl').open('a') as log:
+        log.write(json.dumps({'tool':tool,'arguments':args,'pid':os.getpid()})+'\n')
+    if tool=='list_apps':
+        result={'apps':[{'bundle_id':(root/'bundle').read_text(),'pid':4242,'running':True}]}
+    elif tool=='list_windows':
+        assert args['pid']==4242
+        result={'windows':[{'window_id':101,'title':'Main','is_on_screen':True,'bounds':{'width':800,'height':600}}]}
+    elif tool=='bring_to_front':
+        assert (args['pid'],args['window_id']) in [(4242,101),(9001,201)]
+        if args['pid']==4242:(root/'warmed').touch()
+        result={'activated':True,'pid':args['pid'],'window_id':args['window_id'],'exact_window_effect':{'verified':True}}
+    elif tool=='get_window_state':
+        assert args['pid']==4242 and args['window_id']==101
+        result=json.loads((root/'ready.json').read_text()) if (root/'warmed').exists() else {'elements':[{'role':'AXWindow'}]}
+    elif tool=='end_session':result={'active':False}
+    else:raise AssertionError('Setup must never send input: '+tool)
+    print(json.dumps(result))
+    """#
 
     func testGrokSetupWithDraftOrActiveResponseListsSelectsAndRestoresWithoutInput() async throws {
         for generating in [false, true] {
@@ -2873,7 +2959,7 @@ final class DesktopAppDriverTests: XCTestCase {
                          confirmHostFocus: @escaping @Sendable (DesktopAppConversation.Target) async -> Bool = { _ in false },
                          runProcess: @escaping DesktopAppConversation.ProcessRunner = DesktopAppConversation.execute) -> DesktopAppConversation {
         let file = fixture.directory.appendingPathComponent("grok-native.json")
-        return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout, replyClock: replyClock), delivery: delivery, runProcess: runProcess, confirmHostFocus: confirmHostFocus) { target in
+        return DesktopAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: replyTimeout, callTimeout: callTimeout, replyClock: replyClock), delivery: delivery, runProcess: runProcess, confirmHostFocus: confirmHostFocus, readGrok: { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             let data = try Data(contentsOf: file)
             let raw = try JSONDecoder().decode(GrokBotNativeState.self, from: data)
@@ -2884,7 +2970,7 @@ final class DesktopAppDriverTests: XCTestCase {
                                             elementFocused: attributes["editorFocused"] as? Bool)
             } ?? raw.composerFocused
             return .init(name: raw.name, draft: draft, composerFocused: focus)
-        }
+        })
     }
     private func sendSteps() -> [[String: Any]] {
         [apps(), windows(), snapshot(grok()), step("type_text", [:]), snapshot(grok(draft: prompt, token: "s00000002")), step("click", [:])]

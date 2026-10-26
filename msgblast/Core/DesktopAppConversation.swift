@@ -128,6 +128,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     func grokBots() throws -> [(name: String, element: Element)] {
         try checkReadable()
         guard let end = body.firstIndex(where: { $0.role == "AXSplitter" && $0.label == "Resize sidebar" }) else {
+            guard body.contains(where: { $0.role == "AXWebArea" }) else { throw DesktopAppError.incompleteSnapshot }
             throw DesktopAppError.unavailable("Grok Bot's bot list is unavailable. Open its sidebar and refresh the bots.")
         }
         let sidebar = body[..<end]
@@ -336,9 +337,11 @@ actor DesktopAppConversation {
     private let readGrok: @Sendable (Target) throws -> GrokBotNativeState
     private let runProcess: ProcessRunner
     private let confirmHostFocus: @Sendable (Target) async -> Bool
+    private let captureHostWindow: @Sendable () async throws -> Target
     init(executable: URL? = nil, timing: Timing = Timing(), delivery: Delivery = .background,
          runProcess: @escaping ProcessRunner = DesktopAppConversation.execute,
          confirmHostFocus: @escaping @Sendable (Target) async -> Bool = { await DesktopAppConversation.hostHasFocus($0) },
+         captureHostWindow: @escaping @Sendable () async throws -> Target = { try await DesktopAppConversation.hostWindow() },
          readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
         self.executable = executable ?? Self.findDriver()
         self.embedded = executable == nil
@@ -347,6 +350,7 @@ actor DesktopAppConversation {
         self.readGrok = readGrok
         self.runProcess = runProcess
         self.confirmHostFocus = confirmHostFocus
+        self.captureHostWindow = captureHostWindow
     }
     nonisolated static func execute(_ executable: URL, _ arguments: [String], _ environment: [String: String], _ timeout: TimeInterval, _ cancellation: AgentCancellation) async throws -> AgentProcess.Result {
         try await Task.detached {
@@ -356,7 +360,7 @@ actor DesktopAppConversation {
     static func findDriver() -> URL? {
         EmbeddedCuaDriver.bundledExecutable()
     }
-    struct Target: Sendable, Equatable { let pid: Int; let window: Int }
+    struct Target: Sendable, Equatable { let pid: Int; let window: Int; var expectedSheet: Int? = nil }
     private struct AppList: Decodable, Sendable { struct App: Decodable, Sendable { let bundle_id: String; let pid: Int; let running: Bool }; let apps: [App] }
     private struct WindowList: Decodable, Sendable {
         struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; var space_ids: [UInt64]?; var layer: Int?; let bounds: Bounds }
@@ -408,7 +412,7 @@ actor DesktopAppConversation {
         let app = NSApplication.shared
         let pid = Int(ProcessInfo.processInfo.processIdentifier)
         func target(_ window: NSWindow?) -> Target? {
-            hostWindowNumber(window).map { Target(pid: pid, window: $0) }
+            hostWindowNumber(window).map { Target(pid: pid, window: $0, expectedSheet: window?.attachedSheet?.windowNumber) }
         }
         return try hostWindow(key: target(app.keyWindow), main: target(app.mainWindow),
                               visible: app.windows.compactMap(target))
@@ -428,19 +432,20 @@ actor DesktopAppConversation {
     @MainActor private static func hostHasFocus(_ target: Target) -> Bool {
         let app = NSApplication.shared
         let key = app.keyWindow
+        let attachedKey = key?.isSheet == true && key?.sheetParent?.windowNumber == target.window ? key?.windowNumber : nil
         return hostHasFocus(target, processID: Int(ProcessInfo.processInfo.processIdentifier),
-                            keyWindow: hostWindowNumber(key), active: app.isActive,
-                            blocked: app.modalWindow != nil || key?.attachedSheet != nil)
+                            keyWindow: hostWindowNumber(key) ?? attachedKey, active: app.isActive,
+                            blocked: (app.modalWindow != nil && app.modalWindow?.windowNumber != target.expectedSheet) || key?.attachedSheet != nil)
     }
     static func hostHasFocus(_ target: Target, processID: Int, keyWindow: Int?, active: Bool, blocked: Bool) -> Bool {
-        target.pid == processID && target.window == keyWindow && active && !blocked
+        target.pid == processID && (target.expectedSheet ?? target.window) == keyWindow && active && !blocked
     }
     func beginForeground(_ app: DesktopAppProvider, session: String,
                          host: Target? = nil, onRestored: @escaping @Sendable () async -> Void = {}) async throws -> DesktopForegroundLease? {
         guard delivery == .foreground else { return nil }
         let owner = try await DesktopForegroundOwner.shared.acquire()
         let returnTo: Target
-        do { if let host { returnTo = host } else { returnTo = try await Self.hostWindow() } }
+        do { if let host { returnTo = host } else { returnTo = try await captureHostWindow() } }
         catch { await DesktopForegroundOwner.shared.release(owner); throw error }
         let lease = foregroundLease(owner: owner, host: returnTo, session: session, onRestored: onRestored)
         do {
@@ -462,7 +467,7 @@ actor DesktopAppConversation {
                            } }) async throws -> DesktopForegroundLease? {
         guard delivery == .foreground else { return nil }
         let returnTo: Target
-        if let host { returnTo = host } else { returnTo = try await Self.hostWindow() }
+        if let host { returnTo = host } else { returnTo = try await captureHostWindow() }
         guard await hostIsActive(returnTo) else { return nil }
         guard let owner = await DesktopForegroundOwner.shared.acquireIfAvailable() else { return nil }
         guard await hostIsActive(returnTo) else { await DesktopForegroundOwner.shared.release(owner); return nil }
