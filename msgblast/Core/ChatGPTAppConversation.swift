@@ -330,13 +330,27 @@ actor ChatGPTAppConversation {
             return appended
         }
         var refreshedUnreadReply = false
-        let answer = try await DesktopAppWorkflow.reply(app: binding.kind == .dots ? "Dots" : "ChatGPT", timing: timing, submit: {
+        var previousUnreadCount = typed.unreadDotReplyCount
+        var unreadReplyBecameAvailable = false
+        var retainedRefreshAnswer: String?
+        let answer = try await DesktopAppWorkflow.reply(app: binding.kind == .dots ? "Dots" : "ChatGPT", timing: timing, clock: timing.replyClock, submit: {
             try await self.action(control: typed.control(label: "Send"), target: target, session: session, expected: typed, beforeDelivery: onSubmitAction)
         }, observe: {
             native = try await self.read(target)
-            guard var appended = try ownedMessages(native) else { return nil }
-            if appended.count == 1, native.draft.isEmpty, native.hasUnreadDotReply, !refreshedUnreadReply,
-               let focus = try await refreshUnreadReply(target) {
+            guard var appended = try ownedMessages(native) else { retainedRefreshAnswer = nil; return nil }
+            let unreadCount = native.unreadDotReplyCount
+            if unreadCount != nil, unreadCount != previousUnreadCount { unreadReplyBecameAvailable = true }
+            previousUnreadCount = unreadCount
+            var focus: DesktopForegroundLease?
+            if appended.count == 1, native.draft.isEmpty, unreadCount != nil, unreadReplyBecameAvailable, !refreshedUnreadReply {
+                do { focus = try await refreshUnreadReply(target) }
+                catch {
+                    try Task.checkCancellation()
+                    if error is CancellationError { throw error }
+                    refreshedUnreadReply = true
+                }
+            }
+            if let focus {
                 refreshedUnreadReply = true
                 do {
                     // The badge can update while the conversation remains stale.
@@ -348,8 +362,18 @@ actor ChatGPTAppConversation {
                 _ = try? await focus.restore()
                 guard let refreshed = try ownedMessages(native) else { return nil }
                 appended = refreshed
+                if appended.count == 2, appended.last?.role == .assistant, !native.generating, native.draft.isEmpty {
+                    retainedRefreshAnswer = appended.last?.text
+                }
             }
-            guard appended.count == 2, let answer = appended.last, answer.role == .assistant, !native.generating, native.draft.isEmpty else { return nil }
+            // Activation may expose a complete reply that disappears again in
+            // background reads. Retain it only while the exact outgoing stays owned.
+            if appended.count == 1, !native.generating, native.draft.isEmpty, let retainedRefreshAnswer { return retainedRefreshAnswer }
+            guard appended.count == 2, let answer = appended.last, answer.role == .assistant, !native.generating, native.draft.isEmpty else {
+                retainedRefreshAnswer = nil
+                return nil
+            }
+            if retainedRefreshAnswer != nil { retainedRefreshAnswer = answer.text }
             return answer.text
         })
         var saved = pending

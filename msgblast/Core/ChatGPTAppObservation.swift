@@ -75,11 +75,12 @@ struct ChatGPTAppObservation: Sendable {
     let messages: [ChatGPTMessage]
     let composer: ChatGPTAXNode?
     let codexBootstrap: Bool
-    var hasUnreadDotReply: Bool {
+    var unreadDotReplyCount: Int? {
         guard kind == .dots, let button = try? ChatGPTAppNavigation(validatedNodes: nodes).dotButton(),
-              button.label.hasPrefix(title + " ") else { return false }
+              button.label.hasPrefix(title + " ") else { return nil }
         let badge = String(button.label.dropFirst(title.count + 1))
-        return badge.range(of: #"^[1-9][0-9]* unread messages?$"#, options: .regularExpression) != nil
+        guard badge.range(of: #"^[1-9][0-9]* unread messages?$"#, options: .regularExpression) != nil else { return nil }
+        return Int(badge.prefix(while: { $0.isNumber }))
     }
     var dotSetup: Bool { composer == nil }
     var isNew: Bool { composer != nil && kind == .chatgpt && !codexBootstrap && messages.isEmpty }

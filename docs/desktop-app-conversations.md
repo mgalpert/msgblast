@@ -279,12 +279,17 @@ changed dot identity blocks input until the saved context can be verified.
 
 Dots can publish its sidebar unread badge while the conversation remains stale
 in the background. After verifying this request's outgoing message, msgblast may
-briefly activate that exact ChatGPT window once when the active Dot has unread
-messages. It reads the conversation, then restores the original msgblast window;
+briefly activate that exact ChatGPT window once when the active Dot's unread
+badge changes after submission. An unchanged pre-send badge does not trigger it.
+It reads the conversation, then restores the original msgblast window;
 a one-second watchdog restores focus even if the read stalls. This refresh waits
 while another agent owns foreground input or the user is outside the original
 msgblast window. It never types, navigates, or sends again. A visible reply needs
-no foreground refresh.
+no foreground refresh. If activation fails, background reply collection continues
+without another activation attempt or submission; cancellation still stops it.
+A complete reply read during activation survives stale background reads through
+the stability window only while the same outgoing and conversation remain
+verified, with no draft or generation. Changed history invalidates it.
 
 Native controls select the intended chat; the native accessibility tree verifies
 sender boundaries, draft values, and ownership. Embedded browser tabs and app
