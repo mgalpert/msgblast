@@ -102,7 +102,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         let unconfigured = evaluate(signals(.grokbot) { $0.grokBotConfigured = false })
         XCTAssertEqual(unconfigured.readiness, .blocked); XCTAssertEqual(codes(unconfigured), [.webhookNotConfigured])
         let tunnel = evaluate(signals(.grokbot) { $0.grokBotActivity = "Starting reply tunnel…" })
-        XCTAssertEqual(tunnel.readiness, .busy(detail: "Starting reply tunnel…")); XCTAssertEqual(codes(tunnel), [.tunnelStarting])
+        XCTAssertEqual(tunnel.readiness, .blocked); XCTAssertEqual(codes(tunnel), [.tunnelStarting]); XCTAssertEqual(tunnel.reasons[0].fixOn, .none)
         let cold = evaluate(signals(.grokbot) { $0.snapshotReady = false })
         XCTAssertEqual(cold.readiness, .ready); XCTAssertEqual(codes(cold), [.tunnelStarting])
     }

@@ -195,7 +195,8 @@ public enum AvailabilityCalculator {
                 }
             case .webhookBot:
                 if !s.grokBotConfigured { readiness = .blocked; add(.webhookNotConfigured, "Connect \(s.name)'s webhook in msgblast Settings on your Mac.", .mac) }
-                else if let activity = s.grokBotActivity { readiness = .busy(detail: activity); add(.tunnelStarting, activity, .none) }
+                // While the key is read or the reply tunnel starts, the bot is blocked; it becomes ready by itself.
+                else if let activity = s.grokBotActivity { readiness = .blocked; add(.tunnelStarting, activity, .none) }
                 else if s.isSending { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "A request to \(s.name) is in progress.", .none) }
                 else if !s.snapshotReady && s.unresolvedAttemptIDs.isEmpty { add(.tunnelStarting, "The reply connection starts on the Mac with your first send. Keep the Mac awake for replies.", .none) }
                 for id in s.unresolvedAttemptIDs {
