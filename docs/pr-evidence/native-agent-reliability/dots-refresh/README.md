@@ -1,7 +1,9 @@
 # Dots follow-up verification
 
 Executable source: `4b0f76d178be24113ff99517ddaa6cadd6b9ea26`.
-Later evidence-only commits do not change the executable.
+Later evidence and test-synchronization commits preserve this runtime behavior.
+The test-only synchronization change makes the refresh deadline injectable; its
+production default remains one second.
 
 - App: blue-green **msgblast Dev PR 84**, build 1, `com.msgblast.development`.
 - Machine: Pal’s Studio, native ChatGPT 26.1007.30912 (20156), `com.openai.codex`.

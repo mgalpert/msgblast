@@ -774,6 +774,8 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: f.directory) }
         let recorded = ChatGPTRecordedBindings()
         let control = DesktopAppConversation(executable: f.executable, delivery: .foreground)
+        let (deadlineGate, deadline) = AsyncStream<Void>.makeStream()
+        defer { deadline.finish() }
         let clock = AdvancingClock()
         let started = clock.now
         let timing = DesktopAppConversation.Timing(pollInterval: .seconds(1), stableDuration: .seconds(3), replyTimeout: .seconds(10), callTimeout: 3, replyClock: .init(clock))
@@ -781,7 +783,9 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             XCTAssertEqual(target, .init(pid: 42, window: 21))
             XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
             await recorded.refresh()
-            return try await control.beginReplyRefresh(target, session: "fixture-dot-refresh", host: .init(pid: 777, window: 99), hostIsActive: { _ in true })
+            return try await control.beginReplyRefresh(target, session: "fixture-dot-refresh", host: .init(pid: 777, window: 99), restoreDelay: {
+                for await _ in deadlineGate { break }
+            }, hostIsActive: { _ in true })
         }, onPrepared: { await recorded.prepare($0) }, onBinding: {
             XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("foreground-window"), encoding: .utf8), "777:99")
             await recorded.bind($0)

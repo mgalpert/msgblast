@@ -440,6 +440,7 @@ actor DesktopAppConversation {
     }
     func beginReplyRefresh(_ destination: Target, session: String, host: Target? = nil,
                            onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in },
+                           restoreDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
                            hostIsActive: @Sendable (Target) async -> Bool = { host in await MainActor.run {
                                NSApplication.shared.isActive && NSApplication.shared.keyWindow?.windowNumber == host.window
                            } }) async throws -> DesktopForegroundLease? {
@@ -453,7 +454,7 @@ actor DesktopAppConversation {
         do {
             try Task.checkCancellation()
             try await activate(destination, session: session)
-            await lease.restoreAfterSubmission(delay: { try await Task.sleep(for: .seconds(1)) })
+            await lease.restoreAfterSubmission(delay: restoreDelay)
             return lease
         } catch {
             try await lease.restore()
