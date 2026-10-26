@@ -1,0 +1,729 @@
+{
+  "source_revision": "4b0f76d178be24113ff99517ddaa6cadd6b9ea26",
+  "app": "msgblast Dev PR 84",
+  "machine": "Pals Studio",
+  "method": "Cua list_apps active flag sampled read-only; no manual focus recovery",
+  "limits": "Sampled active-app state verifies return to msgblast; subsecond refresh and exact-window ownership are also covered by deterministic composed regressions.",
+  "samples": [
+    {
+      "time": "2026-10-26T21:37:24.800909+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:25.751022+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:26.681016+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:27.714766+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:28.802151+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:29.888533+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:30.940060+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:32.037947+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:33.196771+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:34.259841+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:35.295624+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:36.364362+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:37.425568+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:38.474338+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:39.538101+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:40.574042+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:41.614800+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:42.666984+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:43.748756+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:44.826218+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:45.911037+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:46.987956+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:48.020484+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:49.085177+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:50.119278+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:51.137272+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:52.161930+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:53.188160+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:54.177747+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:55.069323+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:55.975050+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:56.863493+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:57.834514+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:58.763272+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:37:59.759146+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:00.750824+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:01.786667+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:02.933332+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:03.821578+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:04.763295+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:05.702526+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:06.599300+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:07.553651+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:08.468602+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:09.377022+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:10.276958+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:11.172099+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:12.086770+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:13.038825+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:14.085604+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:14.997842+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:15.879477+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:16.794843+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:17.762000+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:18.686023+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:19.605059+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:20.536177+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:21.435101+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:22.482521+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:23.523600+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:24.473807+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:25.435668+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:26.393944+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:27.397864+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:28.388852+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:29.340086+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:30.338498+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:31.286941+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:32.237629+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:33.185002+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:34.156890+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:35.105062+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:36.109634+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:37.056271+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:38.029219+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:39.158033+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:40.103118+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:41.161262+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:42.260068+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:43.350317+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:44.496991+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:45.554278+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:46.602944+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:47.673762+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:48.707021+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:49.787994+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:50.860248+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:51.949765+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:53.039055+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:54.077800+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:55.121848+00:00",
+      "msgblast_active": false,
+      "chatgpt_active": true,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:56.152827+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:57.204746+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:58.214877+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:38:59.238610+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:00.243048+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:01.136665+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:02.036686+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:02.956150+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:03.895546+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:04.790253+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:05.674553+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:06.615007+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:07.563584+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:08.455152+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:09.393495+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:10.297499+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:11.235882+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:12.135861+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:13.041439+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:14.095811+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:14.989595+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:15.944176+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:16.846429+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:17.748624+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:18.692005+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:19.622060+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:20.522820+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:21.413847+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    },
+    {
+      "time": "2026-10-26T21:39:22.333636+00:00",
+      "msgblast_active": true,
+      "chatgpt_active": false,
+      "read_error": false
+    }
+  ]
+}
