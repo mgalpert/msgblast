@@ -170,7 +170,7 @@ extension SideChatModelCheck {
     /// Optional evidence: renders the actual Settings → Remote section off-screen when
     /// MSGBLAST_REMOTE_EVIDENCE_DIR is set. Demo fixture state only.
     @MainActor static func renderRemoteSettings(_ service: RemoteService, name: String) async throws {
-        guard let directory = ProcessInfo.processInfo.environment["MSGBLAST_REMOTE_EVIDENCE_DIR"] else { return }
+        guard let directory = ProcessInfo.processInfo.environment["MSGBLAST_REMOTE_EVIDENCE_DIR"], !directory.isEmpty else { return }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 760), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Form { Section("Remote") { RemoteSettingsView(service: service) } }.formStyle(.grouped).frame(width: 640, height: 760))
         window.orderBack(nil)
@@ -205,7 +205,7 @@ extension SideChatModelCheck {
             try await Task.sleep(for: .milliseconds(100))
             // Demo replies arrive asynchronously; the projection streams them to the client.
         }
-        if environment["MSGBLAST_REMOTE_EVIDENCE_DIR"] != nil { try await renderRemoteSettings(service, name: "remote-settings-listening") }
+        if environment["MSGBLAST_REMOTE_EVIDENCE_DIR"]?.isEmpty == false { try await renderRemoteSettings(service, name: "remote-settings-listening") }
         print("Demo Mac: paired \(service.pairing.device?.name ?? "none"), conversations \(model.state.comparisons.count), keep-awake held \(service.keepAwake.held)")
         service.setEnabled(false)
     }
