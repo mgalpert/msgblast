@@ -78,7 +78,7 @@ extension AppModel {
                     self.state.comparisons[i].allDraft = text
                     await self.followUp(comparisonID, recipients: Array(recipients), newAttemptID: followUpID)
                 } else {
-                    await self.followUpWithSuppliedDraft(comparisonID, recipients: Array(recipients), text: text, attachments: [], newAttemptID: followUpID)
+                    await self.followUpWithSuppliedDraft(comparisonID, recipients: Array(recipients), text: text, attachments: sentAttachments, newAttemptID: followUpID)
                 }
                 return self.comparison(comparisonID)?.followUps.contains(where: { $0.id == followUpID }) == true ? comparisonID : nil
             }

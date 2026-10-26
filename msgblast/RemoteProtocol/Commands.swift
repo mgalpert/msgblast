@@ -117,6 +117,8 @@ public struct RemoteRejectionCode: RemoteOpenValue {
     public static let attachmentRejected: Self = "attachmentRejected"
     public static let keepAwakeDisabled: Self = "keepAwakeDisabled"
     public static let failed: Self = "failed"
+    /// The Mac navigated an agent's chat for this send and, as on the Mac, needs a new explicit send.
+    public static let preparedNotSent: Self = "preparedNotSent"
 }
 
 public struct RemoteCommandResult: Codable, Hashable, Sendable {

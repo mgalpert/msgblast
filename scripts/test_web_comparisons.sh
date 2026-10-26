@@ -36,8 +36,9 @@ end = source.index("\n@MainActor\nprivate final class AppStartup", start)
 Path(sys.argv[2]).write_text(source[:start] + source[end:])
 PY_SUPPORT
 web_sources+=("$web_tmp/app-support.swift")
-xcrun swiftc "${web_flags[@]}" "${web_sources[@]}" "$web_root/scripts/fixtures/web_comparison_model.swift" "$web_root/scripts/fixtures/permission_review_model.swift" -o "$web_tmp/model"
+xcrun swiftc "${web_flags[@]}" "${web_sources[@]}" "$web_root/scripts/fixtures/web_comparison_model.swift" "$web_root/scripts/fixtures/permission_review_model.swift" "$web_root/scripts/fixtures/remote_control_model.swift" -o "$web_tmp/model"
 "$web_tmp/model" --demo --isolated-demo
+"$web_tmp/model" --demo --isolated-demo --remote-control-fixture
 # Exercise the actual startup path twice against one app-owned fixture profile.
 python3 - "$web_tmp" <<'PY_REVIEW'
 from pathlib import Path

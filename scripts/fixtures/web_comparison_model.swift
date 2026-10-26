@@ -27,6 +27,7 @@ import msgblastCore
         Task { @MainActor in
             do {
                 if ProcessInfo.processInfo.arguments.contains("--permission-review-relaunch-fixture") { try await runPermissionReviewRelaunchChecks() }
+                else if ProcessInfo.processInfo.arguments.contains("--remote-control-fixture") { try await runRemoteControlChecks() }
                 else { try await runChecks() }
             }
             catch { fatalError("Isolated model fixture failed: \(error)") }
