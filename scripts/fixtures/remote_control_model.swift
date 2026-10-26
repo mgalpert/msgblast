@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import SwiftUI
 import msgblastCore
 import msgblastRemoteProtocol
 
@@ -126,6 +127,7 @@ extension SideChatModelCheck {
         precondition(service.listener == nil, "The Demo app opens no port unless asked")
         precondition(FileManager.default.fileExists(atPath: model.local.url.deletingLastPathComponent().appendingPathComponent("remote-settings.json").path))
         let offer = try service.showPairingCode()
+        try await renderRemoteSettings(service, name: "remote-settings-pairing")
         let connection = service.connectInMemory()!
         let phoneKey = P256.Signing.PrivateKey()
         let driver = RemoteClientDriver(mode: .pair(offer: offer, deviceName: "Fixture iPhone", deviceKey: phoneKey))
@@ -155,6 +157,7 @@ extension SideChatModelCheck {
         service.setAllowMessagesSends(true)
         connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
         try await waitUntil { events.contains { if case .events(let list, _) = $0 { list.contains { if case .turnUpsert(let t) = $0.change { t.text == "From the in-memory phone" } else { false } } } else { false } } }
+        try await renderRemoteSettings(service, name: "remote-settings-connected")
         service.setKeepAwake(false)
         precondition(!service.keepAwake.held, "The Mac setting turns keep-awake off")
         service.forget()
@@ -162,5 +165,19 @@ extension SideChatModelCheck {
         precondition(service.pairing.device == nil)
         service.setEnabled(false)
         precondition(!service.running)
+    }
+
+    /// Optional evidence: renders the actual Settings → Remote section off-screen when
+    /// MSGBLAST_REMOTE_EVIDENCE_DIR is set. Demo fixture state only.
+    @MainActor static func renderRemoteSettings(_ service: RemoteService, name: String) async throws {
+        guard let directory = ProcessInfo.processInfo.environment["MSGBLAST_REMOTE_EVIDENCE_DIR"] else { return }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 760), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: Form { Section("Remote") { RemoteSettingsView(service: service) } }.formStyle(.grouped).frame(width: 640, height: 760))
+        window.orderBack(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(600))
+        guard let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
     }
 }
