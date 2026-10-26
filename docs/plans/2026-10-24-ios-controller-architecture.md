@@ -405,12 +405,35 @@ These fix the headless gaps the survey found and are good hygiene on their own:
      type from a CLI client and record which succeed. Desktop apps are expected
      to fail; the question is whether websites, CLIs, and the webhook work.
    - Availability loop cost on a real profile.
+
+   **Status (2026-10-26):** done except the human-only parts. Results in
+   [the spike record](2026-10-26-ios-controller-spike.md): TLS 1.3 listeners on
+   both Tailscale utuns and the LAN with a pinned client work (same-port binds need
+   `allowLocalEndpointReuse`; Bonjour follows `requiredInterface`); an unwindowed
+   `WKWebView` passes the visibility test; a probe pass costs about 45 ms. The
+   cellular reachability check and the lock-screen matrix are written as a human
+   procedure and not yet run.
 1. **Mac remote service:** protocol package (DTOs, `AgentAvailability`,
    events, commands, framing, tests), `AvailabilityModel`, projection and
    journal, listener with single-device pairing and revoke, Settings → Remote
    pane (QR, paired phone, bind policy, keep-awake setting), headless hardening
    (§5), CLI test client under `scripts/`, Demo fixtures that simulate every
    agent form. Demo evidence for the PR.
+
+   **Status (2026-10-26):** landed on `ios-controller` as atomic commits; see
+   [Remote control](../remote-control.md). Protocol framework
+   `msgblast/RemoteProtocol/` (macOS 15 and iOS 26) with `RemoteClientDriver` for
+   phone code; Mac identity, pairing, settings, availability, projection and
+   journal, executor, server and listener in `msgblast/Core/Remote/`; AppModel
+   adapters and `RemoteService` in `msgblast/Remote/`; Settings → Remote;
+   `scripts/remote_client` and `scripts/test_remote_client.sh`. §5 items 1–5 are
+   done (`AppModel.sendShared`/`sendDirect`, `RemoteErrorCapture`). Differences
+   from this plan: the TLS and handshake identity is a software P-256 key wrapped
+   by a Secure Enclave key, because the Enclave cannot hold a TLS server key;
+   device scopes reduce to the single "Send iMessages from the phone" setting;
+   website sends that must navigate a page return `preparedNotSent` and need a
+   second explicit send, as from the Mac composer. Not yet done: Demo PR video
+   evidence, live Dev validation (phase 3).
 2. **iOS app, UX iteration against the Demo Mac:** pairing, inbox,
    conversation, availability-aware agent grid, shared and private sends,
    attempt status chips, end and acknowledge, attachments. Iterate on the

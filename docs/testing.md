@@ -117,6 +117,30 @@ so Continue stays blocked until a complete permission group is enabled. These
 settings never change macOS access and are ignored for live app-control grants.
 Label captures as simulated and retain the compiled source revision.
 
+## Remote control
+
+`msgblastRemoteProtocolTests` (encode/decode round trips, framing limits, the
+encryption envelope with known-answer vectors checked against OpenSSL and Python)
+runs in the native command above, or alone with
+`-only-testing:msgblastRemoteProtocolTests`. The Mac side is in `msgblastTests`:
+`RemoteIdentityTests`, `RemotePairingTests`, `RemoteAvailabilityTests` (every
+provider form and readiness state from fixture sessions, without connecting or
+launching), `RemoteProjectionTests`, `RemoteCommandExecutorTests`, and
+`RemoteServerTests` (handshake, pairing, resume, lock, and replacement over the
+in-memory transport). None opens a port.
+
+`bash scripts/test_web_comparisons.sh <derived-data>` also runs the remote fixture:
+commands through the actual AppModel send paths and the real `RemoteService` with an
+in-memory phone, in the isolated Demo profile. Set `MSGBLAST_REMOTE_EVIDENCE_DIR` to
+render the actual Settings → Remote pane off-screen into PNGs.
+
+`bash scripts/test_remote_client.sh <derived-data> [evidence-dir]` is the end-to-end
+check over real TLS: the Demo profile listens on this Mac's Tailscale or LAN
+address for that run only, and `scripts/remote_client` pairs with the pinned key,
+reads the snapshot, sends to a simulated Messages agent, and resumes. It needs a
+Tailscale or private LAN address and opens a port while it runs; it sends nothing
+real. It does not prove reachability from a phone on another network.
+
 ## Shared native app engine
 
 `DesktopAccessibilityTests` covers exact draft/URL metadata, bounded incomplete

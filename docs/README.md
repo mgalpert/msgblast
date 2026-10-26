@@ -25,6 +25,8 @@ Local development does not need production release credentials.
   separate accounts, saved sessions, configuration, and report restrictions.
 - [Grok Bot](grokbot.md): webhook routines, callback tunnel, credential storage,
   and bundled helper.
+- [Remote control](remote-control.md): pairing one phone, bind policy, security
+  model, what the phone can do, Demo behavior, and the command-line client.
 - [Update recovery](update-recovery.md): preserving state when an older app cannot
   read state written by a newer one.
 
