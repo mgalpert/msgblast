@@ -12,7 +12,7 @@ final class ConnectionTests: XCTestCase {
         var saved: PairedMac? = paired
         var events: [RemoteClientDriver.Event] = []
         let connection = MacConnection(paired: paired, keys: MemoryDeviceKeyStore(), savePaired: { saved = $0 },
-                                       makeTransport: { [unowned mac] in mac.transport(for: $0, spki: $1) })
+                                       makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         connection.timing.backoff = [.milliseconds(10)]
         connection.onEvent = { events.append($0) }
         return (connection, { events }, { saved })
@@ -73,10 +73,12 @@ final class ConnectionTests: XCTestCase {
         let pending = UUID()
         connection.pendingCommandIDs = { [pending] }
         connection.sinceSeq = { 10 }
-        (mac.sessions.last!.transport).drop()
+        let before = mac.sessions.count
+        mac.sessions.forEach { $0.transport.drop() }
         await settle { if case .reconnecting = connection.state { true } else { false } }
-        await settle { mac.connections == 2 && connection.state == .connected }
-        XCTAssertEqual(mac.sessions.last?.sinceSeq, 10, "Resume from the stored seq")
+        // Both QR addresses race, so each attempt may open more than one session.
+        await settle { mac.sessions.dropFirst(before).contains { $0.sinceSeq == 10 } && connection.state == .connected }
+        XCTAssertTrue(mac.sessions.dropFirst(before).contains { $0.sinceSeq == 10 }, "Resume from the stored seq")
         await settle { mac.commands.contains { $0.action == .queryCommand(clientCommandID: pending) } }
         XCTAssertTrue(mac.commands.contains { $0.action == .queryCommand(clientCommandID: pending) }, "Unconfirmed commands are queried, never resent")
         XCTAssertTrue(events().contains { if case .events = $0 { true } else { false } })
@@ -88,14 +90,14 @@ final class ConnectionTests: XCTestCase {
         connection.pair(offer: mac.offer(), deviceName: "Phone") { _ in }
         await settle { connection.state == .connected && !events().isEmpty }
         mac.lockedOnConnect = true
-        mac.sessions.last!.transport.drop()
+        mac.sessions.forEach { $0.transport.drop() }
         await settle { connection.state == .macLocked }
         XCTAssertEqual(connection.state.bannerText, "Disconnected: your Mac is locked")
         XCTAssertFalse(connection.state.canSend)
 
         mac.lockedOnConnect = false
         mac.forgetOnResume = true
-        mac.sessions.last!.transport.drop()
+        mac.sessions.forEach { $0.transport.drop() }
         await settle { if case .pairingLost = connection.state { true } else { false } }
         guard case .pairingLost = connection.state else { return XCTFail("\(connection.state)") }
         let count = mac.connections
@@ -104,6 +106,43 @@ final class ConnectionTests: XCTestCase {
         connection.forget()
         XCTAssertEqual(connection.state, .unpaired)
         XCTAssertNil(connection.pairedMac)
+    }
+
+    func testAFailedPairingKeepsTheExistingPairingKeyAndCache() async throws {
+        let mac = FakeMac()
+        let keys = MemoryDeviceKeyStore()
+        let app = MobileApp(database: try LocalDatabase(url: nil), keys: keys, defaults: UserDefaults(suiteName: "pair-\(UUID().uuidString)")!,
+                            makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+        let paired = try await app.pair(offer: mac.offer(), deviceName: "Phone")
+        for _ in 0..<200 where app.store.projection.seq == nil { try await Task.sleep(for: .milliseconds(5)) }
+        app.store.setDraft("Keep me", for: "new|all")
+        let cached = app.store.projection
+        let key = try XCTUnwrap(keys.storedPublicKey)
+        XCTAssertEqual(app.connection.state, .connected)
+
+        var wrong = mac.offer(); wrong.code = "wrong"
+        do { _ = try await app.pair(offer: wrong, deviceName: "Phone"); XCTFail("A wrong code must not pair") } catch {}
+        XCTAssertEqual(app.connection.pairedMac, paired, "The previous Mac record stays")
+        XCTAssertEqual(keys.storedPublicKey, key, "The previous device key stays")
+        XCTAssertEqual(app.store.projection.seq, cached.seq)
+        XCTAssertEqual(app.store.projection.agents, cached.agents, "The cache is intact")
+        XCTAssertEqual(app.store.draft("new|all"), "Keep me")
+        for _ in 0..<200 where app.connection.state != .connected { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(app.connection.state, .connected, "The previous Mac reconnects and still authenticates")
+        for _ in 0..<200 where !mac.sessions.contains(where: { $0.sinceSeq == cached.seq && $0.sinceSeq != nil }) { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(mac.sessions.contains { $0.sinceSeq == cached.seq }, "Resumed with the old pairing")
+
+        // An unreachable Mac during a new pairing also leaves everything in place.
+        mac.reachable = []
+        do { _ = try await app.pair(offer: mac.offer(), deviceName: "Phone"); XCTFail("Unreachable") } catch {}
+        XCTAssertEqual(keys.storedPublicKey, key)
+        XCTAssertEqual(app.connection.pairedMac, paired)
+
+        // A successful new pairing replaces the key and clears the old cache.
+        mac.reachable = ["100.64.0.1:4000", "192.168.1.2:4000"]
+        _ = try await app.pair(offer: mac.offer(), deviceName: "Phone")
+        XCTAssertNotEqual(keys.storedPublicKey, key)
+        XCTAssertEqual(app.store.draft("new|all"), "", "Drafts for the previous Mac are dropped only on success")
     }
 
     func testUnconfirmedIsNotNotConnected() {

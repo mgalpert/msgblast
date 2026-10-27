@@ -31,6 +31,7 @@ public final class MobileApp: ObservableObject {
         connection.keepAwakeRequested = keepAwake
         connection.onEvent = { [weak self] event in self?.handle(event) }
         connection.pendingCommandIDs = { [weak self] in self?.store.unresolvedCommandIDs ?? [] }
+        connection.willReplacePairing = { [weak self] _ in self?.store.forgetMac() }
         connection.sinceSeq = { [weak self] in self?.store.projection.needsSnapshot == true ? nil : self?.store.projection.seq }
         connection.$state.removeDuplicates().sink { [weak self] state in
             guard let self, !state.canSend else { return }
@@ -88,8 +89,8 @@ public final class MobileApp: ObservableObject {
         return try await pair(offer: offer, deviceName: deviceName)
     }
 
+    /// The current Mac and its cache are replaced only when the new pairing succeeds.
     public func pair(offer: RemotePairingOffer, deviceName: String) async throws -> PairedMac {
-        store.forgetMac()
         return try await withCheckedThrowingContinuation { continuation in
             connection.pair(offer: offer, deviceName: deviceName) { continuation.resume(with: $0) }
         }

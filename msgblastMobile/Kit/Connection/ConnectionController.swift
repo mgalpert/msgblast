@@ -51,6 +51,9 @@ public final class MacConnection: ObservableObject {
     /// Called after (re)authentication with the ids of commands still waiting for a result.
     public var pendingCommandIDs: () -> [UUID] = { [] }
     public var sinceSeq: () -> UInt64? = { nil }
+    /// Called when a new pairing succeeded, before its first snapshot, so the app can drop
+    /// data from the previous Mac. Never called for a failed attempt.
+    public var willReplacePairing: ((PairedMac) -> Void)?
     public var keepAwakeRequested = true
     public var timing = ConnectionTiming()
 
@@ -67,6 +70,9 @@ public final class MacConnection: ObservableObject {
     private var bonjour: [MacEndpoint] = []
     private var browser: NWBrowser?
     private var pairing: (offer: RemotePairingOffer, name: String, completion: (Result<PairedMac, Error>) -> Void)?
+    private var pairingCandidate: DeviceKeyCandidate?
+    /// The previous Mac was connected when this pairing attempt started; reconnect if it fails.
+    private var resumeAfterFailedPairing = false
     private var nonce: UInt64 = 0
 
     public init(paired: PairedMac?, keys: DeviceKeyStore, savePaired: @escaping (PairedMac?) -> Void, now: @escaping () -> Date = Date.init,
@@ -81,9 +87,14 @@ public final class MacConnection: ObservableObject {
     /// Pairs from a scanned or pasted `msgblast://pair` offer. Replaces any previous Mac.
     public func pair(offer: RemotePairingOffer, deviceName: String, completion: @escaping (Result<PairedMac, Error>) -> Void) {
         guard offer.expiresAt > now() else { completion(.failure(MobileConnectionError.offerExpired)); return }
+        // The current pairing (key, Mac record, cache) stays untouched until the new one succeeds.
+        let candidate: DeviceKeyCandidate
+        do { candidate = try keys.makeCandidate() } catch { completion(.failure(error)); return }
+        resumeAfterFailedPairing = pairedMac != nil && [.connected, .connecting, .macLocked].contains(state)
+        reconnectTask?.cancel(); reconnectTask = nil
         stopTransport()
-        let key: any RemoteSigningKey
-        do { keys.delete(); key = try keys.loadOrCreate() } catch { completion(.failure(error)); return }
+        let key = candidate.key
+        pairingCandidate = candidate
         pairing = (offer, deviceName, completion)
         state = .pairing
         let endpoints = offer.endpoints.map { MacEndpoint.host($0.host, port: offer.port) } + bonjour
@@ -175,17 +186,20 @@ public final class MacConnection: ObservableObject {
             let reason = (error as? RemoteProtocolError) == .authenticationFailed
                 ? "Your Mac's identity did not match."
                 : "The connection to your Mac failed: \(error.localizedDescription)"
-            finishPairing(.failure(RemotePairingError(message: reason)))
-            lost(reason, retry: pairing == nil && pairedMac != nil)
+            if pairing != nil { pairingFailed(RemotePairingError(message: reason)) }
+            else { lost(reason, retry: pairedMac != nil) }
         }
     }
 
     private func handle(_ event: RemoteClientDriver.Event) {
         switch event {
         case .paired(let complete, let identityKey):
-            guard let pending = pairing else { break }
+            guard let pending = pairing, let candidate = pairingCandidate else { break }
             let mac = PairedMac(macName: complete.macName, variant: pending.offer.variant, deviceID: complete.deviceID, identityKey: identityKey,
                                 spkiSHA256: pending.offer.spkiSHA256, addresses: pending.offer.endpoints, port: pending.offer.port, pairedAt: now())
+            do { try keys.store(candidate) } catch { pairingFailed(error); return }
+            pairingCandidate = nil
+            willReplacePairing?(mac)
             pairedMac = mac
             savePaired(mac)
             finishPairing(.success(mac))
@@ -201,9 +215,7 @@ public final class MacConnection: ObservableObject {
                 state = .pairingLost(error.message)
             case .pairingClosed, .pairingFailed, .pairingReplaceNeedsConfirmation:
                 lastError = error.message
-                finishPairing(.failure(RemotePairingError(message: error.message)))
-                stopTransport()
-                state = pairedMac == nil ? .unpaired : .stopped
+                pairingFailed(RemotePairingError(message: error.message))
             case .anotherClientConnected:
                 stopTransport()   // A newer connection of this phone took over.
             default:
@@ -224,6 +236,16 @@ public final class MacConnection: ObservableObject {
         if keepAwakeRequested { try? send(RemoteCommand(action: .setKeepAwake(enabled: true))) }
         for id in pendingCommandIDs() { try? send(RemoteCommand(action: .queryCommand(clientCommandID: id))) }
         startHeartbeat()
+    }
+
+    /// A failed attempt returns to the previous Mac, reconnecting if it was connected.
+    private func pairingFailed(_ error: Error) {
+        guard pairing != nil else { return }
+        stopTransport()
+        pairingCandidate = nil
+        finishPairing(.failure(error))
+        state = pairedMac == nil ? .unpaired : .stopped
+        if pairedMac != nil && resumeAfterFailedPairing { resumeAfterFailedPairing = false; connect() }
     }
 
     private func finishPairing(_ result: Result<PairedMac, Error>) {
@@ -262,7 +284,7 @@ public final class MacConnection: ObservableObject {
     private func lost(_ reason: String, retry: Bool = true) {
         stopTransport()
         lastError = reason
-        if pairing != nil { finishPairing(.failure(RemotePairingError(message: reason))); state = pairedMac == nil ? .unpaired : .stopped; return }
+        if pairing != nil { pairingFailed(RemotePairingError(message: reason)); return }
         guard retry, pairedMac != nil else { state = pairedMac == nil ? .unpaired : .stopped; return }
         let delay = timing.backoff[min(attempt, timing.backoff.count - 1)]
         attempt += 1

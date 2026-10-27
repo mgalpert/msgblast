@@ -29,7 +29,8 @@ final class FakeMac {
 
     /// One server-side session over a test transport.
     @MainActor final class Session {
-        unowned let mac: FakeMac
+        // Weak: reconnect tasks from a finished test may still deliver bytes.
+        weak var mac: FakeMac?
         let transport: TestTransport
         var decoder = RemoteFrameDecoder()
         var channel: RemoteSecureChannel?
@@ -43,6 +44,7 @@ final class FakeMac {
             transport.deliverToClient(frame)
         }
         func receive(_ bytes: Data) {
+            guard let mac else { return }
             for payload in try! decoder.append(bytes) {
                 if channel == nil {
                     guard case .hello(let hello) = try! RemoteProtocol.decoder().decode(RemoteHandshakeMessage.self, from: payload) else { return }
@@ -85,7 +87,8 @@ final class FakeMac {
     var reachable: Set<String> = ["100.64.0.1:4000", "192.168.1.2:4000"]
     func transport(for endpoint: MacEndpoint, spki: Data) -> ClientTransport {
         let transport = TestTransport(label: endpoint.label, reachable: reachable.contains(endpoint.label) && spki == self.spki)
-        transport.onConnect = { [unowned self, unowned transport] in
+        transport.onConnect = { [weak self, weak transport] in
+            guard let self, let transport else { return }
             connections += 1
             let session = Session(mac: self, transport: transport)
             sessions.append(session)

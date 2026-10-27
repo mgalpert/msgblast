@@ -33,7 +33,18 @@ public struct PairedMac: Codable, Equatable, Sendable {
 /// leaves it; elsewhere (simulator, tests) it is a software key in the Keychain.
 public protocol DeviceKeyStore: Sendable {
     func loadOrCreate() throws -> any RemoteSigningKey
+    /// A new key for a pairing attempt. Nothing is stored until `store(_:)`, so a failed
+    /// attempt leaves the current pairing's key untouched.
+    func makeCandidate() throws -> DeviceKeyCandidate
+    /// Replaces the stored key with the candidate once pairing succeeded.
+    func store(_ candidate: DeviceKeyCandidate) throws
     func delete()
+}
+
+public struct DeviceKeyCandidate: @unchecked Sendable {
+    public let key: any RemoteSigningKey
+    /// Keychain representation: a 1-byte kind (1 = Secure Enclave, 0 = software) and the key data.
+    let stored: Data
 }
 
 public final class MemoryDeviceKeyStore: DeviceKeyStore, @unchecked Sendable {
@@ -44,6 +55,16 @@ public final class MemoryDeviceKeyStore: DeviceKeyStore, @unchecked Sendable {
         lock.withLock { if let key { return key }; let fresh = P256.Signing.PrivateKey(); key = fresh; return fresh }
     }
     public func delete() { lock.withLock { key = nil } }
+    public func makeCandidate() throws -> DeviceKeyCandidate {
+        let fresh = P256.Signing.PrivateKey()
+        return DeviceKeyCandidate(key: fresh, stored: fresh.rawRepresentation)
+    }
+    public func store(_ candidate: DeviceKeyCandidate) throws {
+        guard let key = candidate.key as? P256.Signing.PrivateKey else { throw MobileConnectionError.keychain }
+        lock.withLock { self.key = key }
+    }
+    /// The stored key's public half, for tests.
+    public var storedPublicKey: Data? { lock.withLock { key?.publicKey.x963Representation } }
 }
 
 public struct KeychainDeviceKeyStore: DeviceKeyStore {
@@ -61,18 +82,22 @@ public struct KeychainDeviceKeyStore: DeviceKeyStore {
             if first == 1, let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: body) { return key }
             if first == 0, let key = try? P256.Signing.PrivateKey(rawRepresentation: body) { return key }
         }
-        let (key, data): (any RemoteSigningKey, Data)
+        let candidate = try makeCandidate()
+        try store(candidate)
+        return candidate.key
+    }
+    public func makeCandidate() throws -> DeviceKeyCandidate {
         if SecureEnclave.isAvailable, let hardware = try? SecureEnclave.P256.Signing.PrivateKey() {
-            (key, data) = (hardware, Data([1]) + hardware.dataRepresentation)
-        } else {
-            let software = P256.Signing.PrivateKey()
-            (key, data) = (software, Data([0]) + software.rawRepresentation)
+            return DeviceKeyCandidate(key: hardware, stored: Data([1]) + hardware.dataRepresentation)
         }
-        var item = query(); item[kSecValueData as String] = data
+        let software = P256.Signing.PrivateKey()
+        return DeviceKeyCandidate(key: software, stored: Data([0]) + software.rawRepresentation)
+    }
+    public func store(_ candidate: DeviceKeyCandidate) throws {
+        var item = query(); item[kSecValueData as String] = candidate.stored
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         SecItemDelete(query() as CFDictionary)
         guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw MobileConnectionError.keychain }
-        return key
     }
     public func delete() { SecItemDelete(query() as CFDictionary) }
 }

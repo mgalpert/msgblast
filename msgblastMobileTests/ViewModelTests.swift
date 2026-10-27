@@ -57,7 +57,7 @@ final class MobileAppTests: XCTestCase {
         let mac = FakeMac()
         let defaults = UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!
         let app = MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: defaults,
-                            makeTransport: { [unowned mac] in mac.transport(for: $0, spki: $1) })
+                            makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         app.connection.timing.backoff = [.seconds(30)]
         XCTAssertThrowsError(try app.send(.setKeepAwake(enabled: true)), "Never queued while disconnected")
         let paired = try await app.pair(link: mac.offer().url.absoluteString, deviceName: "Phone")
