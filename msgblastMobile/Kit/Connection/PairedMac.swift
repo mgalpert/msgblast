@@ -19,13 +19,7 @@ public struct PairedMac: Codable, Equatable, Sendable {
     }
     /// Groups of four hex characters of SHA-256(identity key), shown to compare with the Mac.
     public var fingerprint: String { Self.fingerprint(RemoteHandshake.keyHash(identityKey)) }
-    public static func fingerprint(_ hash: Data) -> String {
-        let hex = hash.prefix(12).map { String(format: "%02X", $0) }.joined()
-        return stride(from: 0, to: hex.count, by: 4).map { start -> String in
-            let a = hex.index(hex.startIndex, offsetBy: start), b = hex.index(a, offsetBy: 4)
-            return String(hex[a..<b])
-        }.joined(separator: " ")
-    }
+    public static func fingerprint(_ hash: Data) -> String { RemoteHandshake.fingerprint(hash) }
     public var endpoints: [MacEndpoint] { addresses.map { .host($0.host, port: port) } }
 }
 

@@ -28,6 +28,15 @@ public enum RemoteHandshake {
     public static let nonceBytes = 32
 
     public static func keyHash(_ x963: Data) -> Data { Data(SHA256.hash(data: x963)) }
+    /// Six groups of four hex digits of a key hash, shown on both the Mac and the phone
+    /// so the user can compare them while pairing.
+    public static func fingerprint(_ keyHash: Data) -> String {
+        let hex = keyHash.prefix(12).map { String(format: "%02X", $0) }.joined()
+        return stride(from: 0, to: hex.count, by: 4).map { start -> String in
+            let a = hex.index(hex.startIndex, offsetBy: start), b = hex.index(a, offsetBy: 4)
+            return String(hex[a..<b])
+        }.joined(separator: " ")
+    }
 
     /// SHA-256 over every value both sides agreed on before keys exist.
     public static func transcript(version: Int, intent: RemoteHelloIntent, clientEphemeral: Data, clientNonce: Data,

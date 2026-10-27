@@ -12,6 +12,8 @@ final class RemoteService: ObservableObject {
     @Published private(set) var problem: String?
     @Published private(set) var running = false
     @Published private(set) var identityStorage: RemoteIdentityStorage?
+    /// The Mac key fingerprint the phone shows before pairing.
+    @Published private(set) var identityFingerprint: String?
     /// Demo only: also listen on the network (for the command-line harness). Not saved.
     @Published private(set) var demoNetworkAllowed: Bool
     let pairing: RemotePairing
@@ -96,6 +98,7 @@ final class RemoteService: ObservableObject {
             let identity = try RemoteIdentityStore(directory: directory).loadOrCreate()
             self.identity = identity
             identityStorage = identity.storage
+            identityFingerprint = RemoteHandshake.fingerprint(identity.identityKeySHA256)
             let host = AppRemoteHost(model: model, availability: availability, keepAwake: keepAwake, power: power, settings: { [settingsReader] in settingsReader.value })
             let executor = RemoteCommandExecutor(host: host)
             let journal = RemoteChangeJournal()

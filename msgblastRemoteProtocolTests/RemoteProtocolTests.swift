@@ -203,6 +203,10 @@ final class RemoteSecureChannelTests: XCTestCase {
         XCTAssertThrowsError(try client.complete(with: forged, pinnedIdentityKey: real.publicKey.x963Representation))
     }
 
+    func testFingerprintFormat() {
+        XCTAssertEqual(RemoteHandshake.fingerprint(Data(0..<32)), "0001 0203 0405 0607 0809 0A0B")
+    }
+
     func testPairingProofDependsOnCodeSessionAndDeviceKey() {
         let transcript = Data(repeating: 1, count: 32), challenge = Data(repeating: 2, count: 32), key = Data(repeating: 4, count: 65)
         let proof = RemoteHandshake.pairingProof(code: "abc", challenge: challenge, transcript: transcript, devicePublicKey: key)

@@ -87,6 +87,10 @@ struct RemoteSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Scan with msgblast on your phone").font(.headline)
                     Text("Expires in \(Int(offer.expiresAt.timeIntervalSince(now)))s · works once").font(.caption).foregroundStyle(.secondary)
+                    if let fingerprint = service.identityFingerprint {
+                        Text("Key \(fingerprint)").font(.caption.monospaced()).textSelection(.enabled)
+                            .accessibilityLabel("Mac key fingerprint \(fingerprint). The phone shows the same before pairing.")
+                    }
                     Text(offer.endpoints.isEmpty ? "No network address yet" : offer.endpoints.map { "\($0.host) (\($0.kind == .tailscale ? "Tailscale" : "local network"))" }.joined(separator: "\n"))
                         .font(.caption.monospaced()).textSelection(.enabled)
                     Button("Copy pairing link") {
