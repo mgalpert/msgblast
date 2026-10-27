@@ -2,6 +2,8 @@
 
 Live follow-up evidence:
 
+- [Claude closed-app connection and complete formatted replies](claude-native/README.md)
+  from `edeaba8cb1ebaed805fd3f0ed6279c6d23753797` on Pal's Studio.
 - [Closed-app Wabi and Grok Bot connection, first replies, and follow-ups](cold-native-connect/README.md)
   from `f08cba3dfde61bf1367b2fa86dd0c48c672ece64` on Pal’s Studio.
 - [Dots first request and consecutive follow-ups](dots-refresh/README.md), with
