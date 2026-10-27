@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import ImageIO
 
@@ -20,6 +21,16 @@ public enum DesktopAppProvider: String, Codable, Sendable {
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {
     public let name: String
     public init(name: String) { self.name = name }
+}
+
+// Keep only hashes of the prior native conversation in persistent state.
+struct GrokReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    let bot: String
+    let prompt: String
+    let anchor: DesktopAppSnapshot.GrokHistoryAnchor
+    var automaticRecovery = true
 }
 
 enum DesktopAppError: LocalizedError {
@@ -210,19 +221,20 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         }
         return ends
     }
-    struct GrokHistoryAnchor: Sendable {
-        let text: [String]
+    struct GrokHistoryAnchor: Codable, Equatable, Sendable {
+        let digests: [Data]
+        private static func digest(_ text: String) -> Data { Data(SHA256.hash(data: Data(text.utf8))) }
         init(history: [String], bot: String) {
             let speakers = history.indices.filter { history[$0] == "You" || history[$0] == bot }
             let start = speakers.dropLast().last ?? history.startIndex
-            text = Array(history.dropFirst(start))
+            digests = history.dropFirst(start).map(Self.digest)
         }
         func boundary(in history: [String]) -> Int? {
-            if text.isEmpty { return nil }
-            guard history.count >= text.count else { return nil }
-            let matches = (0...(history.count - text.count)).filter { history[$0..<($0 + text.count)].elementsEqual(text) }
+            guard !digests.isEmpty, digests.allSatisfy({ $0.count == 32 }), history.count >= digests.count else { return nil }
+            let historyDigests = history.map(Self.digest)
+            let matches = (0...(history.count - digests.count)).filter { historyDigests[$0..<($0 + digests.count)].elementsEqual(digests) }
             guard matches.count == 1 else { return nil }
-            return matches[0] + text.count
+            return matches[0] + digests.count
         }
         func matchesEnd(of history: [String]) -> Bool { boundary(in: history) == history.count }
     }
@@ -667,6 +679,7 @@ actor DesktopAppConversation {
     }
     func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding,
                onSubmitAction: @Sendable () async -> Void = {},
+               onReceipt: @Sendable (DesktopAppSnapshot.GrokHistoryAnchor) async throws -> Void = { _ in },
                onSubmitted: @Sendable () async throws -> Void = {},
                releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
         guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
@@ -690,6 +703,7 @@ actor DesktopAppConversation {
         let field = try state.composer(app: app)
         let draft = app == .grokBot ? try await grokState(state, target: target).draft : field.draft
         guard draft.isEmpty else { throw DesktopAppError.unavailable("\(app.name) has an unsent draft. It was preserved.") }
+        try await onReceipt(receipt)
         state = try await typeGrokDraft(prompt, initial: state, target: target, session: session, binding: binding, image: image)
         let button = try state.sendButton(app: app)
         var submissionObserved = false
@@ -717,6 +731,29 @@ actor DesktopAppConversation {
             }
             return !state.isGenerating ? answer : nil
         })
+    }
+
+    // Read the selected bot only. Recovery never navigates, types, or sends.
+    func recoverGrokReply(_ receipt: GrokReplyReceipt) async throws -> String? {
+        guard receipt.version == 1, !receipt.bot.isEmpty, !receipt.prompt.isEmpty else {
+            throw DesktopAppError.unavailable("The saved Grok Bot request cannot be verified.")
+        }
+        guard occupied.insert(.grokBot).inserted else { return nil }
+        defer { occupied.remove(.grokBot) }
+        let session = "msgblast-grok-recovery-\(UUID())"
+        defer { Task { await endSession(session) } }
+        let target = try await target(.grokBot)
+        let binding = DesktopConversationBinding(name: receipt.bot)
+        func readAnswer() async throws -> String? {
+            let state = try await snapshot(target, session: session)
+            try validate(state, app: .grokBot, binding: binding)
+            guard !state.isGenerating, !state.grokIsWorking,
+                  try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
+            return try state.grokReply(after: receipt.prompt, anchor: receipt.anchor)
+        }
+        guard let answer = try await readAnswer(), !answer.isEmpty else { return nil }
+        if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+        return try await readAnswer() == answer ? answer : nil
     }
 
     func endSession(_ session: String) async {

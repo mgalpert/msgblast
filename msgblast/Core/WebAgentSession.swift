@@ -1793,7 +1793,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
-                    return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding, onSubmitAction: submitAction, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: binding.name)
+                    return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding, onSubmitAction: submitAction, onReceipt: { [weak self] anchor in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordGrokReceipt(.init(comparisonID: id, bot: binding.name, prompt: text, anchor: anchor), attemptID: outgoingID)
+                    }, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: binding.name)
                 }
                 guard let installedAgent else { throw PersonalAgentError.unavailable(provider.name) }
                 return try await LocalPersonalAgent.reply(to: history, using: installedAgent, sessionID: savedSessionID, workingDirectory: workingDirectory)
@@ -1819,11 +1822,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.wabiReplyReceipt = state.attempts.first { $0.id == attempt.id }?.wabiReplyReceipt
             attempt.museReplyReceipt = state.attempts.first { $0.id == attempt.id }?.museReplyReceipt
             attempt.claudeReplyReceipt = state.attempts.first { $0.id == attempt.id }?.claudeReplyReceipt
+            attempt.grokReplyReceipt = state.attempts.first { $0.id == attempt.id }?.grokReplyReceipt
             if error is CancellationError, !shuttingDown || nativeCancellationRequestedBeforeShutdown {
                 attempt.dotsReplyReceipt?.automaticRecovery = false
                 attempt.wabiReplyReceipt?.automaticRecovery = false
                 attempt.museReplyReceipt?.automaticRecovery = false
                 attempt.claudeReplyReceipt?.automaticRecovery = false
+                attempt.grokReplyReceipt?.automaticRecovery = false
             }
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
@@ -1919,6 +1924,20 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         try save()
     }
 
+    private func recordGrokReceipt(_ receipt: GrokReplyReceipt, attemptID: UUID) throws {
+        guard provider == .grokBotApp, !storageFailed,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .attempting,
+              state.attempts[index].comparisonID == receipt.comparisonID,
+              state.attempts[index].grokReplyReceipt == nil, receipt.version == 1,
+              state.desktopConversation?.name == receipt.bot, !receipt.bot.isEmpty,
+              receipt.prompt == state.attempts[index].text, !receipt.anchor.digests.isEmpty else {
+            throw WebSessionFailure.notSent("The Grok Bot request could not be saved. Nothing was sent.")
+        }
+        state.attempts[index].grokReplyReceipt = receipt
+        try save()
+    }
+
     private func recoverableDotsAttempt() -> WebSendAttempt? {
         guard provider == .dotsApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
         let pending = state.attempts.filter { $0.status.isUnresolved }
@@ -1945,7 +1964,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func startNativeRecoveryIfNeeded() {
         guard nativeRecoveryPoll == nil,
-              recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil || recoverableMuseAttempt() != nil || recoverableClaudeAttempt() != nil else { return }
+              recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil || recoverableMuseAttempt() != nil || recoverableClaudeAttempt() != nil || recoverableGrokAttempt() != nil else { return }
         let generation = UUID()
         nativeRecoveryGeneration = generation
         nativeRecoveryPoll = Task { [weak self] in
@@ -1963,6 +1982,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .wabi { return await reconcileWabiReplyOnce() }
         if provider == .museApp { return await reconcileMuseReplyOnce() }
         if provider == .claudeApp { return await reconcileClaudeReplyOnce() }
+        if provider == .grokBotApp { return await reconcileGrokReplyOnce() }
         return false
     }
 
@@ -2074,6 +2094,38 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return recoverableClaudeAttempt() != nil
     }
 
+    private func recoverableGrokAttempt() -> WebSendAttempt? {
+        guard provider == .grokBotApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
+        let pending = state.attempts.filter { $0.status.isUnresolved }
+        guard pending.count == 1, let attempt = pending.first,
+              [.waiting, .uncertain].contains(attempt.status), attempt.messageID == attempt.id.uuidString,
+              let comparison = attempt.comparisonID, let receipt = attempt.grokReplyReceipt,
+              receipt.version == 1, receipt.automaticRecovery, receipt.comparisonID == comparison,
+              receipt.bot == state.desktopConversation?.name, receipt.prompt == attempt.text,
+              let messages = state.localConversations[comparison.uuidString],
+              messages.last == WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text),
+              !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }) else { return nil }
+        return attempt
+    }
+
+    func reconcileGrokReplyOnce() async -> Bool {
+        guard let attempt = recoverableGrokAttempt(), let receipt = attempt.grokReplyReceipt else { return false }
+        guard !isSending, !loading, !refreshing else { return true }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { return true }
+        do {
+            let result = try await desktopDriver.recoverGrokReply(receipt)
+            try Task.checkCancellation()
+            guard let result, let current = recoverableGrokAttempt(), current.id == attempt.id,
+                  current.grokReplyReceipt == receipt else { return recoverableGrokAttempt() != nil }
+            try finishRecoveredNativeReply(result, attempt: attempt, comparison: receipt.comparisonID)
+        } catch is CancellationError { return false }
+        catch {
+            if storageFailed { self.error = "Could not save the Grok Bot reply. Repair storage before continuing." }
+        }
+        return recoverableGrokAttempt() != nil
+    }
+
     private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID) throws {
         guard let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) else { return }
         let key = comparison.uuidString
@@ -2090,11 +2142,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts[index].wabiReplyReceipt = nil
         state.attempts[index].museReplyReceipt = nil
         state.attempts[index].claudeReplyReceipt = nil
+        state.attempts[index].grokReplyReceipt = nil
         do { try save() } catch { state = previous; throw error }
         if error == attempt.detail { error = nil }
         updateNativeSnapshot()
         if provider == .dotsApp { Task { await refresh() } }
-        else if provider == .wabi || provider == .museApp || provider == .claudeApp { Task { await refreshAppAfterRecovery(comparison: comparison) } }
+        else if provider == .wabi || provider == .museApp || provider == .claudeApp || provider == .grokBotApp { Task { await refreshAppAfterRecovery(comparison: comparison) } }
     }
 
     private func refreshAppAfterRecovery(comparison: UUID) async {
@@ -2102,18 +2155,22 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               !isSending, !refreshing, !loading else { return }
         refreshing = true
         defer { refreshing = false }
+        let grokBinding = provider == .grokBotApp ? state.desktopConversation : nil
         do {
             // The ordinary app refresh may navigate. Check only the current
             // window here; a later explicit send can reopen the saved chat.
             if provider == .wabi { try await wabiApp.checkAvailable() }
             else if provider == .museApp { try await museApp.checkAvailable() }
             else if provider == .claudeApp { try await claudeApp.checkAvailable() }
+            else if provider == .grokBotApp, let binding = grokBinding { try await desktopDriver.checkGrokBot(named: binding.name) }
             else { return }
-            guard !shuttingDown, state.comparisonID == comparison else { return }
+            guard !shuttingDown, state.comparisonID == comparison,
+                  provider != .grokBotApp || state.desktopConversation == grokBinding else { return }
             desktopReady = true
-            desktopStatus = provider == .wabi ? "Dedicated Wabi chat ready" : provider == .museApp ? "Muse side chat ready" : "Claude ready"
+            desktopStatus = provider == .wabi ? "Dedicated Wabi chat ready" : provider == .museApp ? "Muse side chat ready" : provider == .grokBotApp ? "Connected to \(state.desktopConversation?.name ?? "Grok Bot")" : "Claude ready"
         } catch {
-            guard !shuttingDown, state.comparisonID == comparison else { return }
+            guard !shuttingDown, state.comparisonID == comparison,
+                  provider != .grokBotApp || state.desktopConversation == grokBinding else { return }
             desktopReady = false
             desktopStatus = error.localizedDescription
         }

@@ -44,6 +44,7 @@ public struct WebSendAttempt: Codable, Equatable, Identifiable, Sendable {
     var wabiReplyReceipt: WabiReplyReceipt?
     var museReplyReceipt: MuseReplyReceipt?
     var claudeReplyReceipt: ClaudeReplyReceipt?
+    var grokReplyReceipt: GrokReplyReceipt?
     var pinnedConversationURL: URL? { recoveryConversationURL ?? receiptContext?.candidateURL }
     public init(text: String, status: WebSendStatus = .preparing) {
         self.text = text; self.status = status

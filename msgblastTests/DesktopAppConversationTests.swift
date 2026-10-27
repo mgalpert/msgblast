@@ -629,6 +629,123 @@ final class DesktopAppConversationTests: XCTestCase {
 /// local JSON plan; it cannot discover or contact the installed Cua service.
 @MainActor
 final class DesktopAppDriverTests: XCTestCase {
+    func testGrokLateReplyIsRecoveredWithoutSendingAndSurvivesReload() async throws {
+        let comparison = UUID()
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: comparison, bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        let fixture = try driver([apps(), windows(), snapshot(grok(reply: "Late answer"), repeating: true)])
+        defer { fixture.remove() }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) },
+                                                   open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep my next draft"
+        workspace.desktopConversation = .init(name: "Fixture Bot")
+        var attempt = WebSendAttempt(text: prompt, status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.grokReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: prompt)]
+        let storage = fixture.directory.appendingPathComponent("workspace.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture))
+        session.connect(automaticallyRefresh: false)
+        let remaining = await session.reconcileGrokReplyOnce()
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let savedData = try Data(contentsOf: storage)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: savedData)
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), [prompt, "Late answer"])
+        XCTAssertEqual(saved.draft, "Keep my next draft")
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(receipt), as: UTF8.self).contains("Earlier unrelated"))
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app", "bring_to_front"].contains($0.tool) })
+    }
+
+    func testGrokRecoveryRejectsUnconfirmedCancelledAndAmbiguousRequests() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let comparison = UUID()
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier question", "Fixture Bot", "Earlier answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: comparison, bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        for scenario in ["unconfirmed", "cancelled", "wrong bot", "multiple requests", "missing outgoing", "interleaved", "wrong comparison", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            workspace.desktopConversation = .init(name: scenario == "wrong bot" ? "Other Bot" : "Fixture Bot")
+            var attempt = WebSendAttempt(text: prompt, status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.grokReplyReceipt = receipt
+            if scenario == "unconfirmed" { attempt.messageID = nil }
+            if scenario == "cancelled" { attempt.grokReplyReceipt?.automaticRecovery = false }
+            if scenario == "wrong comparison" { attempt.grokReplyReceipt = .init(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor) }
+            if scenario == "unsupported version" { attempt.grokReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[comparison.uuidString] = [] }
+            if scenario == "interleaved" { workspace.localConversations[comparison.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "multiple requests" {
+                var second = WebSendAttempt(text: "Another request", status: .uncertain)
+                second.comparisonID = comparison; workspace.attempts.append(second)
+            }
+            let storage = fixture.directory.appendingPathComponent("grok-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client)
+            session.connect(automaticallyRefresh: false)
+            let remaining = await session.reconcileGrokReplyOnce()
+            XCTAssertFalse(remaining, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(try fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
+    }
+
+    func testGrokRecoveryNeverAttributesAnotherBotOrUnrelatedMessage() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        for state in [grok(reply: "Wrong bot answer", name: "Other Bot"),
+                      grok(reply: "Ambiguous bot answer", bots: ["Fixture Bot", "Fixture Bot"]),
+                      grok(reply: "Other request answer", outgoingPrompt: "Different request")] {
+            let fixture = try driver([apps(), windows(), snapshot(state, repeating: true)])
+            defer { fixture.remove() }
+            do {
+                let answer = try await adapter(fixture).recoverGrokReply(receipt)
+                XCTAssertNil(answer, "A foreign reply must never be attributed")
+            } catch { /* Refusing the changed conversation is also correct. */ }
+            let calls = try await finishedCalls(fixture)
+            assertNoInput(calls)
+        }
+    }
+
+    func testGrokRecoveryReceiptComesFromActualTimedOutSubmission() async throws {
+        actor Receipts {
+            var anchor: DesktopAppSnapshot.GrokHistoryAnchor?
+            var submissions = 0
+            func save(_ value: DesktopAppSnapshot.GrokHistoryAnchor) { anchor = value }
+            func submitted() { submissions += 1 }
+        }
+        let receipts = Receipts(), comparison = UUID()
+        let fixture = try driver(sendSteps() + [snapshot(grok(reply: ""), repeating: true)])
+        defer { fixture.remove() }
+        let conversation = adapter(fixture, replyTimeout: .milliseconds(180))
+        do {
+            _ = try await conversation.reply(prompt, app: .grokBot, binding: binding,
+                                             onReceipt: { await receipts.save($0) },
+                                             onSubmitted: { await receipts.submitted() })
+            XCTFail("The first request should time out before the reply arrives")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("nothing will be resent automatically"), error.localizedDescription) }
+        let capturedAnchor = await receipts.anchor
+        let anchor = try XCTUnwrap(capturedAnchor)
+        let count = await receipts.submissions
+        XCTAssertEqual(count, 1)
+        let receipt = GrokReplyReceipt(comparisonID: comparison, bot: binding.name, prompt: prompt, anchor: anchor)
+        let persisted = try JSONDecoder().decode(GrokReplyReceipt.self, from: JSONEncoder().encode(receipt))
+        try fixture.replacePlan([apps(), windows(), snapshot(grok(reply: "Late answer"), repeating: true)])
+        let answer = try await conversation.recoverGrokReply(persisted)
+        XCTAssertEqual(answer, "Late answer")
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
     func testWabiLateReplyIsRecoveredWithoutSendingAndSurvivesReload() async throws {
         let comparison = UUID(), url = wabiURL
         let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
