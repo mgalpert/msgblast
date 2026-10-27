@@ -325,7 +325,7 @@ actor DesktopAppConversation {
     struct Timing: Sendable {
         var pollInterval: Duration = .seconds(1)
         var stableDuration: Duration = .seconds(3)
-        var replyTimeout: Duration = .seconds(180)
+        var replyTimeout: Duration = .seconds(360)
         var callTimeout: TimeInterval = 30
         var replyClock = DesktopAppWorkflow.ReplyClock(ContinuousClock())
     }

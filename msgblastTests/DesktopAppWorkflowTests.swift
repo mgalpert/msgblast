@@ -74,6 +74,31 @@ final class DesktopAppWorkflowTests: XCTestCase {
         XCTAssertGreaterThan(clock.now - started, .milliseconds(20))
     }
 
+    func testDefaultReplyWaitAcceptsFiveMinuteReplyAndStopsAtSixMinutesWithoutResending() async throws {
+        for hasReply in [true, false] {
+            let clock = AdvancingClock()
+            let started = clock.now
+            var submissions = 0
+            var timing = DesktopAppConversation.Timing()
+            timing.pollInterval = .seconds(30)
+            timing.stableDuration = .zero
+            do {
+                let answer = try await DesktopAppWorkflow.reply(app: "Fixture", timing: timing, clock: clock,
+                    submit: { submissions += 1 }, observe: {
+                        hasReply && started.duration(to: clock.now) >= .seconds(330) ? "Delayed answer" : nil
+                    })
+                XCTAssertTrue(hasReply)
+                XCTAssertEqual(answer, "Delayed answer")
+                XCTAssertEqual(started.duration(to: clock.now), .seconds(330))
+            } catch {
+                XCTAssertFalse(hasReply, "A reply after five minutes must still be observed: \(error)")
+                XCTAssertEqual(started.duration(to: clock.now), .seconds(360))
+                XCTAssertTrue(error.localizedDescription.contains("has not completed a verified reply"))
+            }
+            XCTAssertEqual(submissions, 1, "Waiting must never resubmit the prompt")
+        }
+    }
+
     func testTextEntryPreservesBlankLinesAndUnicodeWithoutOverlappingChunks() async throws {
         let prompt = "\nA\n\n" + String(repeating: "🧑🏽‍💻", count: 270) + "\n"
         var draft = ""
