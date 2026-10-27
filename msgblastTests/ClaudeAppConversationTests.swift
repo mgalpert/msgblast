@@ -94,6 +94,12 @@ final class ClaudeAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try receipt.reply(in: [.init(role: .user, text: "Changed"), .init(role: .user, text: "Mine"), .init(role: .assistant, text: "Answer")]))
         XCTAssertThrowsError(try receipt.reply(in: [.init(role: .user, text: "Old"), .init(role: .user, text: "Someone else")]))
     }
+    func testClaudeReceiptWaitsForPartialOutgoingButRejectsForeignText() throws {
+        let receipt = ClaudeAppReceipt(baseline: [.init(role: .assistant, text: "Previous answer")], prompt: "A complete question")
+        XCTAssertNil(try receipt.reply(in: [.init(role: .assistant, text: "Previous answer"), .init(role: .user, text: "A complete")]))
+        XCTAssertThrowsError(try receipt.reply(in: [.init(role: .assistant, text: "Previous answer"), .init(role: .user, text: "Another question")]))
+        XCTAssertEqual(try receipt.reply(in: [.init(role: .assistant, text: "Previous answer"), .init(role: .user, text: "A complete question"), .init(role: .assistant, text: "Answer")]), "Answer")
+    }
     func testSavedClaudeReceiptMatchesItsHistoryWithoutPersistingIt() throws {
         let baseline: [ClaudeAppMessage] = [.init(role: .user, text: "Private question"), .init(role: .assistant, text: "Private answer")]
         let receipt = try ClaudeReplyReceipt(comparisonID: UUID(), initialURL: nil, prompt: "Question", baseline: baseline)
@@ -153,11 +159,12 @@ final class ClaudeAppDriverTests: XCTestCase {
         func calls() -> [[String: Any]] {
             ((try? String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8)) ?? "").split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
         }
-        private static func withDraft(_ draft: String, original: ClaudeAppObservation, collapseBlankParagraphs: Bool) throws -> ClaudeAppObservation {
+        private static func withDraft(_ draft: String, original: ClaudeAppObservation, collapseBlankParagraphs: Bool, messages override: [ClaudeAppMessage]? = nil) throws -> ClaudeAppObservation {
             let lines = draft.components(separatedBy: "\n")
             let raw = collapseBlankParagraphs && !draft.hasSuffix("\n") ? lines.filter { !$0.isEmpty }.joined(separator: "\n") : draft
             let paragraphs: [ClaudeAXNode] = collapseBlankParagraphs ? lines.map { line in .init(role: "AXGroup", children: line.isEmpty ? [] : [.init(role: "AXStaticText", value: line)]) } : []
-            let articles: [ClaudeAXNode] = original.messages.enumerated().map { index, message in
+            let messages = override ?? original.messages
+            let articles: [ClaudeAXNode] = messages.enumerated().map { index, message in
                 .init(role: "AXGroup", subrole: "AXDocumentArticle", label: "Message \(index + 1) of \(original.messages.count)", children: [
                     .init(role: "AXHeading", label: (message.role == .user ? "You said: " : "Claude responded: ") + message.text),
                     .init(role: "AXStaticText", value: message.text)
@@ -167,10 +174,11 @@ final class ClaudeAppDriverTests: XCTestCase {
                 .init(role: "AXWebArea", url: original.url, children: [.init(role: "AXGroup", subrole: "AXLandmarkMain", children: [
                     .init(role: "AXTextArea", label: "Write your prompt to Claude", value: raw, frame: original.composerFrame, focused: true, children: paragraphs),
                     .init(role: "AXGroup", label: "Chat messages", children: articles)
-                ])])
+                ] + (original.generating ? [.init(role: "AXButton", label: "Stop")] : []))])
             ]))
         }
         func adapter(transientAfterSend: Bool = false, coldStart: Bool = false,
+                     partialOutgoingReads: Int = 0,
                      timing: DesktopAppConversation.Timing = .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5)) -> ClaudeAppConversation {
             let failure = ClaudeOneTransientRead()
             let path = stage
@@ -183,6 +191,16 @@ final class ClaudeAppDriverTests: XCTestCase {
                 if transientAfterSend && stage == 2 && failure.claim() { throw ClaudeObservationError.transient("Claude's message history is incomplete.") }
                 if stage == 4, let unrelatedHistory = self.unrelatedHistory { return try ClaudeAppObservation(root: unrelatedHistory, mode: mode) }
                 let original = observations[min(stage, observations.count - 1)]
+                if stage == 2, partialOutgoingReads > 0, case .conversation = mode {
+                    let marker = path.deletingLastPathComponent().appendingPathComponent("partial-outgoing-reads")
+                    let count = Int((try? String(contentsOf: marker, encoding: .utf8)) ?? "0") ?? 0
+                    try Data(String(count + 1).utf8).write(to: marker)
+                    if count < partialOutgoingReads, let last = original.messages.last, last.role == .user {
+                        var partial = original.messages
+                        partial[partial.count - 1] = .init(role: .user, text: String(last.text.prefix(max(1, last.text.count / 2))))
+                        return try Self.withDraft(original.draft, original: original, collapseBlankParagraphs: false, messages: partial)
+                    }
+                }
                 guard stage == 0, let draft = try? String(contentsOf: path.deletingLastPathComponent().appendingPathComponent("draft"), encoding: .utf8) else { return original }
                 return try Self.withDraft(draft, original: original, collapseBlankParagraphs: FileManager.default.fileExists(atPath: path.deletingLastPathComponent().appendingPathComponent("collapse-native-paragraphs").path))
             })
@@ -311,7 +329,7 @@ final class ClaudeAppDriverTests: XCTestCase {
                 image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1sAAAAASUVORK5CYII='))
                 state.update(screenshot_frame_valid=True,screenshot_width=1,screenshot_height=1,screenshot_file_path=str(image))
             print(json.dumps(state))
-            if s==2 and (p/'followup').exists():(p/'stage').write_text('3')
+            if s==2 and (p/'followup').exists() and not (p/'hold-followup').exists():(p/'stage').write_text('3')
         elif tool=='type_text':
             assert s==0
             assert a['pid']==42 and a['window_id']==21 and a['delivery_mode']=='background'
@@ -404,6 +422,35 @@ final class ClaudeAppDriverTests: XCTestCase {
             return nil
         }.joined()
         XCTAssertEqual(input, fixture.binding.firstMessage("First question"))
+    }
+    func testClaudePartialOutgoingSettlesBeforeBindingOrConfirmingSubmission() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let recorded = ClaudeRecordedBindings()
+        let marker = fixture.directory.appendingPathComponent("partial-outgoing-reads")
+        let answer = try await fixture.adapter(partialOutgoingReads: 2).reply("First question", binding: fixture.binding, onPrepared: { _ in }, onSubmitted: {
+            await recorded.observed()
+        }, onBinding: { _ in
+            XCTAssertGreaterThanOrEqual(Int(try String(contentsOf: marker, encoding: .utf8)) ?? 0, 3)
+            await recorded.bind(fixture.binding)
+            try Data("3".utf8).write(to: fixture.stage)
+        })
+        XCTAssertEqual(answer, "ANSWER")
+        let observed = await recorded.observedOutgoing
+        XCTAssertEqual(observed, 1)
+        XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+    }
+    func testClaudePartialFollowupNeverConfirmsBeforeItsExactMessage() async throws {
+        let fixture = try fixture(followup: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try Data().write(to: fixture.directory.appendingPathComponent("hold-followup"))
+        let marker = fixture.directory.appendingPathComponent("partial-outgoing-reads")
+        let answer = try await fixture.adapter(partialOutgoingReads: 2).reply("Follow-up", binding: fixture.binding, onPrepared: { _ in }, onSubmitted: {
+            XCTAssertGreaterThanOrEqual(Int(try String(contentsOf: marker, encoding: .utf8)) ?? 0, 3)
+            try Data("3".utf8).write(to: fixture.stage)
+        }, onBinding: { _ in })
+        XCTAssertEqual(answer, "ANSWER")
+        XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 1)
     }
     @MainActor
     func testClaudeLateReplyRecoversAfterSessionTimeoutAndReloadWithoutResending() async throws {

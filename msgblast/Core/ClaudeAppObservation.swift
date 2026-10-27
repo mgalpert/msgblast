@@ -134,9 +134,11 @@ struct ClaudeAppReceipt {
     func reply(in messages: [ClaudeAppMessage]) throws -> String? {
         if messages == baseline { return nil }
         guard messages.starts(with: baseline), messages.count <= baseline.count + 2,
-              messages.dropFirst(baseline.count).first == .init(role: .user, text: prompt) else {
+              let outgoing = messages.dropFirst(baseline.count).first, outgoing.role == .user else {
             throw DesktopAppError.unavailable("Claude's chat history changed or another outgoing message appeared. No reply was attributed.")
         }
+        if outgoing.text != prompt, !outgoing.text.isEmpty, prompt.hasPrefix(outgoing.text) { return nil }
+        guard outgoing.text == prompt else { throw DesktopAppError.unavailable("Claude's chat history changed or another outgoing message appeared. No reply was attributed.") }
         guard messages.count == baseline.count + 2 else { return nil }
         guard let answer = messages.last, answer.role == .assistant else { throw DesktopAppError.unavailable("Claude's new message has an unexpected sender.") }
         return answer.text
@@ -170,9 +172,11 @@ struct ClaudeReplyReceipt: Codable, Equatable, Sendable {
         }
         let added = messages.dropFirst(baselineCount)
         guard !added.isEmpty else { return nil }
-        guard added.first == ClaudeAppMessage(role: .user, text: prompt) else {
+        guard let outgoing = added.first, outgoing.role == .user else {
             throw DesktopAppError.unavailable("Another request appeared in Claude. No reply was attributed.")
         }
+        if outgoing.text != prompt, !outgoing.text.isEmpty, prompt.hasPrefix(outgoing.text) { return nil }
+        guard outgoing.text == prompt else { throw DesktopAppError.unavailable("Another request appeared in Claude. No reply was attributed.") }
         guard added.count == 2 else { return nil }
         guard let answer = added.last, answer.role == .assistant else {
             throw DesktopAppError.unavailable("Claude's new message has an unexpected sender.")

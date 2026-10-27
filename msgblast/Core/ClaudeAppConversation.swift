@@ -206,6 +206,8 @@ actor ClaudeAppConversation {
                 guard current.url == url else { throw DesktopAppError.unavailable("Claude switched conversations while waiting. No automatic resend.") }
             } else if ClaudeChatURL.isChat(current.url) {
                 if !current.messages.isEmpty {
+                    if let first = current.messages.first, first.role == .user, first.text != prompt,
+                       !first.text.isEmpty, prompt.hasPrefix(first.text) { return nil }
                     guard current.messages.first == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Claude's created chat did not contain this comparison's first prompt.") }
                     saved.url = current.url
                     try await onBinding(saved)
@@ -213,7 +215,8 @@ actor ClaudeAppConversation {
             } else if !ClaudeChatURL.isNew(current.url) { throw DesktopAppError.unavailable("Claude's conversation address changed unexpectedly.") }
             guard saved.url != nil else { return nil }
             let answer = try receipt.reply(in: current.messages)
-            if current.draft.isEmpty, current.messages.count > baseline.messages.count, !submissionObserved {
+            if current.draft.isEmpty, current.messages.count > baseline.messages.count,
+               current.messages[baseline.messages.count] == .init(role: .user, text: prompt), !submissionObserved {
                 try await onSubmitted()
                 submissionObserved = true
             }
