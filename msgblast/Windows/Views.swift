@@ -236,6 +236,8 @@ struct MainView: View {
                         UpdateSidebar(updater: updater)
                         WhatsNewSidebar()
                     }.padding(12)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .overlay(alignment: .top) { Divider() }
                 }
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 330)
         } detail: {
