@@ -45,7 +45,7 @@ struct AgentsWorkspaceView: View {
         if !preparingDesktopSessions.isEmpty {
             return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
         }
-        let drafts = selectedWebSessions.filter { $0.snapshot.hasDraft }.map { $0.name }
+        let drafts = selectedWebSessions.filter { $0.provider.desktopApp == nil && $0.snapshot.hasDraft }.map { $0.name }
         guard !drafts.isEmpty else { return nil }
         let names = drafts.formatted(.list(type: .and))
         return "Finish or clear the draft in \(names), or deselect \(names) to send to the other agents."
@@ -54,7 +54,7 @@ struct AgentsWorkspaceView: View {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         return nativeComparison?.endedAt == nil && !busy && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
-            && selectedWebSessions.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text) }
+            && selectedWebSessions.allSatisfy { $0.provider.desktopApp != nil || ($0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text)) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
     }
 
@@ -340,8 +340,16 @@ struct AgentsWorkspaceView: View {
                 showingConnectionIntro = true
                 return
             }
-            guard await web.prepareComparison(existingID, for: sessions, startNativeApps: true),
+            guard let preparation = await web.prepareComparisonRecipients(existingID, for: sessions, startNativeApps: true),
                   existingID.flatMap({ model.comparison($0)?.endedAt }) == nil else { return }
+            let readySessions = sessions.filter { preparation[$0.id] == true }
+            let failedSessions = sessions.filter { preparation[$0.id] != true }
+            // Website sign-in and joining an existing comparison retain their
+            // explicit setup flow; do not silently change their conversation context.
+            guard failedSessions.allSatisfy({ $0.provider.desktopApp != nil }),
+                  existingID.map({ id in failedSessions.allSatisfy { model.comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } }) ?? true,
+                  !readySessions.isEmpty || !recipients.isEmpty else { return }
+            let failures = failedSessions.map { ($0, $0.error ?? $0.snapshot.reason) }
             let comparisonID: UUID
             if let existingID { comparisonID = existingID }
             else {
@@ -349,7 +357,7 @@ struct AgentsWorkspaceView: View {
                 comparisonID = id
             }
             if existingID != nil {
-                for session in sessions where model.comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) != true {
+                for session in readySessions where model.comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) != true {
                     guard await model.joinWebAgent(session, comparisonID: comparisonID) else { return }
                 }
             }
@@ -360,6 +368,12 @@ struct AgentsWorkspaceView: View {
                 do { try model.save() } catch { model.error = error.localizedDescription; return }
             }
             do { try model.freezeSharedContext(comparisonID) } catch { model.error = error.localizedDescription; return }
+            var unsent: [WebAgentID: WebSendAttempt] = [:]
+            for (session, reason) in failures {
+                guard let attempt = session.recordUnsentPreparation(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), comparisonID: comparisonID, reason: reason) else { return }
+                unsent[session.id] = attempt
+            }
+            let unsentAttempts = unsent
             let allRecipients = model.comparison(comparisonID).map { comparison in
                 Set(comparison.resolvedWebAgentIDs) == Set(sessions.map(\.id)) && Set(comparison.members.map(\.id)) == recipients
             } ?? false
@@ -373,7 +387,8 @@ struct AgentsWorkspaceView: View {
             let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, clearDraft: {
                 model.setSharedDraft("")
             }, web: { text in
-                await WebAgents.send(text, to: sessions, comparisonID: comparisonID, onInputsFinished: { barrier.finishNativeInputs() })
+                let submitted = await WebAgents.send(text, to: readySessions, comparisonID: comparisonID, onInputsFinished: { barrier.finishNativeInputs() })
+                return unsentAttempts.merging(submitted) { _, latest in latest }
             }, messages: { text in
                 defer { if !Task.isCancelled { barrier.finishMessages() } }
                 guard !recipients.isEmpty else { return nil }
@@ -691,11 +706,16 @@ private struct WebAgentPane: View {
                     Label(latest.status.label(for: session.provider), systemImage: "info.circle")
                         .font(.caption.weight(.semibold))
                     Text(latest.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if let detail = latest.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                    if let detail = latest.detail, detail != session.desktopRecoveryMessage { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                    if latest.status == .notSent, latest.messageID == nil, session.provider.desktopApp != nil {
+                        Button("Retry") { sendNative(latest.text) }
+                            .disabled(busy || !session.canSubmitNativePrompt)
+                    }
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityElement(children: .contain)
             }
-            if let error = session.error, !(session.isAutomaticallyWaitingForNativeReply && error == session.latestComparisonAttempt?.detail), endedMessages != nil || session.desktopRecoveryMessage != error {
+            if let error = session.error, error != session.latestComparisonAttempt?.detail,
+               endedMessages != nil || session.desktopRecoveryMessage != error {
                 Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading)
             }
             if let draft = session.draftRecoveryText {

@@ -16,7 +16,7 @@ public enum WebSendStatus: String, Codable, Sendable {
         case .attempting: "Submitting to \(provider.name)…"
         case .waiting: "Waiting for \(provider.name)’s reply…"
         case .observed: provider.usesNativeConversation ? "\(provider.name) replied" : "Appeared in \(provider.name)"
-        case .notSent: provider.usesNativeConversation ? "No completed reply from \(provider.name)" : "Not sent to \(provider.name)"
+        case .notSent: "Not sent to \(provider.name)"
         case .uncertain: "\(provider.name) submission unconfirmed"
         case .dismissed: "Incomplete request acknowledged"
         }

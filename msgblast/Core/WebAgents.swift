@@ -7,7 +7,7 @@ public final class WebAgents: ObservableObject {
     private let workspaceSession: WebAgentSession
     private let directory: URL
     private var configurations: [WebAgentConfiguration] = []
-    private var preparation: Task<Bool, Never>?
+    private var preparation: Task<[WebAgentID: Bool]?, Never>?
     private(set) var preparationID: UUID?
     private var shuttingDown = false
     @Published public private(set) var configurationError: String?
@@ -205,31 +205,42 @@ public final class WebAgents: ObservableObject {
         return groups
     }
     public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false) async -> Bool {
-        guard !shuttingDown else { return false }
+        guard let results = await prepareComparisonRecipients(id, for: sessions, startNativeApps: startNativeApps) else { return false }
+        return sessions.allSatisfy { results[$0.id] == true }
+    }
+
+    /// A nil result means preparation was cancelled or its workspace changed;
+    /// individual false values represent recipients that were not ready.
+    public func prepareComparisonRecipients(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false) async -> [WebAgentID: Bool]? {
+        guard !shuttingDown else { return nil }
         // Muse stores the workspace identity even when it is deselected.
         setComparison(id)
         let previous = preparation
         let token = UUID()
-        let task = Task { @MainActor in
+        let task = Task { @MainActor () -> [WebAgentID: Bool]? in
             _ = await previous?.value
-            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return false }
-            let tasks = Self.executionGroups(sessions).map { group in Task { @MainActor in
-                var ready = true
+            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
+            let tasks = Self.executionGroups(sessions).map { group in Task { @MainActor () -> [WebAgentID: Bool]? in
+                var results: [WebAgentID: Bool] = [:]
                 for session in group {
-                    guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return false }
-                    if !(await session.openComparison(id, startNativeApp: startNativeApps)) { ready = false }
+                    guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
+                    results[session.id] = await session.openComparison(id, startNativeApp: startNativeApps)
                 }
-                return ready
+                return results
             } }
-            var ready = true
-            for task in tasks { if !(await task.value) { ready = false } }
-            return ready
+            var results: [WebAgentID: Bool] = [:]
+            for task in tasks {
+                guard let group = await task.value else { return nil }
+                results.merge(group) { _, latest in latest }
+            }
+            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
+            return results
         }
         preparation = task
         preparationID = token
-        let ready = await task.value
+        let results = await task.value
         if preparationID == token { preparation = nil; preparationID = nil }
-        return ready
+        return results
     }
 
     public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil,

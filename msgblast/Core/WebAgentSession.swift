@@ -501,6 +501,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return state.attempts.first { $0.comparisonID == state.comparisonID }
     }
 
+    /// Preserve a shared prompt for an app that failed before any submission.
+    /// This never changes the app's own draft or schedules a retry.
+    public func recordUnsentPreparation(_ text: String, comparisonID: UUID, reason: String) -> WebSendAttempt? {
+        guard provider.desktopApp != nil, !storageFailed, !isSending, state.comparisonID == comparisonID else { return nil }
+        var attempt = WebSendAttempt(text: text, status: .notSent)
+        attempt.comparisonID = comparisonID
+        attempt.detail = reason
+        state.attempts.insert(attempt, at: 0)
+        do { try save(); objectWillChange.send(); return attempt }
+        catch { self.error = "Could not save the unsent request: \(error.localizedDescription)"; return nil }
+    }
+
     public var isAutomaticallyWaitingForNativeReply: Bool {
         guard !isSending, let latest = latestComparisonAttempt else { return false }
         let attempt = recoverableDotsAttempt() ?? recoverableWabiAttempt() ?? recoverableMuseAttempt() ??

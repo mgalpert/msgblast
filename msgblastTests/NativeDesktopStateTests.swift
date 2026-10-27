@@ -484,6 +484,46 @@ final class NativeDesktopStateTests: XCTestCase {
         }
     }
 
+    func testFailedAppPreparationKeepsItsPromptWhileAnotherAppSubmits() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var running: Set<URL> = []
+        let client = DesktopAppInstallationClient(inspect: { app in
+            let url = URL(fileURLWithPath: "/Fixture/\(app.name).app")
+            return .init(url: url, processID: running.contains(url) ? 42 : nil)
+        }, open: { url in
+            if url.lastPathComponent == "Wabi.app" {
+                throw NSError(domain: "FixtureLaunch", code: 1, userInfo: [NSLocalizedDescriptionKey: "Wabi could not open."])
+            }
+            running.insert(url)
+        })
+        let wabi = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("wabi.json"), fixture: true, museApp: .shared, desktopApps: client)
+        let claude = WebAgentSession(provider: .claudeApp, storageURL: directory.appendingPathComponent("claude.json"), fixture: true, museApp: .shared, desktopApps: client)
+        let agents = WebAgents(directory: directory.appendingPathComponent("workspace"), fixture: true)
+        defer { wabi.beginShutdown(); claude.beginShutdown(); agents.beginShutdown() }
+        [wabi, claude].forEach { $0.setEnabled(true); $0.updateState { $0.desktopConversation = .init(name: "Fixture") } }
+        wabi.updateState { $0.draft = "A separate app draft" }
+        let comparison = UUID(), prompt = "A shared question"
+        let prepared = await agents.prepareComparisonRecipients(comparison, for: [wabi, claude], startNativeApps: true)
+        let preparation = try XCTUnwrap(prepared)
+        XCTAssertEqual(preparation[wabi.id], false)
+        XCTAssertEqual(preparation[claude.id], true)
+        XCTAssertTrue(wabi.state.attempts.isEmpty, "Preparation alone never submits or records a request")
+        let failed = try XCTUnwrap(wabi.recordUnsentPreparation(prompt, comparisonID: comparison, reason: "Wabi could not open."))
+        XCTAssertEqual(failed.status, .notSent)
+        XCTAssertEqual(wabi.state.draft, "A separate app draft")
+        let replies = await WebAgents.send(prompt, to: [claude], comparisonID: comparison)
+        XCTAssertEqual(replies[claude.id]?.status, .observed)
+        XCTAssertTrue(wabi.snapshot.messages.isEmpty, "The failed app must never receive the prompt automatically")
+        let reopened = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("wabi.json"), fixture: true, museApp: .shared, desktopApps: client)
+        defer { reopened.beginShutdown() }
+        XCTAssertEqual(reopened.latestComparisonAttempt?.text, prompt)
+        XCTAssertEqual(reopened.latestComparisonAttempt?.status, .notSent)
+        XCTAssertEqual(reopened.state.draft, "A separate app draft")
+        XCTAssertNil(reopened.recordUnsentPreparation("Wrong workspace", comparisonID: UUID(), reason: "Not ready"))
+        XCTAssertEqual(reopened.state.attempts.count, 1)
+    }
+
     func testChatGPTAndDotsShareOneAppLaunchDuringBroadcastPreparation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
