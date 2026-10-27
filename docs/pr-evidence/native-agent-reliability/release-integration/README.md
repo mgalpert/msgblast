@@ -1,0 +1,7 @@
+# Combined release candidate: Claude and reply wait
+
+On Pal’s Studio, the Apple Development-signed **msgblast Dev build 1** was built from integration revision `348f2b665e82a59589ecb0ff2288d474e698622d` (main `88d1dc071002e90e809ed31de90bd61940a5d378` plus PR source `b29e5207c99889fd8d26d6d89ac0feba7c3d2290`). This is a live provider check, not a Demo fixture or a notarized release build. The existing Dev identity and support data were preserved.
+
+Starting from an unrelated Claude chat, one new comparison and one follow-up returned the unique requested replies inside the same msgblast conversation; msgblast was active after the follow-up. The screenshot shows both responses. The video contains two excerpts of the live recording, cropped to the msgblast conversation: the prepared follow-up and the completed response. The intervening provider foreground interaction is removed for privacy; the video is not a latency measurement. No resend was performed.
+
+The combined [CI run](https://github.com/mgalpert/msgblast/actions/runs/40539415295) passed native and Linux tests. A virtual-clock regression covers a response at 330 seconds, a six-minute timeout and one submission. Earlier in the mixed live test, Wabi and ChatGPT replied in msgblast, while Dots and Grok Bot replied in their native apps only after the previous three-minute wait had ended. Their late-reply reconciliation after the new limit is not verified. Muse was skipped at the user's request. CI is separate from the live check.

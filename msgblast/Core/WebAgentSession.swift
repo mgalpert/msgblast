@@ -492,6 +492,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return state.attempts.first { $0.comparisonID == state.comparisonID }
     }
 
+    public var pendingNativeAttempt: WebSendAttempt? {
+        guard provider.usesNativeConversation, let attempt = latestComparisonAttempt,
+              [.preparing, .attempting, .waiting, .uncertain].contains(attempt.status),
+              !snapshot.messages.contains(where: { $0.id == (attempt.messageID ?? attempt.id.uuidString) }) else { return nil }
+        return attempt
+    }
+
     public var locationLabel: String {
         if provider.desktopApp != nil {
             if fixture { return "Simulated desktop app · no app contacted" }
@@ -950,9 +957,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     @discardableResult
-    public func send(_ text: String, comparisonID: UUID? = nil) async -> WebSendAttempt? {
+    public func send(_ text: String, comparisonID: UUID? = nil,
+                     onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {}) async -> WebSendAttempt? {
+        defer { onSubmissionFinished() }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID) }
-        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID) }
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished) }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
@@ -1198,33 +1207,50 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             : "Your prompts will go to “\(binding.name)” in \(app.name). Comparisons share that conversation. This check didn’t send a message."
     }
 
-    public func refreshGrokBots() async {
+    public func refreshGrokBots(activateIfNeeded: Bool = false) async {
         guard provider == .grokBotApp, !loading, !isSending, !shuttingDown, !storageFailed else { return }
         refreshDesktopInstallation()
         guard desktopInstallation.isRunning else { grokBotNames = []; return }
-        let installation = desktopInstallation
-        desktopReady = false
-        desktopStatus = "Finding your bots…"
         loading = true
-        updateNativeSnapshot()
-        do {
-            try await waitForDesktopRefresh()
-            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await desktopDriver.availableGrokBots()
+        defer { loading = false; updateNativeSnapshot() }
+        // A restart can invalidate discovery while the saved bot is checked.
+        // Re-read the new process once; never restore its predecessor's list.
+        for _ in 0..<2 {
             refreshDesktopInstallation()
-            guard desktopInstallation == installation, !shuttingDown else { throw CancellationError() }
-            grokBotNames = names
-            desktopStatus = "Choose a bot to start chatting."
-        } catch {
-            grokBotNames = []
+            guard desktopInstallation.isRunning, !shuttingDown, !Task.isCancelled else { return }
+            let installation = desktopInstallation
             desktopReady = false
-            desktopStatus = error.localizedDescription
+            desktopStatus = "Finding your bots…"
+            updateNativeSnapshot()
+            do {
+                try await waitForDesktopRefresh()
+                let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await DesktopAppWorkflow.connection(.grokBot, driver: activateIfNeeded ? desktopDriver : nil) {
+                    try await self.desktopDriver.availableGrokBots()
+                }
+                refreshDesktopInstallation()
+                guard desktopInstallation == installation else { continue }
+                guard !shuttingDown, !Task.isCancelled else { return }
+                grokBotNames = names
+                desktopStatus = "Choose a bot to start chatting."
+                if let name = state.desktopConversation?.name, grokBotNames.contains(name), isEnabled {
+                    connected = true
+                    await refreshDesktop(duringConnection: true)
+                }
+                refreshDesktopInstallation()
+                guard desktopInstallation == installation else { continue }
+                return
+            } catch {
+                refreshDesktopInstallation()
+                if desktopInstallation != installation, !shuttingDown, !Task.isCancelled { continue }
+                grokBotNames = []
+                desktopReady = false
+                desktopStatus = error.localizedDescription
+                return
+            }
         }
-        loading = false
-        if let name = state.desktopConversation?.name, grokBotNames.contains(name), isEnabled {
-            connected = true
-            await refreshDesktop()
-        }
-        updateNativeSnapshot()
+        grokBotNames = []
+        desktopReady = false
+        desktopStatus = "Grok Bot changed while connecting. Try connecting again."
     }
 
     private func waitForDesktopRefresh() async throws {
@@ -1276,7 +1302,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard isEnabled, !storageFailed, !shuttingDown else { throw CancellationError() }
         guard !loading else { throw WebSessionFailure.notReady("Wait for the app connection check to finish before starting a conversation.") }
         refreshDesktopInstallation()
-        if desktopInstallation.isRunning, fixture { return }
+        if desktopInstallation.isRunning, fixture, !desktopApps.isHidden(app) { return }
         guard let url = desktopInstallation.url else { throw WebSessionFailure.notReady(desktopStatus) }
         let generation = comparisonGeneration
         func checkCurrent() throws {
@@ -1288,7 +1314,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
         defer { loading = false }
         do {
-            if desktopInstallation.isRunning {
+            if desktopInstallation.isRunning, !desktopApps.isHidden(app) {
                 do {
                     _ = try await desktopDriver.target(app)
                     try checkCurrent()
@@ -1380,28 +1406,29 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do {
             try await waitForDesktopRefresh()
             guard isEnabled else { throw CancellationError() }
-            let binding: DesktopConversationBinding
-            if app == .muse {
-                if !fixture { try await museApp.checkAvailable() }
-                binding = DesktopConversationBinding(name: "Muse")
-            } else if app == .claude {
-                if !fixture { try await claudeApp.checkAvailable() }
-                binding = .init(name: "Claude")
-            } else if let kind = chatgptKind {
-                if !fixture { try await chatgptApp.checkAvailable(kind: kind) }
-                binding = .init(name: app.name)
-            } else if app == .gemini {
-                if !fixture { try await geminiApp.checkAvailable() }
-                binding = .init(name: "Gemini")
-            } else if app == .wabi {
-                if !fixture { try await wabiApp.checkAvailable() }
-                binding = DesktopConversationBinding(name: "Wabi")
-            } else if let botName {
-                if fixture {
-                    guard grokBotNames.contains(botName) else { throw DesktopAppError.unavailable("Refresh the bots and choose your bot again.") }
-                    binding = .init(name: botName)
-                } else { binding = try await desktopDriver.connectGrokBot(named: botName) }
-            } else { throw DesktopAppError.unavailable("Choose your bot in msgblast.") }
+            let binding = try await DesktopAppWorkflow.connection(app, driver: fixture ? nil : desktopDriver) { () async throws -> DesktopConversationBinding in
+                if app == .muse {
+                    if !fixture { try await museApp.checkAvailable() }
+                    return DesktopConversationBinding(name: "Muse")
+                } else if app == .claude {
+                    if !fixture { try await claudeApp.checkAvailable() }
+                    return .init(name: "Claude")
+                } else if let kind = chatgptKind {
+                    if !fixture { try await chatgptApp.checkAvailable(kind: kind) }
+                    return .init(name: app.name)
+                } else if app == .gemini {
+                    if !fixture { try await geminiApp.checkAvailable() }
+                    return .init(name: "Gemini")
+                } else if app == .wabi {
+                    if !fixture { try await wabiApp.checkAvailable() }
+                    return DesktopConversationBinding(name: "Wabi")
+                } else if let botName {
+                    if fixture {
+                        guard grokBotNames.contains(botName) else { throw DesktopAppError.unavailable("Refresh the bots and choose your bot again.") }
+                        return .init(name: botName)
+                    } else { return try await desktopDriver.connectGrokBot(named: botName) }
+                } else { throw DesktopAppError.unavailable("Choose your bot in msgblast.") }
+            }
             refreshDesktopInstallation()
             guard isEnabled, !shuttingDown else { throw CancellationError() }
             guard desktopInstallation == installation else { throw DesktopAppError.unavailable("\(app.name) changed while checking. Check the connection again.") }
@@ -1409,14 +1436,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             try save()
             connected = true
             desktopReady = true
-            desktopStatus = "Connected to \(binding.name) · background input"
+            desktopStatus = "Connected to \(binding.name)"
             error = nil
         } catch { desktopReady = false; desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
         updateNativeSnapshot()
     }
 
-    private func refreshDesktop() async {
-        guard let app = provider.desktopApp, provider.isAvailableInBuild, !loading, !refreshing, !shuttingDown else { return }
+    private func refreshDesktop(duringConnection: Bool = false) async {
+        guard let app = provider.desktopApp, provider.isAvailableInBuild, (!loading || duringConnection), !refreshing, !shuttingDown else { return }
         refreshing = true
         let generation = comparisonGeneration
         defer { refreshing = false }
@@ -1470,16 +1497,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else {
                             throw WebSessionFailure.notReady("This comparison has Wabi history without a tracked dedicated chat. Its history was preserved; start a new comparison.")
                         }
-                        let url: URL
-                        if fixture { url = saved ?? URL(string: "wabi://app/threads/\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))")! }
-                        else { url = try await wabiApp.prepare(savedURL: saved) }
-                        guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
-                        try state.recordWabiConversation(url, for: comparison)
-                        try save()
+                        if isSending || desktopDriver.delivery == .background {
+                            let url: URL
+                            if fixture { url = saved ?? URL(string: "wabi://app/threads/\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))")! }
+                            else { url = try await wabiApp.prepare(savedURL: saved) }
+                            guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                            try state.recordWabiConversation(url, for: comparison)
+                            try save()
+                        } else if !fixture { try await wabiApp.checkAvailable() }
                     } else if !fixture { try await wabiApp.checkAvailable() }
                     guard generation == comparisonGeneration, !shuttingDown else { return }
                     desktopReady = true
-                    desktopStatus = state.comparisonID == nil ? "Connected to Wabi · each comparison gets its own AI chat" : "Dedicated Wabi chat ready · background input"
+                    desktopStatus = state.comparisonID == nil ? "Connected to Wabi · each comparison gets its own AI chat" : "Dedicated Wabi chat ready"
                     updateNativeSnapshot()
                     return
                 }
@@ -1491,21 +1520,30 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         guard saved != nil || state.localConversations[comparison.uuidString]?.isEmpty != false else {
                             throw WebSessionFailure.notReady("This comparison has Muse history without a tracked side chat. Its history was preserved; no replacement chat was created.")
                         }
-                        let pending = state.attempts.first { $0.comparisonID == comparison && $0.recoveryConversationURL != nil }
-                        let prepared: MuseSideChatBinding
-                        if fixture { prepared = saved ?? MuseSideChatBinding(comparisonID: comparison, threadID: nil, title: "Simulated side chat") }
-                        else if saved?.threadID == nil, let pending, let candidate = pending.recoveryConversationURL {
-                            prepared = try await museApp.recover(comparisonID: comparison, candidateURL: candidate, prompt: pending.text, requestID: pending.id)
-                        } else { prepared = try await museApp.prepare(comparisonID: comparison, binding: saved) }
-                        guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
-                        try state.recordMuseAppBinding(prepared)
-                        if prepared.threadID != nil, saved?.threadID == nil, let pending {
-                            try recordMuseAppSubmission(prepared, attemptID: pending.id)
-                        } else { try save() }
+                        if isSending || desktopDriver.delivery == .background {
+                            let pending = state.attempts.first { $0.comparisonID == comparison && $0.recoveryConversationURL != nil }
+                            let prepared: MuseSideChatBinding
+                            if fixture { prepared = saved ?? MuseSideChatBinding(comparisonID: comparison, threadID: nil, title: "Simulated side chat") }
+                            else if saved?.threadID == nil, let pending, let candidate = pending.recoveryConversationURL {
+                                prepared = try await museApp.recover(comparisonID: comparison, candidateURL: candidate, prompt: pending.text, requestID: pending.id)
+                            } else { prepared = try await museApp.prepare(comparisonID: comparison, binding: saved) }
+                            guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                            try state.recordMuseAppBinding(prepared)
+                            if prepared.threadID != nil, saved?.threadID == nil, let pending {
+                                try recordMuseAppSubmission(prepared, attemptID: pending.id)
+                            } else { try save() }
+                        } else {
+                            if !fixture { try await museApp.checkAvailable() }
+                            guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
+                            if saved == nil {
+                                try state.recordMuseAppBinding(.init(comparisonID: comparison, threadID: nil, title: "New side chat"))
+                                try save()
+                            }
+                        }
                     } else if !fixture { try await museApp.checkAvailable() }
                     guard generation == comparisonGeneration, !shuttingDown else { return }
                     desktopReady = true
-                    desktopStatus = comparison == nil ? "Connected to Muse · each comparison gets its own side chat" : "Muse side chat ready · background input"
+                    desktopStatus = comparison == nil ? "Connected to Muse · each comparison gets its own side chat" : "Muse side chat ready"
                     updateNativeSnapshot()
                     return
                 }
@@ -1513,7 +1551,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 if !fixture { try await desktopDriver.checkGrokBot(named: binding.name) }
                 guard generation == comparisonGeneration, !shuttingDown else { return }
                 desktopReady = true
-                desktopStatus = "Connected to \(binding.name) · background input"
+                desktopStatus = "Connected to \(binding.name)"
             } catch {
                 guard generation == comparisonGeneration, !shuttingDown else { return }
                 desktopStatus = error.localizedDescription
@@ -1583,7 +1621,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         storageURL.deletingLastPathComponent().appendingPathComponent("local-conversations/\(provider.localConversationDirectoryName)/\(id.uuidString)", isDirectory: true)
     }
 
-    private func sendNative(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
+    private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
@@ -1607,8 +1645,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateState { $0.comparisonID = id }
         state.attempts.insert(attempt, at: 0)
         var started = false
+        var foreground: DesktopForegroundLease?
         do {
             try save()
+            if !fixture, let app = provider.desktopApp, app.requiresForegroundSubmission {
+                foreground = try await desktopDriver.beginForeground(app, session: "msgblast-foreground-\(attempt.id)", onRestored: { await onSubmissionFinished() })
+            }
             connected = true
             await refresh()
             guard !shuttingDown, !requestCancelled else { throw CancellationError() }
@@ -1616,7 +1658,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             guard snapshot.draft.isEmpty || snapshot.draft == text else {
                 throw WebSessionFailure.notSent("\(provider.name) has a draft. Send or clear it before using the shared composer.")
             }
-            let user = WebPageMessage(role: "user", text: text)
+            let user = WebPageMessage(id: attempt.id.uuidString, role: "user", text: text)
             let history = (state.localConversations[id.uuidString] ?? []) + [user]
             attempt.status = .attempting
             let wabiURL = provider == .wabi ? try state.wabiConversation(for: id) : nil
@@ -1634,6 +1676,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let chatgptBinding = try nativeKind.map { try state.chatgptBinding(for: id, kind: $0) ?? ChatGPTConversationBinding(comparisonID: id, kind: $0) }
             if provider == .geminiApp {
                 geminiBinding = try state.geminiBinding(for: id) ?? GeminiConversationBinding(comparisonID: id, mode: geminiPreferences.mode)
+            }
+            let sendFocus = foreground
+            let submitAction: @Sendable () async -> Void = { await sendFocus?.restoreAfterSubmission() }
+            let outgoingID = attempt.id
+            let submitted: @Sendable () async throws -> Void = { [weak self] in
+                guard let self else { throw CancellationError() }
+                try await self.recordDesktopSubmission(attemptID: outgoingID)
             }
             let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
                 if fixture {
@@ -1665,7 +1714,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     let answer = try await museApp.reply(text, binding: museBinding, requestID: attemptID, onCandidate: { [weak self] url in
                         guard let self else { throw CancellationError() }
                         try await self.recordMuseAppCandidate(url, comparisonID: id, attemptID: attemptID)
-                    }, onBinding: { [weak self] discovered in
+                    }, onSubmitAction: submitAction, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }, onBinding: { [weak self] discovered in
                         guard let self else { throw CancellationError() }
                         try await self.recordMuseAppSubmission(discovered, attemptID: attemptID)
                     })
@@ -1673,7 +1722,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 if provider == .wabi {
                     guard let wabiURL else { throw WebSessionFailure.notSent("Prepare this comparison's dedicated Wabi chat first.") }
-                    return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL), sessionID: "Dedicated Wabi chat")
+                    return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL, onSubmitAction: submitAction, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: "Dedicated Wabi chat")
                 }
                 if provider == .geminiApp {
                     guard let saved = geminiBinding else { throw WebSessionFailure.notSent("Prepare Gemini first.") }
@@ -1687,7 +1736,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     return PersonalAgentReply(text: answer, sessionID: "Dedicated Gemini conversation")
                 }
                 if let saved = claudeBinding {
-                    let answer = try await claudeApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                    let answer = try await claudeApp.reply(text, binding: saved, onSubmitAction: submitAction, onPrepared: { [weak self] pending in
                         guard let self else { throw CancellationError() }
                         try await self.recordClaudeSubmission(pending)
                     }, onBinding: { [weak self] discovered in
@@ -1697,7 +1746,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     return PersonalAgentReply(text: answer, sessionID: "Dedicated Claude chat")
                 }
                 if let saved = chatgptBinding {
-                    let answer = try await chatgptApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                    let answer = try await chatgptApp.reply(text, binding: saved, onSubmitAction: submitAction, refreshUnreadReply: { target in
+                        try await desktopDriver.beginReplyRefresh(target, session: "msgblast-dot-reply-\(UUID())", host: sendFocus?.host, onRestoreFailure: { [weak self] detail in
+                            await MainActor.run { self?.error = detail }
+                        })
+                    }, onPrepared: { [weak self] pending in
                         guard let self else { throw CancellationError() }
                         try await self.recordChatGPTSubmission(pending)
                     }, onBinding: { [weak self] discovered in
@@ -1708,7 +1761,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
-                    return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding), sessionID: binding.name)
+                    return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding, onSubmitAction: submitAction, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: binding.name)
                 }
                 guard let installedAgent else { throw PersonalAgentError.unavailable(provider.name) }
                 return try await LocalPersonalAgent.reply(to: history, using: installedAgent, sessionID: savedSessionID, workingDirectory: workingDirectory)
@@ -1729,6 +1782,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.detail = fixture ? "Simulated reply. No app, local CLI or provider was contacted." : provider.desktopApp != nil ? "Reply text observed in the background and stable for three seconds. The app may continue working." : "Completed reply from the local CLI."
             try store(attempt)
         } catch {
+            attempt.messageID = state.attempts.first { $0.id == attempt.id }?.messageID ?? attempt.messageID
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
@@ -1745,8 +1799,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             self.error = detail
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
         }
+        do { try await foreground?.restore() }
+        catch { self.error = error.localizedDescription }
         updateNativeSnapshot()
         return attempt
+    }
+
+    private func recordDesktopSubmission(attemptID: UUID) throws {
+        guard !storageFailed, let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .attempting, let comparison = state.attempts[index].comparisonID else {
+            throw WebSessionFailure.notSent("The app submission receipt could not be saved. Review the app before continuing.")
+        }
+        let message = WebPageMessage(id: attemptID.uuidString, role: "user", text: state.attempts[index].text)
+        var messages = state.localConversations[comparison.uuidString] ?? []
+        if let existing = messages.first(where: { $0.id == message.id }) {
+            guard existing == message else { throw WebSessionFailure.notReady("The saved outgoing message conflicts with its receipt. Review this conversation before continuing.") }
+        } else { messages.append(message) }
+        state.localConversations[comparison.uuidString] = messages
+        state.attempts[index].status = .waiting
+        state.attempts[index].messageID = attemptID.uuidString
+        state.attempts[index].detail = "Outgoing message observed in the app. Waiting for its reply."
+        try save()
+        updateNativeSnapshot()
     }
 
     private func recordMuseAppCandidate(_ url: URL, comparisonID: UUID, attemptID: UUID) throws {

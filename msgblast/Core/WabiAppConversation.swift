@@ -232,7 +232,9 @@ actor WabiAppConversation {
         defer { Task { await driver.endSession(session) } }
         let target = try await driver.target(.wabi)
         var (state, native) = try await observe(target, session: session, purpose: .readiness)
-        try empty(state, native)
+        let openChooser = savedURL == nil && (native.draft == nil || native.draft == "") &&
+            !state.isGenerating && WabiAppProfile.isNewChatChooser(state)
+        if !openChooser { try empty(state, native) }
         if let savedURL {
             guard WabiThread.isValid(savedURL) else { throw DesktopAppError.unavailable("The saved Wabi chat address is invalid. No replacement was created.") }
             if native.url == savedURL { return savedURL }
@@ -248,9 +250,11 @@ actor WabiAppConversation {
         }
         let original = native.url
         let existing = Set(native.links.map(\.url))
-        try await click(button(state, "New chat"), target, session: session)
-        (state, native) = try await settled(target, session: session, purpose: .readiness) { state, native in
-            (native.draft == nil || native.draft == "") && WabiAppProfile.isNewChatChooser(state)
+        if !openChooser {
+            try await click(button(state, "New chat"), target, session: session)
+            (state, native) = try await settled(target, session: session, purpose: .readiness) { state, native in
+                (native.draft == nil || native.draft == "") && WabiAppProfile.isNewChatChooser(state)
+            }
         }
         guard native.url == original, native.draft == nil || native.draft == "", WabiAppProfile.isNewChatChooser(state) else {
             throw DesktopAppError.unavailable("Wabi did not open its New chat chooser. Nothing was sent.")
@@ -260,11 +264,12 @@ actor WabiAppConversation {
         try empty(state, native)
         guard native.url != original, !existing.contains(native.url),
               state.body.filter({ $0.role == "AXHeading" }).compactMap(\.label) == ["New chat"],
-              native.messages == [.init(role: .assistant, text: "What can I do for you?")],
-              try state.wabiIsBlankAIChat else { throw DesktopAppError.unavailable("Wabi's new AI chat could not be confirmed. Nothing was sent.") }
+              native.messages == [.init(role: .assistant, text: "What can I do for you?")] else { throw DesktopAppError.unavailable("Wabi's new AI chat could not be confirmed. Nothing was sent.") }
         return native.url
     }
-    func reply(_ prompt: String, in url: URL) async throws -> String {
+    func reply(_ prompt: String, in url: URL, onSubmitAction: @Sendable () async -> Void = {},
+               onSubmitted: @Sendable () async throws -> Void = {},
+               releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Wabi is already handling a request.") }
         occupied = true
         defer { occupied = false }
@@ -310,12 +315,19 @@ actor WabiAppConversation {
                 throw DesktopAppError.unavailable("Wabi's prepared draft, focus, or chat changed. Send was not pressed; review the preserved text.")
             }
         })
-        return try await DesktopAppWorkflow.reply(app: "Wabi", timing: timing, submit: {
+        var submissionObserved = false
+        return try await DesktopAppWorkflow.reply(app: "Wabi", timing: timing, onSubmitAction: onSubmitAction, releaseFocus: releaseFocus, submit: {
             try await self.click(state.sendButton(app: .wabi), target, session: session)
         }, observe: {
             (state, native) = try await self.observe(target, session: session)
             guard native.url == url else { throw DesktopAppError.unavailable("Wabi switched chats while waiting. No automatic resend.") }
-            return native.draft == "" && !state.isGenerating ? try receipt.reply(in: native.messages) : nil
+            let answer = try receipt.reply(in: native.messages)
+            if native.draft == "", !receipt.unchanged(native.messages), !submissionObserved {
+                submissionObserved = true
+                try await onSubmitted()
+                try await releaseFocus()
+            }
+            return native.draft == "" && !state.isGenerating ? answer : nil
         })
     }
 }

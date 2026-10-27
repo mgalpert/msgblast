@@ -6,12 +6,13 @@ final class DesktopAppInstallationTests: XCTestCase {
     @MainActor private final class Apps {
         var installation = DesktopAppInstallation(url: nil, processID: nil)
         var opened: [URL] = []
+        var hidden = false
         var openAction: (@MainActor (URL) async throws -> Void)?
         var client: DesktopAppInstallationClient {
             .init(inspect: { _ in self.installation }, open: {
                 self.opened.append($0)
                 try await self.openAction?($0)
-            })
+            }, isHidden: { _ in self.hidden })
         }
     }
 
@@ -228,6 +229,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertTrue(ready)
         XCTAssertEqual(apps.opened, [appURL])
         XCTAssertEqual(session.state.museAppConversations[comparison.uuidString]?.comparisonID, comparison)
+        XCTAssertNil(session.state.museAppConversations[comparison.uuidString]?.threadID, "Opening a comparison records intent; its native side chat is created only when sending")
         XCTAssertTrue(session.state.attempts.isEmpty, "Opening a conversation must not submit a probe")
         _ = await session.openComparison(UUID())
         XCTAssertEqual(apps.opened, [appURL], "Reuse an already running app")
@@ -276,6 +278,31 @@ final class DesktopAppInstallationTests: XCTestCase {
         let tools = try String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8).split(separator: "\n")
         XCTAssertTrue(tools.contains("list_windows"))
         XCTAssertTrue(tools.allSatisfy { $0 == "list_apps" || $0 == "list_windows" }, "Readiness must use only metadata, never input or a probe send")
+    }
+
+    func testExplicitConnectReopensHiddenAppEvenWhenWindowServerListsItsMainWindow() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = try readOnlyMuseDriver(in: directory)
+        let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/Muse.app")
+        apps.installation = .init(url: url, processID: 42)
+        apps.hidden = true
+        apps.openAction = { _ in apps.hidden = false }
+        let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"),
+                                      fixture: false, museApp: .shared, desktopApps: apps.client,
+                                      desktopDriver: DesktopAppConversation(executable: executable))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.draft = "Keep my prompt" }
+        await session.refresh()
+        XCTAssertTrue(apps.opened.isEmpty, "Passive refresh must leave a hidden app alone")
+        let prepared = await session.prepareDesktopConnection()
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(apps.opened, [url], "An existing WindowServer entry does not make a hidden app readable")
+        XCTAssertFalse(apps.hidden)
+        XCTAssertEqual(session.state.draft, "Keep my prompt")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        XCTAssertTrue(session.state.localConversations.isEmpty)
     }
 
     func testExplicitOnboardingConnectReopensShippingAppsAndWaitsForTheirWindow() async throws {
