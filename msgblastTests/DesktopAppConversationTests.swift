@@ -648,7 +648,9 @@ final class DesktopAppDriverTests: XCTestCase {
         try JSONEncoder().encode(workspace).write(to: storage)
         let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture))
         session.connect(automaticallyRefresh: false)
+        XCTAssertTrue(session.isAutomaticallyWaitingForNativeReply)
         let remaining = await session.reconcileGrokReplyOnce()
+        XCTAssertFalse(session.isAutomaticallyWaitingForNativeReply)
         session.beginShutdown()
         XCTAssertFalse(remaining)
         let savedData = try Data(contentsOf: storage)
@@ -690,6 +692,7 @@ final class DesktopAppDriverTests: XCTestCase {
             try JSONEncoder().encode(workspace).write(to: storage)
             let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client)
             session.connect(automaticallyRefresh: false)
+            XCTAssertFalse(session.isAutomaticallyWaitingForNativeReply, scenario)
             let remaining = await session.reconcileGrokReplyOnce()
             XCTAssertFalse(remaining, scenario)
             XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
@@ -713,6 +716,37 @@ final class DesktopAppDriverTests: XCTestCase {
             let calls = try await finishedCalls(fixture)
             assertNoInput(calls)
         }
+    }
+
+    func testStoppingGrokRecoveryKeepsTheSentMessageAndPreventsLaterAttribution() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let comparison = UUID()
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier", "Fixture Bot", "Earlier answer"], bot: "Fixture Bot")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep this draft"
+        workspace.desktopConversation = .init(name: "Fixture Bot")
+        var attempt = WebSendAttempt(text: prompt, status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString
+        attempt.grokReplyReceipt = .init(comparisonID: comparison, bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: prompt)]
+        let storage = fixture.directory.appendingPathComponent("stop-waiting.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture))
+        session.connect(automaticallyRefresh: false)
+        XCTAssertTrue(session.isAutomaticallyWaitingForNativeReply)
+        session.acknowledgeIncompleteRequest()
+        XCTAssertFalse(session.isAutomaticallyWaitingForNativeReply)
+        let remaining = await session.reconcileGrokReplyOnce()
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .dismissed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), [prompt])
+        XCTAssertEqual(saved.draft, "Keep this draft")
+        XCTAssertTrue(try fixture.calls().isEmpty)
     }
 
     func testGrokRecoveryReceiptComesFromActualTimedOutSubmission() async throws {

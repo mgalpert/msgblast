@@ -661,7 +661,9 @@ private struct WebAgentPane: View {
                         .disabled(busy || !session.canLinkCurrentConversation)
                 }.padding(10)
             }
-            if let latest = session.latestComparisonAttempt, latest.status.showsAttemptBanner(for: session.provider) {
+            if let latest = session.latestComparisonAttempt, !session.isAutomaticallyWaitingForNativeReply,
+               !(session.provider.desktopApp != nil && latest.status == .waiting && latest.messageID != nil),
+               latest.status.showsAttemptBanner(for: session.provider) {
                 VStack(alignment: .leading, spacing: 3) {
                     Label(latest.status.label(for: session.provider), systemImage: "info.circle")
                         .font(.caption.weight(.semibold))
@@ -670,7 +672,7 @@ private struct WebAgentPane: View {
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityElement(children: .contain)
             }
-            if let error = session.error, endedMessages != nil || session.desktopRecoveryMessage != error {
+            if let error = session.error, !(session.isAutomaticallyWaitingForNativeReply && error == session.latestComparisonAttempt?.detail), endedMessages != nil || session.desktopRecoveryMessage != error {
                 Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading)
             }
             if let draft = session.draftRecoveryText {
@@ -833,7 +835,14 @@ private struct WebAgentPane: View {
                 Button("Acknowledge that incomplete request") { session.acknowledgeIncompleteRequest(attemptID: attempt.id) }
                     .disabled(busy || session.isSending)
             }
-            if session.latestComparisonAttempt?.status == .uncertain {
+            if session.isAutomaticallyWaitingForNativeReply {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for \(session.name)…").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Stop waiting") { session.acknowledgeIncompleteRequest() }.disabled(busy)
+                }
+            } else if session.latestComparisonAttempt?.status == .uncertain {
                 Text("The last request was incomplete. Continuing may consume provider usage again.").font(.caption).foregroundStyle(.orange)
                 Button("Acknowledge incomplete request") { session.acknowledgeIncompleteRequest() }.disabled(busy)
             }

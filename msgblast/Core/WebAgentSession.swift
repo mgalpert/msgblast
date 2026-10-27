@@ -92,6 +92,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var desktopRecoveryMessage: String? {
         guard let app = provider.desktopApp, isEnabled, !desktopReady else { return nil }
         if !desktopInstallation.isInstalled { return "Install \(app.name) to continue." }
+        if isAutomaticallyWaitingForNativeReply, error == latestComparisonAttempt?.detail { return nil }
         if let error, !error.isEmpty { return error }
         // A saved chat reconnects during the next explicit send. Only an
         // observed failure needs a recovery action; stale readiness is normal.
@@ -498,6 +499,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var latestComparisonAttempt: WebSendAttempt? {
         guard state.comparisonID != nil else { return nil }
         return state.attempts.first { $0.comparisonID == state.comparisonID }
+    }
+
+    public var isAutomaticallyWaitingForNativeReply: Bool {
+        guard !isSending, let latest = latestComparisonAttempt else { return false }
+        let attempt = recoverableDotsAttempt() ?? recoverableWabiAttempt() ?? recoverableMuseAttempt() ??
+            recoverableClaudeAttempt() ?? recoverableGrokAttempt() ?? recoverableChatGPTAttempt()
+        return attempt?.id == latest.id
     }
 
     public var pendingNativeAttempt: WebSendAttempt? {
@@ -1601,11 +1609,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     public func acknowledgeIncompleteRequest(attemptID: UUID? = nil) {
         guard provider.usesNativeConversation, !isSending else { return }
+        let dismissedDetails = state.attempts.filter { attempt in
+            (attemptID.map { attempt.id == $0 } ?? (attempt.comparisonID == state.comparisonID)) && [.waiting, .uncertain].contains(attempt.status)
+        }.compactMap(\.detail)
         updateState { state in
             for i in state.attempts.indices where (attemptID.map { state.attempts[i].id == $0 } ?? (state.attempts[i].comparisonID == state.comparisonID)) && [.waiting, .uncertain].contains(state.attempts[i].status) {
                 state.attempts[i].status = .dismissed
             }
         }
+        if !storageFailed, let error, dismissedDetails.contains(error) { self.error = nil }
     }
 
     public func hasUnresolvedSend(_ text: String) -> Bool {
