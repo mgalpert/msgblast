@@ -117,8 +117,8 @@ struct ComposeBar: View {
                 text = ""; attachments = []
                 onSent(result.conversationID)
             } catch {
-                // The command is recorded as unconfirmed and never resent; keep the draft out of the way.
-                text = ""; attachments = []
+                // Keep the text and files: the Mac may never have received them. An unconfirmed
+                // command is recorded and never resent; the user checks before sending again.
                 message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
             }
         }
