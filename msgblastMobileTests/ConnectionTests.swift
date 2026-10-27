@@ -30,6 +30,8 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(paired.identityKey, mac.identity.publicKey.x963Representation)
         XCTAssertEqual(saved(), paired)
         XCTAssertEqual(paired.fingerprint.split(separator: " ").count, 6)
+        XCTAssertEqual(connection.connectedVia, "192.168.1.2:4000", "The winning route is recorded")
+        XCTAssertNotNil(connection.lastConnectSeconds)
         await settle { !mac.commands.isEmpty }
         XCTAssertEqual(mac.commands.first?.action, .setKeepAwake(enabled: true), "The phone asks for keep-awake on connect")
         XCTAssertTrue(events().contains { if case .snapshot = $0 { true } else { false } })

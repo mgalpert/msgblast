@@ -45,6 +45,11 @@ public final class MacConnection: ObservableObject {
     @Published public private(set) var state: MacConnectionState
     @Published public private(set) var lastHeard: Date?
     @Published public private(set) var lastError: String?
+    /// The candidate that won the last race (for example "100.101.102.103:52000" or a Bonjour name).
+    @Published public private(set) var connectedVia: String?
+    /// Time from starting the race to an authenticated session, for the last connection.
+    @Published public private(set) var lastConnectSeconds: Double?
+    private var raceStarted: Date?
     @Published public private(set) var pairedMac: PairedMac?
     /// Every decoded event, for the store's reducer.
     public var onEvent: ((RemoteClientDriver.Event) -> Void)?
@@ -160,11 +165,13 @@ public final class MacConnection: ObservableObject {
 
     private func open(_ endpoints: [MacEndpoint], spki: Data, driver: RemoteClientDriver) {
         stopTransport()
+        raceStarted = now()
         self.driver = driver
         racer.race(endpoints, make: { [makeTransport] in makeTransport($0, spki) }) { [weak self] result in
             guard let self, self.driver === driver else { return }
             switch result {
             case .success(let transport):
+                self.connectedVia = transport.label
                 self.transport = transport
                 transport.onReceive = { [weak self] bytes in self?.receive(bytes) }
                 transport.onState = { [weak self] state in if state != .ready { self?.lost("The connection closed.") } }
@@ -230,6 +237,7 @@ public final class MacConnection: ObservableObject {
     }
 
     private func authenticated() {
+        if let started = raceStarted { lastConnectSeconds = now().timeIntervalSince(started); raceStarted = nil }
         attempt = 0
         state = .connected
         lastError = nil

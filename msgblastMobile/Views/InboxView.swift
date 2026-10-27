@@ -75,6 +75,8 @@ struct SettingsView: View {
                     LabeledContent("Key", value: mac.fingerprint).font(.callout.monospaced())
                     LabeledContent("Paired", value: mac.pairedAt.formatted(date: .abbreviated, time: .shortened))
                     LabeledContent("Status", value: app.connection.state.bannerText)
+                    if let route = app.connection.connectedVia { LabeledContent("Route", value: route).font(.callout.monospaced()) }
+                    if let seconds = app.connection.lastConnectSeconds { LabeledContent("Connect time", value: String(format: "%.1f s", seconds)) }
                 }
             }
             Section {
