@@ -2446,6 +2446,25 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertFalse(calls.contains { $0.tool == "type_text" })
     }
 
+    func testWabiReadinessAcceptsAnExistingEmptyAIChooser() async throws {
+        let creation = wabiCreationSteps()
+        var initial = windows(); initial["native"] = wabiNative(draft: nil)
+        let fixture = try driver([apps(.wabi), initial, creation[4]])
+        defer { fixture.remove() }
+        try await wabiAdapter(fixture).checkAvailable()
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
+    func testWabiReadinessDoesNotIgnoreADraftBehindTheChooser() async throws {
+        let creation = wabiCreationSteps()
+        var initial = windows(); initial["native"] = wabiNative(draft: "Keep this draft")
+        let fixture = try driver([apps(.wabi), initial, creation[4]])
+        defer { fixture.remove() }
+        let error = await failure { try await self.wabiAdapter(fixture).checkAvailable() }
+        XCTAssertTrue(error.contains("draft"), error)
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
     func testWabiRefreshesStaleNavigationWithoutRepeatingEitherClick() async throws {
         let creation = wabiCreationSteps()
         var open = creation[3]; open["native"] = wabiNative()

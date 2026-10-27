@@ -406,6 +406,10 @@ actor WabiAppConversation {
         // Connecting proves readiness to create a dedicated chat, not the
         // readability of unrelated messages in the currently open chat.
         let (state, native) = try await observe(target, session: session, purpose: .readiness)
+        if WabiAppProfile.isNewChatChooser(state), (native.draft == nil || native.draft == ""), !state.isGenerating {
+            _ = try WabiAppProfile.newAIChatChoice(state)
+            return
+        }
         try empty(state, native)
         _ = try button(state, "New chat")
     }
