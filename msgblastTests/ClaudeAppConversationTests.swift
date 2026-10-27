@@ -46,16 +46,22 @@ final class ClaudeAppConversationTests: XCTestCase {
         let paragraphs = ["First paragraph has more than its opening sentence. Keep this sentence too.",
                           "Second paragraph contains the rest of the answer.", "END-OF-REPLY"]
         var answer = article(2, 2, "Claude responded: First paragraph has more than its opening sentence.", "")
-        answer.children[1].children = paragraphs.map { .init(role: "AXStaticText", value: $0) }
+        answer.children[1].children = [.init(role: "AXHeading", label: "Planning a walk", children: [.init(role: "AXStaticText", value: "Planning a walk")])]
+            + paragraphs.map { .init(role: "AXStaticText", value: $0) }
         answer.children.append(.init(role: "AXGroup", classes: ["sr-only"], children: [.init(role: "AXStaticText", value: "Response announcement")]))
         let observed = try ClaudeAppObservation(root: tree([article(1, 2, "You said: Prompt", "Prompt"), answer]))
-        XCTAssertEqual(try ClaudeAppReceipt(baseline: [], prompt: "Prompt").reply(in: observed.messages), paragraphs.joined(separator: "\n\n"))
+        XCTAssertEqual(try ClaudeAppReceipt(baseline: [], prompt: "Prompt").reply(in: observed.messages), (["Planning a walk"] + paragraphs).joined(separator: "\n\n"))
     }
     func testAssistantHeadingDoesNotSubstituteForAnUnrenderedBody() {
-        var answer = article(1, 1, "Claude responded: Summary only", "")
-        answer.children[1].children = []
-        XCTAssertThrowsError(try ClaudeAppObservation(root: tree([answer]))) { error in
-            guard case ClaudeObservationError.transient = error else { return XCTFail("Wait for the actual reply body instead of completing with its summary") }
+        let bodies: [[ClaudeAXNode]] = [[], [.init(role: "AXStaticText", value: "")],
+                                      [.init(role: "AXStaticText", value: ""), .init(role: "AXStaticText", value: "")],
+                                      [.init(role: "AXStaticText", value: " \n\t")]]
+        for body in bodies {
+            var answer = article(1, 1, "Claude responded: Summary only", "")
+            answer.children[1].children = body
+            XCTAssertThrowsError(try ClaudeAppObservation(root: tree([answer]))) { error in
+                guard case ClaudeObservationError.transient = error else { return XCTFail("Wait for the actual reply body instead of completing with its summary") }
+            }
         }
     }
     func testUnknownSenderOrMissingMessageIsNotAttributed() {

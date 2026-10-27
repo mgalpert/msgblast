@@ -106,14 +106,15 @@ struct ClaudeAppObservation: Sendable, Equatable {
                 throw ClaudeObservationError.transient("Claude's message sender has not finished rendering. No reply was attributed.")
             }
             guard headings.count == 1 else { throw DesktopAppError.unavailable("Claude's message sender is unavailable. No reply was attributed.") }
-            let role: ClaudeAppMessage.Role = headings[0].label.hasPrefix("Claude responded:") ? .assistant : .user
+            let senderHeading = headings[0].label
+            let role: ClaudeAppMessage.Role = senderHeading.hasPrefix("Claude responded:") ? .assistant : .user
             func text(_ node: ClaudeAXNode) -> [String] {
-                guard node.role != "AXHeading", node.role != "AXToolbar", !node.classes.contains("sr-only") else { return [] }
+                guard !(node.role == "AXHeading" && node.label == senderHeading), node.role != "AXToolbar", !node.classes.contains("sr-only") else { return [] }
                 if node.role == "AXStaticText" { return node.value.map { [$0] } ?? [] }
                 return node.children.flatMap(text)
             }
             let body = text(article).joined(separator: "\n\n")
-            guard !body.isEmpty else { throw ClaudeObservationError.transient("Claude exposed an incomplete \(role == .assistant ? "assistant" : "outgoing") message.") }
+            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ClaudeObservationError.transient("Claude exposed an incomplete \(role == .assistant ? "assistant" : "outgoing") message.") }
             return .init(role: role, text: body)
         }
         guard !ClaudeChatURL.isNew(url) || messages.isEmpty else { throw DesktopAppError.unavailable("Claude's New chat contains unexpected messages.") }
