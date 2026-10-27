@@ -578,7 +578,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     /// Only an explicit first submission may launch an app without a comparison ID.
     @discardableResult
-    public func openComparison(_ id: UUID?, startNativeApp: Bool = false, allowSavedPrivateDraft: Bool = false) async -> Bool {
+    public func openComparison(_ id: UUID?, startNativeApp: Bool = false, allowSavedPrivateDraft: Bool = false, foregroundPreparation: Bool = false) async -> Bool {
         guard !isSending else { return false }
         if state.comparisonID != id {
             if provider == .geminiApp { geminiConfigurationError = nil; geminiOptions = .init() }
@@ -600,7 +600,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             guard state.comparisonID == id, !shuttingDown else { return false }
             await refresh()
             if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
-            if snapshot.ready { await prepareAdditionalDesktopConversation() }
+            if snapshot.ready { await prepareAdditionalDesktopConversation(foreground: foregroundPreparation) }
             let ready = snapshot.ready && (allowSavedPrivateDraft || snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && !hasIncompleteNativeRequest(for: id)
             if ready { error = nil }
             else if !snapshot.ready || hasIncompleteNativeRequest(for: id) { error = snapshot.reason }
@@ -1420,7 +1420,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         try state.recordChatGPTBinding(binding)
         try save()
     }
-    private func prepareAdditionalDesktopConversation() async {
+    private func prepareAdditionalDesktopConversation(foreground: Bool = false) async {
         guard provider == .claudeApp || chatgptKind != nil, let comparison = state.comparisonID,
               !loading, !shuttingDown else { return }
         let generation = comparisonGeneration
@@ -1429,12 +1429,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do {
             if provider == .claudeApp {
                 let saved = try state.claudeBinding(for: comparison)
-                let prepared = fixture ? saved ?? .init(comparisonID: comparison) : try await claudeApp.prepare(comparisonID: comparison, binding: saved)
+                let prepared = fixture ? saved ?? .init(comparisonID: comparison) : try await DesktopAppWorkflow.preparation(.claude, driver: foreground ? desktopDriver : nil) {
+                    try await claudeApp.prepare(comparisonID: comparison, binding: saved)
+                }
                 guard !shuttingDown, comparisonGeneration == generation else { throw CancellationError() }
                 try recordClaudeSubmission(prepared)
             } else if let kind = chatgptKind {
                 let saved = try state.chatgptBinding(for: comparison, kind: kind)
-                let prepared = fixture ? saved ?? .init(comparisonID: comparison, kind: kind) : try await chatgptApp.prepare(comparisonID: comparison, kind: kind, binding: saved)
+                let prepared = fixture ? saved ?? .init(comparisonID: comparison, kind: kind) : try await DesktopAppWorkflow.preparation(kind == .dots ? .dots : .chatgpt, driver: foreground ? desktopDriver : nil) {
+                    try await chatgptApp.prepare(comparisonID: comparison, kind: kind, binding: saved)
+                }
                 guard !shuttingDown, comparisonGeneration == generation else { throw CancellationError() }
                 try recordChatGPTSubmission(prepared)
             }

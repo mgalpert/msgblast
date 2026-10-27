@@ -652,9 +652,18 @@ actor DesktopAppConversation {
             }
             try await self.input(step.input, focus: step.before.isEmpty, point: point, target: target, session: session)
         }, after: { step in
+            var refreshRequested = false
+            var refreshed = false
             let verified = try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: self.timing.pollInterval,
                 failure: "Grok Bot did not confirm the prepared draft. Send was not clicked; review the preserved text.",
                 read: {
+                    // Electron can defer publishing typed text until its window
+                    // becomes active again. Refresh the already-owned window
+                    // once, without typing or submitting a second time.
+                    if refreshRequested && !refreshed && self.delivery == .foreground {
+                        refreshed = true
+                        try await self.activate(target, session: session)
+                    }
                     let candidate = try await self.snapshot(target, session: session)
                     return (candidate, try await self.grokState(candidate, target: target))
                 }, ready: { observation in
@@ -671,6 +680,7 @@ actor DesktopAppConversation {
                           try history.matchesEnd(of: candidate.historyText(app: .grokBot)), !candidate.isGenerating else {
                         throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
                     }
+                    if !nativeReady || !driverReady { refreshRequested = true }
                     return nativeReady && driverReady
                 })
             state = verified.0

@@ -210,14 +210,14 @@ public final class WebAgents: ObservableObject {
         }
         return groups
     }
-    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false) async -> Bool {
-        guard let results = await prepareComparisonRecipients(id, for: sessions, startNativeApps: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft) else { return false }
+    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false, foregroundPreparation: Bool = false) async -> Bool {
+        guard let results = await prepareComparisonRecipients(id, for: sessions, startNativeApps: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft, foregroundPreparation: foregroundPreparation) else { return false }
         return sessions.allSatisfy { results[$0.id] == true }
     }
 
     /// A nil result means preparation was cancelled or its workspace changed;
     /// individual false values represent recipients that were not ready.
-    public func prepareComparisonRecipients(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false) async -> [WebAgentID: Bool]? {
+    public func prepareComparisonRecipients(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false, foregroundPreparation: Bool = false) async -> [WebAgentID: Bool]? {
         guard !shuttingDown else { return nil }
         // Muse stores the workspace identity even when it is deselected.
         setComparison(id)
@@ -230,7 +230,7 @@ public final class WebAgents: ObservableObject {
                 var results: [WebAgentID: Bool] = [:]
                 for session in group {
                     guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
-                    results[session.id] = await session.openComparison(id, startNativeApp: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft)
+                    results[session.id] = await session.openComparison(id, startNativeApp: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft, foregroundPreparation: foregroundPreparation)
                 }
                 return results
             } }
@@ -267,7 +267,7 @@ public final class WebAgents: ObservableObject {
         var results = await Self.send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
             guard let attemptID = plannedAttempts[session.id] else { return nil }
             guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == comparisonID,
-                  let ready = await self.prepareComparisonRecipients(comparisonID, for: [session], startNativeApps: true, allowSavedPrivateDraft: true),
+                  let ready = await self.prepareComparisonRecipients(comparisonID, for: [session], startNativeApps: true, allowSavedPrivateDraft: true, foregroundPreparation: true),
                   ready[session.id] == true, !Task.isCancelled, !self.shuttingDown, self.comparisonID == comparisonID else {
                 let reason = Task.isCancelled || self.shuttingDown ? "Stopped before sending." : session.error ?? session.snapshot.reason
                 return session.failNativePreparation(attemptID, reason: reason)

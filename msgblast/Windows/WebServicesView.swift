@@ -356,7 +356,7 @@ struct AgentsWorkspaceView: View {
                     comparisonID = id
                 }
             } else {
-                guard let preparation = await web.prepareComparisonRecipients(existingID, for: sessions, startNativeApps: true, allowSavedPrivateDraft: true),
+                guard let preparation = await web.prepareComparisonRecipients(existingID, for: sessions, startNativeApps: true, allowSavedPrivateDraft: true, foregroundPreparation: true),
                       existingID.flatMap({ model.comparison($0)?.endedAt }) == nil else { return }
                 readySessions = sessions.filter { preparation[$0.id] == true }
                 let failedSessions = sessions.filter { preparation[$0.id] != true }

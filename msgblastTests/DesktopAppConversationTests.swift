@@ -1502,6 +1502,29 @@ final class DesktopAppDriverTests: XCTestCase {
     private func focusSteps(_ app: DesktopAppProvider = .grokBot) -> [[String: Any]] {
         [apps(app), windows(), activation()]
     }
+    func testClaudePreparationOwnsFocusAndRestoresHostOnSuccessAndFailure() async throws {
+        for shouldFail in [false, true] {
+            let fixture = try driver(focusSteps(.claude) + [activation(fixtureHost)])
+            defer { fixture.remove() }
+            let host = fixtureHost
+            let control = DesktopAppConversation(executable: fixture.executable, delivery: .foreground, captureHostWindow: { host })
+            do {
+                let result = try await DesktopAppWorkflow.preparation(.claude, driver: control) {
+                    let focus = try fixture.calls().filter { $0.tool == "bring_to_front" }
+                    XCTAssertEqual(focus.compactMap { $0.arguments["window_id"] as? Int }, [101])
+                    if shouldFail { throw DesktopAppError.unavailable("Preparation failed") }
+                    return "prepared"
+                }
+                XCTAssertFalse(shouldFail)
+                XCTAssertEqual(result, "prepared")
+            } catch {
+                XCTAssertTrue(shouldFail, error.localizedDescription)
+            }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.compactMap { $0.arguments["window_id"] as? Int }, [101, 201])
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click"].contains($0.tool) })
+        }
+    }
     func testReplyRefreshRestoresTheExactHostOnceWithoutInput() async throws {
         let fixture = try driver([activation(), activation(fixtureHost)])
         defer { fixture.remove() }
@@ -2763,6 +2786,22 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(clicks.count, 1, "Submit the verified draft once")
         XCTAssertEqual(clicks.first?.arguments["element_token"] as? String, "s00000002:send")
         assertBackgroundTargets(calls)
+    }
+
+    func testGrokRefreshesStaleEditorWithoutRetypingBeforeSubmit() async throws {
+        let fixture = try driver([
+            apps(), windows(), snapshot(grok()), step("type_text", [:], arguments: ["text": prompt]),
+            snapshot(grok()), activation(),
+            snapshot(grok(draft: prompt, token: "s00000002")), step("click", [:]),
+            snapshot(grok(reply: "Fresh answer", token: "s00000003"), repeating: true)
+        ])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture, delivery: .foreground).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Fresh answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
     }
 
     func testNativeEditorFocusAllowsBackgroundWrapperButRefusesConflictingOrLostFocus() async throws {

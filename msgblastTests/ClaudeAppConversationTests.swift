@@ -483,7 +483,7 @@ final class ClaudeAppDriverTests: XCTestCase {
         let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
         XCTAssertEqual(saved.attempts.first?.status, .observed)
         XCTAssertEqual(saved.localConversations[fixture.binding.comparisonID.uuidString]?.map(\.text), ["First question", "ANSWER"])
-        XCTAssertEqual(saved.draft, "First question")
+        XCTAssertEqual(saved.draft, "", "A verified recovered reply consumes the unchanged submitted draft")
         XCTAssertEqual(fixture.calls().filter { ["type_text", "press_key", "click"].contains($0["tool"] as? String ?? "") }.count, inputBefore)
     }
 
