@@ -151,30 +151,47 @@ struct MuseAppReceipt {
 }
 
 
+enum MuseObservationError: LocalizedError {
+    case incomplete
+    var errorDescription: String? { "Muse is updating its chat controls. Waiting for a complete read." }
+}
+
 enum MuseAppProfile {
     static func capture(_ target: DesktopAppConversation.Target) throws -> MuseAppObservation {
         try parse(DesktopAccessibility.capture(target, app: .muse))
     }
+    static func captureReply(_ target: DesktopAppConversation.Target) throws -> MuseAppObservation {
+        try parseReply(DesktopAccessibility.capture(target, app: .muse, readComposer: false))
+    }
     static func parse(_ root: DesktopAccessibilityNode) throws -> MuseAppObservation {
+        try parse(root, repliesOnly: false)
+    }
+    static func parseReply(_ root: DesktopAccessibilityNode) throws -> MuseAppObservation {
+        try parse(root, repliesOnly: true)
+    }
+    private static func parse(_ root: DesktopAccessibilityNode, repliesOnly: Bool) throws -> MuseAppObservation {
         let nodes = root.descendants
         guard !nodes.contains(where: { ["AXSheet", "AXDialog"].contains($0.role) }) else { throw DesktopAppError.unavailable("Dismiss Muse's dialog before continuing.") }
         let areas = nodes.filter { $0.role == "AXWebArea" }
         let composers = nodes.filter { DesktopAccessibility.isComposer($0, app: .muse) }
         let transcripts = nodes.filter { $0.role == "AXGroup" && $0.label == "Chat messages" }
-        guard areas.count == 1, let url = areas.first?.url, composers.count == 1, let composer = composers.first,
-              let draft = composer.editorText, transcripts.count == 1,
-              url == URL(string: "https://muse.ai/") || url == MuseSideChatBinding.newURL || MuseSideChatBinding.threadID(in: url) != nil else {
-            throw DesktopAppError.unavailable("Muse's side chat and composer could not be read independently. Nothing will be sent.")
+        guard areas.count == 1, let url = areas.first?.url, transcripts.count == 1 else {
+            throw MuseObservationError.incomplete
+        }
+        let composer = composers.count == 1 ? composers.first : nil
+        guard repliesOnly || composer?.editorText != nil else { throw MuseObservationError.incomplete }
+        guard url == URL(string: "https://muse.ai/") || url == MuseSideChatBinding.newURL || MuseSideChatBinding.threadID(in: url) != nil else {
+            throw DesktopAppError.unavailable("Muse's current page is not a supported chat. Nothing will be sent.")
         }
         func convert(_ node: DesktopAccessibilityNode) -> MuseAXNode {
             .init(role: node.role, label: node.label, value: node.value ?? "", children: node.children.map(convert))
         }
         let header = nodes.first { $0.role == "AXButton" && $0.label.contains("Open chat and side chats") }?.label
         let title = header.map { $0.components(separatedBy: " Unread chats").first ?? $0 } ?? "Muse side chat"
-        return .init(url: url, draft: draft, composerFocused: composer.focused,
-                     messages: try MuseTranscript.messages(in: convert(transcripts[0])), composerIdentity: composer.identity,
+        return .init(url: url, draft: repliesOnly ? "" : composer!.editorText!, composerFocused: !repliesOnly && composer?.focused == true,
+                     messages: try MuseTranscript.messages(in: convert(transcripts[0])), composerIdentity: composer?.identity,
                      sidebarOpen: nodes.contains { $0.role == "AXButton" && $0.label == "New side chat" },
                      windowBounds: root.frame.map { .init(x: $0.x, y: $0.y, width: $0.w, height: $0.h) },
-                     generating: nodes.contains { $0.label == "Stop" || $0.label.hasSuffix(" Dictate a message Stop") }, title: title)
+                     generating: nodes.contains { $0.role == "AXButton" && ($0.label == "Stop" || DesktopAccessibility.museComposerAction($0.label) == "Stop") }, title: title)
     }
 }

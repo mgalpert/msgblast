@@ -1,0 +1,38 @@
+{
+  "source_revision": "f08cba3dfde61bf1367b2fa86dd0c48c672ece64",
+  "candidate": "msgblast Dev PR 84",
+  "build": "1",
+  "bundle_id": "com.msgblast.development",
+  "machine": "Pal Studio",
+  "signing": "Apple Development; not notarized",
+  "package_sha256": "4c014388cb99cc055b49b2c8cbd0d5886ef7875e61260beaf7bf80e2f2b7a396",
+  "wabi": {
+    "version": "0.1.15",
+    "started_closed": true,
+    "connect_clicks": 1,
+    "ready_on_first_attempt": true,
+    "first_reply_in_msgblast": true,
+    "three_paragraph_followup_in_msgblast": true,
+    "end_marker_observed": true
+  },
+  "grok_bot": {
+    "version": "0.75.3",
+    "started_closed": true,
+    "connect_clicks": 1,
+    "ready_on_first_attempt": true,
+    "first_reply_in_msgblast": true,
+    "three_paragraph_followup_in_msgblast": true,
+    "end_marker_observed": true
+  },
+  "connect_sent_messages": false,
+  "first_prompt": "Reply only: PAL-NATIVE-FIRST-F08CBA3. Do not use tools or take other actions.",
+  "followup_prompt": "Reply in three short paragraphs about planning a walk. End with the exact line END-PAL-NATIVE-FOLLOWUP-F08CBA3. Do not use tools or take other actions.",
+  "send_and_compare_clicks_per_prompt": 1,
+  "manual_provider_recovery_or_resend": false,
+  "msgblast_active_after_each_connect": true,
+  "msgblast_active_after_followup": true,
+  "final_shared_composer_empty": true,
+  "final_busy_indicators": 0,
+  "final_warning_banners": 0,
+  "gui_checks_performed_locally": false
+}

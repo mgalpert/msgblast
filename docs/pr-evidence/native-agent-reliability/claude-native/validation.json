@@ -1,0 +1,87 @@
+{
+  "candidate": "msgblast Dev PR 84 (build 1)",
+  "source_revision": "edeaba8cb1ebaed805fd3f0ed6279c6d23753797",
+  "bundle_id": "com.msgblast.development",
+  "support_directory": "msgblast-Dev",
+  "zip_sha256": "5c10ae1aa5e9ca861855f8c12e003fae48e2a519705b0b7b67fb761f072af157",
+  "signing": "Approved Apple Development designated requirement retained; strict signature verified; not notarized",
+  "machine": "Pal Studio",
+  "platform": {
+    "macOS": "27.0.1",
+    "Claude": [
+      {
+        "version": "3.6556.2",
+        "build": "3.6556.2"
+      }
+    ]
+  },
+  "cold_connect": {
+    "process_initially_closed": true,
+    "clicks": 1,
+    "result": "Ready to chat in original Settings sheet",
+    "manual_provider_activation_before_connect": false,
+    "setup_messages_sent": 0
+  },
+  "conversation": {
+    "new_comparison": true,
+    "first_reply": "Heading, two paragraphs and final marker present",
+    "followup": "Heading, two paragraphs and final marker present",
+    "all_reply_segments_match_native_static_text": true,
+    "roles": [
+      "user",
+      "assistant",
+      "user",
+      "assistant"
+    ],
+    "attempts": 2,
+    "attempt_statuses": [
+      "observed",
+      "observed"
+    ],
+    "same_owned_conversation": true,
+    "draft_empty_after_completion": true,
+    "busy_after_completion": false,
+    "manual_resend_or_recovery": false
+  },
+  "focus": {
+    "first_samples": 45,
+    "followup_samples": 50,
+    "errors": 0,
+    "last_samples_msgblast_active": true,
+    "limit": "Read-only samples do not measure brief foreground transitions."
+  },
+  "tests": [
+    {
+      "source": "e33424ea4dd8d5f32e77dd612ef8ffb44c20ab6e",
+      "passed": 221,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Native app observation/driver/installation/state and Claude fixtures"
+    },
+    {
+      "source": "edeaba8cb1ebaed805fd3f0ed6279c6d23753797",
+      "passed": 29,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Claude observation and driver fixtures"
+    }
+  ],
+  "regressions": {
+    "initial_shell": "One test failed with unavailable composer before the repair; green afterward.",
+    "body": "Two tests produced three assertions before the repair: missing visible heading and two accepted whitespace-only bodies; green afterward."
+  },
+  "video": {
+    "kind": "Actual native-window screenshot sequence",
+    "duration_seconds": 12,
+    "continuous": false,
+    "edited_holds": true,
+    "latency_measurement": false
+  },
+  "limits": [
+    "Only Claude was sent new prompts in this candidate.",
+    "Muse is awaiting sign-in handback and remains unverified.",
+    "Gemini is deferred and unavailable in this build.",
+    "This evidence does not establish every other provider on this candidate.",
+    "No production app, live Messages history or OS consent was reset."
+  ]
+}
