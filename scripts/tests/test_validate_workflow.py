@@ -12,6 +12,19 @@ CHECKOUT = "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
 
 
 class ValidateWorkflowTests(unittest.TestCase):
+    def test_crash_symbols_are_verified_and_retained_before_publication(self):
+        text = RELEASE.read_text()
+        prepare = text.index("--prepare-only")
+        verify = text.index("dwarfdump")
+        retain = text.index("name: msgblast-symbols-")
+        publish = text.index("--publish-prepared")
+        self.assertLess(prepare, verify)
+        self.assertLess(verify, retain)
+        self.assertLess(retain, publish)
+        self.assertNotIn("continue-on-error:", text[prepare:publish])
+        self.assertNotIn("if: always()", text[prepare:publish])
+        self.assertIn("if-no-files-found: error", text[retain:publish])
+
     def test_validation_workflow_does_not_publish(self):
         text = WORKFLOW.read_text()
         release = RELEASE.read_text()

@@ -36,6 +36,15 @@ test('rejects malformed fields and unknown input',async()=>{
  for(const value of [{...report,id:'../file'},{...report,kind:'other'},{...report,note:' '},{...report,note:'x'.repeat(16001)},{...report,contact:'bad'},{...report,contact:'a'.repeat(121)+'@x.com'},{...report,files:[]},[],null])assert.equal((await send(value)).status,400);
  assert.equal((await send({id,kind:'bug',note:'🐈'.repeat(8000)})).status,201);
 });
+test('accepts bounded native-app provider counts while retaining the private diagnostics allowlist',async()=>{
+ const env=environment();
+ const counts={museApp:1,grokBotApp:1,wabi:1,geminiApp:1,chatgptApp:2,dotsApp:1,claudeApp:1,os3:1,hark:1};
+ const input={...report,diagnostics:JSON.stringify({...diagnostics,webProviderCounts:counts})};
+ assert.equal((await send(input,env)).status,201);
+ assert.deepEqual(JSON.parse(env.objects.get(`reports/${id}.json`).value).diagnostics.webProviderCounts,counts);
+ for(const bad of [{unknownApp:1},{chatgptApp:-1},{wabi:'private text'},{dotsApp:1000001}])
+  assert.equal((await send({...report,diagnostics:JSON.stringify({...diagnostics,webProviderCounts:bad})})).status,400);
+});
 test('diagnostics allowlist rejects arbitrary fields, types and categories',async()=>{
  for(const value of [{...diagnostics,transcript:'secret'},{...diagnostics,agentCount:-1},{...diagnostics,agentCount:1000001},{...diagnostics,fixtureMode:'true'},{...diagnostics,messagesStatus:'private text'},{...diagnostics,webProviderCounts:{unknown:1}},{...diagnostics,supportFolder:'/Users/private'},{...diagnostics,updatesReason:'a token'},{...diagnostics,version:'secret with spaces'},{}])assert.equal((await send({...report,diagnostics:JSON.stringify(value)})).status,400);
  assert.equal((await send({...report,diagnostics})).status,400);
@@ -82,4 +91,25 @@ test('canonical diagnostics ordering permits identical retry and rejects invalid
 });
 test('other routes delegate only to assets',async()=>{
  const env=environment();env.ASSETS={fetch:async()=>new Response('asset')};assert.equal(await (await worker.fetch(new Request('https://msgblast.app/'),env)).text(),'asset');
+});
+
+const crash = {schema:1, incident:'12345678-1234-1234-1234-123456789abc', process:'app', bundleIdentifier:'com.msgblast.mac', version:'0.9.0', build:'40', exception:'EXC_CRASH', signal:'SIGABRT', day:'2026-09-21', frames:[{uuid:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',arch:'arm64',offset:1234}], fingerprint:'a'.repeat(64)};
+test('crash summaries are strictly validated and private with idempotent receipt',async()=>{
+ const env=environment(); const body={...report,kind:'crash',crash};
+ assert.equal((await send(body,env)).status,201);
+ assert.equal((await send(body,env)).status,200);
+ assert.deepEqual(JSON.parse(env.objects.get(`reports/${id}.json`).value).crash,crash);
+ for(const bad of [{...crash,path:'/Users/private'},{...crash,frames:[{...crash.frames[0],symbol:'chat text'}]},{...crash,frames:[]},{...crash,frames:Array(65).fill(crash.frames[0])},{...crash,signal:'SIGTERM'},{...crash,bundleIdentifier:'com.other.app'},{...crash,frames:[{...crash.frames[0],offset:-1}]}]) {
+  assert.equal((await send({...body,crash:bad})).status,400);
+ }
+ assert.equal((await send({...report,kind:'crash'})).status,400);
+ assert.equal((await send({...report,crash})).status,400);
+});
+test('crash retries normalize frame-object key order inside arrays',async()=>{
+ const env=environment();
+ const body={...report,kind:'crash',crash};
+ assert.equal((await send(body,env)).status,201);
+ const reordered={...crash,frames:crash.frames.map(f=>({offset:f.offset,arch:f.arch,uuid:f.uuid}))};
+ assert.equal((await send({...body,crash:reordered},env)).status,200);
+ assert.equal(env.objects.size,1);
 });
