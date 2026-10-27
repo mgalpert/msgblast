@@ -45,6 +45,37 @@ final class ChatGPTAppConversationTests: XCTestCase {
         XCTAssertTrue(native.draft.isEmpty)
         XCTAssertFalse(native.nodes.contains { $0.value == "Private unsent text" })
     }
+    func testDotNavigationRequiresUniqueFirstPartySidebarAndExcludesEmbeddedApps() throws {
+        let newChat = ChatGPTAXNode(role: "AXButton", label: "New chat", classes: ["sidebar-item"])
+        let dot = ChatGPTAXNode(role: "AXButton", label: "Your dot", classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
+        let sidebar = ChatGPTAXNode(role: "AXGroup", children: [newChat, dot])
+        let foreign = ChatGPTAXNode(role: "AXWebArea", url: "https://embedded.invalid", children: [sidebar])
+        let root = window(extra: [sidebar, foreign])
+        XCTAssertEqual(try ChatGPTAppNavigation(root: root).dotButton().label, "Your dot")
+        XCTAssertThrowsError(try ChatGPTAppNavigation(root: window(extra: [foreign])).dotButton())
+        XCTAssertThrowsError(try ChatGPTAppNavigation(root: window(extra: [sidebar, sidebar])).dotButton())
+        XCTAssertThrowsError(try ChatGPTAppNavigation(root: window(extra: [sidebar, .init(role: "AXDialog")])).dotButton())
+        var wrongApp = root; wrongApp.children[0].url = "https://chatgpt.com"
+        XCTAssertThrowsError(try ChatGPTAppNavigation(root: wrongApp).dotButton())
+    }
+    func testUnreadDotReplyRequiresTheActiveDotsUniqueSidebarBadge() throws {
+        func dot(_ label: String, duplicate: Bool = false) throws -> ChatGPTAppObservation {
+            let button = ChatGPTAXNode(role: "AXButton", label: label, classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
+            var root = window([.init(role: "AXGroup", classes: ["message-list"])], composer: field("Message", value: "Send a message"), extra: [
+                .init(role: "AXPopUpButton", label: "Open Example Dot’s profile"),
+                .init(role: "AXGroup", children: [.init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]), button] + (duplicate ? [button] : []))
+            ])
+            root.children[0].label = "Example Dot"
+            return try ChatGPTAppObservation(root: root)
+        }
+        XCTAssertEqual(try dot("Example Dot 1 unread message").unreadDotReplyCount, 1)
+        XCTAssertEqual(try dot("Example Dot 12 unread messages").unreadDotReplyCount, 12)
+        XCTAssertNil(try dot("Other Dot 1 unread message").unreadDotReplyCount)
+        XCTAssertNil(try dot("Example Dot 0 unread messages").unreadDotReplyCount)
+        XCTAssertNil(try dot("Example Dot").unreadDotReplyCount)
+        XCTAssertNil(try dot("Example Dot 1 unread message", duplicate: true).unreadDotReplyCount)
+        XCTAssertNil(try ChatGPTAppObservation(root: window()).unreadDotReplyCount)
+    }
     func testActualPlaceholderRequiresNativePlaceholderChild() throws {
         XCTAssertEqual(try ChatGPTAppObservation(root: window()).draft, "")
         for value in ["Ask ChatGPT", "Ask ChatGPT\n", "Keep my draft"] {
@@ -263,8 +294,13 @@ final class ChatGPTAppDriverTests: XCTestCase {
 private actor ChatGPTRecordedBindings {
     var prepared: [ChatGPTConversationBinding] = []
     var bound: [ChatGPTConversationBinding] = []
-    func prepare(_ value: ChatGPTConversationBinding) { prepared.append(value) }
-    func bind(_ value: ChatGPTConversationBinding) { bound.append(value) }
+    var events: [String] = []
+    func prepare(_ value: ChatGPTConversationBinding) { prepared.append(value); events.append("prepared") }
+    func submit() { events.append("submit") }
+    func refresh() { events.append("refresh") }
+    func restore() { events.append("restore") }
+    func restoreFailed() { events.append("restore-failed") }
+    func bind(_ value: ChatGPTConversationBinding) { bound.append(value); events.append("bound") }
 }
 
 final class ChatGPTAppSubmissionTests: XCTestCase {
@@ -280,8 +316,12 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let nativeParagraphs: Bool
         let preparation: Preparation
         var stage: URL { directory.appendingPathComponent("stage") }
-        func adapter(transientAfterTyping: Bool = false, partialOutgoingOnce: Bool = false, thinkingStatusOnce: Bool = false, renameReadFailure: Bool = false, renameReadCancellation: Bool = false, prependHistoryAfterSend: Bool = false, dotTransitionOnce: Bool = false) -> ChatGPTAppConversation {
-            ChatGPTAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(3), callTimeout: 3), readNative: { target in
+        func adapter(transientAfterTyping: Bool = false, partialOutgoingOnce: Bool = false, thinkingStatusOnce: Bool = false, renameReadFailure: Bool = false, renameReadCancellation: Bool = false, prependHistoryAfterSend: Bool = false, dotTransitionOnce: Bool = false, staleDotReplyUntilRefresh: Bool = false, timing: DesktopAppConversation.Timing = .init(pollInterval: .milliseconds(1), stableDuration: .zero, replyTimeout: .seconds(3), callTimeout: 3), transformNative: @escaping @Sendable (ChatGPTAXNode) throws -> ChatGPTAXNode = { $0 }) -> ChatGPTAppConversation {
+            ChatGPTAppConversation(executable: executable, timing: timing, readNavigation: { target in
+                guard target == .init(pid: 42, window: 21) else { throw DesktopAppError.unavailable("Wrong exact window") }
+                let index = Int((try? String(contentsOf: stage, encoding: .utf8)) ?? "0") ?? 0
+                return try ChatGPTAppNavigation(root: roots[index])
+            }, readNative: { target in
                 guard target == .init(pid: 42, window: 21) else { throw DesktopAppError.unavailable("Wrong exact window") }
                 let index = Int((try? String(contentsOf: stage, encoding: .utf8)) ?? "0") ?? 0
                 let transientMarker = directory.appendingPathComponent("transient-read")
@@ -369,14 +409,29 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
                     }
                     prepend(&root)
                 }
-                return try ChatGPTAppObservation(root: root)
+                if staleDotReplyUntilRefresh, FileManager.default.fileExists(atPath: directory.appendingPathComponent("submitted-draft").path) {
+                    root.children[0].children.removeAll { $0.children.contains { $0.label == "New chat" && $0.classes.contains("sidebar-item") } }
+                    root.children[0].children.insert(.init(role: "AXGroup", children: [
+                        .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
+                        .init(role: "AXButton", label: "Example Dot 1 unread message", classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
+                    ]), at: 0)
+                    let foreground = try? String(contentsOf: directory.appendingPathComponent("foreground-window"), encoding: .utf8)
+                    if foreground != "42:21", !FileManager.default.fileExists(atPath: directory.appendingPathComponent("reply-refreshed").path) {
+                        func hideReply(_ node: inout ChatGPTAXNode) {
+                            if node.classes.contains("message-list") { node.children.removeLast() }
+                            else { for child in node.children.indices { hideReply(&node.children[child]) } }
+                        }
+                        hideReply(&root)
+                    }
+                }
+                return try ChatGPTAppObservation(root: transformNative(root))
             })
         }
         func calls() -> [[String: Any]] {
             (try? String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? []
         }
     }
-    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false, preparation: Preparation = .ready) throws -> Fixture {
+    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false, unreadableStart: Bool = false, unreadDotStart: Bool = false, preparation: Preparation = .ready) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chatgpt-submit-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var binding = ChatGPTConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, kind: kind)
@@ -437,6 +492,19 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             actions.append(["tool": "type_text", "label": "Chat title", "role": "AXTextField", "text": binding.dedicatedTitle]); roots.append(root(sent: true, titleField: binding.dedicatedTitle))
             actions.append(["tool": "press_key", "label": "Chat title", "role": "AXTextField", "key": "return"]); roots.append(root(sent: true, saved: true))
         }
+        if unreadDotStart {
+            for index in roots.indices {
+                roots[index].children[0].children.insert(.init(role: "AXGroup", children: [
+                    .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
+                    control("AXButton", "Example Dot", x: 60)
+                ]), at: 0)
+                roots[index].children[0].children[0].children[1].classes = ["sidebar-item"]
+            }
+            var unread = roots[0]
+            unread.children[0].children[0].children[1].label = "Example Dot 1 unread message"
+            roots.insert(unread, at: 0)
+            actions.insert(["tool": "click", "label": "Example Dot 1 unread message", "role": "AXButton", "pixel": "yes"], at: 0)
+        }
         if reopen {
             let sidebar = ChatGPTAXNode(role: "AXButton", label: binding.fallbackTitle ?? binding.dedicatedTitle, classes: ["sidebar-item"], frame: zeroHeightSidebar ? .init(x: 173, y: 929, w: 391, h: 0) : nil)
             for index in roots.indices { roots[index].children[0].children.insert(sidebar, at: 0) }
@@ -461,12 +529,32 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         }
         if dotSetupDestination {
             var home = root()
+            if kind == .dots {
+                home.label = "ChatGPT"
+                func chatGPTComposer(_ node: inout ChatGPTAXNode) {
+                    if node.role == "AXTextArea" { node.label = "Ask ChatGPT"; node.value = "Ask ChatGPT\n" }
+                    for child in node.children.indices { chatGPTComposer(&node.children[child]) }
+                }
+                chatGPTComposer(&home)
+            }
             var newChat = control("AXButton", "New chat", x: 70)
             newChat.classes = ["sidebar-item"]
             var dot = control("AXButton", "Your dot", x: 80)
             dot.classes = ["sidebar-item"]
             home.children[0].children.insert(.init(role: "AXGroup", children: [newChat, dot]), at: 0)
             roots.insert(home, at: 0)
+            actions.insert(["tool": "click", "label": "Your dot", "role": "AXButton"], at: 0)
+        }
+        if unreadableStart {
+            var newChat = control("AXButton", "New chat", x: 70); newChat.classes = ["sidebar-item"]
+            var dot = control("AXButton", "Your dot", x: 80); dot.classes = ["sidebar-item"]
+            let unrelated = ChatGPTAXNode(role: "AXWindow", label: "Existing task", children: [
+                .init(role: "AXWebArea", url: "app://-/index.html", children: [
+                    .init(role: "AXGroup", children: [newChat, dot]),
+                    .init(role: "AXGroup", id: "task-chat-panel", children: [control("AXTextArea", "Task editor", value: "Keep this unrelated draft", x: 0)])
+                ])
+            ])
+            roots.insert(unrelated, at: 0)
             actions.insert(["tool": "click", "label": "Your dot", "role": "AXButton"], at: 0)
         }
         if existingWork {
@@ -555,6 +643,10 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             no_focus=(p/'preparation').read_text()=='focusNoOp' and tool=='click' and e['role']=='AXTextArea'
             if not(no_focus or (e['label']=='Automatic title' and tool=='click' and (p/'rename-failure').exists())):(p/'stage').write_text(str(s+1))
             if not(e['label']=='Send' and (p/'unknown-send').exists()):print(json.dumps({'effect':'unverifiable'}))
+        elif tool=='bring_to_front':
+            assert (a['pid'],a['window_id']) in [(42,21),(777,99)]
+            (p/'foreground-window').write_text(str(a['pid'])+':'+str(a['window_id']))
+            print(json.dumps({'activated':True,'pid':a['pid'],'window_id':a['window_id'],'exact_window_effect':{'verified':True}}))
         elif tool=='end_session':print('{}')
         else:raise AssertionError('Unexpected tool '+tool)
         sys.stdout.flush();time.sleep(0.02)
@@ -634,12 +726,18 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
     func testNativeChatGPTSingleSendRenamesAndPersistsOwnedThread() async throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let recorded = ChatGPTRecordedBindings()
-        let answer = try await fixture.adapter().reply("First question", binding: fixture.binding, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
+        let answer = try await fixture.adapter().reply("First question", binding: fixture.binding, onSubmitAction: {
+            XCTAssertEqual(try? String(contentsOf: fixture.directory.appendingPathComponent("native-draft"), encoding: .utf8), fixture.binding.firstMessage("First question"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("submitted-draft").path))
+            await recorded.submit()
+        }, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
         XCTAssertEqual(answer, "ANSWER")
         let prepared = await recorded.prepared, bound = await recorded.bound
         XCTAssertEqual(prepared.count, 1); XCTAssertNil(prepared[0].title)
         XCTAssertEqual(prepared[0].firstPrompt, fixture.binding.firstMessage("First question"))
         XCTAssertEqual(bound.count, 1); XCTAssertEqual(bound[0].title, fixture.binding.dedicatedTitle)
+        let events = await recorded.events
+        XCTAssertEqual(events, ["prepared", "submit", "bound"])
         XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 2)
         XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "press_key" }.count, 3)
         XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "8")
@@ -656,14 +754,250 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         for followup in [false, true] {
             let fixture = try fixture(kind: .dots, followup: followup); defer { try? FileManager.default.removeItem(at: fixture.directory) }
             let recorded = ChatGPTRecordedBindings()
-            let answer = try await fixture.adapter().reply(followup ? "Follow-up" : "First question", binding: fixture.binding, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
+            let answer = try await fixture.adapter().reply(followup ? "Follow-up" : "First question", binding: fixture.binding, onSubmitAction: {
+                XCTAssertEqual(try? String(contentsOf: fixture.directory.appendingPathComponent("native-draft"), encoding: .utf8), followup ? "Follow-up" : fixture.binding.firstMessage("First question"))
+                XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("submitted-draft").path))
+                await recorded.submit()
+            }, onPrepared: { await recorded.prepare($0) }, onBinding: { await recorded.bind($0) })
             XCTAssertEqual(answer, "ANSWER")
             let bound = await recorded.bound
             XCTAssertEqual(bound.first?.title, "Example Dot")
             XCTAssertEqual(bound.first?.firstPrompt, fixture.binding.firstMessage("First question"))
+            let events = await recorded.events
+            XCTAssertEqual(events, ["prepared", "submit", "bound"])
             XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 1)
             XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "type_text" }.count, followup ? 1 : 2)
         }
+    }
+    func testDotsUnreadFollowupRefreshesOnceAndRestoresFocusBeforeReturningReplyWithoutResending() async throws {
+        let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let recorded = ChatGPTRecordedBindings()
+        let control = DesktopAppConversation(executable: f.executable, delivery: .foreground)
+        let (deadlineGate, deadline) = AsyncStream<Void>.makeStream()
+        defer { deadline.finish() }
+        let clock = AdvancingClock()
+        let started = clock.now
+        let timing = DesktopAppConversation.Timing(pollInterval: .seconds(1), stableDuration: .seconds(3), replyTimeout: .seconds(10), callTimeout: 3, replyClock: .init(clock))
+        let answer = try await f.adapter(staleDotReplyUntilRefresh: true, timing: timing).reply("Follow-up", binding: f.binding, refreshUnreadReply: { target in
+            XCTAssertEqual(target, .init(pid: 42, window: 21))
+            XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
+            await recorded.refresh()
+            return try await control.beginReplyRefresh(target, session: "fixture-dot-refresh", host: .init(pid: 777, window: 99), restoreDelay: {
+                for await _ in deadlineGate { break }
+            }, hostIsActive: { _ in true })
+        }, onPrepared: { await recorded.prepare($0) }, onBinding: {
+            XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("foreground-window"), encoding: .utf8), "777:99")
+            await recorded.bind($0)
+        })
+        XCTAssertEqual(answer, "ANSWER")
+        XCTAssertGreaterThanOrEqual(clock.now - started, .seconds(4))
+        let events = await recorded.events
+        XCTAssertEqual(events, ["prepared", "refresh", "bound"])
+        let activations = f.calls().filter { $0["tool"] as? String == "bring_to_front" }
+        XCTAssertEqual(activations.compactMap { ($0["arguments"] as? [String: Any])?["pid"] as? Int }, [42, 777])
+        let mutations = f.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(mutations.map { $0["tool"] as? String }, ["click", "type_text", "click"], "Acknowledge the old badge before typing; refreshing must never replay input or Send")
+    }
+    func testDotsUnchangedUnreadBadgeStopsBeforeTypingOrReservingInput() async throws {
+        let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let timing = DesktopAppConversation.Timing(pollInterval: .seconds(1), stableDuration: .zero, replyTimeout: .seconds(10), callTimeout: 3, replyClock: .init(AdvancingClock()))
+        let adapter = f.adapter(timing: timing, transformNative: { root in
+            var root = root
+            root.children[0].children[0].children[1].label = "Example Dot 1 unread message"
+            return root
+        })
+        do {
+            _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("No input is reserved until the old badge clears") }, onBinding: { _ in XCTFail("No reply can be bound") })
+            XCTFail("An unchanged unread badge must block before typing")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("unread"), error.localizedDescription) }
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path))
+    }
+    func testDotsUnreadAcknowledgementRejectsHistoryChangesAndPreservesAnExternalDraft() async throws {
+        for historyChanged in [false, true] {
+            let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let adapter = f.adapter(transformNative: { root in
+                guard ((try? String(contentsOf: f.stage, encoding: .utf8)) ?? "0") != "0" else { return root }
+                var root = root
+                func change(_ node: inout ChatGPTAXNode) {
+                    if historyChanged, node.classes.contains("message-list") {
+                        node.children.append(.init(role: "AXGroup", classes: ["message-row", "self"], children: [.init(role: "AXGroup", classes: ["message-bubble"], children: [.init(role: "AXStaticText", value: "Unrelated outgoing")])]))
+                    }
+                    if !historyChanged, node.role == "AXTextArea" { node.value = "Keep this external draft"; node.children = [] }
+                    for child in node.children.indices { change(&node.children[child]) }
+                }
+                change(&root)
+                return root
+            })
+            do {
+                _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("Changed native work must not reserve input") }, onBinding: { _ in XCTFail("Must not bind foreign work") })
+                XCTFail("Changed native work must stop before typing")
+            } catch { XCTAssertTrue(error.localizedDescription.contains("Dot conversation changed"), error.localizedDescription) }
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+            XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+        }
+    }
+    func testDotsMissingSidebarAfterAcknowledgementCannotMasqueradeAsClearedUnread() async throws {
+        let f = try fixture(kind: .dots, followup: true, unreadDotStart: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { root in
+            guard ((try? String(contentsOf: f.stage, encoding: .utf8)) ?? "0") != "0" else { return root }
+            var root = root
+            root.children[0].children.removeAll { $0.children.contains { $0.label == "New chat" } }
+            return root
+        })
+        do {
+            _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("A missing sidebar does not prove the old badge cleared") }, onBinding: { _ in XCTFail("No reply") })
+            XCTFail("Missing acknowledgement must stop")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Dot navigation"), error.localizedDescription) }
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+    }
+    func testDotsNavigatingFromChatGPTPreservesTheDestinationsExistingDraft() async throws {
+        let f = try fixture(kind: .dots, followup: true, dotSetupDestination: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { root in
+            guard ((try? String(contentsOf: f.stage, encoding: .utf8)) ?? "0") != "0" else { return root }
+            var root = root
+            func draft(_ node: inout ChatGPTAXNode) {
+                if node.role == "AXTextArea" { node.value = "Keep this external draft"; node.children = [] }
+                for child in node.children.indices { draft(&node.children[child]) }
+            }
+            draft(&root)
+            return root
+        })
+        do {
+            _ = try await adapter.reply("Follow-up", binding: f.binding, onPrepared: { _ in XCTFail("A drafted destination must stop before reserving input") }, onBinding: { _ in XCTFail("No reply") })
+            XCTFail("Drafted destination must stop")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("draft or active response"), error.localizedDescription) }
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "type_text" })
+    }
+    func testDotsFailedOptionalRefreshKeepsPollingWithoutResendingAndPreservesCancellation() async throws {
+        for cancelled in [false, true] {
+            let f = try fixture(kind: .dots, followup: true)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let recorded = ChatGPTRecordedBindings()
+            do {
+                let answer = try await f.adapter(staleDotReplyUntilRefresh: true).reply("Follow-up", binding: f.binding, refreshUnreadReply: { _ in
+                    await recorded.refresh()
+                    try Data().write(to: f.directory.appendingPathComponent("reply-refreshed"))
+                    if cancelled { throw CancellationError() }
+                    throw DesktopAppError.unavailable("Optional activation failed")
+                }, onPrepared: { _ in }, onBinding: { await recorded.bind($0) })
+                XCTAssertFalse(cancelled)
+                XCTAssertEqual(answer, "ANSWER")
+            } catch {
+                XCTAssertTrue(cancelled, error.localizedDescription)
+                XCTAssertTrue(error is CancellationError, error.localizedDescription)
+            }
+            let events = await recorded.events
+            XCTAssertEqual(events, cancelled ? ["refresh"] : ["refresh", "bound"])
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        }
+    }
+    func testDotsUnchangedOldUnreadBadgeDoesNotConsumeRefreshBeforeNewReply() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let reads = f.directory.appendingPathComponent("post-send-reads")
+        let adapter = f.adapter(staleDotReplyUntilRefresh: true, transformNative: { root in
+            var root = root
+            let submitted = FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path)
+            let read = submitted ? (Int((try? String(contentsOf: reads, encoding: .utf8)) ?? "0") ?? 0) + 1 : 0
+            let draft = (try? String(contentsOf: f.directory.appendingPathComponent("native-draft"), encoding: .utf8)) ?? ""
+            if submitted { try String(read).write(to: reads, atomically: true, encoding: .utf8) }
+            root.children[0].children.removeAll { $0.children.contains { $0.label == "New chat" && $0.classes.contains("sidebar-item") } }
+            root.children[0].children.insert(.init(role: "AXGroup", children: [
+                .init(role: "AXButton", label: "New chat", classes: ["sidebar-item"]),
+                .init(role: "AXButton", label: read == 2 || (read == 0 && draft.isEmpty) ? "Example Dot" : "Example Dot 1 unread message", classes: ["sidebar-item"], frame: .init(x: 10, y: 20, w: 100, h: 30))
+            ]), at: 0)
+            return root
+        })
+        let answer = try await adapter.reply("Follow-up", binding: f.binding, refreshUnreadReply: { _ in
+            XCTAssertEqual(try String(contentsOf: reads, encoding: .utf8), "3", "An unchanged old badge is not evidence of this reply")
+            try Data().write(to: f.directory.appendingPathComponent("reply-refreshed"))
+            let owner = try await DesktopForegroundOwner.shared.acquire()
+            return DesktopForegroundLease(owner: owner) {}
+        }, onPrepared: { _ in }, onBinding: { _ in })
+        XCTAssertEqual(answer, "ANSWER")
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+    }
+    func testDotsVisibleReplyAndForeignOutgoingNeverRequestForegroundRefresh() async throws {
+        for wrongOutgoing in [false, true] {
+            let f = try fixture(kind: .dots, followup: true, wrongOutgoing: wrongOutgoing)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            if !wrongOutgoing { try Data().write(to: f.directory.appendingPathComponent("reply-refreshed")) }
+            do {
+                let answer = try await f.adapter(staleDotReplyUntilRefresh: true).reply("Follow-up", binding: f.binding, refreshUnreadReply: { _ in
+                    XCTFail("A visible reply or an unowned outgoing cannot trigger foreground refresh")
+                    return nil
+                }, onPrepared: { _ in }, onBinding: { _ in })
+                XCTAssertFalse(wrongOutgoing)
+                XCTAssertEqual(answer, "ANSWER")
+            } catch {
+                XCTAssertTrue(wrongOutgoing)
+                XCTAssertTrue(error.localizedDescription.contains("outgoing message did not match"), error.localizedDescription)
+            }
+        }
+    }
+    func testDotsRetainedRefreshAnswerDoesNotSurviveChangedConversationOrForeignMessage() async throws {
+        for changedTitle in [false, true] {
+            let f = try fixture(kind: .dots, followup: true)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let control = DesktopAppConversation(executable: f.executable, delivery: .foreground)
+            let timing = DesktopAppConversation.Timing(pollInterval: .seconds(1), stableDuration: .seconds(3), replyTimeout: .seconds(6), callTimeout: 3, replyClock: .init(AdvancingClock()))
+            let adapter = f.adapter(staleDotReplyUntilRefresh: true, timing: timing, transformNative: { root in
+                guard (try? String(contentsOf: f.directory.appendingPathComponent("foreground-window"), encoding: .utf8)) == "777:99" else { return root }
+                var root = root
+                if changedTitle {
+                    root.label = "Another Dot"
+                    for index in root.children[0].children.indices where root.children[0].children[index].role == "AXPopUpButton" {
+                        root.children[0].children[index].label = "Open Another Dot’s profile"
+                    }
+                }
+                else {
+                    func appendForeign(_ node: inout ChatGPTAXNode) {
+                        if node.classes.contains("message-list") {
+                            node.children.append(.init(role: "AXGroup", classes: ["message-row", "self"], children: [.init(role: "AXGroup", classes: ["message-bubble"], children: [.init(role: "AXStaticText", value: "Unrelated outgoing")])]))
+                        } else { for child in node.children.indices { appendForeign(&node.children[child]) } }
+                    }
+                    appendForeign(&root)
+                }
+                return root
+            })
+            do {
+                _ = try await adapter.reply("Follow-up", binding: f.binding, refreshUnreadReply: { target in
+                    try await control.beginReplyRefresh(target, session: "changed-dot", host: .init(pid: 777, window: 99), hostIsActive: { _ in true })
+                }, onPrepared: { _ in }, onBinding: { _ in XCTFail("A changed conversation must not bind the retained reply") })
+                XCTFail("A changed conversation must invalidate the retained reply")
+            } catch { XCTAssertTrue(error.localizedDescription.contains(changedTitle ? "conversation changed" : "has not completed a verified reply"), error.localizedDescription) }
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        }
+    }
+    func testDotsRefreshRestoreFailureKeepsOwnedReplyAndReportsFailureWithoutResending() async throws {
+        struct RestoreFailure: Error {}
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let recorded = ChatGPTRecordedBindings()
+        let answer = try await f.adapter(staleDotReplyUntilRefresh: true).reply("Follow-up", binding: f.binding, refreshUnreadReply: { _ in
+            try Data().write(to: f.directory.appendingPathComponent("reply-refreshed"))
+            let owner = try await DesktopForegroundOwner.shared.acquire()
+            return DesktopForegroundLease(owner: owner, onRestoreFailure: { detail in
+                XCTAssertTrue(detail.contains("could not regain focus"))
+                await recorded.restoreFailed()
+            }) { throw RestoreFailure() }
+        }, onPrepared: { _ in }, onBinding: { await recorded.bind($0) })
+        XCTAssertEqual(answer, "ANSWER")
+        let events = await recorded.events
+        XCTAssertEqual(events, ["restore-failed", "bound"])
+        let nextOwner = try await DesktopForegroundOwner.shared.acquire()
+        await DesktopForegroundOwner.shared.release(nextOwner)
+        XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
+        XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
     }
     func testUnknownSendResultIsObservedWithoutSecondSubmission() async throws {
         let fixture = try fixture(kind: .dots, unknownSend: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -805,6 +1139,28 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(mutations.count, 1)
         XCTAssertEqual(mutations.first?["tool"] as? String, "click")
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("dot-transition-read").path))
+    }
+    func testDotsConnectsFromPageWithoutSupportedComposerWithoutTypingOrSending() async throws {
+        let fixture = try fixture(kind: .dots, unreadableStart: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: fixture.roots[0])) { error in
+            guard case ChatGPTObservationError.composerUnavailable = error else { return XCTFail("Must reproduce the unavailable composer failure") }
+        }
+        try await fixture.adapter().checkAvailable(kind: .dots)
+        let mutations = fixture.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(mutations.count, 1)
+        XCTAssertEqual(mutations.first?["tool"] as? String, "click")
+        XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "1")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("native-draft").path))
+    }
+    func testDotFirstPromptCanNavigatePastUnrelatedUnsupportedComposer() async throws {
+        let fixture = try fixture(kind: .dots, unreadableStart: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let answer = try await fixture.adapter().reply("First question", binding: fixture.binding, onPrepared: { _ in }, onBinding: { _ in })
+        XCTAssertEqual(answer, "ANSWER")
+        XCTAssertEqual(try String(contentsOf: fixture.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), fixture.binding.firstMessage("First question"))
+        let clicks = fixture.calls().filter { $0["tool"] as? String == "click" }
+        XCTAssertEqual(clicks.count, 2, "One Dot navigation and exactly one submission")
     }
     func testNewChatGPTPromptFromDotSetupUsesDedicatedChat() async throws {
         let fixture = try fixture(dotSetup: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }

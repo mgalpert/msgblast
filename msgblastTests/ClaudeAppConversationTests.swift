@@ -42,6 +42,28 @@ final class ClaudeAppConversationTests: XCTestCase {
         XCTAssertEqual(observed.messages, [.init(role: .user, text: "Full prompt"), .init(role: .assistant, text: "Full answer")])
         XCTAssertEqual(observed.draft, "")
     }
+    func testAssistantHeadingExcerptDoesNotTruncateNativeReply() throws {
+        let paragraphs = ["First paragraph has more than its opening sentence. Keep this sentence too.",
+                          "Second paragraph contains the rest of the answer.", "END-OF-REPLY"]
+        var answer = article(2, 2, "Claude responded: First paragraph has more than its opening sentence.", "")
+        answer.children[1].children = [.init(role: "AXHeading", label: "Planning a walk", children: [.init(role: "AXStaticText", value: "Planning a walk")])]
+            + paragraphs.map { .init(role: "AXStaticText", value: $0) }
+        answer.children.append(.init(role: "AXGroup", classes: ["sr-only"], children: [.init(role: "AXStaticText", value: "Response announcement")]))
+        let observed = try ClaudeAppObservation(root: tree([article(1, 2, "You said: Prompt", "Prompt"), answer]))
+        XCTAssertEqual(try ClaudeAppReceipt(baseline: [], prompt: "Prompt").reply(in: observed.messages), (["Planning a walk"] + paragraphs).joined(separator: "\n\n"))
+    }
+    func testAssistantHeadingDoesNotSubstituteForAnUnrenderedBody() {
+        let bodies: [[ClaudeAXNode]] = [[], [.init(role: "AXStaticText", value: "")],
+                                      [.init(role: "AXStaticText", value: ""), .init(role: "AXStaticText", value: "")],
+                                      [.init(role: "AXStaticText", value: " \n\t")]]
+        for body in bodies {
+            var answer = article(1, 1, "Claude responded: Summary only", "")
+            answer.children[1].children = body
+            XCTAssertThrowsError(try ClaudeAppObservation(root: tree([answer]))) { error in
+                guard case ClaudeObservationError.transient = error else { return XCTFail("Wait for the actual reply body instead of completing with its summary") }
+            }
+        }
+    }
     func testUnknownSenderOrMissingMessageIsNotAttributed() {
         XCTAssertThrowsError(try ClaudeAppObservation(root: tree([article(1, 1, "Unknown speaker", "Text")])))
         XCTAssertThrowsError(try ClaudeAppObservation(root: tree([article(2, 2, "Claude responded: Answer", "Answer")]))) { error in
@@ -94,17 +116,13 @@ private final class ClaudeOneTransientRead: @unchecked Sendable {
     }
 }
 
-private final class ClaudeStartupReads: @unchecked Sendable {
-    private let lock = NSLock()
-    private var reads = 0
-    func isLoading() -> Bool { lock.withLock { reads += 1; return reads <= 3 } }
-}
-
 private actor ClaudeRecordedBindings {
     var prepared: [ClaudeConversationBinding] = []
     var bound: [ClaudeConversationBinding] = []
+    var submissions = 0
     func prepare(_ value: ClaudeConversationBinding) { prepared.append(value) }
     func bind(_ value: ClaudeConversationBinding) { bound.append(value) }
+    func submitted() { submissions += 1 }
 }
 
 final class ClaudeAppDriverTests: XCTestCase {
@@ -113,6 +131,7 @@ final class ClaudeAppDriverTests: XCTestCase {
         let executable: URL
         let binding: ClaudeConversationBinding
         let observations: [ClaudeAppObservation]
+        let unrelatedHistory: ClaudeAXNode?
         var stage: URL { directory.appendingPathComponent("stage") }
         func calls() -> [[String: Any]] {
             ((try? String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8)) ?? "").split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
@@ -136,28 +155,52 @@ final class ClaudeAppDriverTests: XCTestCase {
         }
         func adapter(transientAfterSend: Bool = false, coldStart: Bool = false) -> ClaudeAppConversation {
             let failure = ClaudeOneTransientRead()
-            let startup = ClaudeStartupReads()
             let path = stage
             let observations = observations
-            return ClaudeAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5), readNative: { _ in
+            return ClaudeAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5), readNative: { _, mode in
                 let stage = Int((try? String(contentsOf: path, encoding: .utf8)) ?? "0") ?? 0
-                if coldStart, startup.isLoading() { return try ClaudeAppObservation(root: .init(role: "AXWindow")) }
+                if coldStart, !FileManager.default.fileExists(atPath: path.deletingLastPathComponent().appendingPathComponent("driver-initialized").path) {
+                    return try ClaudeAppObservation(root: .init(role: "AXWindow"))
+                }
                 if transientAfterSend && stage == 2 && failure.claim() { throw ClaudeObservationError.transient("Claude's message history is incomplete.") }
+                if stage == 4, let unrelatedHistory = self.unrelatedHistory { return try ClaudeAppObservation(root: unrelatedHistory, mode: mode) }
                 let original = observations[min(stage, observations.count - 1)]
                 guard stage == 0, let draft = try? String(contentsOf: path.deletingLastPathComponent().appendingPathComponent("draft"), encoding: .utf8) else { return original }
                 return try Self.withDraft(draft, original: original, collapseBlankParagraphs: FileManager.default.fileExists(atPath: path.deletingLastPathComponent().appendingPathComponent("collapse-native-paragraphs").path))
             })
         }
     }
-    func testOnboardingWaitsForColdStartChatAddressWithoutInput() async throws {
-        let fixture = try fixture()
+    func testOnboardingAndNewComparisonDoNotRequireUnrelatedVirtualizedHistory() async throws {
+        let fixture = try fixture(virtualizedInitialHistory: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let control = fixture.adapter()
+        try await control.checkAvailable()
+        XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") })
+        let prepared = try await control.prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
+        XCTAssertEqual(prepared, fixture.binding)
+        let actions = fixture.calls().filter { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") }
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual((actions.first?["arguments"] as? [String: Any])?["element_token"] as? String, "new-4")
+    }
+    func testVirtualizedOwnedHistoryStillPreventsFollowupWithoutInput() async throws {
+        let fixture = try fixture(virtualizedInitialHistory: true, followup: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do {
+            _ = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: fixture.binding)
+            XCTFail("An owned conversation still needs complete history")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("history is incomplete"), error.localizedDescription) }
+        XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") })
+    }
+
+    func testOnboardingInitializesDriverSnapshotBeforeReadingColdNativeControls() async throws {
+        let fixture = try fixture(initialDriverShell: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         try await fixture.adapter(coldStart: true).checkAvailable()
         XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") })
-        XCTAssertTrue(fixture.calls().contains { $0["tool"] as? String == "get_window_state" })
+        XCTAssertGreaterThanOrEqual(fixture.calls().filter { $0["tool"] as? String == "get_window_state" }.count, 2, "The initialization shell must not substitute for a verified composer snapshot")
     }
 
-    private func fixture(followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false) throws -> Fixture {
+    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000001")!
@@ -207,11 +250,12 @@ final class ClaudeAppDriverTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: snapshots).write(to: dir.appendingPathComponent("snapshots.json"))
         try Data(prompt.utf8).write(to: dir.appendingPathComponent("prompt"))
         if followup { try Data().write(to: dir.appendingPathComponent("followup")) }
-        if reopen { try Data("4".utf8).write(to: dir.appendingPathComponent("stage")) }
+        if reopen || virtualizedInitialHistory { try Data("4".utf8).write(to: dir.appendingPathComponent("stage")) }
         if unknownLaunchResult { try Data().write(to: dir.appendingPathComponent("unknown-launch")) }
         if stripDriverTrailingNewlines { try Data().write(to: dir.appendingPathComponent("strip-driver-newlines")) }
         if corruptDriverTextAfterNewline { try Data().write(to: dir.appendingPathComponent("corrupt-driver-text")) }
         if collapseNativeBlankParagraphs { try Data().write(to: dir.appendingPathComponent("collapse-native-paragraphs")) }
+        if initialDriverShell { try Data().write(to: dir.appendingPathComponent("initial-driver-shell")) }
         let script = """
         #!/usr/bin/env python3
         import sys,json,pathlib,time,base64
@@ -233,6 +277,11 @@ final class ClaudeAppDriverTests: XCTestCase {
         elif tool=='get_window_state':
             assert a['pid']==42 and a['window_id']==21
             state=json.loads((p/'snapshots.json').read_text())[s]
+            first=not (p/'driver-initialized').exists()
+            (p/'driver-initialized').touch()
+            if first and (p/'initial-driver-shell').exists():
+                print(json.dumps({'pid':42,'window_id':21,'elements':[{'role':'AXWindow'}]}))
+                sys.exit(0)
             if s==0 and (p/'draft').exists():
                 actual=(p/'draft').read_text()
                 state['elements'][0]['value']=actual
@@ -264,6 +313,9 @@ final class ClaudeAppDriverTests: XCTestCase {
             (p/'draft').write_text(draft)
             if draft==(p/'prompt').read_text():(p/'stage').write_text('1')
             print(json.dumps({'effect':'unverifiable'}))
+        elif tool=='click' and s==4:
+            assert a['element_token']=='new-4' and a['pid']==42 and a['window_id']==21
+            (p/'stage').write_text('0');print(json.dumps({'effect':'unverifiable'}))
         elif tool=='click':
             assert s==1 and a['element_token']=='send-1'
             assert a['pid']==42 and a['window_id']==21 and a['delivery_mode']=='background'
@@ -275,14 +327,30 @@ final class ClaudeAppDriverTests: XCTestCase {
         let executable = dir.appendingPathComponent("driver")
         try Data(script.utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        return .init(directory: dir, executable: executable, binding: binding, observations: observations)
+        let unrelatedHistory: ClaudeAXNode? = virtualizedInitialHistory ? .init(role: "AXWindow", frame: windowFrame, children: [
+            .init(role: "AXWebArea", url: url, children: [.init(role: "AXGroup", subrole: "AXLandmarkMain", children: [
+                .init(role: "AXTextArea", label: "Write your prompt to Claude", value: "\n", frame: fieldFrame, focused: true, children: [.init(role: "AXGroup", classes: ["is-empty", "is-editor-empty"])]),
+                .init(role: "AXGroup", label: "Chat messages", children: [
+                    .init(role: "AXGroup", subrole: "AXDocumentArticle", label: "Message 20 of 27", children: [
+                        .init(role: "AXHeading", label: "Claude responded: An older answer"),
+                        .init(role: "AXStaticText", value: "An older answer")
+                    ])
+                ])
+            ])])
+        ]) : nil
+        return .init(directory: dir, executable: executable, binding: binding, observations: observations, unrelatedHistory: unrelatedHistory)
     }
     func testOnePromptAndOneSendPersistCanonicalURLBeforeAnswerCompletes() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let recorded = ClaudeRecordedBindings()
-        let result = try await fixture.adapter().reply("First question", binding: fixture.binding, onPrepared: { await recorded.prepare($0) }, onBinding: { binding in
+        let result = try await fixture.adapter().reply("First question", binding: fixture.binding, onSubmitAction: {
+            XCTAssertEqual(try? String(contentsOf: fixture.stage, encoding: .utf8), "2")
+            await recorded.submitted()
+        }, onPrepared: { await recorded.prepare($0) }, onBinding: { binding in
             XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "2")
+            let submissions = await recorded.submissions
+            XCTAssertEqual(submissions, 1, "Release foreground ownership after Send, before waiting for the reply")
             // At this callback the adapter has observed the owned outgoing but
             // has not yet read the completed-answer observation at stage 3.
             await recorded.bind(binding)
@@ -291,6 +359,8 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertEqual(result, "ANSWER")
         let prepared = await recorded.prepared
         let bound = await recorded.bound
+        let submissions = await recorded.submissions
+        XCTAssertEqual(submissions, 1)
         XCTAssertEqual(prepared.count, 1)
         XCTAssertNil(prepared[0].url)
         XCTAssertEqual(bound.count, 1)

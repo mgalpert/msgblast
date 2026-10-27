@@ -117,34 +117,18 @@ struct DesktopAppSetupView: View {
                 }
                 HStack {
                     if !installed { Link("Get \(app.name)", destination: session.provider.homeURL) }
-                    if compact, installed, !showConnectionConfirmation {
-                        Button("Connect") { Task { await connect(app) } }
-                            .accessibilityLabel("Connect \(session.provider.name)")
+                    if installed, !compact || !showConnectionConfirmation {
+                        Button(app == .grokBot && !compact ? "Refresh bots" : "Connect") {
+                            Task { await connect(app) }
+                        }.accessibilityLabel(app == .grokBot && !compact ? "Refresh bots" : "Connect \(session.provider.name)")
                             .disabled(busy || session.loading || session.isSending || !session.isEnabled)
-                    } else if !compact, installed && !session.desktopInstallation.isRunning {
-                        Button("Open \(app.name)") { Task {
-                            await session.openDesktopApp()
-                            if app == .grokBot { await loadBots() }
-                        } }
-                            .disabled(busy || session.loading || session.isSending)
-                    } else if !compact, installed, app != .grokBot {
-                        Button(app == .muse ? "Check Muse connection" : "Check connection") {
-                            Task {
-                                await session.connectDesktopConversation()
-                                if app == .gemini, session.isReadyForOnboarding { await session.configureGemini(session.geminiPreferences) }
-                                if session.isReadyForOnboarding { onConnected() }
-                            }
-                        }.disabled(busy || session.loading || session.isSending || !session.isEnabled)
-                    }
-                    if !compact {
-                        Button(app == .grokBot ? "Refresh bots" : "Check installation") {
-                            if app == .grokBot { Task { await loadBots() } }
-                            else { session.refreshDesktopInstallation() }
-                        }
-                            .disabled(busy || session.loading || session.isSending)
-                            .accessibilityIdentifier("check-desktop-installation")
+                            .accessibilityIdentifier("connect-desktop-app")
                     }
                     if session.loading { ProgressView().controlSize(.small) }
+                }
+                if app.requiresForegroundSubmission {
+                    Text("msgblast briefly brings \(app.name) forward to send, then returns you here.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if !session.desktopReady { Text(session.desktopStatus).font(.caption).foregroundStyle(.secondary) }
             }
@@ -174,7 +158,7 @@ struct DesktopAppSetupView: View {
     private func connect(_ app: DesktopAppProvider) async {
         guard await session.prepareDesktopConnection() else { return }
         if app == .grokBot {
-            await loadBots(markConnected: false)
+            await loadBots(markConnected: false, activateIfNeeded: true)
             if let name = session.state.desktopConversation?.name, session.grokBotNames.contains(name) {
                 await session.connectDesktopConversation(botName: name)
                 if session.isReadyForOnboarding { onConnected() }
@@ -188,8 +172,8 @@ struct DesktopAppSetupView: View {
         if session.isReadyForOnboarding { onConnected() }
     }
 
-    private func loadBots(markConnected: Bool = true) async {
-        await session.refreshGrokBots()
+    private func loadBots(markConnected: Bool = true, activateIfNeeded: Bool = false) async {
+        await session.refreshGrokBots(activateIfNeeded: activateIfNeeded)
         if markConnected, session.isReadyForOnboarding { onConnected() }
     }
 }

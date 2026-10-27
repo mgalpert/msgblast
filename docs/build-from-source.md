@@ -191,8 +191,13 @@ and choose its **Connect** action on the connection screen. Gemini’s native pa
 you choose Chat or Task, model, and available thinking levels; install it from
 [Google’s Mac download](https://gemini.google/mac). For
 Grok Bot App, choose your bot from the **Bot** menu in msgblast; the connection
-checks automatically and the saved bot reopens before sending. The check
-does not send a test prompt; it confirms readiness before your first real message.
+checks automatically and the saved bot reopens before sending. Listing, choosing,
+and checking a bot are read-only and work while another conversation has a draft
+or response in progress. Setup preserves that conversation; sending separately
+checks the composer before entering text. The check does not send a test prompt.
+Muse, Grok Bot, and Wabi briefly come forward during an explicit send, then return
+focus to msgblast once the outgoing request is observed. Replies are read in the
+background. Setup checks never take foreground control.
 Native app entries keep separate saved state from their website and webhook
 counterparts; enabling one does not migrate an existing website account or history. See [desktop app conversations](desktop-app-conversations.md) for
 capabilities and limits.
