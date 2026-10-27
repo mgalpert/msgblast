@@ -330,15 +330,53 @@ final class ChatGPTAppDriverTests: XCTestCase {
         }
         XCTAssertTrue(try calls(directory).allSatisfy { ["list_apps", "list_windows"].contains($0) })
     }
+
+    func testChatGPTRecoveryRejectsWrongConversationAndInterleavedMessages() async throws {
+        let (directory, executable) = try fixture(); defer { try? FileManager.default.removeItem(at: directory) }
+        let id = UUID(), binding = ChatGPTConversationBinding(comparisonID: id, kind: .chatgpt)
+        let first = binding.firstMessage("First question")
+        let baseline: [ChatGPTMessage] = [.init(role: .user, text: first), .init(role: .assistant, text: "Earlier answer")]
+        let receipt = try ChatGPTReplyReceipt(comparisonID: id, initialTitle: "Owned chat", firstPrompt: first, prompt: "Follow-up", baseline: baseline)
+        func observation(_ messages: [ChatGPTMessage], title: String = "Owned chat", generating: Bool = false) throws -> ChatGPTAppObservation {
+            let turns = messages.map { message in ChatGPTAXNode(role: "AXGroup", children: [
+                .init(role: "AXHeading", label: message.role == .user ? "You said:" : "ChatGPT said:"),
+                .init(role: "AXGroup", children: [.init(role: "AXStaticText", value: message.text)])
+            ]) }
+            var controls: [ChatGPTAXNode] = [.init(role: "AXTextArea", label: "Ask ChatGPT", value: "Keep this draft"),
+                .init(role: "AXGroup", classes: ["_transcriptContent_test"], children: turns)]
+            if generating { controls.append(.init(role: "AXButton", label: "Stop generating")) }
+            return try .init(root: .init(role: "AXWindow", label: title, children: [.init(role: "AXWebArea", url: "app://-/index.html", children: [.init(role: "AXGroup", id: "test-chat-panel", children: controls)])]))
+        }
+        let outgoing = ChatGPTMessage(role: .user, text: "Follow-up"), reply = ChatGPTMessage(role: .assistant, text: "Late answer")
+        let timing = DesktopAppConversation.Timing(stableDuration: .zero)
+        let correct = try observation(baseline + [outgoing, reply])
+        let recovered = try await ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in correct }).recoverChatGPTReply(receipt)
+        XCTAssertEqual(recovered?.answer, "Late answer")
+        let busy = try observation(baseline + [outgoing, reply], generating: true)
+        let pending = try await ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in busy }).recoverChatGPTReply(receipt)
+        XCTAssertNil(pending)
+        for invalid in [try observation(baseline + [outgoing, reply], title: "Different chat"),
+                        try observation([.init(role: .user, text: "Different first prompt"), baseline[1], outgoing, reply]),
+                        try observation(baseline + [.init(role: .user, text: "Other request"), reply]),
+                        try observation(baseline + [outgoing, reply, .init(role: .user, text: "New request")])] {
+            do {
+                let result = try await ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in invalid }).recoverChatGPTReply(receipt)
+                XCTAssertNil(result)
+            } catch { }
+        }
+        XCTAssertTrue(try calls(directory).allSatisfy { ["list_apps", "list_windows"].contains($0) })
+    }
 }
 
 private actor ChatGPTRecordedBindings {
     var prepared: [ChatGPTConversationBinding] = []
     var bound: [ChatGPTConversationBinding] = []
     var dotsReceipts: [DotsReplyReceipt] = []
+    var chatgptReceipts: [ChatGPTReplyReceipt] = []
     var events: [String] = []
     func prepare(_ value: ChatGPTConversationBinding) { prepared.append(value); events.append("prepared") }
     func receipt(_ value: DotsReplyReceipt) { dotsReceipts.append(value); events.append("receipt") }
+    func chatgptReceipt(_ value: ChatGPTReplyReceipt) { chatgptReceipts.append(value); events.append("receipt") }
     func submitted() { events.append("submitted") }
     func submit() { events.append("submit") }
     func refresh() { events.append("refresh") }
@@ -1257,6 +1295,68 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
     }
     @MainActor
+    func testChatGPTLateRepliesRecoverInitialAndFollowUpWithoutResending() async throws {
+        for followup in [false, true] {
+            let f = try fixture(followup: followup)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let visible = f.directory.appendingPathComponent("late-reply-visible")
+            let timing = DesktopAppConversation.Timing(pollInterval: .seconds(1), stableDuration: .zero,
+                                                       replyTimeout: .seconds(6), callTimeout: 3, replyClock: .init(AdvancingClock()))
+            let adapter = f.adapter(timing: timing, transformNative: { root in
+                guard FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path),
+                      !FileManager.default.fileExists(atPath: visible.path) else { return root }
+                var root = root
+                func hideAnswer(_ node: inout ChatGPTAXNode) {
+                    if node.classes.contains(where: { $0.hasPrefix("_transcriptContent_") }) { node.children.removeLast() }
+                    else { for index in node.children.indices { hideAnswer(&node.children[index]) } }
+                }
+                hideAnswer(&root)
+                return root
+            })
+            let recorded = ChatGPTRecordedBindings(), text = followup ? "Follow-up" : "First question"
+            do {
+                _ = try await adapter.reply(text, binding: f.binding, onPrepared: { await recorded.prepare($0) },
+                                            onChatGPTReceipt: { await recorded.chatgptReceipt($0) },
+                                            onSubmitted: { await recorded.submitted() }, onBinding: { _ in XCTFail("The reply has not arrived") })
+                XCTFail("The initial wait should time out")
+            } catch { XCTAssertTrue(error.localizedDescription.contains("has not completed a verified reply"), error.localizedDescription) }
+            let events = await recorded.events
+            XCTAssertEqual(events, ["prepared", "receipt", "submitted"])
+            let receipts = await recorded.chatgptReceipts, preparations = await recorded.prepared
+            let receipt = try XCTUnwrap(receipts.first), savedBinding = try XCTUnwrap(preparations.first)
+            XCTAssertEqual(receipt.initialTitle, followup ? f.binding.dedicatedTitle : nil)
+            XCTAssertFalse(String(decoding: try JSONEncoder().encode(receipt), as: UTF8.self).contains("Previous answer"))
+            let initialClicks = f.calls().filter { $0["tool"] as? String == "click" }.count
+            XCTAssertEqual(initialClicks, 1)
+
+            let storage = f.directory.appendingPathComponent("workspace.json")
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID; workspace.draft = "Keep my next draft"
+            workspace.chatgptConversations[f.binding.comparisonID.uuidString] = savedBinding
+            var attempt = WebSendAttempt(text: text, status: .uncertain)
+            attempt.comparisonID = f.binding.comparisonID; attempt.messageID = attempt.id.uuidString; attempt.chatgptReplyReceipt = receipt
+            workspace.attempts = [attempt]
+            workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: text)]
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not open an app") })
+            let session = WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            let waiting = await session.reconcileChatGPTReplyOnce()
+            XCTAssertTrue(waiting)
+            try Data().write(to: visible)
+            let stillWaiting = await session.reconcileChatGPTReplyOnce()
+            session.beginShutdown()
+            XCTAssertFalse(stillWaiting)
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            XCTAssertEqual(saved.attempts.first?.status, .observed)
+            XCTAssertEqual(saved.localConversations[f.binding.comparisonID.uuidString]?.map(\.text), [text, "ANSWER"])
+            XCTAssertEqual(saved.draft, "Keep my next draft")
+            if !followup { XCTAssertEqual(saved.chatgptConversations[f.binding.comparisonID.uuidString]?.fallbackTitle, "Automatic title") }
+            XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, initialClicks)
+        }
+    }
+
+    @MainActor
     func testDotsLateReplyIsRecoveredAfterReloadWithoutResendingOrClearingDraft() async throws {
         let f = try fixture(kind: .dots, followup: true)
         defer { try? FileManager.default.removeItem(at: f.directory) }
@@ -1396,6 +1496,43 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(f.calls().filter { $0["tool"] as? String == "click" }.count, 1)
     }
     @MainActor
+    func testChatGPTRecoverySkipsUnconfirmedCancelledAndAmbiguousRequests() async throws {
+        let f = try fixture(followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let first = try XCTUnwrap(f.binding.firstPrompt)
+        let receipt = try ChatGPTReplyReceipt(comparisonID: f.binding.comparisonID, initialTitle: f.binding.dedicatedTitle,
+                                              firstPrompt: first, prompt: "Follow-up", baseline: [.init(role: .user, text: first)])
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not open an app") })
+        for scenario in ["unconfirmed", "cancelled", "wrong binding", "multiple requests", "missing outgoing", "additional message", "duplicate reply", "wrong comparison", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+            workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+            var attempt = WebSendAttempt(text: "Follow-up", status: .uncertain)
+            attempt.comparisonID = f.binding.comparisonID; attempt.messageID = attempt.id.uuidString; attempt.chatgptReplyReceipt = receipt
+            if scenario == "unconfirmed" { attempt.messageID = nil }
+            if scenario == "cancelled" { attempt.chatgptReplyReceipt?.automaticRecovery = false }
+            if scenario == "wrong binding" { workspace.chatgptConversations[f.binding.comparisonID.uuidString]?.firstPrompt = f.binding.firstMessage("Different first prompt") }
+            if scenario == "wrong comparison" { attempt.chatgptReplyReceipt = try .init(comparisonID: UUID(), initialTitle: f.binding.dedicatedTitle, firstPrompt: first, prompt: "Follow-up", baseline: []) }
+            if scenario == "unsupported version" { attempt.chatgptReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[f.binding.comparisonID.uuidString] = [] }
+            if scenario == "additional message" { workspace.localConversations[f.binding.comparisonID.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "duplicate reply" { workspace.localConversations[f.binding.comparisonID.uuidString]?.insert(.init(id: "native-reply-\(attempt.id.uuidString)", role: "assistant", text: "Already saved"), at: 0) }
+            if scenario == "multiple requests" { workspace.attempts.append(WebSendAttempt(text: "Another request", status: .uncertain)) }
+            let storage = f.directory.appendingPathComponent("chatgpt-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: f.adapter())
+            session.connect(automaticallyRefresh: false)
+            let continuing = await session.reconcileChatGPTReplyOnce()
+            XCTAssertFalse(continuing, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(f.calls().isEmpty, "Unsafe recovery must not inspect or interact with the native app")
+    }
+
+    @MainActor
     func testDotsRecoverySkipsUnconfirmedCancelledAndAmbiguousRequests() async throws {
         let f = try fixture(kind: .dots, followup: true)
         defer { try? FileManager.default.removeItem(at: f.directory) }
@@ -1439,6 +1576,49 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             session.beginShutdown()
         }
         XCTAssertTrue(f.calls().isEmpty, "Unsafe recovery must not inspect or interact with the native app")
+    }
+
+    @MainActor
+    func testChatGPTRecoveryRechecksBindingAfterAnInFlightRead() async throws {
+        let f = try fixture(followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        try Data(String(f.roots.count - 1).utf8).write(to: f.stage)
+        let started = expectation(description: "ChatGPT read started"), resume = DispatchSemaphore(value: 0)
+        let marker = f.directory.appendingPathComponent("recovery-read-started")
+        let adapter = f.adapter(transformNative: { root in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker); started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return root
+        })
+        let first = try XCTUnwrap(f.binding.firstPrompt)
+        let receipt = try ChatGPTReplyReceipt(comparisonID: f.binding.comparisonID, initialTitle: f.binding.dedicatedTitle,
+                                              firstPrompt: first, prompt: "Follow-up",
+                                              baseline: [.init(role: .user, text: first), .init(role: .assistant, text: "Previous answer")])
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        var attempt = WebSendAttempt(text: "Follow-up", status: .uncertain)
+        attempt.comparisonID = f.binding.comparisonID; attempt.messageID = attempt.id.uuidString; attempt.chatgptReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = f.directory.appendingPathComponent("chatgpt-in-flight.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not launch ChatGPT") })
+        let session = WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileChatGPTReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.chatgptConversations[f.binding.comparisonID.uuidString]?.firstPrompt = f.binding.firstMessage("Different prompt") }
+        resume.signal()
+        let remaining = await recovery.value
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .uncertain)
+        XCTAssertEqual(saved.localConversations[f.binding.comparisonID.uuidString]?.map(\.text), ["Follow-up"])
+        XCTAssertFalse(f.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0["tool"] as? String ?? "") })
     }
 
     @MainActor

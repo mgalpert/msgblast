@@ -1785,6 +1785,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     }, onDotsReceipt: { [weak self] receipt in
                         guard let self else { throw CancellationError() }
                         try await self.recordDotsReceipt(receipt, attemptID: outgoingID)
+                    }, onChatGPTReceipt: { [weak self] receipt in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordChatGPTReceipt(receipt, attemptID: outgoingID)
                     }, onSubmitted: submitted, onBinding: { [weak self] discovered in
                         guard let self else { throw CancellationError() }
                         try await self.recordChatGPTSubmission(discovered)
@@ -1823,12 +1826,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.museReplyReceipt = state.attempts.first { $0.id == attempt.id }?.museReplyReceipt
             attempt.claudeReplyReceipt = state.attempts.first { $0.id == attempt.id }?.claudeReplyReceipt
             attempt.grokReplyReceipt = state.attempts.first { $0.id == attempt.id }?.grokReplyReceipt
+            attempt.chatgptReplyReceipt = state.attempts.first { $0.id == attempt.id }?.chatgptReplyReceipt
             if error is CancellationError, !shuttingDown || nativeCancellationRequestedBeforeShutdown {
                 attempt.dotsReplyReceipt?.automaticRecovery = false
                 attempt.wabiReplyReceipt?.automaticRecovery = false
                 attempt.museReplyReceipt?.automaticRecovery = false
                 attempt.claudeReplyReceipt?.automaticRecovery = false
                 attempt.grokReplyReceipt?.automaticRecovery = false
+                attempt.chatgptReplyReceipt?.automaticRecovery = false
             }
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
@@ -1938,6 +1943,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         try save()
     }
 
+    private func recordChatGPTReceipt(_ receipt: ChatGPTReplyReceipt, attemptID: UUID) throws {
+        guard provider == .chatgptApp, !storageFailed,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .attempting,
+              state.attempts[index].comparisonID == receipt.comparisonID,
+              state.attempts[index].chatgptReplyReceipt == nil, receipt.version == 1,
+              let binding = try state.chatgptBinding(for: receipt.comparisonID, kind: .chatgpt),
+              binding.firstPrompt == receipt.firstPrompt, !receipt.prompt.isEmpty,
+              receipt.initialTitle == nil || [binding.title, binding.fallbackTitle].contains(receipt.initialTitle) else {
+            throw WebSessionFailure.notSent("The ChatGPT request could not be saved. Nothing was sent.")
+        }
+        state.attempts[index].chatgptReplyReceipt = receipt
+        try save()
+    }
+
     private func recoverableDotsAttempt() -> WebSendAttempt? {
         guard provider == .dotsApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
         let pending = state.attempts.filter { $0.status.isUnresolved }
@@ -1964,7 +1984,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func startNativeRecoveryIfNeeded() {
         guard nativeRecoveryPoll == nil,
-              recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil || recoverableMuseAttempt() != nil || recoverableClaudeAttempt() != nil || recoverableGrokAttempt() != nil else { return }
+              recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil || recoverableMuseAttempt() != nil || recoverableClaudeAttempt() != nil || recoverableGrokAttempt() != nil || recoverableChatGPTAttempt() != nil else { return }
         let generation = UUID()
         nativeRecoveryGeneration = generation
         nativeRecoveryPoll = Task { [weak self] in
@@ -1983,6 +2003,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .museApp { return await reconcileMuseReplyOnce() }
         if provider == .claudeApp { return await reconcileClaudeReplyOnce() }
         if provider == .grokBotApp { return await reconcileGrokReplyOnce() }
+        if provider == .chatgptApp { return await reconcileChatGPTReplyOnce() }
         return false
     }
 
@@ -2126,7 +2147,46 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return recoverableGrokAttempt() != nil
     }
 
-    private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID) throws {
+    private func recoverableChatGPTAttempt() -> WebSendAttempt? {
+        guard provider == .chatgptApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
+        let pending = state.attempts.filter { $0.status.isUnresolved }
+        guard pending.count == 1, let attempt = pending.first,
+              [.waiting, .uncertain].contains(attempt.status), attempt.messageID == attempt.id.uuidString,
+              let comparison = attempt.comparisonID, let receipt = attempt.chatgptReplyReceipt,
+              receipt.version == 1, receipt.automaticRecovery, receipt.comparisonID == comparison,
+              let binding = try? state.chatgptBinding(for: comparison, kind: .chatgpt),
+              binding.firstPrompt == receipt.firstPrompt,
+              receipt.initialTitle == nil || [binding.title, binding.fallbackTitle].contains(receipt.initialTitle),
+              receipt.prompt == (receipt.initialTitle == nil ? binding.firstMessage(attempt.text) : attempt.text),
+              let messages = state.localConversations[comparison.uuidString],
+              messages.last == WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text),
+              !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }) else { return nil }
+        return attempt
+    }
+
+    func reconcileChatGPTReplyOnce() async -> Bool {
+        guard let attempt = recoverableChatGPTAttempt(), let receipt = attempt.chatgptReplyReceipt,
+              let binding = try? state.chatgptBinding(for: receipt.comparisonID, kind: .chatgpt) else { return false }
+        guard !isSending, !loading, !refreshing else { return true }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { return true }
+        do {
+            let result = try await chatgptApp.recoverChatGPTReply(receipt)
+            try Task.checkCancellation()
+            guard let result, let current = recoverableChatGPTAttempt(), current.id == attempt.id,
+                  current.chatgptReplyReceipt == receipt,
+                  (try? state.chatgptBinding(for: receipt.comparisonID, kind: .chatgpt)) == binding else { return recoverableChatGPTAttempt() != nil }
+            var saved = binding
+            if saved.title == nil { saved.title = saved.dedicatedTitle; saved.fallbackTitle = result.title }
+            try finishRecoveredNativeReply(result.answer, attempt: attempt, comparison: receipt.comparisonID, chatgptBinding: saved)
+        } catch is CancellationError { return false }
+        catch {
+            if storageFailed { self.error = "Could not save the ChatGPT reply. Repair storage before continuing." }
+        }
+        return recoverableChatGPTAttempt() != nil
+    }
+
+    private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID, chatgptBinding: ChatGPTConversationBinding? = nil) throws {
         guard let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) else { return }
         let key = comparison.uuidString
         var messages = state.localConversations[key] ?? []
@@ -2135,6 +2195,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard messages.last == outgoing, !messages.contains(where: { $0.id == reply.id }) else { return }
         messages.append(reply)
         let previous = state
+        if let chatgptBinding { try state.recordChatGPTBinding(chatgptBinding) }
         state.localConversations[key] = messages
         state.attempts[index].status = .observed
         state.attempts[index].detail = "Reply observed in the app conversation."
@@ -2143,11 +2204,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts[index].museReplyReceipt = nil
         state.attempts[index].claudeReplyReceipt = nil
         state.attempts[index].grokReplyReceipt = nil
+        state.attempts[index].chatgptReplyReceipt = nil
         do { try save() } catch { state = previous; throw error }
         if error == attempt.detail { error = nil }
         updateNativeSnapshot()
         if provider == .dotsApp { Task { await refresh() } }
-        else if provider == .wabi || provider == .museApp || provider == .claudeApp || provider == .grokBotApp { Task { await refreshAppAfterRecovery(comparison: comparison) } }
+        else if provider == .wabi || provider == .museApp || provider == .claudeApp || provider == .grokBotApp || provider == .chatgptApp { Task { await refreshAppAfterRecovery(comparison: comparison) } }
     }
 
     private func refreshAppAfterRecovery(comparison: UUID) async {
@@ -2162,12 +2224,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider == .wabi { try await wabiApp.checkAvailable() }
             else if provider == .museApp { try await museApp.checkAvailable() }
             else if provider == .claudeApp { try await claudeApp.checkAvailable() }
+            else if provider == .chatgptApp { try await chatgptApp.checkAvailable(kind: .chatgpt) }
             else if provider == .grokBotApp, let binding = grokBinding { try await desktopDriver.checkGrokBot(named: binding.name) }
             else { return }
             guard !shuttingDown, state.comparisonID == comparison,
                   provider != .grokBotApp || state.desktopConversation == grokBinding else { return }
             desktopReady = true
-            desktopStatus = provider == .wabi ? "Dedicated Wabi chat ready" : provider == .museApp ? "Muse side chat ready" : provider == .grokBotApp ? "Connected to \(state.desktopConversation?.name ?? "Grok Bot")" : "Claude ready"
+            desktopStatus = provider == .wabi ? "Dedicated Wabi chat ready" : provider == .museApp ? "Muse side chat ready" : provider == .grokBotApp ? "Connected to \(state.desktopConversation?.name ?? "Grok Bot")" : provider == .chatgptApp ? "ChatGPT ready" : "Claude ready"
         } catch {
             guard !shuttingDown, state.comparisonID == comparison,
                   provider != .grokBotApp || state.desktopConversation == grokBinding else { return }

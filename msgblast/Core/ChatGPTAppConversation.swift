@@ -279,7 +279,7 @@ actor ChatGPTAppConversation {
               !current.generating, current.composer?.focused == true, current.draft == expected else { throw DesktopAppError.unavailable("ChatGPT did not confirm the exact prepared draft. Send was not pressed; review the preserved text.") }
         return current
     }
-    func reply(_ text: String, binding: ChatGPTConversationBinding, onSubmitAction: @Sendable () async -> Void = {}, refreshUnreadReply: @Sendable (DesktopAppConversation.Target) async throws -> DesktopForegroundLease? = { _ in nil }, onPrepared: @Sendable (ChatGPTConversationBinding) async throws -> Void, onDotsReceipt: @Sendable (DotsReplyReceipt) async throws -> Void = { _ in }, onSubmitted: @Sendable () async throws -> Void = {}, onBinding: @Sendable (ChatGPTConversationBinding) async throws -> Void) async throws -> String {
+    func reply(_ text: String, binding: ChatGPTConversationBinding, onSubmitAction: @Sendable () async -> Void = {}, refreshUnreadReply: @Sendable (DesktopAppConversation.Target) async throws -> DesktopForegroundLease? = { _ in nil }, onPrepared: @Sendable (ChatGPTConversationBinding) async throws -> Void, onDotsReceipt: @Sendable (DotsReplyReceipt) async throws -> Void = { _ in }, onChatGPTReceipt: @Sendable (ChatGPTReplyReceipt) async throws -> Void = { _ in }, onSubmitted: @Sendable () async throws -> Void = {}, onBinding: @Sendable (ChatGPTConversationBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("ChatGPT is already handling a request.") }
         occupied = true; defer { occupied = false }
         let session = "msgblast-chatgpt-send-\(UUID())"
@@ -314,6 +314,9 @@ actor ChatGPTAppConversation {
         if binding.kind == .dots {
             try await onDotsReceipt(try .init(comparisonID: binding.comparisonID, title: openedTitle, prompt: prompt,
                                               baseline: baseline, initialUnreadCount: native.unreadDotReplyCount))
+        } else if let firstPrompt = pending.firstPrompt {
+            try await onChatGPTReceipt(try .init(comparisonID: binding.comparisonID, initialTitle: binding.title == nil ? nil : openedTitle,
+                                                  firstPrompt: firstPrompt, prompt: prompt, baseline: baseline))
         }
         var prepared = native
         try await DesktopAppWorkflow.enterText(prompt, before: { _ in }, perform: { step in
@@ -357,7 +360,7 @@ actor ChatGPTAppConversation {
         }, observe: {
             native = try await self.read(target)
             guard var appended = try ownedMessages(native) else { retainedRefreshAnswer = nil; return nil }
-            if binding.kind == .dots, appended.first == .init(role: .user, text: prompt), !submissionObserved {
+            if appended.first == .init(role: .user, text: prompt), !submissionObserved {
                 try await onSubmitted()
                 submissionObserved = true
             }
@@ -409,6 +412,36 @@ actor ChatGPTAppConversation {
             catch { try Task.checkCancellation(); if error is CancellationError { throw error } }
         } else { try await onBinding(saved) }
         return answer
+    }
+
+    /// Inspect the selected dedicated chat without navigating or sending.
+    func recoverChatGPTReply(_ receipt: ChatGPTReplyReceipt) async throws -> (answer: String, title: String)? {
+        let marker = "[msgblast comparison \(receipt.comparisonID.uuidString)]\n\n"
+        guard receipt.version == 1, receipt.firstPrompt.hasPrefix(marker), !receipt.prompt.isEmpty,
+              receipt.initialTitle.map({ !$0.isEmpty }) ?? (receipt.baselineCount == 0 && receipt.prompt == receipt.firstPrompt) else {
+            throw DesktopAppError.unavailable("The saved ChatGPT request cannot be verified.")
+        }
+        guard !occupied else { return nil }
+        occupied = true; defer { occupied = false }
+        let target = try await driver.target(.chatgpt)
+        func answer(_ observation: ChatGPTAppObservation) throws -> (String, String)? {
+            guard observation.kind == .chatgpt, !observation.title.isEmpty,
+                  receipt.initialTitle.map({ $0 == observation.title }) ?? true,
+                  observation.messages.first == .init(role: .user, text: receipt.firstPrompt) else {
+                throw DesktopAppError.unavailable("The selected ChatGPT conversation changed. No reply was attributed.")
+            }
+            let appended = try receipt.appendedMessages(in: observation.messages)
+            if let first = appended.first, first != .init(role: .user, text: receipt.prompt) {
+                throw DesktopAppError.unavailable("The ChatGPT outgoing message changed. No reply was attributed.")
+            }
+            guard !observation.generating, appended.count == 2,
+                  appended[1].role == .assistant, !appended[1].text.isEmpty else { return nil }
+            return (appended[1].text, observation.title)
+        }
+        guard let candidate = try answer(await read(target)) else { return nil }
+        if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+        guard let current = try answer(await read(target)), current.0 == candidate.0, current.1 == candidate.1 else { return nil }
+        return (current.0, current.1)
     }
 
     /// Inspect only the already-selected Dot. Never navigate, type, or resend.
