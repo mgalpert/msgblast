@@ -28,6 +28,12 @@ struct WabiAppMessage: Codable, Equatable, Sendable {
     let text: String
 }
 
+private enum WabiHistoryWindow {
+    // Bound receipt size and hashing work for unusually long native chats.
+    static let maximumDropped = 16
+    static func minimumRetained(_ count: Int) -> Int { max(3, count / 2 + count % 2) }
+}
+
 struct WabiAXNode: Sendable {
     let role: String
     var label = ""
@@ -88,11 +94,19 @@ struct WabiAppReceipt {
     private var acceptableHistory: [[WabiAppMessage]] {
         let orientations = [baseline, Array(baseline.reversed())]
         let greeting = WabiAppMessage(role: .assistant, text: "What can I do for you?")
-        // Wabi drops this initial greeting once its thread grows. Require at
-        // least two retained messages and compare every one, including sender.
-        return orientations + orientations.compactMap { history in
+        let withoutGreeting = orientations.compactMap { history in
             history.count >= 3 && history.first == greeting ? Array(history.dropFirst()) : nil
         }
+        // Wabi virtualizes older messages. Compare at least half of the
+        // original history and at least three consecutive messages, including
+        // every sender, before accepting a shifted window.
+        let minimum = WabiHistoryWindow.minimumRetained(baseline.count)
+        let shifted = orientations.flatMap { history -> [[WabiAppMessage]] in
+            guard history.count > minimum else { return [] }
+            let limit = min(WabiHistoryWindow.maximumDropped, history.count - minimum)
+            return (1...limit).map { Array(history.dropFirst($0)) }
+        }
+        return orientations + withoutGreeting + shifted
     }
 
     func unchanged(_ messages: [WabiAppMessage]) -> Bool {
@@ -128,6 +142,11 @@ struct WabiAppReceipt {
 
 // Persist only a digest of the prior chat, so a late response can be matched
 // without saving the user's unrelated native conversation in msgblast.
+struct WabiHistoryDigest: Codable, Equatable, Sendable {
+    let retained: Int
+    let digest: Data
+}
+
 struct WabiReplyReceipt: Codable, Equatable, Sendable {
     var version = 1
     let comparisonID: UUID
@@ -136,6 +155,8 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
     let baselineCount: Int
     let baselineDigest: Data
     let reversedBaselineDigest: Data
+    // Optional for backwards compatibility. Digests retain no message text.
+    let overlapDigests: [WabiHistoryDigest]?
     var automaticRecovery = true
 
     init(comparisonID: UUID, url: URL, prompt: String, baseline: [WabiAppMessage]) throws {
@@ -143,6 +164,18 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
         baselineCount = baseline.count
         baselineDigest = try Self.digest(baseline)
         reversedBaselineDigest = try Self.digest(Array(baseline.reversed()))
+        let minimum = WabiHistoryWindow.minimumRetained(baseline.count)
+        var overlaps: [WabiHistoryDigest] = []
+        if baseline.count > minimum {
+            for history in [baseline, Array(baseline.reversed())] {
+                let limit = min(WabiHistoryWindow.maximumDropped, history.count - minimum)
+                for drop in 1...limit {
+                    let suffix = Array(history.dropFirst(drop))
+                    overlaps.append(.init(retained: suffix.count, digest: try Self.digest(suffix)))
+                }
+            }
+        }
+        overlapDigests = overlaps
     }
 
     private static func digest(_ messages: [WabiAppMessage]) throws -> Data {
@@ -150,22 +183,45 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
         return Data(SHA256.hash(data: try encoder.encode(messages)))
     }
 
-    func reply(in messages: [WabiAppMessage]) throws -> String? {
+    func reply(in messages: [WabiAppMessage], knownHistory: [WabiAppMessage]? = nil) throws -> String? {
         guard version == 1, WabiThread.isValid(url), !prompt.isEmpty, baselineCount >= 0,
               baselineDigest.count == 32, reversedBaselineDigest.count == 32,
-              messages.count <= baselineCount + 2 else {
+              messages.count <= baselineCount || messages.count - baselineCount <= 2 else {
             throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
+        }
+        if let overlapDigests {
+            let minimum = WabiHistoryWindow.minimumRetained(baselineCount)
+            guard overlapDigests.count <= 2 * WabiHistoryWindow.maximumDropped,
+                  overlapDigests.allSatisfy({ $0.digest.count == 32 && $0.retained >= minimum && $0.retained < baselineCount && baselineCount - $0.retained <= WabiHistoryWindow.maximumDropped }) else {
+                throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
+            }
         }
         var answers: Set<String> = []
         var waiting = false
+        if let knownHistory, knownHistory.count == baselineCount {
+            let hash = try Self.digest(knownHistory)
+            if hash == baselineDigest || hash == reversedBaselineDigest {
+                return try WabiAppReceipt(baseline: knownHistory, prompt: prompt).reply(in: messages)
+            }
+        }
         for ordered in [messages, Array(messages.reversed())] {
-            for dropGreeting in [false, true] {
-                let retained = baselineCount - (dropGreeting ? 1 : 0)
-                guard retained >= (dropGreeting ? 2 : 0), ordered.count >= retained, ordered.count <= retained + 2 else { continue }
+            let minimumCandidate = max(0, ordered.count - 2)
+            let maximumCandidate = min(baselineCount, ordered.count)
+            guard minimumCandidate <= maximumCandidate else { continue }
+            for retained in minimumCandidate...maximumCandidate {
                 let old = Array(ordered.prefix(retained))
-                let reconstructed = dropGreeting ? [WabiAppMessage(role: .assistant, text: "What can I do for you?")] + old : old
-                let hash = try Self.digest(reconstructed)
-                guard hash == baselineDigest || hash == reversedBaselineDigest else { continue }
+                let hash = try Self.digest(old)
+                let fullMatch = retained == baselineCount && (hash == baselineDigest || hash == reversedBaselineDigest)
+                var greetingMatch = false
+                if retained >= 2, retained == baselineCount - 1 {
+                    let restored = [WabiAppMessage(role: .assistant, text: "What can I do for you?")] + old
+                    let restoredHash = try Self.digest(restored)
+                    greetingMatch = restoredHash == baselineDigest || restoredHash == reversedBaselineDigest
+                }
+                let minimum = WabiHistoryWindow.minimumRetained(baselineCount)
+                let overlapMatch = retained >= minimum && retained < baselineCount && baselineCount - retained <= WabiHistoryWindow.maximumDropped &&
+                    (overlapDigests?.contains { $0.retained == retained && $0.digest == hash } ?? false)
+                guard fullMatch || greetingMatch || overlapMatch else { continue }
                 let added = ordered.dropFirst(retained)
                 if added.isEmpty { waiting = true; continue }
                 guard let outgoing = added.first, outgoing.role == .user,
@@ -403,7 +459,7 @@ actor WabiAppConversation {
     }
 
     /// Read only the currently open, already-owned thread; never navigate or resend.
-    func recoverReply(_ receipt: WabiReplyReceipt) async throws -> String? {
+    func recoverReply(_ receipt: WabiReplyReceipt, knownHistory: [WabiAppMessage]? = nil) async throws -> String? {
         guard !occupied else { return nil }
         guard receipt.version == 1, WabiThread.isValid(receipt.url) else {
             throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
@@ -416,7 +472,7 @@ actor WabiAppConversation {
             let (state, native) = try await observe(target, session: session)
             guard native.url == receipt.url else { throw DesktopAppError.unavailable("Wabi's selected chat changed. No reply was attributed.") }
             guard !state.isGenerating else { return nil }
-            return try receipt.reply(in: native.messages)
+            return try receipt.reply(in: native.messages, knownHistory: knownHistory)
         }
         guard let first = try await answer() else { return nil }
         if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }

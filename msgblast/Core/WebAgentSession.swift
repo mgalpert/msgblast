@@ -2060,8 +2060,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         refreshDesktopInstallation()
         guard desktopInstallation.isRunning else { return true }
         let originalMessages = state.localConversations[receipt.comparisonID.uuidString] ?? []
+        let priorMessages = attempt.messageID == nil ? originalMessages : Array(originalMessages.dropLast())
+        let converted = priorMessages.compactMap { message -> WabiAppMessage? in
+            guard let role = WabiAppMessage.Role(rawValue: message.role) else { return nil }
+            return WabiAppMessage(role: role, text: message.text)
+        }
+        let knownHistory = converted.count == priorMessages.count ? converted : nil
         do {
-            let result = try await wabiApp.recoverReply(receipt)
+            let result = try await wabiApp.recoverReply(receipt, knownHistory: knownHistory)
             try Task.checkCancellation()
             guard let result, let current = recoverableWabiAttempt(), current.id == attempt.id,
                   current.wabiReplyReceipt == receipt,

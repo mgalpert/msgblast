@@ -460,6 +460,50 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try saved.reply(in: earlier + [.init(role: .user, text: "Someone else's question"), answer]))
     }
 
+    func testWabiReceiptMatchesAnOverlappingHistoryWindow() throws {
+        let url = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
+        let baseline = (0..<10).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .user : .assistant, text: "Earlier message \($0)") }
+        let outgoing = WabiAppMessage(role: .user, text: "New question")
+        let answer = WabiAppMessage(role: .assistant, text: "New reply")
+        let live = WabiAppReceipt(baseline: baseline, prompt: outgoing.text)
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: outgoing.text, baseline: baseline)
+        let window = Array(baseline.dropFirst())
+        XCTAssertTrue(live.unchanged(window), "A shifted history window alone is not a submission")
+        XCTAssertNil(try live.reply(in: window + [outgoing]))
+        XCTAssertNil(try saved.reply(in: window + [outgoing]))
+        for messages in [window + [outgoing, answer], Array((window + [outgoing, answer]).reversed())] {
+            XCTAssertEqual(try live.reply(in: messages), answer.text)
+            XCTAssertEqual(try saved.reply(in: messages), answer.text)
+        }
+        let changed = [WabiAppMessage(role: .user, text: "Changed history")] + Array(window.dropFirst()) + [outgoing, answer]
+        XCTAssertThrowsError(try live.reply(in: changed))
+        XCTAssertThrowsError(try saved.reply(in: changed))
+        XCTAssertThrowsError(try saved.reply(in: window + [.init(role: .user, text: "Foreign question"), answer]))
+        let tooLittleHistory = Array(baseline.suffix(2)) + [outgoing, answer]
+        XCTAssertThrowsError(try live.reply(in: tooLittleHistory))
+        XCTAssertThrowsError(try saved.reply(in: tooLittleHistory))
+        let encoded = try JSONEncoder().encode(saved)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("Earlier message"))
+        var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacyJSON.removeValue(forKey: "overlapDigests")
+        let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+        XCTAssertThrowsError(try legacy.reply(in: window + [outgoing, answer]), "An old receipt alone cannot prove a shifted window")
+        XCTAssertEqual(try legacy.reply(in: window + [outgoing, answer], knownHistory: baseline), answer.text)
+        let wrongHistory = [.init(role: WabiAppMessage.Role.user, text: "Changed")] + Array(baseline.dropFirst())
+        XCTAssertThrowsError(try legacy.reply(in: window + [outgoing, answer], knownHistory: wrongHistory))
+        var invalidJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        invalidJSON["overlapDigests"] = [["retained": 1, "digest": Data(repeating: 0, count: 32).base64EncodedString()]]
+        let invalid = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: invalidJSON))
+        XCTAssertThrowsError(try invalid.reply(in: baseline + [outgoing, answer]), "Malformed overlap receipts must not be used")
+        let longBaseline = (0..<40).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .user : .assistant, text: "Earlier \($0)") }
+        let longLive = WabiAppReceipt(baseline: longBaseline, prompt: outgoing.text)
+        let longSaved = try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: outgoing.text, baseline: longBaseline)
+        XCTAssertEqual(try longLive.reply(in: Array(longBaseline.dropFirst(16)) + [outgoing, answer]), answer.text)
+        XCTAssertEqual(try longSaved.reply(in: Array(longBaseline.dropFirst(16)) + [outgoing, answer]), answer.text)
+        XCTAssertThrowsError(try longLive.reply(in: Array(longBaseline.dropFirst(17)) + [outgoing, answer]))
+        XCTAssertThrowsError(try longSaved.reply(in: Array(longBaseline.dropFirst(17)) + [outgoing, answer]))
+    }
+
     func testSavedMuseReceiptChecksBaselineAndRejectsAnotherRequest() throws {
         let previous: [MuseAppMessage] = [.init(role: .user, text: "Private earlier question"), .init(role: .assistant, text: "Private earlier answer")]
         let receipt = try MuseReplyReceipt(comparisonID: UUID(), requestID: UUID(), initialThreadID: UUID(), prompt: "Next question", baseline: previous)
@@ -937,6 +981,43 @@ final class DesktopAppDriverTests: XCTestCase {
                 XCTAssertNil(saved.attempts.first?.messageID)
                 XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Earlier question", "Earlier reply"])
             }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+        }
+    }
+
+    func testLegacyWabiRecoveryVerifiesSavedLocalHistoryBeforeUsingIt() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline = (0..<6).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .user : .assistant, text: "Earlier message \($0)") }
+        let generated = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(generated)) as? [String: Any])
+        json.removeValue(forKey: "overlapDigests")
+        let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for historyMatches in [true, false] {
+            let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+            defer { fixture.remove() }
+            let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+                .init(url: url, draft: "", links: [], messages: Array(baseline.dropFirst()) + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Answer")])
+            }
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            try workspace.recordWabiConversation(url, for: comparison)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.wabiReplyReceipt = legacy
+            workspace.attempts = [attempt]
+            var local = baseline.map { WebPageMessage(role: $0.role.rawValue, text: $0.text) }
+            if !historyMatches { local[0] = .init(role: "user", text: "Different message") }
+            workspace.localConversations[comparison.uuidString] = local
+            let storage = fixture.directory.appendingPathComponent("legacy.json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            _ = await session.reconcileWabiReplyOnce()
+            session.beginShutdown()
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            XCTAssertEqual(saved.attempts.first?.status, historyMatches ? .observed : .uncertain)
+            XCTAssertEqual(saved.localConversations[comparison.uuidString]?.count, historyMatches ? 8 : 6)
             let calls = try await finishedCalls(fixture)
             XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
         }
