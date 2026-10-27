@@ -151,7 +151,7 @@ final class ClaudeAppDriverTests: XCTestCase {
             let observations = observations
             return ClaudeAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5), readNative: { _, mode in
                 let stage = Int((try? String(contentsOf: path, encoding: .utf8)) ?? "0") ?? 0
-                if coldStart, !self.calls().contains(where: { $0["tool"] as? String == "get_window_state" }) {
+                if coldStart, !FileManager.default.fileExists(atPath: path.deletingLastPathComponent().appendingPathComponent("driver-initialized").path) {
                     return try ClaudeAppObservation(root: .init(role: "AXWindow"))
                 }
                 if transientAfterSend && stage == 2 && failure.claim() { throw ClaudeObservationError.transient("Claude's message history is incomplete.") }
@@ -185,14 +185,14 @@ final class ClaudeAppDriverTests: XCTestCase {
     }
 
     func testOnboardingInitializesDriverSnapshotBeforeReadingColdNativeControls() async throws {
-        let fixture = try fixture()
+        let fixture = try fixture(initialDriverShell: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         try await fixture.adapter(coldStart: true).checkAvailable()
         XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") })
-        XCTAssertTrue(fixture.calls().contains { $0["tool"] as? String == "get_window_state" })
+        XCTAssertGreaterThanOrEqual(fixture.calls().filter { $0["tool"] as? String == "get_window_state" }.count, 2, "The initialization shell must not substitute for a verified composer snapshot")
     }
 
-    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false) throws -> Fixture {
+    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000001")!
@@ -247,6 +247,7 @@ final class ClaudeAppDriverTests: XCTestCase {
         if stripDriverTrailingNewlines { try Data().write(to: dir.appendingPathComponent("strip-driver-newlines")) }
         if corruptDriverTextAfterNewline { try Data().write(to: dir.appendingPathComponent("corrupt-driver-text")) }
         if collapseNativeBlankParagraphs { try Data().write(to: dir.appendingPathComponent("collapse-native-paragraphs")) }
+        if initialDriverShell { try Data().write(to: dir.appendingPathComponent("initial-driver-shell")) }
         let script = """
         #!/usr/bin/env python3
         import sys,json,pathlib,time,base64
@@ -268,6 +269,11 @@ final class ClaudeAppDriverTests: XCTestCase {
         elif tool=='get_window_state':
             assert a['pid']==42 and a['window_id']==21
             state=json.loads((p/'snapshots.json').read_text())[s]
+            first=not (p/'driver-initialized').exists()
+            (p/'driver-initialized').touch()
+            if first and (p/'initial-driver-shell').exists():
+                print(json.dumps({'pid':42,'window_id':21,'elements':[{'role':'AXWindow'}]}))
+                sys.exit(0)
             if s==0 and (p/'draft').exists():
                 actual=(p/'draft').read_text()
                 state['elements'][0]['value']=actual

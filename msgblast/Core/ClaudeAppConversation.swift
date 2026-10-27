@@ -20,11 +20,9 @@ actor ClaudeAppConversation {
     private func observe(_ target: DesktopAppConversation.Target, session: String, mode: ClaudeAppObservation.ReadMode = .conversation, screenshotURL: URL? = nil) async throws -> (DesktopAppSnapshot, ClaudeAppObservation) {
         // A cold Electron window may expose its native chat only after Cua
         // initializes accessibility. Navigation checks must reach that read.
-        let navigationState = mode == .navigation ? try await driver.snapshot(target, session: session, screenshotURL: screenshotURL) : nil
+        if mode == .navigation { _ = try await driver.snapshot(target, session: session) }
         let before = try await native(target, mode: mode)
-        let state: DesktopAppSnapshot
-        if let navigationState { state = navigationState }
-        else { state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL) }
+        let state = try await driver.snapshot(target, session: session, screenshotURL: screenshotURL)
         try state.checkReadable()
         let after = try await native(target, mode: mode)
         guard before.url == after.url, before.draft == after.draft, before.windowBounds == after.windowBounds, before.composerFrame == after.composerFrame else { throw DesktopAppError.unavailable("Claude changed while verifying its conversation. No action was replayed.") }
