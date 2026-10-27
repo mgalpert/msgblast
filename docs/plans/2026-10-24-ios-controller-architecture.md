@@ -453,6 +453,11 @@ These fix the headless gaps the survey found and are good hygiene on their own:
 3. **Live Dev validation over Tailscale:** real agents, lock and sleep
    behavior, focus-steal feedback, long desktop sends. Fix what the UX
    iteration missed.
+
+   **Status (2026-10-26):** prepared, pending the owner's run. The step-by-step
+   procedure is [the phase 3 procedure](2026-10-26-ios-controller-phase3-procedure.md);
+   the phone now shows its route and connect time, and the Mac shows the key
+   fingerprint under the pairing code, for that run.
 4. **v2 (separate plan):** Cloudflare encrypted gateway as the public route,
    opt-in push notifications, multi-device pairing and a Mac switcher.
 
