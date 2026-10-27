@@ -2252,8 +2252,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
     }
 
-    // A single poll never opens or navigates a provider app. A nil result or
-    // an ambiguous observation leaves the original request unresolved.
+    // A single poll never opens or switches a provider conversation. A nil
+    // result or ambiguous observation leaves the original request unresolved.
     func reconcileDotsReplyOnce() async -> Bool {
         guard let attempt = recoverableDotsAttempt(), let receipt = attempt.dotsReplyReceipt else { return false }
         guard !isSending, !loading, !refreshing else { return true }
