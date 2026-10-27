@@ -306,6 +306,59 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(draft.text, "My next message")
     }
 
+    func testBroadcastPreservesAnEditedAndRetypedDraft() async {
+        let draft = BroadcastDraft("First message")
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let started = expectation(description: "The broadcast is waiting for its reply")
+        let revision = draft.revision.value
+        let send = Task { @MainActor in
+            await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, shouldClearDraft: { draft.revision.value == revision }, clearDraft: { draft.text = "" }, web: { text in
+                started.fulfill()
+                for await _ in gate { break }
+                return [.muse: WebSendAttempt(text: text, status: .observed)]
+            }, messages: { _ in nil })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        draft.text = "Next message"
+        draft.text = "First message"
+        release.yield(()); release.finish()
+        _ = await send.value
+        XCTAssertEqual(draft.text, "First message", "The retyped draft belongs to the next message")
+    }
+
+    func testBroadcastDraftOwnershipSurvivesPromotionButNotWorkspaceChanges() async {
+        for scenario in ["unchanged", "promotion", "switched", "returned", "rejected"] {
+            let draft = BroadcastDraft("First message")
+            let sentRevision = draft.revision.value
+            let comparison = UUID(), other = UUID()
+            var workspace: UUID? = comparison
+            let (gate, release) = AsyncStream<Void>.makeStream()
+            let started = expectation(description: "Broadcast started: \(scenario)")
+            let send = Task { @MainActor in
+                await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, shouldClearDraft: {
+                    draft.revision.value == sentRevision && workspace == comparison
+                }, clearDraft: { draft.text = "" }, web: { text in
+                    started.fulfill()
+                    for await _ in gate { break }
+                    return [.muse: WebSendAttempt(text: text, status: scenario == "rejected" ? .notSent : .observed)]
+                }, messages: { _ in nil })
+            }
+            await fulfillment(of: [started], timeout: 2)
+            if scenario == "promotion" { draft.revision.switchedWorkspace(promotingDraft: true) }
+            if scenario == "switched" || scenario == "returned" {
+                draft.revision.switchedWorkspace(promotingDraft: false)
+                workspace = other
+            }
+            if scenario == "returned" {
+                draft.revision.switchedWorkspace(promotingDraft: false)
+                workspace = comparison
+            }
+            release.yield(()); release.finish()
+            _ = await send.value
+            XCTAssertEqual(draft.text, ["unchanged", "promotion"].contains(scenario) ? "" : "First message", scenario)
+        }
+    }
+
     func testIndependentRepliesUnlockAfterBothSubmissionsWhileAnAgentStillWorks() async {
         let nativeInputFinished = expectation(description: "Native input finished")
         let ready = expectation(description: "Both submission paths finished")
@@ -497,7 +550,8 @@ final class WebServiceTests: XCTestCase {
 
 @MainActor
 private final class BroadcastDraft {
-    var text: String
+    var revision = SharedDraftRevision()
+    var text: String { didSet { revision.edited(from: oldValue, to: text) } }
     init(_ text: String) { self.text = text }
 }
 

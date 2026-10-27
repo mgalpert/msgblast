@@ -12,6 +12,7 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     @Published var busy = false
     @Published var webBroadcastBusy = false
+    private(set) var sharedDraftRevision = SharedDraftRevision()
     @Published private(set) var webBroadcastReplyGate = BroadcastReplyGate()
     var webBroadcastInputsFinished: Bool { webBroadcastReplyGate.inputsFinished }
     var independentNativeReplies: Int { webBroadcastReplyGate.independentReplies }
@@ -459,6 +460,7 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func setSharedDraft(_ text: String) {
+        sharedDraftRevision.edited(from: state.draft, to: text)
         state.draft = text
         if state.workspaceDrafts == nil { state.workspaceDrafts = [:] }
         state.workspaceDrafts?[webAgents.comparisonID?.uuidString ?? "new"] = text
@@ -506,6 +508,7 @@ final class AppModel: ObservableObject {
         if id == nil { deselectHiddenGridRecipients(); persist() }
         let previous = webAgents.comparisonID
         guard previous != id else { return }
+        sharedDraftRevision.switchedWorkspace(promotingDraft: promotingDraft)
         var drafts = state.workspaceDrafts ?? [:]
         drafts[previous?.uuidString ?? "new"] = state.draft
         let key = id?.uuidString ?? "new"

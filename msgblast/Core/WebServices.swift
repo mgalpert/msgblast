@@ -375,11 +375,24 @@ public struct BroadcastReplyGate: Sendable {
     }
 }
 
+/// Tracks edits and workspace changes while a shared send is in flight.
+public struct SharedDraftRevision: Sendable {
+    public private(set) var value = UUID()
+    public init() {}
+    public mutating func edited(from old: String, to new: String) {
+        if old != new { value = UUID() }
+    }
+    public mutating func switchedWorkspace(promotingDraft: Bool) {
+        if !promotingDraft { value = UUID() }
+    }
+}
+
 @MainActor
 public enum AgentBroadcast {
     public static func send(
         draft: String,
         currentDraft: @MainActor () -> String,
+        shouldClearDraft: @MainActor () -> Bool = { true },
         clearDraft: @MainActor () -> Void,
         web: @MainActor @Sendable (String) async -> [WebAgentID: WebSendAttempt],
         messages: @MainActor @Sendable (String) async -> UUID?
@@ -390,7 +403,7 @@ public enum AgentBroadcast {
         let result = await AgentBroadcastResult(web: webAttempts, comparisonID: comparisonID)
         let mayHaveSent = result.comparisonID != nil || result.web.values.contains { [.observed, .waiting, .uncertain].contains($0.status) }
         // Keep edits to the next message; a wholly rejected broadcast remains ready to correct.
-        if mayHaveSent && currentDraft() == draft { clearDraft() }
+        if mayHaveSent && shouldClearDraft() && currentDraft() == draft { clearDraft() }
         return result
     }
 }

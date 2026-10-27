@@ -327,6 +327,7 @@ struct AgentsWorkspaceView: View {
             return
         }
         let originalDraft = model.state.draft
+        let submittedDraftRevision = model.sharedDraftRevision.value
         let sentAttachments = attachments
         let broadcastCreated = Date()
         let existingID = showingComparison ? nativeComparison?.id : nil
@@ -384,7 +385,9 @@ struct AgentsWorkspaceView: View {
                       web.comparisonID == comparisonID, model.comparison(comparisonID)?.endedAt == nil else { return }
                 model.finishSharedWebInputs()
             }
-            let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, clearDraft: {
+            let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, shouldClearDraft: {
+                model.sharedDraftRevision.value == submittedDraftRevision && web.comparisonID == comparisonID
+            }, clearDraft: {
                 model.setSharedDraft("")
             }, web: { text in
                 let submitted = await WebAgents.send(text, to: readySessions, comparisonID: comparisonID, onInputsFinished: { barrier.finishNativeInputs() })
