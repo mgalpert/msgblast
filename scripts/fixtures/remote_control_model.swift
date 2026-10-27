@@ -205,9 +205,20 @@ extension SideChatModelCheck {
         try offer.url.absoluteString.write(toFile: offerFile, atomically: true, encoding: .utf8)
         FileHandle.standardError.write(Data("Demo Mac listening on \(service.endpoints.map(\.host)) port \(port)\n".utf8))
         let deadline = Date().addingTimeInterval(180)
+        // Optional triggers for recording phone fixtures: simulated lock/unlock (no real lock)
+        // and a confirmed replacement pairing offer written next to the offer file.
+        let lockFile = environment["MSGBLAST_REMOTE_LOCK_FILE"], unlockFile = environment["MSGBLAST_REMOTE_UNLOCK_FILE"]
+        let replaceFile = environment["MSGBLAST_REMOTE_REPLACE_FILE"]
+        var locked = false, replaced = false
         while !FileManager.default.fileExists(atPath: doneFile), Date() < deadline {
             try await Task.sleep(for: .milliseconds(100))
             // Demo replies arrive asynchronously; the projection streams them to the client.
+            if let lockFile, !locked, FileManager.default.fileExists(atPath: lockFile) { locked = true; service.power.simulate(locked: true) }
+            if let unlockFile, locked, FileManager.default.fileExists(atPath: unlockFile) { locked = false; service.power.simulate(locked: false); try? FileManager.default.removeItem(atPath: unlockFile); try? FileManager.default.removeItem(atPath: lockFile ?? "") }
+            if let replaceFile, !replaced, FileManager.default.fileExists(atPath: replaceFile) {
+                replaced = true
+                try service.showPairingCode(confirmReplacement: true).url.absoluteString.write(toFile: replaceFile + ".offer", atomically: true, encoding: .utf8)
+            }
         }
         if environment["MSGBLAST_REMOTE_EVIDENCE_DIR"]?.isEmpty == false { try await renderRemoteSettings(service, name: "remote-settings-listening") }
         print("Demo Mac: paired \(service.pairing.device?.name ?? "none"), conversations \(model.state.comparisons.count), keep-awake held \(service.keepAwake.held)")

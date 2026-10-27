@@ -102,3 +102,33 @@ public final class RemoteClientDriver {
         return (outgoing, events)
     }
 }
+
+/// Recorded client events (fixtures for the phone's reducer and the harness's `--record`).
+extension RemoteClientDriver.Event: Codable {
+    private enum CodingKeys: String, CodingKey { case kind, paired, macIdentityKey, deviceID, snapshot, events, latestSeq, result, nonce, seq, error }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "paired": self = .paired(try c.decode(RemotePairComplete.self, forKey: .paired), macIdentityKey: try c.decode(Data.self, forKey: .macIdentityKey))
+        case "authenticated": self = .authenticated(deviceID: try c.decode(UUID.self, forKey: .deviceID))
+        case "snapshot": self = .snapshot(try c.decode(RemoteSnapshot.self, forKey: .snapshot))
+        case "events": self = .events(try c.decode([RemoteEvent].self, forKey: .events), latestSeq: try c.decode(UInt64.self, forKey: .latestSeq))
+        case "commandResult": self = .commandResult(try c.decode(RemoteCommandResult.self, forKey: .result))
+        case "pong": self = .pong(nonce: try c.decode(UInt64.self, forKey: .nonce), seq: try c.decode(UInt64.self, forKey: .seq))
+        case "error": self = .error(try c.decode(RemoteErrorMessage.self, forKey: .error))
+        case let other: throw RemoteProtocolError.unexpectedMessage(other)
+        }
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .paired(let complete, let key): try c.encode("paired", forKey: .kind); try c.encode(complete, forKey: .paired); try c.encode(key, forKey: .macIdentityKey)
+        case .authenticated(let id): try c.encode("authenticated", forKey: .kind); try c.encode(id, forKey: .deviceID)
+        case .snapshot(let snapshot): try c.encode("snapshot", forKey: .kind); try c.encode(snapshot, forKey: .snapshot)
+        case .events(let events, let latest): try c.encode("events", forKey: .kind); try c.encode(events, forKey: .events); try c.encode(latest, forKey: .latestSeq)
+        case .commandResult(let result): try c.encode("commandResult", forKey: .kind); try c.encode(result, forKey: .result)
+        case .pong(let nonce, let seq): try c.encode("pong", forKey: .kind); try c.encode(nonce, forKey: .nonce); try c.encode(seq, forKey: .seq)
+        case .error(let error): try c.encode("error", forKey: .kind); try c.encode(error, forKey: .error)
+        }
+    }
+}

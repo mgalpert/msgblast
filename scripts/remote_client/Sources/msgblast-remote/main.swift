@@ -27,6 +27,7 @@ usage:
   msgblast-remote end --conversation UUID [--state FILE]
   msgblast-remote acknowledge --to AGENT [--attempt ID] [--state FILE]
   msgblast-remote keep-awake on|off [--state FILE]
+Any verb accepts --record FILE (append each event as a JSON line).
 
 Defaults: --state ~/Library/Application Support/msgblast-remote-client/state.json (0600, folder 0700). --once exits after the snapshot.
 The client never retries a send: a lost connection reports the command as unconfirmed.
@@ -54,6 +55,18 @@ arguments.removeFirst()
 let defaultStateDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/msgblast-remote-client", isDirectory: true)
 let statePath = option("--state").map { URL(fileURLWithPath: $0) } ?? defaultStateDirectory.appendingPathComponent("state.json")
 let once = flag("--once"), json = flag("--json")
+// --record FILE appends every client event as one JSON line (fixtures for the phone's reducer).
+let recordPath = option("--record")
+// --linger SECONDS keeps a send's session open after its result to capture the events that follow.
+let linger = option("--linger").flatMap(Double.init) ?? 0
+let recorder: FileHandle? = recordPath.flatMap { path in
+    if !FileManager.default.fileExists(atPath: path) { FileManager.default.createFile(atPath: path, contents: nil) }
+    let handle = FileHandle(forWritingAtPath: path); handle?.seekToEndOfFile(); return handle
+}
+func record(_ event: RemoteClientDriver.Event) {
+    guard let recorder, let line = try? RemoteProtocol.encoder().encode(event) else { return }
+    recorder.write(line + Data("\n".utf8))
+}
 
 func loadState() -> ClientState {
     guard let data = try? Data(contentsOf: statePath), let state = try? JSONDecoder().decode(ClientState.self, from: data) else {
@@ -141,6 +154,7 @@ final class Session: @unchecked Sendable {
     }
 
     func handle(_ event: RemoteClientDriver.Event) {
+        record(event)
         switch event {
         case .paired(let complete, let macKey):
             guard let offer = pairingOffer, case .pair(_, _, let key) = modeKey else { return }
@@ -195,7 +209,11 @@ final class Session: @unchecked Sendable {
                 for (agent, status) in result.agentStatuses.sorted(by: { $0.key < $1.key }) { print("  \(agent): \(status.rawValue)") }
                 if let id = result.attachmentID { print("  attachment \(id)") }
             }
-            if result.outcome != .accepted, result.clientCommandID == pendingCommand?.clientCommandID { exit(result.outcome == .applied ? 0 : 2) }
+            if result.outcome != .accepted, result.clientCommandID == pendingCommand?.clientCommandID {
+                let code: Int32 = result.outcome == .applied ? 0 : 2
+                pendingCommand = nil
+                if linger > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + linger) { exit(code) } } else { exit(code) }
+            }
         case .pong(let nonce, let seq): print("pong \(nonce) seq \(seq)")
         case .error(let error):
             print("Mac says \(error.code.rawValue): \(error.message)")
