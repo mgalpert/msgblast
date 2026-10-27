@@ -675,6 +675,10 @@ final class DesktopAppDriverTests: XCTestCase {
         try await assertColdNativeSetup(.grokBotApp)
     }
 
+    func testPassiveGrokDiscoveryDoesNotActivateColdAppBeforeExplicitConnect() async throws {
+        try await assertColdNativeSetup(.grokBotApp, checkPassiveDiscovery: true)
+    }
+
     func testWabiSetupInitializesColdNativeControlsAndRestoresHostWithoutSending() async throws {
         try await assertColdNativeSetup(.wabi)
     }
@@ -683,7 +687,7 @@ final class DesktopAppDriverTests: XCTestCase {
         try await assertColdNativeSetup(.wabi, externalDraft: "Keep the native app draft")
     }
 
-    private func assertColdNativeSetup(_ provider: WebProvider, externalDraft: String = "") async throws {
+    private func assertColdNativeSetup(_ provider: WebProvider, externalDraft: String = "", checkPassiveDiscovery: Bool = false) async throws {
         let app = try XCTUnwrap(provider.desktopApp)
         let fixture = try driver([])
         defer { fixture.remove() }
@@ -704,7 +708,13 @@ final class DesktopAppDriverTests: XCTestCase {
         session.setEnabled(true)
         session.updateState { $0.draft = "Keep this msgblast draft" }
         if app == .grokBot {
-            await session.refreshGrokBots()
+            if checkPassiveDiscovery {
+                await session.refreshGrokBots()
+                XCTAssertTrue(session.grokBotNames.isEmpty, "Passive discovery must wait for an explicit Connect when native controls are cold")
+                XCTAssertFalse(try fixture.calls().contains { $0.tool == "bring_to_front" }, "Opening setup or returning to msgblast must not activate Grok Bot")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: warmed.path))
+            }
+            await session.refreshGrokBots(activateIfNeeded: true)
             XCTAssertEqual(session.grokBotNames, ["Fixture Bot"], session.desktopStatus)
         } else {
             await session.connectDesktopConversation()

@@ -158,7 +158,7 @@ struct DesktopAppSetupView: View {
     private func connect(_ app: DesktopAppProvider) async {
         guard await session.prepareDesktopConnection() else { return }
         if app == .grokBot {
-            await loadBots(markConnected: false)
+            await loadBots(markConnected: false, activateIfNeeded: true)
             if let name = session.state.desktopConversation?.name, session.grokBotNames.contains(name) {
                 await session.connectDesktopConversation(botName: name)
                 if session.isReadyForOnboarding { onConnected() }
@@ -172,8 +172,8 @@ struct DesktopAppSetupView: View {
         if session.isReadyForOnboarding { onConnected() }
     }
 
-    private func loadBots(markConnected: Bool = true) async {
-        await session.refreshGrokBots()
+    private func loadBots(markConnected: Bool = true, activateIfNeeded: Bool = false) async {
+        await session.refreshGrokBots(activateIfNeeded: activateIfNeeded)
         if markConnected, session.isReadyForOnboarding { onConnected() }
     }
 }

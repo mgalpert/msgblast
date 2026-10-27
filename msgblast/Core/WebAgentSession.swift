@@ -1207,7 +1207,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             : "Your prompts will go to “\(binding.name)” in \(app.name). Comparisons share that conversation. This check didn’t send a message."
     }
 
-    public func refreshGrokBots() async {
+    public func refreshGrokBots(activateIfNeeded: Bool = false) async {
         guard provider == .grokBotApp, !loading, !isSending, !shuttingDown, !storageFailed else { return }
         refreshDesktopInstallation()
         guard desktopInstallation.isRunning else { grokBotNames = []; return }
@@ -1218,7 +1218,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
         do {
             try await waitForDesktopRefresh()
-            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await DesktopAppWorkflow.connection(.grokBot, driver: desktopDriver) {
+            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await DesktopAppWorkflow.connection(.grokBot, driver: activateIfNeeded ? desktopDriver : nil) {
                 try await self.desktopDriver.availableGrokBots()
             }
             refreshDesktopInstallation()
