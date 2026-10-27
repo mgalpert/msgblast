@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum ClaudeChatURL {
     static func isChat(_ url: URL) -> Bool {
@@ -139,6 +140,44 @@ struct ClaudeAppReceipt {
         guard messages.count == baseline.count + 2 else { return nil }
         guard let answer = messages.last, answer.role == .assistant else { throw DesktopAppError.unavailable("Claude's new message has an unexpected sender.") }
         return answer.text
+    }
+}
+
+struct ClaudeReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    let initialURL: URL?
+    let prompt: String
+    let baselineCount: Int
+    let baselineDigest: Data
+    var automaticRecovery = true
+
+    init(comparisonID: UUID, initialURL: URL?, prompt: String, baseline: [ClaudeAppMessage]) throws {
+        self.comparisonID = comparisonID; self.initialURL = initialURL; self.prompt = prompt
+        baselineCount = baseline.count; baselineDigest = try Self.digest(baseline)
+    }
+
+    private static func digest(_ messages: [ClaudeAppMessage]) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return Data(SHA256.hash(data: try encoder.encode(messages)))
+    }
+
+    func reply(in messages: [ClaudeAppMessage]) throws -> String? {
+        guard version == 1, !prompt.isEmpty, baselineCount >= 0, baselineDigest.count == 32,
+              messages.count >= baselineCount, messages.count <= baselineCount + 2,
+              try Self.digest(Array(messages.prefix(baselineCount))) == baselineDigest else {
+            throw DesktopAppError.unavailable("Claude's saved chat history changed. No reply was attributed.")
+        }
+        let added = messages.dropFirst(baselineCount)
+        guard !added.isEmpty else { return nil }
+        guard added.first == ClaudeAppMessage(role: .user, text: prompt) else {
+            throw DesktopAppError.unavailable("Another request appeared in Claude. No reply was attributed.")
+        }
+        guard added.count == 2 else { return nil }
+        guard let answer = added.last, answer.role == .assistant else {
+            throw DesktopAppError.unavailable("Claude's new message has an unexpected sender.")
+        }
+        return answer.text.isEmpty ? nil : answer.text
     }
 }
 

@@ -124,6 +124,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var configuringGrokBot: Bool { grokBotConnectionActivity != nil }
     private var shuttingDown = false
     private var requestCancelled = false
+    private var nativeCancellationRequestedBeforeShutdown = false
     public let fixture: Bool
     private let storageURL: URL
     private var storageFailed = false
@@ -1356,8 +1357,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
     }
 
-    private func recordClaudeSubmission(_ binding: ClaudeConversationBinding) throws {
+    private func recordClaudeSubmission(_ binding: ClaudeConversationBinding, attemptID: UUID? = nil) throws {
+        let index = attemptID.flatMap { id in state.attempts.firstIndex(where: { $0.id == id && $0.comparisonID == binding.comparisonID }) }
+        guard attemptID == nil || index != nil else { throw WebSessionFailure.notSent("Claude's chat identity could not be saved.") }
         try state.recordClaudeBinding(binding)
+        if let index { state.attempts[index].conversationURL = binding.url }
         try save()
     }
     private func recordChatGPTSubmission(_ binding: ChatGPTConversationBinding) throws {
@@ -1616,7 +1620,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts.contains { (provider.desktopApp != nil || $0.comparisonID == id) && $0.status.isUnresolved }
     }
 
-    public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
+    public func cancelNativeRequest() {
+        if !shuttingDown { nativeCancellationRequestedBeforeShutdown = true }
+        requestCancelled = true
+        nativeRequest?.cancel()
+    }
     public func beginShutdown() { shuttingDown = true; poll?.cancel(); stopNativeRecovery(); cancelNativeRequest(); stopGrokBotConnection() }
     public func cancelAndWait() async {
         if !shuttingDown { try? await saveBrowserDrafts() }
@@ -1638,6 +1646,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         isSending = true
         requestCancelled = false
+        nativeCancellationRequestedBeforeShutdown = false
         defer { nativeRequest = nil; isSending = false; startNativeRecoveryIfNeeded() }
         error = nil
         if provider.desktopApp != nil {
@@ -1755,9 +1764,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     let answer = try await claudeApp.reply(text, binding: saved, onSubmitAction: submitAction, onPrepared: { [weak self] pending in
                         guard let self else { throw CancellationError() }
                         try await self.recordClaudeSubmission(pending)
-                    }, onBinding: { [weak self] discovered in
+                    }, onReceipt: { [weak self] baseline, wirePrompt in
                         guard let self else { throw CancellationError() }
-                        try await self.recordClaudeSubmission(discovered)
+                        let receipt = try ClaudeReplyReceipt(comparisonID: id, initialURL: saved.url, prompt: wirePrompt, baseline: baseline)
+                        try await self.recordClaudeReceipt(receipt, attemptID: outgoingID)
+                    }, onSubmitted: submitted, onBinding: { [weak self] discovered in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordClaudeSubmission(discovered, attemptID: outgoingID)
                     })
                     return PersonalAgentReply(text: answer, sessionID: "Dedicated Claude chat")
                 }
@@ -1805,9 +1818,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.dotsReplyReceipt = state.attempts.first { $0.id == attempt.id }?.dotsReplyReceipt
             attempt.wabiReplyReceipt = state.attempts.first { $0.id == attempt.id }?.wabiReplyReceipt
             attempt.museReplyReceipt = state.attempts.first { $0.id == attempt.id }?.museReplyReceipt
-            if error is CancellationError { attempt.dotsReplyReceipt?.automaticRecovery = false }
-            if error is CancellationError { attempt.wabiReplyReceipt?.automaticRecovery = false }
-            if error is CancellationError { attempt.museReplyReceipt?.automaticRecovery = false }
+            attempt.claudeReplyReceipt = state.attempts.first { $0.id == attempt.id }?.claudeReplyReceipt
+            if error is CancellationError, !shuttingDown || nativeCancellationRequestedBeforeShutdown {
+                attempt.dotsReplyReceipt?.automaticRecovery = false
+                attempt.wabiReplyReceipt?.automaticRecovery = false
+                attempt.museReplyReceipt?.automaticRecovery = false
+                attempt.claudeReplyReceipt?.automaticRecovery = false
+            }
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
@@ -1887,6 +1904,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         try save()
     }
 
+    private func recordClaudeReceipt(_ receipt: ClaudeReplyReceipt, attemptID: UUID) throws {
+        guard provider == .claudeApp, !storageFailed,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .attempting,
+              state.attempts[index].comparisonID == receipt.comparisonID,
+              state.attempts[index].claudeReplyReceipt == nil, receipt.version == 1,
+              receipt.initialURL == nil || receipt.initialURL.map(ClaudeChatURL.isChat) == true,
+              !receipt.prompt.isEmpty else {
+            throw WebSessionFailure.notSent("The Claude request could not be saved. Nothing was sent.")
+        }
+        state.attempts[index].claudeReplyReceipt = receipt
+        state.attempts[index].conversationURL = receipt.initialURL
+        try save()
+    }
+
     private func recoverableDotsAttempt() -> WebSendAttempt? {
         guard provider == .dotsApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
         let pending = state.attempts.filter { $0.status.isUnresolved }
@@ -1913,7 +1945,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     private func startNativeRecoveryIfNeeded() {
         guard nativeRecoveryPoll == nil,
-              recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil || recoverableMuseAttempt() != nil else { return }
+              recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil || recoverableMuseAttempt() != nil || recoverableClaudeAttempt() != nil else { return }
         let generation = UUID()
         nativeRecoveryGeneration = generation
         nativeRecoveryPoll = Task { [weak self] in
@@ -1930,6 +1962,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .dotsApp { return await reconcileDotsReplyOnce() }
         if provider == .wabi { return await reconcileWabiReplyOnce() }
         if provider == .museApp { return await reconcileMuseReplyOnce() }
+        if provider == .claudeApp { return await reconcileClaudeReplyOnce() }
         return false
     }
 
@@ -2004,6 +2037,43 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return recoverableMuseAttempt() != nil
     }
 
+    private func recoverableClaudeAttempt() -> WebSendAttempt? {
+        guard provider == .claudeApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
+        let pending = state.attempts.filter { $0.status.isUnresolved }
+        guard pending.count == 1, let attempt = pending.first,
+              [.waiting, .uncertain].contains(attempt.status), attempt.messageID == attempt.id.uuidString,
+              let comparison = attempt.comparisonID, let receipt = attempt.claudeReplyReceipt,
+              receipt.version == 1, receipt.automaticRecovery, receipt.comparisonID == comparison,
+              let binding = try? state.claudeBinding(for: comparison), let url = binding.url, ClaudeChatURL.isChat(url),
+              attempt.conversationURL == url, receipt.initialURL == nil || receipt.initialURL == url,
+              let firstPrompt = binding.firstPrompt, firstPrompt.hasPrefix("[msgblast comparison \(comparison.uuidString)]\n\n"),
+              receipt.prompt == (receipt.initialURL == nil ? binding.firstMessage(attempt.text) : attempt.text),
+              let messages = state.localConversations[comparison.uuidString],
+              messages.last == WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text),
+              !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }) else { return nil }
+        return attempt
+    }
+
+    func reconcileClaudeReplyOnce() async -> Bool {
+        guard let attempt = recoverableClaudeAttempt(), let receipt = attempt.claudeReplyReceipt,
+              let binding = try? state.claudeBinding(for: receipt.comparisonID) else { return false }
+        guard !isSending, !loading, !refreshing else { return true }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { return true }
+        do {
+            let result = try await claudeApp.recoverReply(receipt, binding: binding)
+            try Task.checkCancellation()
+            guard let result, let current = recoverableClaudeAttempt(), current.id == attempt.id,
+                  current.claudeReplyReceipt == receipt,
+                  (try? state.claudeBinding(for: receipt.comparisonID)) == binding else { return recoverableClaudeAttempt() != nil }
+            try finishRecoveredNativeReply(result, attempt: attempt, comparison: receipt.comparisonID)
+        } catch is CancellationError { return false }
+        catch {
+            if storageFailed { self.error = "Could not save the Claude reply. Repair storage before continuing." }
+        }
+        return recoverableClaudeAttempt() != nil
+    }
+
     private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID) throws {
         guard let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) else { return }
         let key = comparison.uuidString
@@ -2019,11 +2089,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts[index].dotsReplyReceipt = nil
         state.attempts[index].wabiReplyReceipt = nil
         state.attempts[index].museReplyReceipt = nil
+        state.attempts[index].claudeReplyReceipt = nil
         do { try save() } catch { state = previous; throw error }
         if error == attempt.detail { error = nil }
         updateNativeSnapshot()
         if provider == .dotsApp { Task { await refresh() } }
-        else if provider == .wabi || provider == .museApp { Task { await refreshAppAfterRecovery(comparison: comparison) } }
+        else if provider == .wabi || provider == .museApp || provider == .claudeApp { Task { await refreshAppAfterRecovery(comparison: comparison) } }
     }
 
     private func refreshAppAfterRecovery(comparison: UUID) async {
@@ -2036,10 +2107,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             // window here; a later explicit send can reopen the saved chat.
             if provider == .wabi { try await wabiApp.checkAvailable() }
             else if provider == .museApp { try await museApp.checkAvailable() }
+            else if provider == .claudeApp { try await claudeApp.checkAvailable() }
             else { return }
             guard !shuttingDown, state.comparisonID == comparison else { return }
             desktopReady = true
-            desktopStatus = provider == .wabi ? "Dedicated Wabi chat ready" : "Muse side chat ready"
+            desktopStatus = provider == .wabi ? "Dedicated Wabi chat ready" : provider == .museApp ? "Muse side chat ready" : "Claude ready"
         } catch {
             guard !shuttingDown, state.comparisonID == comparison else { return }
             desktopReady = false

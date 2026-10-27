@@ -94,6 +94,19 @@ final class ClaudeAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try receipt.reply(in: [.init(role: .user, text: "Changed"), .init(role: .user, text: "Mine"), .init(role: .assistant, text: "Answer")]))
         XCTAssertThrowsError(try receipt.reply(in: [.init(role: .user, text: "Old"), .init(role: .user, text: "Someone else")]))
     }
+    func testSavedClaudeReceiptMatchesItsHistoryWithoutPersistingIt() throws {
+        let baseline: [ClaudeAppMessage] = [.init(role: .user, text: "Private question"), .init(role: .assistant, text: "Private answer")]
+        let receipt = try ClaudeReplyReceipt(comparisonID: UUID(), initialURL: nil, prompt: "Question", baseline: baseline)
+        let data = try JSONEncoder().encode(receipt)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("Private"))
+        let restored = try JSONDecoder().decode(ClaudeReplyReceipt.self, from: data)
+        let outgoing = ClaudeAppMessage(role: .user, text: "Question")
+        XCTAssertNil(try restored.reply(in: baseline + [outgoing]))
+        XCTAssertEqual(try restored.reply(in: baseline + [outgoing, .init(role: .assistant, text: "Late answer")]), "Late answer")
+        XCTAssertThrowsError(try restored.reply(in: [.init(role: .user, text: "Changed"), baseline[1], outgoing]))
+        XCTAssertThrowsError(try restored.reply(in: baseline + [.init(role: .user, text: "Another question")]))
+        XCTAssertThrowsError(try restored.reply(in: baseline + [outgoing, .init(role: .user, text: "Another question")]))
+    }
     func testInterruptedFirstInputBindingSurvivesReload() throws {
         let id = UUID()
         var binding = ClaudeConversationBinding(comparisonID: id)
@@ -120,9 +133,13 @@ private actor ClaudeRecordedBindings {
     var prepared: [ClaudeConversationBinding] = []
     var bound: [ClaudeConversationBinding] = []
     var submissions = 0
+    var observedOutgoing = 0
+    var receiptCount = 0
     func prepare(_ value: ClaudeConversationBinding) { prepared.append(value) }
     func bind(_ value: ClaudeConversationBinding) { bound.append(value) }
     func submitted() { submissions += 1 }
+    func observed() { observedOutgoing += 1 }
+    func receipt() { receiptCount += 1 }
 }
 
 final class ClaudeAppDriverTests: XCTestCase {
@@ -153,11 +170,12 @@ final class ClaudeAppDriverTests: XCTestCase {
                 ])])
             ]))
         }
-        func adapter(transientAfterSend: Bool = false, coldStart: Bool = false) -> ClaudeAppConversation {
+        func adapter(transientAfterSend: Bool = false, coldStart: Bool = false,
+                     timing: DesktopAppConversation.Timing = .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5)) -> ClaudeAppConversation {
             let failure = ClaudeOneTransientRead()
             let path = stage
             let observations = observations
-            return ClaudeAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5), readNative: { _, mode in
+            return ClaudeAppConversation(executable: executable, timing: timing, readNative: { _, mode in
                 let stage = Int((try? String(contentsOf: path, encoding: .utf8)) ?? "0") ?? 0
                 if coldStart, !FileManager.default.fileExists(atPath: path.deletingLastPathComponent().appendingPathComponent("driver-initialized").path) {
                     return try ClaudeAppObservation(root: .init(role: "AXWindow"))
@@ -347,7 +365,10 @@ final class ClaudeAppDriverTests: XCTestCase {
         let result = try await fixture.adapter().reply("First question", binding: fixture.binding, onSubmitAction: {
             XCTAssertEqual(try? String(contentsOf: fixture.stage, encoding: .utf8), "2")
             await recorded.submitted()
-        }, onPrepared: { await recorded.prepare($0) }, onBinding: { binding in
+        }, onPrepared: { await recorded.prepare($0) }, onReceipt: { _, _ in
+            XCTAssertFalse(fixture.calls().contains { $0["tool"] as? String == "type_text" })
+            await recorded.receipt()
+        }, onSubmitted: { await recorded.observed() }, onBinding: { binding in
             XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "2")
             let submissions = await recorded.submissions
             XCTAssertEqual(submissions, 1, "Release foreground ownership after Send, before waiting for the reply")
@@ -361,6 +382,10 @@ final class ClaudeAppDriverTests: XCTestCase {
         let bound = await recorded.bound
         let submissions = await recorded.submissions
         XCTAssertEqual(submissions, 1)
+        let observed = await recorded.observedOutgoing
+        let receipts = await recorded.receiptCount
+        XCTAssertEqual(observed, 1)
+        XCTAssertEqual(receipts, 1)
         XCTAssertEqual(prepared.count, 1)
         XCTAssertNil(prepared[0].url)
         XCTAssertEqual(bound.count, 1)
@@ -379,6 +404,182 @@ final class ClaudeAppDriverTests: XCTestCase {
             return nil
         }.joined()
         XCTAssertEqual(input, fixture.binding.firstMessage("First question"))
+    }
+    @MainActor
+    func testClaudeLateReplyRecoversAfterSessionTimeoutAndReloadWithoutResending() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let storage = fixture.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.desktopConversation = .init(name: "Claude")
+        workspace.comparisonID = fixture.binding.comparisonID; workspace.draft = "First question"
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(1), callTimeout: 5)
+        let adapter = fixture.adapter(timing: timing)
+        let driver = DesktopAppConversation(executable: fixture.executable)
+        let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, desktopDriver: driver, claudeApp: adapter)
+        let sent = await session.send("First question", comparisonID: fixture.binding.comparisonID)
+        let attempt = try XCTUnwrap(sent)
+        XCTAssertEqual(attempt.status, .uncertain)
+        XCTAssertEqual(attempt.messageID, attempt.id.uuidString)
+        XCTAssertNotNil(attempt.claudeReplyReceipt)
+        XCTAssertTrue(attempt.conversationURL.map(ClaudeChatURL.isChat) == true)
+        XCTAssertEqual(session.snapshot.messages.map(\.text), ["First question"])
+        session.beginShutdown()
+        let inputBefore = fixture.calls().filter { ["type_text", "press_key", "click"].contains($0["tool"] as? String ?? "") }.count
+        try Data("3".utf8).write(to: fixture.stage)
+        let reopened = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, desktopDriver: driver, claudeApp: adapter)
+        reopened.connect(automaticallyRefresh: false)
+        let remaining = await reopened.reconcileClaudeReplyOnce()
+        reopened.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[fixture.binding.comparisonID.uuidString]?.map(\.text), ["First question", "ANSWER"])
+        XCTAssertEqual(saved.draft, "First question")
+        XCTAssertEqual(fixture.calls().filter { ["type_text", "press_key", "click"].contains($0["tool"] as? String ?? "") }.count, inputBefore)
+    }
+
+    @MainActor
+    func testClaudeShutdownKeepsRecoveryButExplicitCancellationStopsIt() async throws {
+        for scenario in ["shutdown", "cancel", "cancel then shutdown"] {
+            let shutdown = scenario == "shutdown"
+            let fixture = try fixture()
+            defer { try? FileManager.default.removeItem(at: fixture.directory) }
+            let storage = fixture.directory.appendingPathComponent("shutdown-\(scenario).json")
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.desktopConversation = .init(name: "Claude"); workspace.comparisonID = fixture.binding.comparisonID
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(8), callTimeout: 5)
+            let adapter = fixture.adapter(timing: timing), driver = DesktopAppConversation(executable: fixture.executable)
+            let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, desktopDriver: driver, claudeApp: adapter)
+            let sending = Task { await session.send("First question", comparisonID: fixture.binding.comparisonID) }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while session.state.attempts.first?.status != .waiting, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertEqual(session.state.attempts.first?.status, .waiting)
+            if shutdown { await session.cancelAndWait() }
+            else {
+                session.cancelNativeRequest()
+                if scenario == "cancel then shutdown" { session.beginShutdown() }
+            }
+            let result = await sending.value
+            XCTAssertEqual(result?.status, .uncertain)
+            XCTAssertEqual(result?.claudeReplyReceipt?.automaticRecovery, shutdown)
+            session.beginShutdown()
+            if shutdown {
+                try Data("3".utf8).write(to: fixture.stage)
+                let reopened = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, desktopDriver: driver, claudeApp: adapter)
+                reopened.connect(automaticallyRefresh: false)
+                let remaining = await reopened.reconcileClaudeReplyOnce()
+                reopened.beginShutdown()
+                XCTAssertFalse(remaining)
+                XCTAssertEqual(reopened.state.attempts.first?.status, .observed)
+                XCTAssertEqual(reopened.state.localConversations[fixture.binding.comparisonID.uuidString]?.map(\.text), ["First question", "ANSWER"])
+            }
+        }
+    }
+
+    @MainActor
+    func testClaudeRecoveryRejectsUnconfirmedCancelledAndWrongOwnership() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let comparison = fixture.binding.comparisonID
+        let url = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000001")!
+        let other = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000002")!
+        let first = fixture.binding.firstMessage("First question")
+        for scenario in ["unconfirmed", "cancelled", "wrong binding", "wrong comparison", "missing outgoing", "interleaved", "multiple requests", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            workspace.claudeConversations[comparison.uuidString] = .init(comparisonID: comparison, url: scenario == "wrong binding" ? other : url, firstPrompt: first)
+            var attempt = WebSendAttempt(text: "First question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.conversationURL = url
+            attempt.claudeReplyReceipt = try .init(comparisonID: scenario == "wrong comparison" ? UUID() : comparison, initialURL: nil, prompt: first, baseline: [])
+            if scenario == "unconfirmed" { attempt.messageID = nil }
+            if scenario == "cancelled" { attempt.claudeReplyReceipt?.automaticRecovery = false }
+            if scenario == "unsupported version" { attempt.claudeReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[comparison.uuidString] = [] }
+            if scenario == "interleaved" { workspace.localConversations[comparison.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "multiple requests" { workspace.attempts.append(WebSendAttempt(text: "Another request", status: .uncertain)) }
+            let storage = fixture.directory.appendingPathComponent("claude-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, claudeApp: fixture.adapter())
+            session.connect(automaticallyRefresh: false)
+            let remaining = await session.reconcileClaudeReplyOnce()
+            XCTAssertFalse(remaining, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
+    }
+
+    func testClaudeRecoveryNeverAttributesAnotherOpenChat() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try Data("3".utf8).write(to: fixture.stage)
+        let other = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000002")!
+        let receipt = try ClaudeReplyReceipt(comparisonID: fixture.binding.comparisonID, initialURL: nil, prompt: fixture.binding.firstMessage("First question"), baseline: [])
+        let binding = ClaudeConversationBinding(comparisonID: fixture.binding.comparisonID, url: other, firstPrompt: receipt.prompt)
+        do {
+            _ = try await fixture.adapter().recoverReply(receipt, binding: binding)
+            XCTFail("A reply from another chat must not be attributed")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("selected chat changed")) }
+        XCTAssertFalse(fixture.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0["tool"] as? String ?? "") })
+    }
+
+    @MainActor
+    func testClaudeRecoveryRechecksRequestAfterAnInFlightRead() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try Data("3".utf8).write(to: fixture.stage)
+        let started = expectation(description: "Claude read started")
+        let resume = DispatchSemaphore(value: 0)
+        let marker = fixture.directory.appendingPathComponent("recovery-read-started")
+        let observation = fixture.observations[3]
+        let adapter = ClaudeAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker); started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return observation
+        }
+        let comparison = fixture.binding.comparisonID, url = observation.url
+        let first = fixture.binding.firstMessage("First question")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison
+        workspace.claudeConversations[comparison.uuidString] = .init(comparisonID: comparison, url: url, firstPrompt: first)
+        var attempt = WebSendAttempt(text: "First question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.conversationURL = url
+        attempt.claudeReplyReceipt = try .init(comparisonID: comparison, initialURL: nil, prompt: first, baseline: [])
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = fixture.directory.appendingPathComponent("claude-in-flight.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, claudeApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileClaudeReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.attempts[0].status = .dismissed }
+        resume.signal()
+        let remaining = await recovery.value
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .dismissed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["First question"])
+        XCTAssertFalse(fixture.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0["tool"] as? String ?? "") })
+    }
+
+    func testClaudeDoesNotTypeIfRecoveryReceiptCannotBeSaved() async throws {
+        enum StorageFailure: Error { case denied }
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do {
+            _ = try await fixture.adapter().reply("First question", binding: fixture.binding, onPrepared: { _ in }, onReceipt: { _, _ in throw StorageFailure.denied }, onBinding: { _ in })
+            XCTFail("A failed recovery receipt must stop before typing")
+        } catch StorageFailure.denied { }
+        XCTAssertFalse(fixture.calls().contains { ["type_text", "press_key", "click"].contains($0["tool"] as? String ?? "") })
     }
     func testTransientIncompleteHistoryAfterSendRetriesOnlyObservation() async throws {
         let fixture = try fixture()
