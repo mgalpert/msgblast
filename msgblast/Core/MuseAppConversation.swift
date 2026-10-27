@@ -223,6 +223,7 @@ actor MuseAppConversation {
                onCandidate: @Sendable (URL) async throws -> Void = { _ in },
                onSubmitAction: @Sendable () async -> Void = {},
                onSubmitted: @Sendable () async throws -> Void = {},
+               onReceipt: @Sendable ([MuseAppMessage], String) async throws -> Void = { _, _ in },
                releaseFocus: @Sendable () async throws -> Void = {},
                onBinding: @Sendable (MuseSideChatBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Muse is already handling a request.") }
@@ -243,6 +244,7 @@ actor MuseAppConversation {
         }
         try sameChat(before, id: binding.threadID)
         let receipt = MuseAppReceipt(baseline: before.messages, prompt: wirePrompt)
+        try await onReceipt(before.messages, wirePrompt)
         func matchesPreparedDraft(_ draft: String, prefix: String) -> Bool {
             // WebKit exposes an extra terminal line break while a new empty
             // line is being edited. This tolerance is only for intermediate
@@ -354,5 +356,30 @@ actor MuseAppConversation {
             }
             return knownID != nil && !state.generating ? observedReply : nil
         })
+    }
+
+    /// Only inspect the currently selected owned side chat; never navigate or resend.
+    func recoverReply(_ receipt: MuseReplyReceipt, binding: MuseSideChatBinding) async throws -> String? {
+        guard !occupied else { return nil }
+        guard receipt.version == 1, binding.comparisonID == receipt.comparisonID,
+              let threadID = binding.threadID,
+              receipt.initialThreadID == nil || receipt.initialThreadID == threadID else {
+            throw DesktopAppError.unavailable("Muse's saved side chat could not be verified.")
+        }
+        occupied = true; defer { occupied = false }
+        let session = "msgblast-muse-recovery-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
+        let target = try await driver.target(.muse)
+        func answer() async throws -> String? {
+            let state = try await observe(target, repliesOnly: true)
+            guard MuseSideChatBinding.threadID(in: state.url) == threadID else {
+                throw DesktopAppError.unavailable("Muse's selected side chat changed. No reply was attributed.")
+            }
+            guard !state.generating else { return nil }
+            return try receipt.reply(in: state.messages)
+        }
+        guard let first = try await answer() else { return nil }
+        if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+        return try await answer() == first ? first : nil
     }
 }

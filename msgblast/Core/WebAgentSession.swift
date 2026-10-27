@@ -1721,7 +1721,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     let answer = try await museApp.reply(text, binding: museBinding, requestID: attemptID, onCandidate: { [weak self] url in
                         guard let self else { throw CancellationError() }
                         try await self.recordMuseAppCandidate(url, comparisonID: id, attemptID: attemptID)
-                    }, onSubmitAction: submitAction, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }, onBinding: { [weak self] discovered in
+                    }, onSubmitAction: submitAction, onSubmitted: submitted, onReceipt: { [weak self] baseline, wirePrompt in
+                        guard let self else { throw CancellationError() }
+                        let receipt = try MuseReplyReceipt(comparisonID: id, requestID: attemptID, initialThreadID: museBinding.threadID,
+                                                           prompt: wirePrompt, baseline: baseline)
+                        try await self.recordMuseReceipt(receipt, attemptID: attemptID)
+                    }, releaseFocus: { _ = try? await sendFocus?.restore() }, onBinding: { [weak self] discovered in
                         guard let self else { throw CancellationError() }
                         try await self.recordMuseAppSubmission(discovered, attemptID: attemptID)
                     })
@@ -1799,8 +1804,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.messageID = state.attempts.first { $0.id == attempt.id }?.messageID ?? attempt.messageID
             attempt.dotsReplyReceipt = state.attempts.first { $0.id == attempt.id }?.dotsReplyReceipt
             attempt.wabiReplyReceipt = state.attempts.first { $0.id == attempt.id }?.wabiReplyReceipt
+            attempt.museReplyReceipt = state.attempts.first { $0.id == attempt.id }?.museReplyReceipt
             if error is CancellationError { attempt.dotsReplyReceipt?.automaticRecovery = false }
             if error is CancellationError { attempt.wabiReplyReceipt?.automaticRecovery = false }
+            if error is CancellationError { attempt.museReplyReceipt?.automaticRecovery = false }
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
@@ -1867,6 +1874,19 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         try save()
     }
 
+    private func recordMuseReceipt(_ receipt: MuseReplyReceipt, attemptID: UUID) throws {
+        guard provider == .museApp, !storageFailed,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .attempting,
+              state.attempts[index].comparisonID == receipt.comparisonID,
+              state.attempts[index].museReplyReceipt == nil, receipt.requestID == attemptID,
+              receipt.version == 1, !receipt.prompt.isEmpty else {
+            throw WebSessionFailure.notSent("The Muse request could not be saved. Nothing was sent.")
+        }
+        state.attempts[index].museReplyReceipt = receipt
+        try save()
+    }
+
     private func recoverableDotsAttempt() -> WebSendAttempt? {
         guard provider == .dotsApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
         let pending = state.attempts.filter { $0.status.isUnresolved }
@@ -1892,7 +1912,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     private func startNativeRecoveryIfNeeded() {
-        guard nativeRecoveryPoll == nil, recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil else { return }
+        guard nativeRecoveryPoll == nil,
+              recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil || recoverableMuseAttempt() != nil else { return }
         let generation = UUID()
         nativeRecoveryGeneration = generation
         nativeRecoveryPoll = Task { [weak self] in
@@ -1908,6 +1929,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private func reconcileNativeReplyOnce() async -> Bool {
         if provider == .dotsApp { return await reconcileDotsReplyOnce() }
         if provider == .wabi { return await reconcileWabiReplyOnce() }
+        if provider == .museApp { return await reconcileMuseReplyOnce() }
         return false
     }
 
@@ -1944,6 +1966,44 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return recoverableWabiAttempt() != nil
     }
 
+    private func recoverableMuseAttempt() -> WebSendAttempt? {
+        guard provider == .museApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
+        let pending = state.attempts.filter { $0.status.isUnresolved }
+        guard pending.count == 1, let attempt = pending.first,
+              [.waiting, .uncertain].contains(attempt.status), attempt.messageID == attempt.id.uuidString,
+              let comparison = attempt.comparisonID, let receipt = attempt.museReplyReceipt,
+              receipt.version == 1, receipt.automaticRecovery, receipt.comparisonID == comparison,
+              receipt.requestID == attempt.id,
+              let binding = try? state.museAppBinding(for: comparison), let threadID = binding.threadID,
+              receipt.initialThreadID == nil || receipt.initialThreadID == threadID,
+              binding.url == attempt.conversationURL,
+              receipt.prompt == (receipt.initialThreadID == nil ? MuseAppConversation.firstPrompt(attempt.text, requestID: attempt.id) : attempt.text),
+              let messages = state.localConversations[comparison.uuidString],
+              messages.last == WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text),
+              !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }) else { return nil }
+        return attempt
+    }
+
+    func reconcileMuseReplyOnce() async -> Bool {
+        guard let attempt = recoverableMuseAttempt(), let receipt = attempt.museReplyReceipt,
+              let binding = try? state.museAppBinding(for: receipt.comparisonID) else { return false }
+        guard !isSending, !loading, !refreshing else { return true }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { return true }
+        do {
+            let result = try await museApp.recoverReply(receipt, binding: binding)
+            try Task.checkCancellation()
+            guard let result, let current = recoverableMuseAttempt(), current.id == attempt.id,
+                  current.museReplyReceipt == receipt,
+                  (try? state.museAppBinding(for: receipt.comparisonID)) == binding else { return recoverableMuseAttempt() != nil }
+            try finishRecoveredNativeReply(result, attempt: attempt, comparison: receipt.comparisonID)
+        } catch is CancellationError { return false }
+        catch {
+            if storageFailed { self.error = "Could not save the Muse reply. Repair storage before continuing." }
+        }
+        return recoverableMuseAttempt() != nil
+    }
+
     private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID) throws {
         guard let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) else { return }
         let key = comparison.uuidString
@@ -1958,25 +2018,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts[index].detail = "Reply observed in the app conversation."
         state.attempts[index].dotsReplyReceipt = nil
         state.attempts[index].wabiReplyReceipt = nil
+        state.attempts[index].museReplyReceipt = nil
         do { try save() } catch { state = previous; throw error }
         if error == attempt.detail { error = nil }
         updateNativeSnapshot()
         if provider == .dotsApp { Task { await refresh() } }
-        else if provider == .wabi { Task { await refreshWabiAfterRecovery(comparison: comparison) } }
+        else if provider == .wabi || provider == .museApp { Task { await refreshAppAfterRecovery(comparison: comparison) } }
     }
 
-    private func refreshWabiAfterRecovery(comparison: UUID) async {
+    private func refreshAppAfterRecovery(comparison: UUID) async {
         guard !shuttingDown, isEnabled, connected, state.comparisonID == comparison,
               !isSending, !refreshing, !loading else { return }
         refreshing = true
         defer { refreshing = false }
         do {
-            // The ordinary Wabi refresh may navigate. Check only the current
+            // The ordinary app refresh may navigate. Check only the current
             // window here; a later explicit send can reopen the saved chat.
-            try await wabiApp.checkAvailable()
+            if provider == .wabi { try await wabiApp.checkAvailable() }
+            else if provider == .museApp { try await museApp.checkAvailable() }
+            else { return }
             guard !shuttingDown, state.comparisonID == comparison else { return }
             desktopReady = true
-            desktopStatus = "Dedicated Wabi chat ready"
+            desktopStatus = provider == .wabi ? "Dedicated Wabi chat ready" : "Muse side chat ready"
         } catch {
             guard !shuttingDown, state.comparisonID == comparison else { return }
             desktopReady = false

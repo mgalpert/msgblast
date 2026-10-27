@@ -42,6 +42,7 @@ public struct WebSendAttempt: Codable, Equatable, Identifiable, Sendable {
     // A versioned, read-only native receipt. Older workspaces decode without it.
     var dotsReplyReceipt: DotsReplyReceipt?
     var wabiReplyReceipt: WabiReplyReceipt?
+    var museReplyReceipt: MuseReplyReceipt?
     var pinnedConversationURL: URL? { recoveryConversationURL ?? receiptContext?.candidateURL }
     public init(text: String, status: WebSendStatus = .preparing) {
         self.text = text; self.status = status

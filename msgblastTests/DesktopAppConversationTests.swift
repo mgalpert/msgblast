@@ -433,6 +433,22 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try restored.reply(in: previous + [outgoing, response, response]))
     }
 
+    func testSavedMuseReceiptChecksBaselineAndRejectsAnotherRequest() throws {
+        let previous: [MuseAppMessage] = [.init(role: .user, text: "Private earlier question"), .init(role: .assistant, text: "Private earlier answer")]
+        let receipt = try MuseReplyReceipt(comparisonID: UUID(), requestID: UUID(), initialThreadID: UUID(), prompt: "Next question", baseline: previous)
+        let outgoing = MuseAppMessage(role: .user, text: "Next question")
+        let first = MuseAppMessage(role: .assistant, text: "First part")
+        let second = MuseAppMessage(role: .assistant, text: "Second part")
+        let data = try JSONEncoder().encode(receipt)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("Private earlier"))
+        let restored = try JSONDecoder().decode(MuseReplyReceipt.self, from: data)
+        XCTAssertNil(try restored.reply(in: previous + [outgoing]))
+        XCTAssertEqual(try restored.reply(in: previous + [outgoing, first, second]), "First part\n\nSecond part")
+        XCTAssertThrowsError(try restored.reply(in: [.init(role: .user, text: "Different history"), previous[1], outgoing, first]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [.init(role: .user, text: "Someone else's question"), first]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [outgoing, first, .init(role: .user, text: "Another request")]))
+    }
+
 
 
     func testWabiNativeMessageFramesProveSendersAndKeepLiteralMetadataText() throws {
@@ -2753,6 +2769,19 @@ final class DesktopAppDriverTests: XCTestCase {
         assertMuseBackground(calls)
     }
 
+    func testMuseDoesNotTypeIfRecoveryReceiptCannotBeSaved() async throws {
+        enum StorageFailure: Error { case denied }
+        let owner = UUID(), thread = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        let fixture = try driver([apps(.muse), initial])
+        defer { fixture.remove() }
+        do {
+            _ = try await museAdapter(fixture).reply(prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Side chat"), onReceipt: { _, _ in throw StorageFailure.denied }, onBinding: { _ in })
+            XCTFail("A failed recovery receipt must stop before typing")
+        } catch StorageFailure.denied { }
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
     func testMusePartialDraftFocusLossAndChatSwitchPreventReturnWithoutReplay() async throws {
         let owner = UUID(), thread = UUID()
         for fault in ["unchanged", "partial", "focus", "chat", "history", "generating"] {
@@ -2812,6 +2841,134 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
         assertMuseBackground(calls)
         reopened.beginShutdown()
+    }
+
+    func testMuseLateReplyRecoversAfterRealSessionTimeoutAndReloadWithoutResending() async throws {
+        let owner = UUID(), thread = UUID()
+        let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
+        defer { fixture.remove() }
+        let storage = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
+        try JSONEncoder().encode(saved).write(to: storage)
+        let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        let sent = await session.send(prompt, comparisonID: owner)
+        let result = try XCTUnwrap(sent)
+        XCTAssertEqual(result.status, .uncertain)
+        XCTAssertEqual(result.messageID, result.id.uuidString)
+        let receipt = try XCTUnwrap(result.museReplyReceipt)
+        XCTAssertNil(receipt.initialThreadID)
+        XCTAssertEqual(receipt.requestID, result.id)
+        XCTAssertEqual(result.conversationURL, MuseSideChatBinding(comparisonID: owner, threadID: thread, title: "").url)
+        session.beginShutdown()
+        let wire = MuseAppConversation.firstPrompt(prompt, requestID: result.id)
+        try setNative(museObservation(thread: thread, messages: [.init(role: .user, text: wire), .init(role: .assistant, text: "A late answer")]), in: fixture)
+        try fixture.replacePlan([apps(.muse), windows()])
+        let reopened = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        reopened.connect(automaticallyRefresh: false)
+        let remaining = await reopened.reconcileMuseReplyOnce()
+        reopened.beginShutdown()
+        XCTAssertFalse(remaining)
+        let recovered = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(recovered.attempts.first?.status, .observed)
+        XCTAssertEqual(recovered.localConversations[owner.uuidString]?.map(\.text), [prompt, "A late answer"])
+        XCTAssertEqual(recovered.draft, prompt)
+        let calls = try await finishedCalls(fixture, cleanupCount: 3)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 2)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+    }
+
+    func testMuseRecoveryRejectsUnconfirmedCancelledAndWrongOwnership() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let owner = UUID(), thread = UUID(), other = UUID()
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Muse") })
+        for scenario in ["unconfirmed", "cancelled", "wrong thread", "wrong comparison", "wrong request", "missing outgoing", "interleaved", "multiple requests", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = owner
+            let binding = MuseSideChatBinding(comparisonID: owner, threadID: scenario == "wrong thread" ? other : thread, title: "Side chat")
+            try workspace.recordMuseAppBinding(binding)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = owner; attempt.messageID = attempt.id.uuidString
+            attempt.conversationURL = MuseSideChatBinding(comparisonID: owner, threadID: thread, title: "Side chat").url
+            attempt.museReplyReceipt = try .init(comparisonID: scenario == "wrong comparison" ? UUID() : owner,
+                                                  requestID: scenario == "wrong request" ? UUID() : attempt.id,
+                                                  initialThreadID: thread, prompt: "Question", baseline: [])
+            if scenario == "unconfirmed" { attempt.messageID = nil }
+            if scenario == "cancelled" { attempt.museReplyReceipt?.automaticRecovery = false }
+            if scenario == "unsupported version" { attempt.museReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[owner.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[owner.uuidString] = [] }
+            if scenario == "interleaved" { workspace.localConversations[owner.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "multiple requests" { workspace.attempts.append(WebSendAttempt(text: "Another request", status: .uncertain)) }
+            let storage = fixture.directory.appendingPathComponent("muse-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client)
+            session.connect(automaticallyRefresh: false)
+            let remaining = await session.reconcileMuseReplyOnce()
+            XCTAssertFalse(remaining, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(try fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
+    }
+
+    func testMuseRecoveryNeverAttributesAnotherOpenSideChat() async throws {
+        let owner = UUID(), thread = UUID(), other = UUID()
+        let fixture = try driver([apps(.muse), windows()])
+        defer { fixture.remove() }
+        let receipt = try MuseReplyReceipt(comparisonID: owner, requestID: UUID(), initialThreadID: thread, prompt: "Question", baseline: [])
+        let observation = museObservation(thread: other, messages: [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Wrong chat")])
+        let adapter = MuseAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _ in observation }
+        do {
+            _ = try await adapter.recoverReply(receipt, binding: .init(comparisonID: owner, threadID: thread, title: "Side chat"))
+            XCTFail("A reply from a different side chat must not be attributed")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("side chat changed")) }
+        let calls = try await finishedCalls(fixture)
+        assertNoInput(calls)
+    }
+
+    func testMuseRecoveryRechecksTheRequestAfterAnInFlightRead() async throws {
+        let owner = UUID(), thread = UUID()
+        let fixture = try driver([apps(.muse), windows()])
+        defer { fixture.remove() }
+        let started = expectation(description: "Muse read started")
+        let resume = DispatchSemaphore(value: 0)
+        let marker = fixture.directory.appendingPathComponent("muse-read-started")
+        let observation = museObservation(thread: thread, messages: [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+        let adapter = MuseAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _ in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker); started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return observation
+        }
+        let binding = MuseSideChatBinding(comparisonID: owner, threadID: thread, title: "Side chat")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = owner
+        try workspace.recordMuseAppBinding(binding)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = owner; attempt.messageID = attempt.id.uuidString; attempt.conversationURL = binding.url
+        attempt.museReplyReceipt = try .init(comparisonID: owner, requestID: attempt.id, initialThreadID: thread, prompt: "Question", baseline: [])
+        workspace.attempts = [attempt]
+        workspace.localConversations[owner.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = fixture.directory.appendingPathComponent("muse-in-flight.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Muse") })
+        let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: adapter, desktopApps: client)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileMuseReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.attempts[0].status = .dismissed }
+        resume.signal()
+        let remaining = await recovery.value
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .dismissed)
+        XCTAssertEqual(saved.localConversations[owner.uuidString]?.map(\.text), ["Question"])
+        XCTAssertFalse(try fixture.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
     }
 
     func testMuseConfirmedPromptSurvivesMissingReplyAcknowledgementAndRestart() async throws {
