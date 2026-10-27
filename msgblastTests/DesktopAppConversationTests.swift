@@ -780,6 +780,28 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
     }
 
+    func testGrokWorkingPastDeadlineDoesNotHoldTheBroadcastOpen() async throws {
+        actor Submission { var count = 0; func record() { count += 1 } }
+        let submission = Submission()
+        var working = grok(reply: "")
+        var elements = try XCTUnwrap(working["elements"] as? [[String: Any]])
+        elements.append(element("AXStaticText", "Fixture Bot is working"))
+        working["elements"] = elements
+        working["returned_element_count"] = elements.count; working["total_element_count"] = elements.count
+        let fixture = try driver(sendSteps() + [snapshot(working), snapshot(working), snapshot(working), snapshot(grok(reply: "Eventually finished"), repeating: true)])
+        defer { fixture.remove() }
+        let error = await failure {
+            try await self.adapter(fixture, replyTimeout: .milliseconds(15), replyClock: .init(AdvancingClock()))
+                .reply(self.prompt, app: .grokBot, binding: self.binding, onSubmitted: { await submission.record() })
+        }
+        XCTAssertTrue(error.contains("has not completed a verified reply"), error)
+        let submissions = await submission.count
+        XCTAssertEqual(submissions, 1, "The test must reach a confirmed outgoing message")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Never resend while the bot is still working")
+        XCTAssertEqual(calls.filter { $0.tool == "get_window_state" }.count, 5, "Three deadline ticks should end the foreground wait")
+    }
+
     func testWabiLateReplyIsRecoveredWithoutSendingAndSurvivesReload() async throws {
         let comparison = UUID(), url = wabiURL
         let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
@@ -3029,6 +3051,42 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
     }
 
+    func testMuseWorkingPastDeadlineDoesNotHoldTheBroadcastOpen() async throws {
+        final class Reads: @unchecked Sendable {
+            private let lock = NSLock()
+            private var reads = 0
+            var count: Int { lock.withLock { reads } }
+            func next(_ value: MuseAppObservation) -> MuseAppObservation {
+                guard !value.messages.isEmpty else { return value }
+                return lock.withLock {
+                    reads += 1
+                    var result = value
+                    result.generating = reads <= 3
+                    if reads > 3 { result.messages.append(.init(role: .assistant, text: "Eventually finished")) }
+                    return result
+                }
+            }
+        }
+        let owner = UUID(), thread = UUID(), reads = Reads()
+        let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
+        defer { fixture.remove() }
+        let storage = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
+        try JSONEncoder().encode(saved).write(to: storage)
+        let muse = museAdapter(fixture, timeout: .milliseconds(15), replyClock: .init(AdvancingClock()), transformNative: { reads.next($0) })
+        let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: muse, desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        let sent = await session.send(prompt, comparisonID: owner)
+        session.beginShutdown()
+        let attempt = try XCTUnwrap(sent)
+        XCTAssertEqual(attempt.status, .uncertain)
+        XCTAssertEqual(attempt.messageID, attempt.id.uuidString, "The outgoing message must be confirmed")
+        XCTAssertNotNil(attempt.museReplyReceipt)
+        XCTAssertEqual(reads.count, 3, "The foreground wait should stop after three deadline ticks")
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+    }
+
     func testMuseRecoveryRejectsUnconfirmedCancelledAndWrongOwnership() async throws {
         let fixture = try driver([])
         defer { fixture.remove() }
@@ -3534,10 +3592,11 @@ final class DesktopAppDriverTests: XCTestCase {
         init(failures: Int = 1) { remaining = failures }
         func shouldFail() -> Bool { lock.withLock { guard remaining > 0 else { return false }; remaining -= 1; return true } }
     }
-    private func museAdapter(_ fixture: DriverFixture, timeout: Duration = .seconds(3), transientWindowFailure: Bool = false, transientReadFailures: Int = 0, requiresDriverSnapshot: Bool = false) -> MuseAppConversation {
+    private func museAdapter(_ fixture: DriverFixture, timeout: Duration = .seconds(3), transientWindowFailure: Bool = false, transientReadFailures: Int = 0, requiresDriverSnapshot: Bool = false,
+                             replyClock: DesktopAppWorkflow.ReplyClock = .init(ContinuousClock()), transformNative: @escaping @Sendable (MuseAppObservation) -> MuseAppObservation = { $0 }) -> MuseAppConversation {
         let fault = MuseReadFault(failures: transientWindowFailure ? 1 : transientReadFailures)
         let url = fixture.directory.appendingPathComponent("native.json")
-        return MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: timeout, callTimeout: 3)) { target in
+        return MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: timeout, callTimeout: 3, replyClock: replyClock)) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             if requiresDriverSnapshot, !(try fixture.calls()).contains(where: { $0.tool == "get_window_state" }) {
                 throw DesktopAppError.unavailable("Muse's accessibility window has not been initialized")
@@ -3546,7 +3605,7 @@ final class DesktopAppDriverTests: XCTestCase {
             if observation.url == MuseSideChatBinding.newURL, fault.shouldFail() {
                 throw DesktopAppError.unavailable("Muse's empty composer could not be confirmed.")
             }
-            return observation
+            return transformNative(observation)
         }
     }
     private func assertMuseBackground(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {

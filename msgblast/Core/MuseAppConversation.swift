@@ -322,13 +322,11 @@ actor MuseAppConversation {
         var provisionalID: UUID?
         var savedTitle: String?
         var submissionObserved = false
-        var generating = false
         return try await DesktopAppWorkflow.reply(app: "Muse", timing: timing, clock: timing.replyClock, onSubmitAction: onSubmitAction, releaseFocus: releaseFocus,
-            continueWaiting: { submissionObserved && generating }, submit: {
+            submit: {
             _ = try await self.driver.call("press_key", ["key": "return", "delivery_mode": "background", "session": session], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
         }, observe: {
             let state = try await self.observe(target, repliesOnly: true)
-            generating = state.generating
             if let id = knownID {
                 guard MuseSideChatBinding.threadID(in: state.url) == id else { throw DesktopAppError.unavailable("Muse switched side chats while waiting. Review the saved chat; no automatic resend.") }
             } else if let id = MuseSideChatBinding.threadID(in: state.url) {

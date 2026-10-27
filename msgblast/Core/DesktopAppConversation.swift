@@ -709,7 +709,7 @@ actor DesktopAppConversation {
         var submissionObserved = false
         var revealedLatestMessages: String?
         return try await DesktopAppWorkflow.reply(app: app.name, timing: timing, clock: timing.replyClock, onSubmitAction: onSubmitAction, releaseFocus: releaseFocus,
-            continueWaiting: { submissionObserved && state.grokIsWorking }, submit: {
+            submit: {
             _ = try await self.call("click", ["session": session, "element_token": button.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
         }, observe: {
             state = try await self.snapshot(target, session: session)
