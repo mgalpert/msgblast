@@ -1215,6 +1215,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         desktopReady = false
         desktopStatus = "Finding your bots…"
         loading = true
+        defer { loading = false }
         updateNativeSnapshot()
         do {
             try await waitForDesktopRefresh()
@@ -1230,10 +1231,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             desktopReady = false
             desktopStatus = error.localizedDescription
         }
-        loading = false
         if let name = state.desktopConversation?.name, grokBotNames.contains(name), isEnabled {
             connected = true
-            await refreshDesktop()
+            await refreshDesktop(duringConnection: true)
         }
         updateNativeSnapshot()
     }
@@ -1427,8 +1427,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
     }
 
-    private func refreshDesktop() async {
-        guard let app = provider.desktopApp, provider.isAvailableInBuild, !loading, !refreshing, !shuttingDown else { return }
+    private func refreshDesktop(duringConnection: Bool = false) async {
+        guard let app = provider.desktopApp, provider.isAvailableInBuild, (!loading || duringConnection), !refreshing, !shuttingDown else { return }
         refreshing = true
         let generation = comparisonGeneration
         defer { refreshing = false }

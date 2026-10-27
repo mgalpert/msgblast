@@ -1165,6 +1165,51 @@ final class DesktopAppDriverTests: XCTestCase {
         assertNoInput(try await finishedCalls(fixture, cleanupCount: 3))
     }
 
+    func testGrokDiscoveryStaysBusyUntilSavedBotReadinessFinishes() async throws {
+        let initial = grok(bots: ["Fixture Bot", "Other Bot"])
+        let read = [apps(), windows(), snapshot(initial)]
+        let fixture = try driver(read + read)
+        defer { fixture.remove() }
+        let entered = expectation(description: "Saved bot readiness reached window discovery")
+        let passiveReturned = expectation(description: "Passive discovery does not join an explicit connection")
+        let (releaseGate, release) = AsyncStream<Void>.makeStream()
+        defer { release.finish() }
+        let firstReadiness = FirstCall()
+        let run: DesktopAppConversation.ProcessRunner = { executable, arguments, environment, timeout, cancellation in
+            if arguments.dropFirst().first == "list_windows",
+               try fixture.calls().filter({ $0.tool == "get_window_state" }).count == 1,
+               firstReadiness.take() {
+                entered.fulfill()
+                for await _ in releaseGate { break }
+            }
+            try Task.checkCancellation()
+            return try await DesktopAppConversation.execute(executable, arguments, environment, timeout, cancellation)
+        }
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: .shared, desktopApps: .demo, desktopDriver: adapter(fixture, runProcess: run))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = binding; $0.draft = "Keep this msgblast draft" }
+        let connection = Task { await session.refreshGrokBots(activateIfNeeded: true) }
+        await fulfillment(of: [entered], timeout: 5)
+        XCTAssertTrue(session.loading, "Connect must stay busy through its saved bot readiness check")
+        let passive = Task {
+            await session.refreshGrokBots()
+            passiveReturned.fulfill()
+        }
+        await fulfillment(of: [passiveReturned], timeout: 5)
+        release.yield(()); release.finish()
+        await connection.value
+        await passive.value
+        XCTAssertFalse(session.loading)
+        XCTAssertTrue(session.isReadyForOnboarding, session.desktopStatus)
+        XCTAssertEqual(session.grokBotNames, ["Fixture Bot", "Other Bot"])
+        XCTAssertEqual(session.state.desktopConversation, binding)
+        XCTAssertEqual(session.state.draft, "Keep this msgblast draft")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        assertNoInput(try await finishedCalls(fixture, cleanupCount: 2))
+    }
+
     func testGrokDiscoveryAndSelectionWaitForReadinessRefresh() async throws {
         for choosing in [false, true] {
             let initial = grok(bots: ["Fixture Bot", "Other Bot"])
