@@ -32,6 +32,20 @@ private enum WabiHistoryWindow {
     // Bound receipt size and hashing work for unusually long native chats.
     static let maximumDropped = 16
     static func minimumRetained(_ count: Int) -> Int { max(3, count / 2 + count % 2) }
+    // Wabi may omit one older accessible row while keeping the newest rows.
+    // Require a substantial exact overlap and an intact recent tail.
+    static func matchesMissingOlderRow<T: Equatable>(baseline: [T], observed: [T]) -> Bool {
+        guard baseline.count >= 7, observed.count >= minimumRetained(baseline.count),
+              observed.count >= 6, baseline.count > observed.count,
+              baseline.suffix(3).elementsEqual(observed.suffix(3)) else { return false }
+        let dropped = baseline.count - observed.count - 1
+        guard dropped >= 0, dropped + 1 <= maximumDropped else { return false }
+        let window = Array(baseline.dropFirst(dropped).dropLast(3))
+        let visible = Array(observed.dropLast(3))
+        var index = 0
+        while index < visible.count && window[index] == visible[index] { index += 1 }
+        return window.dropFirst(index + 1).elementsEqual(visible.dropFirst(index))
+    }
 }
 
 struct WabiAXNode: Sendable {
@@ -110,7 +124,11 @@ struct WabiAppReceipt {
     }
 
     func unchanged(_ messages: [WabiAppMessage]) -> Bool {
-        acceptableHistory.contains(messages) || acceptableHistory.contains(Array(messages.reversed()))
+        acceptableHistory.contains(messages) || acceptableHistory.contains(Array(messages.reversed())) ||
+            [baseline, Array(baseline.reversed())].contains { history in
+                WabiHistoryWindow.matchesMissingOlderRow(baseline: history, observed: messages) ||
+                    WabiHistoryWindow.matchesMissingOlderRow(baseline: history, observed: Array(messages.reversed()))
+            }
     }
 
     func reply(in messages: [WabiAppMessage]) throws -> String? {
@@ -124,6 +142,15 @@ struct WabiAppReceipt {
         var candidates: Set<String> = []
         var waiting = false
         for ordered in [messages, Array(messages.reversed())] {
+            for oldCount in max(0, ordered.count - 2)...ordered.count {
+                let old = Array(ordered.prefix(oldCount))
+                guard [baseline, Array(baseline.reversed())].contains(where: { WabiHistoryWindow.matchesMissingOlderRow(baseline: $0, observed: old) }) else { continue }
+                let added = ordered.dropFirst(oldCount)
+                guard let outgoing = added.first, outgoing.role == .user,
+                      outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
+                if added.count == 1 { waiting = true }
+                else if let answer = added.last, answer.role == .assistant { candidates.insert(answer.text) }
+            }
             for old in acceptableHistory where ordered.starts(with: old) {
                 let added = ordered.dropFirst(old.count)
                 guard added.count <= 2 else { continue }
@@ -157,6 +184,8 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
     let reversedBaselineDigest: Data
     // Optional for backwards compatibility. Digests retain no message text.
     let overlapDigests: [WabiHistoryDigest]?
+    // Optional per-row hashes allow one older virtualized row to disappear.
+    let messageDigests: [Data]?
     var automaticRecovery = true
 
     init(comparisonID: UUID, url: URL, prompt: String, baseline: [WabiAppMessage]) throws {
@@ -164,6 +193,7 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
         baselineCount = baseline.count
         baselineDigest = try Self.digest(baseline)
         reversedBaselineDigest = try Self.digest(Array(baseline.reversed()))
+        messageDigests = baseline.count <= 512 ? try baseline.map { try Self.digest([$0]) } : nil
         let minimum = WabiHistoryWindow.minimumRetained(baseline.count)
         var overlaps: [WabiHistoryDigest] = []
         if baseline.count > minimum {
@@ -196,12 +226,19 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
                 throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
             }
         }
+        if let messageDigests {
+            guard messageDigests.count == baselineCount, messageDigests.count <= 512,
+                  messageDigests.allSatisfy({ $0.count == 32 }) else {
+                throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
+            }
+        }
         var answers: Set<String> = []
         var waiting = false
-        if let knownHistory, knownHistory.count == baselineCount {
-            let hash = try Self.digest(knownHistory)
+        if let knownHistory, knownHistory.count >= baselineCount {
+            let history = Array(knownHistory.suffix(baselineCount))
+            let hash = try Self.digest(history)
             if hash == baselineDigest || hash == reversedBaselineDigest {
-                return try WabiAppReceipt(baseline: knownHistory, prompt: prompt).reply(in: messages)
+                return try WabiAppReceipt(baseline: history, prompt: prompt).reply(in: messages)
             }
         }
         for ordered in [messages, Array(messages.reversed())] {
@@ -221,7 +258,14 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
                 let minimum = WabiHistoryWindow.minimumRetained(baselineCount)
                 let overlapMatch = retained >= minimum && retained < baselineCount && baselineCount - retained <= WabiHistoryWindow.maximumDropped &&
                     (overlapDigests?.contains { $0.retained == retained && $0.digest == hash } ?? false)
-                guard fullMatch || greetingMatch || overlapMatch else { continue }
+                let rowMatch: Bool
+                if let messageDigests {
+                    let observed = try old.map { try Self.digest([$0]) }
+                    rowMatch = [messageDigests, Array(messageDigests.reversed())].contains {
+                        WabiHistoryWindow.matchesMissingOlderRow(baseline: $0, observed: observed)
+                    }
+                } else { rowMatch = false }
+                guard fullMatch || greetingMatch || overlapMatch || rowMatch else { continue }
                 let added = ordered.dropFirst(retained)
                 if added.isEmpty { waiting = true; continue }
                 guard let outgoing = added.first, outgoing.role == .user,
