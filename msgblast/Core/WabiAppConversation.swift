@@ -439,6 +439,7 @@ actor WabiAppConversation {
     func reply(_ prompt: String, in url: URL, onSubmitAction: @Sendable () async -> Void = {},
                onSubmitted: @Sendable () async throws -> Void = {},
                onReceipt: @Sendable ([WabiAppMessage]) async throws -> Void = { _ in },
+               refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)? = nil,
                releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Wabi is already handling a request.") }
         occupied = true
@@ -481,6 +482,20 @@ actor WabiAppConversation {
             try await self.driver.input(step.input, focus: step.before.isEmpty, point: point, target: target, session: session)
         }, after: { step in
             (state, native) = try await self.observe(target, session: session)
+            let field = try state.composer(app: .wabi)
+            let nativeExpected = native.draft == step.after
+            let driverExpected = self.driverDraftAgrees(field, with: step.after)
+            // A previously submitted input may remain invisible to Electron's
+            // accessibility tree until its already-owned window is activated.
+            // Refresh once only when both reads still show the old or expected
+            // prefix and the owned chat and history have not changed.
+            if (!nativeExpected || !driverExpected || native.composerFocused != true), let refreshInput,
+               native.url == url, (nativeExpected || native.draft == step.before),
+               (driverExpected || self.driverDraftAgrees(field, with: step.before)),
+               receipt.unchanged(native.messages), !state.isGenerating {
+                try await refreshInput(target, session)
+                (state, native) = try await self.observe(target, session: session)
+            }
             guard native.url == url, native.draft == step.after, try self.driverDraftAgrees(state.composer(app: .wabi), with: step.after),
                   native.composerFocused == true, receipt.unchanged(native.messages), !state.isGenerating else {
                 throw DesktopAppError.unavailable("Wabi's prepared draft, focus, or chat changed. Send was not pressed; review the preserved text.")

@@ -412,7 +412,7 @@ actor DesktopAppConversation {
         let window_id: Int
         let exact_window_effect: Exact
     }
-    private func activate(_ target: Target, session: String) async throws {
+    func activate(_ target: Target, session: String) async throws {
         let result = try await call("bring_to_front", ["session": session],
                                     numbers: ["pid": target.pid, "window_id": target.window], as: FocusResult.self)
         guard result.activated, result.pid == target.pid, result.window_id == target.window,

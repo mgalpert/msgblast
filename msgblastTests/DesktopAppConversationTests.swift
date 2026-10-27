@@ -2149,6 +2149,46 @@ final class DesktopAppDriverTests: XCTestCase {
         assertBackgroundTargets(calls)
     }
 
+    func testWabiRefreshesStaleEditorWithoutRetypingBeforeSubmit() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", ["effect": "unverifiable"], arguments: ["text": prompt])
+        typed["native"] = wabiNative()
+        var refresh = activation(); refresh["native"] = wabiNative(draft: prompt)
+        var sent = step("click", [:], arguments: ["element_token": "s00000002:send"])
+        sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Fresh Wabi answer")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi()), refresh,
+                                  snapshot(wabi(draft: prompt, token: "s00000002")), sent,
+                                  snapshot(wabi(reply: "Fresh Wabi answer"), repeating: true)])
+        defer { fixture.remove() }
+        let control = DesktopAppConversation(executable: fixture.executable)
+        let answer = try await wabiAdapter(fixture).reply(prompt, in: wabiURL, refreshInput: { target, session in
+            try await control.activate(target, session: session)
+        })
+        XCTAssertEqual(answer, "Fresh Wabi answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiDoesNotRefreshOrSubmitAnUnexpectedDraft() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", ["effect": "unverifiable"], arguments: ["text": prompt])
+        typed["native"] = wabiNative(draft: "Someone else's draft")
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed,
+                                  snapshot(wabi(draft: "Someone else's draft"))])
+        defer { fixture.remove() }
+        let error = await failure {
+            try await self.wabiAdapter(fixture).reply(self.prompt, in: self.wabiURL, refreshInput: { _, _ in
+                XCTFail("Unexpected text must never trigger a focus refresh or submission")
+            })
+        }
+        XCTAssertTrue(error.contains("prepared draft"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertFalse(calls.contains { ["bring_to_front", "click"].contains($0.tool) })
+    }
+
     func testWabiMultilineUsesVerifiedChunksAndShiftReturnWithoutRefocusingText() async throws {
         try await runWabiMultiline(driverTrimsWhitespace: false)
     }

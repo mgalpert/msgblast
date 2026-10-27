@@ -1831,11 +1831,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 if provider == .wabi {
                     guard let wabiURL else { throw WebSessionFailure.notSent("Prepare this comparison's dedicated Wabi chat first.") }
+                    let refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)?
+                    if sendFocus != nil {
+                        refreshInput = { target, session in try await desktopDriver.activate(target, session: session) }
+                    } else { refreshInput = nil }
                     return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL, onSubmitAction: submitAction, onSubmitted: submitted, onReceipt: { [weak self] baseline in
                         guard let self else { throw CancellationError() }
                         let receipt = try WabiReplyReceipt(comparisonID: id, url: wabiURL, prompt: text, baseline: baseline)
                         try await self.recordWabiReceipt(receipt, attemptID: outgoingID)
-                    }, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: "Dedicated Wabi chat")
+                    }, refreshInput: refreshInput, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: "Dedicated Wabi chat")
                 }
                 if provider == .geminiApp {
                     guard let saved = geminiBinding else { throw WebSessionFailure.notSent("Prepare Gemini first.") }
