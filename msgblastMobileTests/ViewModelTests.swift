@@ -18,7 +18,22 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(chips.count, 1)
         XCTAssertEqual(chips.first?.state, .replied, "A submitted Messages send with a later reply reads Replied")
         let agent = try XCTUnwrap(first.agentIDs.first)
+        XCTAssertEqual(presenter.chips(for: prompt, agentID: agent).map(\.agentID), [agent], "A one-agent filter shows only that agent's chip")
+        XCTAssertTrue(presenter.chips(for: prompt, agentID: "someone-else").isEmpty)
         XCTAssertTrue(presenter.turns(in: first.id, agentID: agent).contains { $0.role == .assistant })
+    }
+
+    func testSharedPromptChipsFollowTheAgentFilter() {
+        var state = ProjectionState()
+        let conversation = UUID()
+        let prompt = RemoteTurn(id: "p", conversationID: conversation, agentID: nil, role: .user, origin: .sharedPrompt, text: "Hi", created: Date(), ordinal: 0, contentHash: "h")
+        state.turns[prompt.id] = prompt
+        for (agent, status) in [("claude", RemoteAttemptStatus.observed), ("codexCLI", .uncertain)] {
+            state.attempts[agent] = RemoteAttempt(id: agent, conversationID: conversation, agentID: agent, text: "Hi", status: status, detail: nil, created: Date())
+        }
+        let presenter = ProjectionPresenter(state: state)
+        XCTAssertEqual(presenter.chips(for: prompt).map(\.agentID), ["claude", "codexCLI"], "All shows every agent")
+        XCTAssertEqual(presenter.chips(for: prompt, agentID: "codexCLI").map(\.state), [.unconfirmed], "One agent's view shows only its chip")
     }
 
     func testDisabledReasonsLaunchNotesAndProductGroups() throws {

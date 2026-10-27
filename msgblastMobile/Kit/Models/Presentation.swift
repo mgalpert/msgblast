@@ -71,9 +71,12 @@ public struct ProjectionPresenter: Sendable {
     }
 
     /// Chips for one of your turns: the matching attempt for each agent.
-    public func chips(for turn: RemoteTurn) -> [StatusChip] {
+    /// `agentID` is the conversation's one-agent filter: only that agent's chip is shown.
+    public func chips(for turn: RemoteTurn, agentID filter: String? = nil) -> [StatusChip] {
         guard turn.role == .user else { return [] }
-        let attempts = state.attempts(in: turn.conversationID).filter { $0.text == turn.text && (turn.agentID == nil || $0.agentID == turn.agentID) }
+        let attempts = state.attempts(in: turn.conversationID).filter {
+            $0.text == turn.text && (turn.agentID == nil || $0.agentID == turn.agentID) && (filter == nil || $0.agentID == filter)
+        }
         var latest: [String: RemoteAttempt] = [:]
         for attempt in attempts where latest[attempt.agentID].map({ ($0.created ?? .distantPast) <= (attempt.created ?? .distantPast) }) ?? true { latest[attempt.agentID] = attempt }
         let replies = state.turns(in: turn.conversationID).filter { $0.role == .assistant }

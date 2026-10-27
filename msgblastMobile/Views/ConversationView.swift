@@ -83,7 +83,7 @@ struct ConversationView: View {
                 Label(turn.attachments.map(\.filename).joined(separator: ", "), systemImage: "paperclip").font(.caption).foregroundStyle(.secondary)
             }
             if mine {
-                let chips = presenter.chips(for: turn)
+                let chips = presenter.chips(for: turn, agentID: filter)
                 FlowChips(chips: chips)
             }
         }
