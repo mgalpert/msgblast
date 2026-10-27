@@ -55,6 +55,13 @@ struct AgentsWorkspaceView: View {
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
     }
 
+    private func canReplyWhileBroadcasting(to session: WebAgentSession) -> Bool {
+        guard model.webBroadcastBusy, model.webBroadcastInputsFinished, model.independentNativeReplies == 0, !model.busy,
+              let comparison = nativeComparison, comparison.endedAt == nil,
+              comparison.resolvedWebAgentIDs.contains(session.id), web.comparisonID == comparison.id else { return false }
+        return web.canSendIndependentNativeReply(to: session, comparisonID: comparison.id)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if showingComparison {
@@ -160,7 +167,7 @@ struct AgentsWorkspaceView: View {
                 HStack(spacing: 0) {
                     ForEach(displayedSessions, id: \.id) { session in
                         if session.id != displayedSessions.first?.id { Divider() }
-                        WebAgentPane(session: session, account: model.personalAgent, busy: busy, endedMessages: archivedMessages(for: session), removalDisabled: sending, sendNative: { sendDirect($0, to: session) }, removeFromView: {
+                        WebAgentPane(session: session, account: model.personalAgent, busy: busy, allowPrivateReplyWhileBusy: canReplyWhileBroadcasting(to: session), endedMessages: archivedMessages(for: session), removalDisabled: sending, sendNative: { sendDirect($0, to: session) }, removeFromView: {
                             if windowComparisonID == nil || web.comparisonID == windowComparisonID {
                                 session.updateState { $0.selected = false }
                             }
@@ -320,10 +327,10 @@ struct AgentsWorkspaceView: View {
         let sentAttachments = attachments
         let broadcastCreated = Date()
         let existingID = showingComparison ? nativeComparison?.id : nil
-        model.webBroadcastBusy = true
+        guard model.beginSharedWebBroadcast() else { return }
         showingComparison = true
         Task { @MainActor in
-            defer { model.webBroadcastBusy = false }
+            defer { model.finishSharedWebBroadcast() }
             let needsSignIn = await web.signInRequired(for: sessions)
             if !needsSignIn.isEmpty {
                 signInProviders = needsSignIn
@@ -355,11 +362,17 @@ struct AgentsWorkspaceView: View {
             } ?? false
             let followUpID = UUID()
             let telemetryStarted = Date()
+            let barrier = BroadcastSubmissionBarrier {
+                guard !Task.isCancelled, !sessions.isEmpty,
+                      web.comparisonID == comparisonID, model.comparison(comparisonID)?.endedAt == nil else { return }
+                model.finishSharedWebInputs()
+            }
             let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, clearDraft: {
                 model.setSharedDraft("")
             }, web: { text in
-                await WebAgents.send(text, to: sessions, comparisonID: comparisonID)
+                await WebAgents.send(text, to: sessions, comparisonID: comparisonID, onInputsFinished: { barrier.finishNativeInputs() })
             }, messages: { text in
+                defer { if !Task.isCancelled { barrier.finishMessages() } }
                 guard !recipients.isEmpty else { return nil }
                 if existingID != nil {
                     guard let i = model.index(comparisonID) else { return nil }
@@ -394,11 +407,17 @@ struct AgentsWorkspaceView: View {
 
     private func sendDirect(_ text: String, to session: WebAgentSession) {
         guard nativeComparison?.endedAt == nil else { return }
-        guard !busy, session.isEnabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let independent = canReplyWhileBroadcasting(to: session)
+        guard (!busy || independent), session.isEnabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let existingID = nativeComparison?.id
-        model.webBroadcastBusy = true
+        if independent {
+            guard model.beginIndependentNativeReply() else { return }
+        } else { model.webBroadcastBusy = true }
         Task { @MainActor in
-            defer { model.webBroadcastBusy = false }
+            defer {
+                if independent { model.finishIndependentNativeReply() }
+                else { model.webBroadcastBusy = false }
+            }
             let id: UUID
             if let existingID { id = existingID }
             else {
@@ -616,6 +635,7 @@ private struct WebAgentPane: View {
     @ObservedObject var account: PersonalAgentController
     @State private var showingDesktopOptions = false
     let busy: Bool
+    var allowPrivateReplyWhileBusy = false
     var endedMessages: [WebPageMessage]? = nil
     var removalDisabled = false
     let sendNative: (String) -> Void
@@ -853,7 +873,7 @@ private struct WebAgentPane: View {
             MessageInput(text: Binding(get: { session.state.draft }, set: { text in session.updateState { $0.draft = text } }),
                 attachments: [], addAttachments: { _ in }, removeAttachment: { _ in }, placeholder: "Message \(session.name)",
                 accessibilityName: "Message \(session.name)", sendLabel: "Send to \(session.name)",
-                disabled: busy || !session.canSubmitNativePrompt, attachmentsEnabled: false) {
+                disabled: (busy && !allowPrivateReplyWhileBusy) || !session.canSubmitNativePrompt, attachmentsEnabled: false) {
                     sendNative(session.state.draft)
                 }
         }.padding(14)

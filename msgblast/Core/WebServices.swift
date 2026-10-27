@@ -323,6 +323,53 @@ public struct AgentBroadcastResult: Sendable {
     public let comparisonID: UUID?
 }
 
+/// A shared send can allow independent private replies once both the native
+/// input handoff and the Messages submission have finished. Replies may still
+/// be arriving; this barrier does not mark the broadcast complete.
+@MainActor
+public final class BroadcastSubmissionBarrier {
+    private var nativeInputsFinished = false
+    private var messagesFinished = false
+    private var notified = false
+    private let onReady: @MainActor @Sendable () -> Void
+    public init(onReady: @escaping @MainActor @Sendable () -> Void) { self.onReady = onReady }
+    public func finishNativeInputs() { nativeInputsFinished = true; notifyIfReady() }
+    public func finishMessages() { messagesFinished = true; notifyIfReady() }
+    private func notifyIfReady() {
+        guard nativeInputsFinished, messagesFinished, !notified else { return }
+        notified = true; onReady()
+    }
+}
+
+/// Keep the workspace owned until both the shared broadcast and any private
+/// reply started during it have completed.
+public struct BroadcastReplyGate: Sendable {
+    public private(set) var broadcastActive = false
+    public private(set) var inputsFinished = false
+    public private(set) var independentReplies = 0
+    public var busy: Bool { broadcastActive || independentReplies > 0 }
+    public init() {}
+    public mutating func beginBroadcast() -> Bool {
+        guard !busy else { return false }
+        broadcastActive = true; inputsFinished = false
+        return true
+    }
+    public mutating func finishInputs() {
+        if broadcastActive { inputsFinished = true }
+    }
+    public mutating func beginIndependentReply() -> Bool {
+        guard broadcastActive, inputsFinished, independentReplies == 0 else { return false }
+        independentReplies += 1
+        return true
+    }
+    public mutating func finishIndependentReply() {
+        if independentReplies > 0 { independentReplies -= 1 }
+    }
+    public mutating func finishBroadcast() {
+        broadcastActive = false; inputsFinished = false
+    }
+}
+
 @MainActor
 public enum AgentBroadcast {
     public static func send(

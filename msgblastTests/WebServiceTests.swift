@@ -306,6 +306,40 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(draft.text, "My next message")
     }
 
+    func testIndependentRepliesUnlockAfterBothSubmissionsWhileAnAgentStillWorks() async {
+        let nativeInputFinished = expectation(description: "Native input finished")
+        let ready = expectation(description: "Both submission paths finished")
+        let (replyGate, releaseReply) = AsyncStream<Void>.makeStream()
+        let (messagesGate, releaseMessages) = AsyncStream<Void>.makeStream()
+        defer { releaseReply.finish(); releaseMessages.finish() }
+        var readyCount = 0
+        let barrier = BroadcastSubmissionBarrier { readyCount += 1; ready.fulfill() }
+        var draft = "Shared question"
+        let broadcast = Task { @MainActor in
+            await AgentBroadcast.send(draft: draft, currentDraft: { draft }, clearDraft: { draft = "" }, web: { text in
+                barrier.finishNativeInputs()
+                nativeInputFinished.fulfill()
+                for await _ in replyGate { break }
+                return [.init(provider: .wabi): WebSendAttempt(text: text, status: .observed)]
+            }, messages: { _ in
+                for await _ in messagesGate { break }
+                barrier.finishMessages()
+                return UUID()
+            })
+        }
+        await fulfillment(of: [nativeInputFinished], timeout: 2)
+        XCTAssertEqual(readyCount, 0, "A pending Messages submission must still block private replies")
+        releaseMessages.yield(()); releaseMessages.finish()
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(readyCount, 1)
+        XCTAssertEqual(draft, "Shared question", "A reply in progress does not clear or replace the shared draft")
+        barrier.finishNativeInputs(); barrier.finishMessages()
+        XCTAssertEqual(readyCount, 1, "Repeated handoffs cannot unlock twice")
+        releaseReply.yield(()); releaseReply.finish()
+        _ = await broadcast.value
+        XCTAssertEqual(draft, "")
+    }
+
     func testPersonalAvatarFollowsTheMainChatMediaAndChanges() async throws {
         let session = try makeSession()
         let window = displayAvatarFixture(session)

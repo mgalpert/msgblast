@@ -3,6 +3,47 @@ import XCTest
 
 @MainActor
 final class NativeDesktopStateTests: XCTestCase {
+    func testWorkspaceRemainsOwnedUntilAnIndependentReplyAndItsBroadcastBothFinish() {
+        var gate = BroadcastReplyGate()
+        XCTAssertTrue(gate.beginBroadcast())
+        XCTAssertFalse(gate.beginIndependentReply(), "Do not start a private reply while the broadcast is still entering input")
+        gate.finishInputs()
+        XCTAssertTrue(gate.beginIndependentReply())
+        XCTAssertFalse(gate.beginIndependentReply(), "Native private input must remain serialized")
+        gate.finishBroadcast()
+        XCTAssertTrue(gate.busy, "Finishing the first broadcast must not unlock a private reply in flight")
+        XCTAssertFalse(gate.inputsFinished)
+        XCTAssertFalse(gate.beginBroadcast())
+        gate.finishIndependentReply()
+        XCTAssertFalse(gate.busy)
+        XCTAssertTrue(gate.beginBroadcast())
+    }
+
+    func testIndependentReplyDoesNotTakeAWaitingAgentsSharedAppSurface() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let comparison = UUID()
+        let chatgpt = try XCTUnwrap(agents.session(for: .init(provider: .chatgptApp)))
+        let dots = try XCTUnwrap(agents.session(for: .init(provider: .dotsApp)))
+        let wabi = try XCTUnwrap(agents.session(for: .init(provider: .wabi)))
+        for session in [chatgpt, dots, wabi] {
+            session.setEnabled(true)
+            let name = session.name
+            session.updateState { $0.comparisonID = comparison; $0.desktopConversation = .init(name: name) }
+        }
+        var pending = WebSendAttempt(text: "Still waiting", status: .waiting)
+        pending.comparisonID = comparison; pending.messageID = pending.id.uuidString
+        dots.updateState { $0.attempts = [pending] }
+        XCTAssertFalse(agents.canSendIndependentNativeReply(to: chatgpt, comparisonID: comparison), "ChatGPT and Dots share one app")
+        XCTAssertFalse(agents.canSendIndependentNativeReply(to: dots, comparisonID: comparison), "Never send a second request to a waiting agent")
+        XCTAssertTrue(agents.canSendIndependentNativeReply(to: wabi, comparisonID: comparison), "An independent app can still receive a private reply")
+        XCTAssertFalse(agents.canSendIndependentNativeReply(to: wabi, comparisonID: UUID()), "A different comparison must not take the request")
+        dots.acknowledgeIncompleteRequest()
+        XCTAssertTrue(agents.canSendIndependentNativeReply(to: chatgpt, comparisonID: comparison))
+    }
+
     func testNextAppSubmitsAfterInputHandoffWhilePreviousReplyIsPending() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -12,12 +53,16 @@ final class NativeDesktopStateTests: XCTestCase {
         defer { sessions.forEach { $0.beginShutdown() } }
         let firstStarted = expectation(description: "Grok submission started")
         let secondStarted = expectation(description: "Wabi submitted while Grok reply is pending")
+        let inputsFinished = expectation(description: "All native input was handed back before the slow reply")
         let (inputGate, input) = AsyncStream<Void>.makeStream()
         let (replyGate, reply) = AsyncStream<Void>.makeStream()
         defer { input.finish(); reply.finish() }
         var events: [String] = []
         let broadcast = Task {
-            await WebAgents.send(to: sessions) { session, handoff in
+            await WebAgents.send(to: sessions, onInputsFinished: {
+                events.append("inputs finished")
+                inputsFinished.fulfill()
+            }) { session, handoff in
                 if session.provider == .grokBotApp {
                     events.append("grok input")
                     firstStarted.fulfill()
@@ -39,7 +84,8 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertEqual(events, ["grok input"], "The next app must not race the previous app’s input")
         input.yield(()); input.finish()
         await fulfillment(of: [secondStarted], timeout: 2)
-        XCTAssertEqual(events, ["grok input", "grok restored", "wabi input"])
+        await fulfillment(of: [inputsFinished], timeout: 2)
+        XCTAssertEqual(events, ["grok input", "grok restored", "wabi input", "inputs finished"])
         reply.yield(()); reply.finish()
         let results = await broadcast.value
         XCTAssertEqual(Set(results.keys), Set(sessions.map(\.id)))
@@ -76,6 +122,43 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertEqual(events, ["chatgptApp input", "wabi input", "chatgpt reply", "dotsApp input"])
     }
 
+    func testMixedBroadcastWaitsForWebsiteSubmissionBeforeOpeningPrivateReplies() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessions = [WebProvider.grokBotApp, .grok].map {
+            WebAgentSession(provider: $0, storageURL: directory.appendingPathComponent($0.storageFilename), fixture: true)
+        }
+        defer { sessions.forEach { $0.beginShutdown() } }
+        let nativeHandoff = expectation(description: "Native input is finished")
+        let websiteStarted = expectation(description: "Website submission is in progress")
+        let ready = expectation(description: "All submissions are finished")
+        let (nativeReplyGate, nativeReply) = AsyncStream<Void>.makeStream()
+        let (websiteGate, website) = AsyncStream<Void>.makeStream()
+        defer { nativeReply.finish(); website.finish() }
+        var inputsFinished = false
+        let broadcast = Task {
+            await WebAgents.send(to: sessions, onInputsFinished: { inputsFinished = true; ready.fulfill() }) { session, handoff in
+                if session.provider == .grokBotApp {
+                    handoff(); nativeHandoff.fulfill()
+                    for await _ in nativeReplyGate { break }
+                } else {
+                    websiteStarted.fulfill()
+                    for await _ in websiteGate { break }
+                    handoff()
+                }
+                return WebSendAttempt(text: "Controlled scheduling input", status: .observed)
+            }
+        }
+        await fulfillment(of: [nativeHandoff, websiteStarted], timeout: 2)
+        XCTAssertFalse(inputsFinished, "A website submission still owns its input")
+        website.yield(()); website.finish()
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertTrue(inputsFinished, "The native reply can still be pending")
+        nativeReply.yield(()); nativeReply.finish()
+        let results = await broadcast.value
+        XCTAssertEqual(results.count, 2)
+    }
+
     func testCancelledNativeBroadcastDoesNotStartTheNextApp() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -87,8 +170,9 @@ final class NativeDesktopStateTests: XCTestCase {
         let (inputGate, input) = AsyncStream<Void>.makeStream()
         defer { input.finish() }
         var submissions: [WebProvider] = []
+        var inputBarrierPassed = false
         let broadcast = Task {
-            await WebAgents.send(to: sessions) { session, _ in
+            await WebAgents.send(to: sessions, onInputsFinished: { inputBarrierPassed = true }) { session, _ in
                 submissions.append(session.provider)
                 if session.provider == .grokBotApp {
                     started.fulfill()
@@ -102,6 +186,7 @@ final class NativeDesktopStateTests: XCTestCase {
         let results = await broadcast.value
         XCTAssertTrue(results.isEmpty)
         XCTAssertEqual(submissions, [.grokBotApp])
+        XCTAssertFalse(inputBarrierPassed, "Cancellation must not open the reply window")
     }
 
     func testRejectedNativeSendFinishesHandoffWithoutClaimingSubmission() async throws {

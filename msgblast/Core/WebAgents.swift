@@ -157,6 +157,16 @@ public final class WebAgents: ObservableObject {
     public var hasConnectedWebSessions: Bool { sessions.contains { !$0.provider.usesNativeConversation && $0.connected } }
     public func saveBrowserDrafts() async throws { for session in sessions { try await session.saveBrowserDrafts() } }
     public var hasNativeRequests: Bool { sessions.contains { $0.provider.usesNativeConversation && $0.isSending } }
+    /// A private reply may proceed after a broadcast's inputs have finished,
+    /// provided no other request owns the same native app surface.
+    public func canSendIndependentNativeReply(to session: WebAgentSession, comparisonID: UUID) -> Bool {
+        guard sessions.contains(where: { $0 === session }), let app = session.provider.desktopApp,
+              session.state.comparisonID == comparisonID, !session.isSending, session.canSubmitNativePrompt else { return false }
+        return !sessions.contains { other in
+            other !== session && other.provider.desktopApp?.bundleID == app.bundleID &&
+                (other.isSending || other.incompleteDesktopAttempt != nil)
+        }
+    }
     public func beginShutdown() {
         shuttingDown = true
         preparation?.cancel()
@@ -205,17 +215,21 @@ public final class WebAgents: ObservableObject {
         return ready
     }
 
-    public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil) async -> [WebAgentID: WebSendAttempt] {
-        await send(to: sessions) { session, handoff in
+    public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil,
+                            onInputsFinished: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
+        await send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
             await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff)
         }
     }
 
-    static func send(to sessions: [WebAgentSession], perform: @escaping @MainActor @Sendable (WebAgentSession, @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt?) async -> [WebAgentID: WebSendAttempt] {
+    static func send(to sessions: [WebAgentSession], onInputsFinished: @escaping @MainActor @Sendable () -> Void = {}, perform: @escaping @MainActor @Sendable (WebAgentSession, @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt?) async -> [WebAgentID: WebSendAttempt] {
         let operation = WebBroadcastOperation(perform)
         return await withTaskGroup(of: (WebAgentID, WebSendAttempt?).self) { group in
+            var otherInputs: [DesktopBroadcastHandoff] = []
             for session in sessions where session.provider.desktopApp == nil {
-                group.addTask { await operation.send(session) }
+                let input = DesktopBroadcastHandoff()
+                otherInputs.append(input)
+                group.addTask { await operation.send(session, input: input) }
             }
             var replies: [String: DesktopBroadcastHandoff] = [:]
             for session in sessions where session.provider.desktopApp != nil {
@@ -229,6 +243,11 @@ public final class WebAgents: ObservableObject {
                 group.addTask { await operation.send(session, input: input, reply: reply) }
                 await input.wait()
             }
+            for input in otherInputs {
+                guard !group.isCancelled else { break }
+                await input.wait()
+            }
+            if !group.isCancelled { await onInputsFinished() }
             var results: [WebAgentID: WebSendAttempt] = [:]
             for await (id, attempt) in group { results[id] = attempt }
             return results
