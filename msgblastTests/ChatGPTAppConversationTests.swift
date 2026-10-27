@@ -1440,6 +1440,50 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         }
         XCTAssertTrue(f.calls().isEmpty, "Unsafe recovery must not inspect or interact with the native app")
     }
+
+    @MainActor
+    func testDotsRecoveryRechecksBindingAfterAnInFlightRead() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        try Data(String(f.roots.count - 1).utf8).write(to: f.stage)
+        let started = expectation(description: "Dot read started")
+        let resume = DispatchSemaphore(value: 0)
+        let marker = f.directory.appendingPathComponent("recovery-read-started")
+        let adapter = f.adapter(transformNative: { root in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker)
+                started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return root
+        })
+        let receipt = try DotsReplyReceipt(comparisonID: f.binding.comparisonID, title: "Example Dot", prompt: "Follow-up",
+                                           baseline: [.init(role: .user, text: try XCTUnwrap(f.binding.firstPrompt)), .init(role: .assistant, text: "Previous answer")], initialUnreadCount: nil)
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.desktopConversation = .init(name: "Dots")
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        var attempt = WebSendAttempt(text: "Follow-up", status: .uncertain)
+        attempt.comparisonID = f.binding.comparisonID; attempt.messageID = attempt.id.uuidString; attempt.dotsReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = f.directory.appendingPathComponent("in-flight.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not launch ChatGPT") })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileDotsReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.chatgptConversations[f.binding.comparisonID.uuidString]?.title = "Different Dot" }
+        resume.signal()
+        let remaining = await recovery.value
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .uncertain)
+        XCTAssertEqual(saved.localConversations[f.binding.comparisonID.uuidString]?.map(\.text), ["Follow-up"])
+        XCTAssertFalse(f.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0["tool"] as? String ?? "") })
+    }
     func testForeignOutgoingStillStopsInsteadOfWaitingOrAttributing() async throws {
         let fixture = try fixture(kind: .dots, wrongOutgoing: true); defer { try? FileManager.default.removeItem(at: fixture.directory) }
         do {

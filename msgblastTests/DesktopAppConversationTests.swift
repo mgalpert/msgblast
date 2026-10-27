@@ -415,6 +415,26 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try receipt.reply(in: old + [prompt, foreign, answer]))
     }
 
+    func testSavedWabiReceiptMatchesOnlyItsOriginalConversationHistory() throws {
+        let url = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
+        let previous: [WabiAppMessage] = [.init(role: .user, text: "Private earlier question"), .init(role: .assistant, text: "Private earlier answer")]
+        let receipt = try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: "Next question\nplease", baseline: previous)
+        let outgoing = WabiAppMessage(role: .user, text: "Next question please")
+        let response = WabiAppMessage(role: .assistant, text: "A later answer")
+        let persisted = try JSONEncoder().encode(receipt)
+        XCTAssertFalse(String(decoding: persisted, as: UTF8.self).contains("Private earlier"))
+        let restored = try JSONDecoder().decode(WabiReplyReceipt.self, from: persisted)
+        XCTAssertNil(try restored.reply(in: previous + [outgoing]))
+        XCTAssertEqual(try restored.reply(in: previous + [outgoing, response]), "A later answer")
+        XCTAssertEqual(try restored.reply(in: Array((previous + [outgoing, response]).reversed())), "A later answer")
+        XCTAssertThrowsError(try restored.reply(in: [.init(role: .assistant, text: "Other history"), previous[1], outgoing, response]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [.init(role: .user, text: "Someone else's question"), response]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [outgoing, .init(role: .user, text: "Another question")]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [outgoing, response, response]))
+    }
+
+
+
     func testWabiNativeMessageFramesProveSendersAndKeepLiteralMetadataText() throws {
         func frame(_ sender: String, _ text: String) -> WabiAXNode {
             .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: [
@@ -593,6 +613,135 @@ final class DesktopAppConversationTests: XCTestCase {
 /// local JSON plan; it cannot discover or contact the installed Cua service.
 @MainActor
 final class DesktopAppDriverTests: XCTestCase {
+    func testWabiLateReplyIsRecoveredWithoutSendingAndSurvivesReload() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .milliseconds(1))) { _, _ in
+            .init(url: url, draft: "An unrelated native draft", links: [], messages: baseline + [
+                .init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) },
+                                                   open: { _ in XCTFail("Recovery must not open Wabi") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep my next draft"
+        try workspace.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = fixture.directory.appendingPathComponent("workspace.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let remaining = await session.reconcileWabiReplyOnce()
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Question", "Late answer"])
+        XCTAssertEqual(saved.draft, "Keep my next draft")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+    func testWabiRecoveryRejectsUnconfirmedCancelledAndAmbiguousRequests() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let comparison = UUID(), url = wabiURL
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: [.init(role: .assistant, text: "Welcome")])
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for scenario in ["unconfirmed", "cancelled", "wrong binding", "multiple requests", "missing outgoing", "interleaved", "wrong comparison", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            try workspace.recordWabiConversation(scenario == "wrong binding" ? otherWabiURL : url, for: comparison)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+            if scenario == "unconfirmed" { attempt.messageID = nil }
+            if scenario == "cancelled" { attempt.wabiReplyReceipt?.automaticRecovery = false }
+            if scenario == "wrong comparison" { attempt.wabiReplyReceipt = try .init(comparisonID: UUID(), url: url, prompt: "Question", baseline: []) }
+            if scenario == "unsupported version" { attempt.wabiReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[comparison.uuidString] = [] }
+            if scenario == "interleaved" { workspace.localConversations[comparison.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "multiple requests" {
+                var second = WebSendAttempt(text: "Another request", status: .uncertain)
+                second.comparisonID = comparison; workspace.attempts.append(second)
+            }
+            let storage = fixture.directory.appendingPathComponent("wabi-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client)
+            session.connect(automaticallyRefresh: false)
+            let remaining = await session.reconcileWabiReplyOnce()
+            XCTAssertFalse(remaining, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(try fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
+    }
+
+    func testWabiRecoveryDoesNotAttributeReplyFromAnotherOpenThread() async throws {
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi())])
+        defer { fixture.remove() }
+        let receipt = try WabiReplyReceipt(comparisonID: UUID(), url: wabiURL, prompt: "Question", baseline: [])
+        let wrongURL = otherWabiURL
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            .init(url: wrongURL, draft: "", links: [], messages: [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Wrong chat")])
+        }
+        do {
+            _ = try await adapter.recoverReply(receipt)
+            XCTFail("A reply from a different thread must not be attributed")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("selected chat changed")) }
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+    func testWabiRecoveryRechecksRequestAfterAnInFlightRead() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let started = expectation(description: "Native read started")
+        let resume = DispatchSemaphore(value: 0)
+        let marker = fixture.directory.appendingPathComponent("read-started")
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker)
+                started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison
+        try workspace.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = fixture.directory.appendingPathComponent("in-flight.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileWabiReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.attempts[0].status = .dismissed }
+        resume.signal()
+        let remaining = await recovery.value
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .dismissed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Question"])
+        XCTAssertFalse(try fixture.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+
     private let prompt = "Fixture prompt"
     private let binding = DesktopConversationBinding(name: "Fixture Bot")
 
@@ -1520,11 +1669,30 @@ final class DesktopAppDriverTests: XCTestCase {
         var sent = step("click", [:]); sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Completed after layout settled")])
         let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent, snapshot(wabi(reply: "Completed after layout settled"), repeating: true)])
         defer { fixture.remove() }
-        let result = try await wabiAdapter(fixture, transientAfterSend: true).reply(prompt, in: wabiURL)
+        let receiptSaved = expectation(description: "Baseline is saved before input")
+        let result = try await wabiAdapter(fixture, transientAfterSend: true).reply(prompt, in: wabiURL, onReceipt: { baseline in
+            XCTAssertTrue(baseline.isEmpty)
+            XCTAssertFalse(try fixture.calls().contains { ["type_text", "click"].contains($0.tool) })
+            receiptSaved.fulfill()
+        })
+        await fulfillment(of: [receiptSaved], timeout: 1)
         XCTAssertEqual(result, "Completed after layout settled")
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiDoesNotTypeIfRecoveryReceiptCannotBeSaved() async throws {
+        enum StorageFailure: Error { case denied }
+        var initial = windows(); initial["native"] = wabiNative()
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi())])
+        defer { fixture.remove() }
+        do {
+            _ = try await wabiAdapter(fixture).reply(prompt, in: wabiURL, onReceipt: { _ in throw StorageFailure.denied })
+            XCTFail("A failed recovery receipt must stop before typing")
+        } catch StorageFailure.denied { }
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click"].contains($0.tool) })
     }
 
     func testWabiIncompleteLayoutDeadlineNeverResendsOrClaimsAReply() async throws {

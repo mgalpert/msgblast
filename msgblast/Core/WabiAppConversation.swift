@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum WabiThread {
     static func isValid(_ url: URL) -> Bool {
@@ -109,6 +110,56 @@ struct WabiAppReceipt {
         if let answer = candidates.first { return answer }
         if waiting { return nil }
         throw DesktopAppError.unavailable("Wabi's new message did not match this request. No reply was attributed.")
+    }
+}
+
+// Persist only a digest of the prior chat, so a late response can be matched
+// without saving the user's unrelated native conversation in msgblast.
+struct WabiReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    let url: URL
+    let prompt: String
+    let baselineCount: Int
+    let baselineDigest: Data
+    let reversedBaselineDigest: Data
+    var automaticRecovery = true
+
+    init(comparisonID: UUID, url: URL, prompt: String, baseline: [WabiAppMessage]) throws {
+        self.comparisonID = comparisonID; self.url = url; self.prompt = prompt
+        baselineCount = baseline.count
+        baselineDigest = try Self.digest(baseline)
+        reversedBaselineDigest = try Self.digest(Array(baseline.reversed()))
+    }
+
+    private static func digest(_ messages: [WabiAppMessage]) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return Data(SHA256.hash(data: try encoder.encode(messages)))
+    }
+
+    func reply(in messages: [WabiAppMessage]) throws -> String? {
+        guard version == 1, WabiThread.isValid(url), !prompt.isEmpty, baselineCount >= 0,
+              baselineDigest.count == 32, reversedBaselineDigest.count == 32,
+              messages.count >= baselineCount, messages.count <= baselineCount + 2 else {
+            throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
+        }
+        var answers: Set<String> = []
+        var waiting = false
+        for ordered in [messages, Array(messages.reversed())] {
+            let old = Array(ordered.prefix(baselineCount))
+            let hash = try Self.digest(old)
+            guard hash == baselineDigest || hash == reversedBaselineDigest else { continue }
+            let added = ordered.dropFirst(baselineCount)
+            if added.isEmpty { waiting = true; continue }
+            guard let outgoing = added.first, outgoing.role == .user,
+                  outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
+            if added.count == 1 { waiting = true }
+            else if let answer = added.last, answer.role == .assistant, !answer.text.isEmpty { answers.insert(answer.text) }
+        }
+        guard answers.count <= 1 else { throw DesktopAppError.unavailable("Wabi's new reply is ambiguous.") }
+        if let answer = answers.first { return answer }
+        if waiting { return nil }
+        throw DesktopAppError.unavailable("Wabi's chat changed. No reply was attributed.")
     }
 }
 
@@ -269,6 +320,7 @@ actor WabiAppConversation {
     }
     func reply(_ prompt: String, in url: URL, onSubmitAction: @Sendable () async -> Void = {},
                onSubmitted: @Sendable () async throws -> Void = {},
+               onReceipt: @Sendable ([WabiAppMessage]) async throws -> Void = { _ in },
                releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Wabi is already handling a request.") }
         occupied = true
@@ -288,6 +340,7 @@ actor WabiAppConversation {
         guard native.url == url else { throw DesktopAppError.unavailable("Wabi's selected chat changed. Nothing was sent.") }
         try empty(state, native)
         let receipt = WabiAppReceipt(baseline: native.messages, prompt: prompt)
+        try await onReceipt(native.messages)
         var point = (x: 0, y: 0)
         try await DesktopAppWorkflow.enterText(prompt, before: { step in
             if !step.first { (state, native) = try await self.observe(target, session: session, screenshotURL: image) }
@@ -329,5 +382,26 @@ actor WabiAppConversation {
             }
             return native.draft == "" && !state.isGenerating ? answer : nil
         })
+    }
+
+    /// Read only the currently open, already-owned thread; never navigate or resend.
+    func recoverReply(_ receipt: WabiReplyReceipt) async throws -> String? {
+        guard !occupied else { return nil }
+        guard receipt.version == 1, WabiThread.isValid(receipt.url) else {
+            throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
+        }
+        occupied = true; defer { occupied = false }
+        let session = "msgblast-wabi-recovery-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
+        let target = try await driver.target(.wabi)
+        func answer() async throws -> String? {
+            let (state, native) = try await observe(target, session: session)
+            guard native.url == receipt.url else { throw DesktopAppError.unavailable("Wabi's selected chat changed. No reply was attributed.") }
+            guard !state.isGenerating else { return nil }
+            return try receipt.reply(in: native.messages)
+        }
+        guard let first = try await answer() else { return nil }
+        if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+        return try await answer() == first ? first : nil
     }
 }

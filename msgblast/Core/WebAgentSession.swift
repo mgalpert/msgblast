@@ -129,8 +129,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var storageFailed = false
     private var grokBotReplyStorageFailure: UUID?
     private var poll: Task<Void, Never>?
-    private var dotsRecoveryPoll: Task<Void, Never>?
-    private var dotsRecoveryGeneration = UUID()
+    private var nativeRecoveryPoll: Task<Void, Never>?
+    private var nativeRecoveryGeneration = UUID()
     private var refreshing = false
     private var flushingDrafts = false
     private var navigationGeneration: Int { activePage?.generation ?? 0 }
@@ -212,7 +212,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if failure == nil { persist() }
     }
 
-    deinit { poll?.cancel(); dotsRecoveryPoll?.cancel() }
+    deinit { poll?.cancel(); nativeRecoveryPoll?.cancel() }
 
     public func rename(_ name: String) throws {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -266,8 +266,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             else { $0.websiteEnabled = enabled }
             if !enabled { $0.selected = false }
         }
-        if !enabled { cancelNativeRequest(); stopDotsRecovery() }
-        else { startDotsRecoveryIfNeeded() }
+        if !enabled { cancelNativeRequest(); stopNativeRecovery() }
+        else { startNativeRecoveryIfNeeded() }
         if provider == .grokbot {
             if enabled, grokBotReplyURL == nil { grokBotConnectionReady = nil }
             if connected { Task { await refresh() } }
@@ -324,7 +324,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     // Controlled fixtures can own refresh boundaries without racing the poller.
     func connect(automaticallyRefresh: Bool) {
         if connected {
-            if automaticallyRefresh { startDotsRecoveryIfNeeded() }
+            if automaticallyRefresh { startNativeRecoveryIfNeeded() }
             return
         }
         connected = true
@@ -339,7 +339,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             return
         }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil {
-            if automaticallyRefresh { startDotsRecoveryIfNeeded() }
+            if automaticallyRefresh { startNativeRecoveryIfNeeded() }
             if automaticallyRefresh { Task { await refresh() } }
             return
         }
@@ -1617,7 +1617,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
-    public func beginShutdown() { shuttingDown = true; poll?.cancel(); stopDotsRecovery(); cancelNativeRequest(); stopGrokBotConnection() }
+    public func beginShutdown() { shuttingDown = true; poll?.cancel(); stopNativeRecovery(); cancelNativeRequest(); stopGrokBotConnection() }
     public func cancelAndWait() async {
         if !shuttingDown { try? await saveBrowserDrafts() }
         beginShutdown()
@@ -1638,7 +1638,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         isSending = true
         requestCancelled = false
-        defer { nativeRequest = nil; isSending = false; startDotsRecoveryIfNeeded() }
+        defer { nativeRequest = nil; isSending = false; startNativeRecoveryIfNeeded() }
         error = nil
         if provider.desktopApp != nil {
             do {
@@ -1729,7 +1729,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 if provider == .wabi {
                     guard let wabiURL else { throw WebSessionFailure.notSent("Prepare this comparison's dedicated Wabi chat first.") }
-                    return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL, onSubmitAction: submitAction, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: "Dedicated Wabi chat")
+                    return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL, onSubmitAction: submitAction, onSubmitted: submitted, onReceipt: { [weak self] baseline in
+                        guard let self else { throw CancellationError() }
+                        let receipt = try WabiReplyReceipt(comparisonID: id, url: wabiURL, prompt: text, baseline: baseline)
+                        try await self.recordWabiReceipt(receipt, attemptID: outgoingID)
+                    }, releaseFocus: { _ = try? await sendFocus?.restore() }), sessionID: "Dedicated Wabi chat")
                 }
                 if provider == .geminiApp {
                     guard let saved = geminiBinding else { throw WebSessionFailure.notSent("Prepare Gemini first.") }
@@ -1794,7 +1798,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         } catch {
             attempt.messageID = state.attempts.first { $0.id == attempt.id }?.messageID ?? attempt.messageID
             attempt.dotsReplyReceipt = state.attempts.first { $0.id == attempt.id }?.dotsReplyReceipt
+            attempt.wabiReplyReceipt = state.attempts.first { $0.id == attempt.id }?.wabiReplyReceipt
             if error is CancellationError { attempt.dotsReplyReceipt?.automaticRecovery = false }
+            if error is CancellationError { attempt.wabiReplyReceipt?.automaticRecovery = false }
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
@@ -1848,6 +1854,19 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         try save()
     }
 
+    private func recordWabiReceipt(_ receipt: WabiReplyReceipt, attemptID: UUID) throws {
+        guard provider == .wabi, !storageFailed,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .attempting,
+              state.attempts[index].comparisonID == receipt.comparisonID,
+              state.attempts[index].wabiReplyReceipt == nil,
+              receipt.version == 1, WabiThread.isValid(receipt.url), !receipt.prompt.isEmpty else {
+            throw WebSessionFailure.notSent("The Wabi request could not be saved. Nothing was sent.")
+        }
+        state.attempts[index].wabiReplyReceipt = receipt
+        try save()
+    }
+
     private func recoverableDotsAttempt() -> WebSendAttempt? {
         guard provider == .dotsApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
         let pending = state.attempts.filter { $0.status.isUnresolved }
@@ -1866,24 +1885,104 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return attempt
     }
 
-    private func stopDotsRecovery() {
-        dotsRecoveryGeneration = UUID()
-        dotsRecoveryPoll?.cancel()
-        dotsRecoveryPoll = nil
+    private func stopNativeRecovery() {
+        nativeRecoveryGeneration = UUID()
+        nativeRecoveryPoll?.cancel()
+        nativeRecoveryPoll = nil
     }
 
-    private func startDotsRecoveryIfNeeded() {
-        guard dotsRecoveryPoll == nil, recoverableDotsAttempt() != nil else { return }
+    private func startNativeRecoveryIfNeeded() {
+        guard nativeRecoveryPoll == nil, recoverableDotsAttempt() != nil || recoverableWabiAttempt() != nil else { return }
         let generation = UUID()
-        dotsRecoveryGeneration = generation
-        dotsRecoveryPoll = Task { [weak self] in
+        nativeRecoveryGeneration = generation
+        nativeRecoveryPoll = Task { [weak self] in
             while !Task.isCancelled {
-                guard await self?.reconcileDotsReplyOnce() == true else { break }
+                guard await self?.reconcileNativeReplyOnce() == true else { break }
                 do { try await Task.sleep(for: .seconds(10)) } catch { break }
             }
-            guard let self, self.dotsRecoveryGeneration == generation else { return }
-            self.dotsRecoveryPoll = nil
+            guard let self, self.nativeRecoveryGeneration == generation else { return }
+            self.nativeRecoveryPoll = nil
         }
+    }
+
+    private func reconcileNativeReplyOnce() async -> Bool {
+        if provider == .dotsApp { return await reconcileDotsReplyOnce() }
+        if provider == .wabi { return await reconcileWabiReplyOnce() }
+        return false
+    }
+
+    private func recoverableWabiAttempt() -> WebSendAttempt? {
+        guard provider == .wabi, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
+        let pending = state.attempts.filter { $0.status.isUnresolved }
+        guard pending.count == 1, let attempt = pending.first,
+              [.waiting, .uncertain].contains(attempt.status), attempt.messageID == attempt.id.uuidString,
+              let comparison = attempt.comparisonID, let receipt = attempt.wabiReplyReceipt,
+              receipt.version == 1, receipt.automaticRecovery, receipt.comparisonID == comparison,
+              receipt.prompt == attempt.text, WabiThread.isValid(receipt.url),
+              (try? state.wabiConversation(for: comparison)) == receipt.url,
+              let messages = state.localConversations[comparison.uuidString],
+              messages.last == WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text),
+              !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }) else { return nil }
+        return attempt
+    }
+
+    func reconcileWabiReplyOnce() async -> Bool {
+        guard let attempt = recoverableWabiAttempt(), let receipt = attempt.wabiReplyReceipt else { return false }
+        guard !isSending, !loading, !refreshing else { return true }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { return true }
+        do {
+            let result = try await wabiApp.recoverReply(receipt)
+            try Task.checkCancellation()
+            guard let result, let current = recoverableWabiAttempt(), current.id == attempt.id,
+                  current.wabiReplyReceipt == receipt else { return recoverableWabiAttempt() != nil }
+            try finishRecoveredNativeReply(result, attempt: attempt, comparison: receipt.comparisonID)
+        } catch is CancellationError { return false }
+        catch {
+            if storageFailed { self.error = "Could not save the Wabi reply. Repair storage before continuing." }
+        }
+        return recoverableWabiAttempt() != nil
+    }
+
+    private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID) throws {
+        guard let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) else { return }
+        let key = comparison.uuidString
+        var messages = state.localConversations[key] ?? []
+        let outgoing = WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text)
+        let reply = WebPageMessage(id: "native-reply-\(attempt.id.uuidString)", role: "assistant", text: result)
+        guard messages.last == outgoing, !messages.contains(where: { $0.id == reply.id }) else { return }
+        messages.append(reply)
+        let previous = state
+        state.localConversations[key] = messages
+        state.attempts[index].status = .observed
+        state.attempts[index].detail = "Reply observed in the app conversation."
+        state.attempts[index].dotsReplyReceipt = nil
+        state.attempts[index].wabiReplyReceipt = nil
+        do { try save() } catch { state = previous; throw error }
+        if error == attempt.detail { error = nil }
+        updateNativeSnapshot()
+        if provider == .dotsApp { Task { await refresh() } }
+        else if provider == .wabi { Task { await refreshWabiAfterRecovery(comparison: comparison) } }
+    }
+
+    private func refreshWabiAfterRecovery(comparison: UUID) async {
+        guard !shuttingDown, isEnabled, connected, state.comparisonID == comparison,
+              !isSending, !refreshing, !loading else { return }
+        refreshing = true
+        defer { refreshing = false }
+        do {
+            // The ordinary Wabi refresh may navigate. Check only the current
+            // window here; a later explicit send can reopen the saved chat.
+            try await wabiApp.checkAvailable()
+            guard !shuttingDown, state.comparisonID == comparison else { return }
+            desktopReady = true
+            desktopStatus = "Dedicated Wabi chat ready"
+        } catch {
+            guard !shuttingDown, state.comparisonID == comparison else { return }
+            desktopReady = false
+            desktopStatus = error.localizedDescription
+        }
+        updateNativeSnapshot()
     }
 
     // A single poll never opens or navigates a provider app. A nil result or
@@ -1903,28 +2002,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 return focus
             })
             try Task.checkCancellation()
-            guard let result, let index = state.attempts.firstIndex(where: { $0.id == attempt.id }),
-                  [.waiting, .uncertain].contains(state.attempts[index].status),
-                  state.attempts[index].messageID == attempt.id.uuidString,
-                  var currentReceipt = state.attempts[index].dotsReplyReceipt else { return recoverableDotsAttempt() != nil }
+            guard let result, let current = recoverableDotsAttempt(), current.id == attempt.id,
+                  var currentReceipt = current.dotsReplyReceipt else { return recoverableDotsAttempt() != nil }
             var expectedReceipt = receipt
             currentReceipt.refreshedUnreadCount = nil; expectedReceipt.refreshedUnreadCount = nil
             guard currentReceipt == expectedReceipt else { return recoverableDotsAttempt() != nil }
-            let key = receipt.comparisonID.uuidString
-            var messages = state.localConversations[key] ?? []
-            let outgoing = WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text)
-            let reply = WebPageMessage(id: "native-reply-\(attempt.id.uuidString)", role: "assistant", text: result)
-            guard messages.last == outgoing, !messages.contains(where: { $0.id == reply.id }) else { return true }
-            messages.append(reply)
-            let previous = state
-            state.localConversations[key] = messages
-            state.attempts[index].status = .observed
-            state.attempts[index].detail = "Reply observed in the Dot conversation."
-            state.attempts[index].dotsReplyReceipt = nil
-            do { try save() } catch { state = previous; throw error }
-            if error == attempt.detail { error = nil }
-            updateNativeSnapshot()
-            Task { await refresh() }
+            try finishRecoveredNativeReply(result, attempt: attempt, comparison: receipt.comparisonID)
         } catch is CancellationError { return false }
         catch {
             // Closed apps, transient reads, or changed conversations never
