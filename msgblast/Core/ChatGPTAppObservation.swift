@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public enum ChatGPTAppKind: String, Codable, Sendable { case chatgpt, dots }
 public struct ChatGPTConversationBinding: Codable, Equatable, Sendable {
@@ -29,10 +30,53 @@ struct ChatGPTAXNode: Sendable {
     var descendants: [Self] { [self] + children.flatMap(\.descendants) }
     var visible: Bool { frame.map { $0.w > 0 && $0.h > 0 } ?? false }
 }
-struct ChatGPTMessage: Equatable, Sendable {
-    enum Role: Sendable { case user, assistant }
+struct ChatGPTMessage: Codable, Equatable, Sendable {
+    enum Role: String, Codable, Sendable { case user, assistant }
     var role: Role
     var text: String
+}
+
+// Saved before submission so a later read can match the same outgoing message
+// without typing or submitting anything again.
+struct DotsReplyReceipt: Codable, Equatable, Sendable {
+    var version: Int = 1
+    let comparisonID: UUID
+    let title: String
+    let prompt: String
+    let baselineCount: Int
+    let baselineDigest: Data
+    let initialUnreadCount: Int?
+    var refreshedUnreadCount: Int?
+    var automaticRecovery = true
+
+    init(comparisonID: UUID, title: String, prompt: String, baseline: [ChatGPTMessage], initialUnreadCount: Int?) throws {
+        self.comparisonID = comparisonID; self.title = title; self.prompt = prompt
+        baselineCount = baseline.count; baselineDigest = try Self.digest(baseline)
+        self.initialUnreadCount = initialUnreadCount
+    }
+
+    private static func digest(_ messages: [ChatGPTMessage]) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return Data(SHA256.hash(data: try encoder.encode(messages)))
+    }
+
+    func appendedMessages(in messages: [ChatGPTMessage]) throws -> [ChatGPTMessage] {
+        guard baselineCount >= 0, baselineDigest.count == 32, messages.count >= baselineCount else {
+            throw DesktopAppError.unavailable("The saved Dot history cannot be verified.")
+        }
+        let maximumOffset = baselineCount > 0 ? messages.count - baselineCount : 0
+        let firstOffset = max(0, messages.count - baselineCount - 2)
+        guard firstOffset <= maximumOffset else { throw DesktopAppError.unavailable("The Dot history changed. No reply was attributed.") }
+        var matching: [Int] = []
+        for offset in firstOffset...maximumOffset {
+            let end = offset + baselineCount
+            if try Self.digest(Array(messages[offset..<end])) == baselineDigest { matching.append(offset) }
+        }
+        guard matching.count == 1, let offset = matching.first else {
+            throw DesktopAppError.unavailable("The Dot history changed. No reply was attributed.")
+        }
+        return Array(messages.dropFirst(offset + baselineCount))
+    }
 }
 enum ChatGPTObservationError: LocalizedError, Sendable {
     case transient, composerUnavailable

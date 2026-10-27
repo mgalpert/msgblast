@@ -39,6 +39,8 @@ public struct WebSendAttempt: Codable, Equatable, Identifiable, Sendable {
     // Preparation can succeed before automatic Send is rejected. A later page
     // submission is observed separately; it is never an automatic-send receipt.
     var manualContext: WebReceiptContext?
+    // A versioned, read-only native receipt. Older workspaces decode without it.
+    var dotsReplyReceipt: DotsReplyReceipt?
     var pinnedConversationURL: URL? { recoveryConversationURL ?? receiptContext?.candidateURL }
     public init(text: String, status: WebSendStatus = .preparing) {
         self.text = text; self.status = status

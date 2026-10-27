@@ -129,6 +129,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private var storageFailed = false
     private var grokBotReplyStorageFailure: UUID?
     private var poll: Task<Void, Never>?
+    private var dotsRecoveryPoll: Task<Void, Never>?
+    private var dotsRecoveryGeneration = UUID()
     private var refreshing = false
     private var flushingDrafts = false
     private var navigationGeneration: Int { activePage?.generation ?? 0 }
@@ -210,7 +212,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if failure == nil { persist() }
     }
 
-    deinit { poll?.cancel() }
+    deinit { poll?.cancel(); dotsRecoveryPoll?.cancel() }
 
     public func rename(_ name: String) throws {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -264,7 +266,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             else { $0.websiteEnabled = enabled }
             if !enabled { $0.selected = false }
         }
-        if !enabled { cancelNativeRequest() }
+        if !enabled { cancelNativeRequest(); stopDotsRecovery() }
+        else { startDotsRecoveryIfNeeded() }
         if provider == .grokbot {
             if enabled, grokBotReplyURL == nil { grokBotConnectionReady = nil }
             if connected { Task { await refresh() } }
@@ -320,7 +323,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     // Controlled fixtures can own refresh boundaries without racing the poller.
     func connect(automaticallyRefresh: Bool) {
-        guard !connected else { return }
+        if connected {
+            if automaticallyRefresh { startDotsRecoveryIfNeeded() }
+            return
+        }
         connected = true
         if provider == .grokbot {
             if !fixture { Task { await refresh() }; return }
@@ -333,6 +339,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             return
         }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil {
+            if automaticallyRefresh { startDotsRecoveryIfNeeded() }
             if automaticallyRefresh { Task { await refresh() } }
             return
         }
@@ -1610,7 +1617,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     public func cancelNativeRequest() { requestCancelled = true; nativeRequest?.cancel() }
-    public func beginShutdown() { shuttingDown = true; poll?.cancel(); cancelNativeRequest(); stopGrokBotConnection() }
+    public func beginShutdown() { shuttingDown = true; poll?.cancel(); stopDotsRecovery(); cancelNativeRequest(); stopGrokBotConnection() }
     public func cancelAndWait() async {
         if !shuttingDown { try? await saveBrowserDrafts() }
         beginShutdown()
@@ -1631,7 +1638,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         isSending = true
         requestCancelled = false
-        defer { nativeRequest = nil; isSending = false }
+        defer { nativeRequest = nil; isSending = false; startDotsRecoveryIfNeeded() }
         error = nil
         if provider.desktopApp != nil {
             do {
@@ -1753,7 +1760,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     }, onPrepared: { [weak self] pending in
                         guard let self else { throw CancellationError() }
                         try await self.recordChatGPTSubmission(pending)
-                    }, onBinding: { [weak self] discovered in
+                    }, onDotsReceipt: { [weak self] receipt in
+                        guard let self else { throw CancellationError() }
+                        try await self.recordDotsReceipt(receipt, attemptID: outgoingID)
+                    }, onSubmitted: submitted, onBinding: { [weak self] discovered in
                         guard let self else { throw CancellationError() }
                         try await self.recordChatGPTSubmission(discovered)
                     })
@@ -1783,6 +1793,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             try store(attempt)
         } catch {
             attempt.messageID = state.attempts.first { $0.id == attempt.id }?.messageID ?? attempt.messageID
+            attempt.dotsReplyReceipt = state.attempts.first { $0.id == attempt.id }?.dotsReplyReceipt
+            if error is CancellationError { attempt.dotsReplyReceipt?.automaticRecovery = false }
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
@@ -1821,6 +1833,123 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts[index].detail = "Outgoing message observed in the app. Waiting for its reply."
         try save()
         updateNativeSnapshot()
+    }
+
+    private func recordDotsReceipt(_ receipt: DotsReplyReceipt, attemptID: UUID) throws {
+        guard provider == .dotsApp, !storageFailed,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .attempting,
+              state.attempts[index].comparisonID == receipt.comparisonID,
+              state.attempts[index].dotsReplyReceipt == nil, receipt.version == 1,
+              !receipt.title.isEmpty, !receipt.prompt.isEmpty else {
+            throw WebSessionFailure.notSent("The Dot request could not be saved. Nothing was sent.")
+        }
+        state.attempts[index].dotsReplyReceipt = receipt
+        try save()
+    }
+
+    private func recoverableDotsAttempt() -> WebSendAttempt? {
+        guard provider == .dotsApp, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
+        let pending = state.attempts.filter { $0.status.isUnresolved }
+        // A shared Dot cannot safely attribute a reply if old state contains
+        // more than one unresolved request, even if only one has a receipt.
+        guard pending.count == 1, let attempt = pending.first else { return nil }
+        guard [.waiting, .uncertain].contains(attempt.status), attempt.messageID == attempt.id.uuidString,
+                  let comparison = attempt.comparisonID, let receipt = attempt.dotsReplyReceipt,
+                  receipt.version == 1, receipt.automaticRecovery, receipt.comparisonID == comparison,
+                  let binding = state.chatgptConversations[comparison.uuidString], binding.kind == .dots,
+                  binding.comparisonID == comparison, binding.title == receipt.title,
+                  let messages = state.localConversations[comparison.uuidString],
+                  messages.last == WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text),
+                  !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }),
+                  receipt.prompt == attempt.text || receipt.prompt == binding.firstMessage(attempt.text) else { return nil }
+        return attempt
+    }
+
+    private func stopDotsRecovery() {
+        dotsRecoveryGeneration = UUID()
+        dotsRecoveryPoll?.cancel()
+        dotsRecoveryPoll = nil
+    }
+
+    private func startDotsRecoveryIfNeeded() {
+        guard dotsRecoveryPoll == nil, recoverableDotsAttempt() != nil else { return }
+        let generation = UUID()
+        dotsRecoveryGeneration = generation
+        dotsRecoveryPoll = Task { [weak self] in
+            while !Task.isCancelled {
+                guard await self?.reconcileDotsReplyOnce() == true else { break }
+                do { try await Task.sleep(for: .seconds(10)) } catch { break }
+            }
+            guard let self, self.dotsRecoveryGeneration == generation else { return }
+            self.dotsRecoveryPoll = nil
+        }
+    }
+
+    // A single poll never opens or navigates a provider app. A nil result or
+    // an ambiguous observation leaves the original request unresolved.
+    func reconcileDotsReplyOnce() async -> Bool {
+        guard let attempt = recoverableDotsAttempt(), let receipt = attempt.dotsReplyReceipt else { return false }
+        guard !isSending, !loading, !refreshing else { return true }
+        refreshDesktopInstallation()
+        guard desktopInstallation.isRunning else { return true }
+        do {
+            let result = try await chatgptApp.recoverDotsReply(receipt, refreshUnreadReply: { [weak self] target, count in
+                guard let self, try await self.reserveDotsRefresh(attemptID: attempt.id, receipt: receipt, count: count) else { return nil }
+                let focus = try await self.desktopDriver.beginReplyRefresh(target, session: "msgblast-dot-recovery-\(UUID())", onRestoreFailure: { [weak self] detail in
+                    await MainActor.run { self?.error = detail }
+                })
+                if focus == nil { try await self.undoDotsRefreshReservation(attemptID: attempt.id, count: count) }
+                return focus
+            })
+            try Task.checkCancellation()
+            guard let result, let index = state.attempts.firstIndex(where: { $0.id == attempt.id }),
+                  [.waiting, .uncertain].contains(state.attempts[index].status),
+                  state.attempts[index].messageID == attempt.id.uuidString,
+                  var currentReceipt = state.attempts[index].dotsReplyReceipt else { return recoverableDotsAttempt() != nil }
+            var expectedReceipt = receipt
+            currentReceipt.refreshedUnreadCount = nil; expectedReceipt.refreshedUnreadCount = nil
+            guard currentReceipt == expectedReceipt else { return recoverableDotsAttempt() != nil }
+            let key = receipt.comparisonID.uuidString
+            var messages = state.localConversations[key] ?? []
+            let outgoing = WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text)
+            let reply = WebPageMessage(id: "native-reply-\(attempt.id.uuidString)", role: "assistant", text: result)
+            guard messages.last == outgoing, !messages.contains(where: { $0.id == reply.id }) else { return true }
+            messages.append(reply)
+            let previous = state
+            state.localConversations[key] = messages
+            state.attempts[index].status = .observed
+            state.attempts[index].detail = "Reply observed in the Dot conversation."
+            state.attempts[index].dotsReplyReceipt = nil
+            do { try save() } catch { state = previous; throw error }
+            if error == attempt.detail { error = nil }
+            updateNativeSnapshot()
+            Task { await refresh() }
+        } catch is CancellationError { return false }
+        catch {
+            // Closed apps, transient reads, or changed conversations never
+            // cause navigation, resending, or attribution to a different chat.
+            if storageFailed { self.error = "Could not save the Dot reply. Repair storage before continuing." }
+        }
+        return recoverableDotsAttempt() != nil
+    }
+
+    private func reserveDotsRefresh(attemptID: UUID, receipt: DotsReplyReceipt, count: Int) throws -> Bool {
+        guard let attempt = recoverableDotsAttempt(), attempt.id == attemptID,
+              let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].dotsReplyReceipt == receipt,
+              count != receipt.initialUnreadCount, count != receipt.refreshedUnreadCount else { return false }
+        state.attempts[index].dotsReplyReceipt?.refreshedUnreadCount = count
+        try save()
+        return true
+    }
+
+    private func undoDotsRefreshReservation(attemptID: UUID, count: Int) throws {
+        guard let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status.isUnresolved,
+              state.attempts[index].dotsReplyReceipt?.refreshedUnreadCount == count else { return }
+        state.attempts[index].dotsReplyReceipt?.refreshedUnreadCount = nil
+        try save()
     }
 
     private func recordMuseAppCandidate(_ url: URL, comparisonID: UUID, attemptID: UUID) throws {
