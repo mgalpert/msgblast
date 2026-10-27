@@ -2035,13 +2035,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard provider == .wabi, connected, isEnabled, !fixture, !storageFailed, !shuttingDown else { return nil }
         let pending = state.attempts.filter { $0.status.isUnresolved }
         guard pending.count == 1, let attempt = pending.first,
-              [.waiting, .uncertain].contains(attempt.status), attempt.messageID == attempt.id.uuidString,
+              [.waiting, .uncertain].contains(attempt.status),
               let comparison = attempt.comparisonID, let receipt = attempt.wabiReplyReceipt,
               receipt.version == 1, receipt.automaticRecovery, receipt.comparisonID == comparison,
               receipt.prompt == attempt.text, WabiThread.isValid(receipt.url),
-              (try? state.wabiConversation(for: comparison)) == receipt.url,
-              let messages = state.localConversations[comparison.uuidString],
-              messages.last == WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text),
+              (try? state.wabiConversation(for: comparison)) == receipt.url else { return nil }
+        let messages = state.localConversations[comparison.uuidString] ?? []
+        let outgoing = WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text)
+        let confirmed = attempt.messageID == attempt.id.uuidString && messages.last == outgoing
+        // The persisted pre-send receipt can also prove a previously
+        // unconfirmed send, but only by matching the exact outgoing and reply
+        // in the saved thread; later attempts and existing outgoing IDs block it.
+        let awaitingProof = attempt.status == .uncertain && attempt.messageID == nil &&
+            state.attempts.first(where: { $0.comparisonID == comparison })?.id == attempt.id &&
+            !messages.contains(where: { $0.id == outgoing.id })
+        guard (confirmed || awaitingProof),
               !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }) else { return nil }
         return attempt
     }
@@ -2051,12 +2059,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard !isSending, !loading, !refreshing else { return true }
         refreshDesktopInstallation()
         guard desktopInstallation.isRunning else { return true }
+        let originalMessages = state.localConversations[receipt.comparisonID.uuidString] ?? []
         do {
             let result = try await wabiApp.recoverReply(receipt)
             try Task.checkCancellation()
             guard let result, let current = recoverableWabiAttempt(), current.id == attempt.id,
-                  current.wabiReplyReceipt == receipt else { return recoverableWabiAttempt() != nil }
-            try finishRecoveredNativeReply(result, attempt: attempt, comparison: receipt.comparisonID)
+                  current.wabiReplyReceipt == receipt,
+                  (state.localConversations[receipt.comparisonID.uuidString] ?? []) == originalMessages else { return recoverableWabiAttempt() != nil }
+            try finishRecoveredNativeReply(result, attempt: attempt, comparison: receipt.comparisonID, allowUnconfirmedWabi: attempt.messageID == nil)
         } catch is CancellationError { return false }
         catch {
             if storageFailed { self.error = "Could not save the Wabi reply. Repair storage before continuing." }
@@ -2210,18 +2220,24 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return recoverableChatGPTAttempt() != nil
     }
 
-    private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID, chatgptBinding: ChatGPTConversationBinding? = nil) throws {
+    private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID, chatgptBinding: ChatGPTConversationBinding? = nil, allowUnconfirmedWabi: Bool = false) throws {
         guard let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) else { return }
         let key = comparison.uuidString
         var messages = state.localConversations[key] ?? []
         let outgoing = WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text)
         let reply = WebPageMessage(id: "native-reply-\(attempt.id.uuidString)", role: "assistant", text: result)
-        guard messages.last == outgoing, !messages.contains(where: { $0.id == reply.id }) else { return }
+        guard !messages.contains(where: { $0.id == reply.id }) else { return }
+        if messages.last != outgoing {
+            guard allowUnconfirmedWabi, provider == .wabi, attempt.messageID == nil,
+                  !messages.contains(where: { $0.id == outgoing.id }) else { return }
+            messages.append(outgoing)
+        }
         messages.append(reply)
         let previous = state
         if let chatgptBinding { try state.recordChatGPTBinding(chatgptBinding) }
         state.localConversations[key] = messages
         state.attempts[index].status = .observed
+        if allowUnconfirmedWabi { state.attempts[index].messageID = attempt.id.uuidString }
         state.attempts[index].detail = "Reply observed in the app conversation."
         state.attempts[index].dotsReplyReceipt = nil
         state.attempts[index].wabiReplyReceipt = nil

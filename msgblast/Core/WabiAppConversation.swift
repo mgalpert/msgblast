@@ -85,11 +85,23 @@ struct WabiAppReceipt {
     let baseline: [WabiAppMessage]
     let prompt: String
 
-    func unchanged(_ messages: [WabiAppMessage]) -> Bool { messages == baseline || messages == Array(baseline.reversed()) }
+    private var acceptableHistory: [[WabiAppMessage]] {
+        let orientations = [baseline, Array(baseline.reversed())]
+        let greeting = WabiAppMessage(role: .assistant, text: "What can I do for you?")
+        // Wabi drops this initial greeting once its thread grows. Require at
+        // least two retained messages and compare every one, including sender.
+        return orientations + orientations.compactMap { history in
+            history.count >= 3 && history.first == greeting ? Array(history.dropFirst()) : nil
+        }
+    }
+
+    func unchanged(_ messages: [WabiAppMessage]) -> Bool {
+        acceptableHistory.contains(messages) || acceptableHistory.contains(Array(messages.reversed()))
+    }
 
     func reply(in messages: [WabiAppMessage]) throws -> String? {
         if unchanged(messages) { return nil }
-        guard messages.count > baseline.count, messages.count <= baseline.count + 2 else {
+        guard messages.count <= baseline.count + 2 else {
             throw DesktopAppError.unavailable("Wabi's message history changed or another message arrived. Review the saved chat; no reply was attributed.")
         }
         // Wabi can reverse its accessible message order when reopening a chat.
@@ -98,8 +110,9 @@ struct WabiAppReceipt {
         var candidates: Set<String> = []
         var waiting = false
         for ordered in [messages, Array(messages.reversed())] {
-            for old in [baseline, Array(baseline.reversed())] where ordered.starts(with: old) {
+            for old in acceptableHistory where ordered.starts(with: old) {
                 let added = ordered.dropFirst(old.count)
+                guard added.count <= 2 else { continue }
                 guard let outgoing = added.first, outgoing.role == .user,
                       outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
                 if added.count == 1 { waiting = true }
@@ -140,21 +153,26 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
     func reply(in messages: [WabiAppMessage]) throws -> String? {
         guard version == 1, WabiThread.isValid(url), !prompt.isEmpty, baselineCount >= 0,
               baselineDigest.count == 32, reversedBaselineDigest.count == 32,
-              messages.count >= baselineCount, messages.count <= baselineCount + 2 else {
+              messages.count <= baselineCount + 2 else {
             throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
         }
         var answers: Set<String> = []
         var waiting = false
         for ordered in [messages, Array(messages.reversed())] {
-            let old = Array(ordered.prefix(baselineCount))
-            let hash = try Self.digest(old)
-            guard hash == baselineDigest || hash == reversedBaselineDigest else { continue }
-            let added = ordered.dropFirst(baselineCount)
-            if added.isEmpty { waiting = true; continue }
-            guard let outgoing = added.first, outgoing.role == .user,
-                  outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
-            if added.count == 1 { waiting = true }
-            else if let answer = added.last, answer.role == .assistant, !answer.text.isEmpty { answers.insert(answer.text) }
+            for dropGreeting in [false, true] {
+                let retained = baselineCount - (dropGreeting ? 1 : 0)
+                guard retained >= (dropGreeting ? 2 : 0), ordered.count >= retained, ordered.count <= retained + 2 else { continue }
+                let old = Array(ordered.prefix(retained))
+                let reconstructed = dropGreeting ? [WabiAppMessage(role: .assistant, text: "What can I do for you?")] + old : old
+                let hash = try Self.digest(reconstructed)
+                guard hash == baselineDigest || hash == reversedBaselineDigest else { continue }
+                let added = ordered.dropFirst(retained)
+                if added.isEmpty { waiting = true; continue }
+                guard let outgoing = added.first, outgoing.role == .user,
+                      outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
+                if added.count == 1 { waiting = true }
+                else if let answer = added.last, answer.role == .assistant, !answer.text.isEmpty { answers.insert(answer.text) }
+            }
         }
         guard answers.count <= 1 else { throw DesktopAppError.unavailable("Wabi's new reply is ambiguous.") }
         if let answer = answers.first { return answer }
