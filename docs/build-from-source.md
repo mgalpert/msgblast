@@ -141,6 +141,22 @@ settings out of the PR. They do not authorize live sends or production state res
 An unbundled `swift run` is not the supported GUI setup: Xcode registers the icon,
 Info.plist, entitlements, frameworks, resources, and helper.
 
+## iOS controller app
+
+`msgblastMobile` is the phone app for [remote control](remote-control.md). It needs
+the iOS 26 or later simulator runtime from Xcode. No team is committed; choose your
+own team in Xcode to run it on a device.
+
+```sh
+xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile -configuration Debug \
+  -derivedDataPath build/ios-mobile -destination 'platform=iOS Simulator,name=iPhone 17' build
+```
+
+Its logic is in `msgblastMobileKit`, which also builds for macOS. See
+[Testing](testing.md#remote-control) for its tests and
+[Remote control](remote-control.md#ux-iteration-against-the-demo-mac) for running it
+against the Demo profile.
+
 ## Dependencies and generated files
 
 - Xcode resolves **Sparkle 2.10.0**, pinned in the generator and Package.swift.

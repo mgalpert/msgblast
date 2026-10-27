@@ -1,10 +1,10 @@
-# Remote control (phone controller, Mac side)
+# Remote control (phone controller)
 
 Remote control lets one paired phone use msgblast on a Mac: see every agent's
 availability and the conversations' replies, start conversations, send shared and
 private messages, end conversations, and acknowledge stuck requests. The Mac stays
-the only executor. Phase 1 (this guide) is the Mac service plus a command-line
-client; the iOS app is phase 2 of the
+the only executor. The Mac service and a command-line client are phase 1; the iOS
+app (`msgblastMobile`) is phase 2 of the
 [iOS controller plan](plans/2026-10-24-ios-controller-architecture.md).
 
 ## Turning it on
@@ -188,6 +188,66 @@ cd scripts/remote_client && swift build
 It keeps its device key and cursor in `~/Library/Application Support/msgblast-remote-client/state.json` (file 0600, folder 0700); `--state <path>` overrides it.
 Use it only against a Demo Mac or a Mac whose owner authorized real sends.
 
+## iOS app
+
+`msgblastMobile` (iOS 26, iPhone and iPad, bundle id `com.msgblast.ios`) is a
+SwiftUI app over `msgblastMobileKit`, a framework without UIKit that holds the
+connection, the local cache and the screen presenters, so its tests run on macOS too.
+
+- **Pairing:** scan the QR code (VisionKit), paste the link, or open it (the app
+  registers `msgblast://`). The phone shows the Mac's name and key fingerprint
+  before pairing. Its P-256 key stays in the Keychain, in the Secure Enclave on a
+  device that has one.
+- **Connection:** every QR address and any `_msgblast._tcp` Bonjour result on the
+  LAN are tried at once over TLS 1.3 with the Mac's key pinned. After connecting the
+  phone resumes from its stored `seq`, requests keep-awake (Settings toggle), asks
+  about commands still waiting for a result, and pings every 20 s. It reconnects
+  with backoff. The banner reads Connected, Reconnecting (msgblast may not be
+  running, or the Mac is asleep or off this network), Disconnected: your Mac is
+  locked, or asks to pair again when the Mac forgot this phone.
+- **Cache:** a SQLite file (system sqlite3) in the app's Application Support holds
+  the projection, the last `seq`, per-device drafts, and each command with its last
+  result. The reducer is a pure function from events to state.
+- **Rules:** nothing is queued while disconnected; a command without a final result
+  is shown as unconfirmed and never resent, including `unknownCommand` after a Mac
+  restart; drafts never leave the phone; forms of one product (ChatGPT web, Mac app,
+  Codex CLI) are separate threads.
+- **Screens:** inbox (conversations and direct chats), conversation (All or one
+  agent, status chips Sending on Mac → Sent → Replied / Not sent / Unconfirmed with
+  the Mac's reason, acknowledge, stop waiting, end or keep active), compose bar
+  (recipient chips: all = shared, one = private; the Mac's reason when a send is
+  not possible; "Will open ChatGPT on your Mac"; "Getting ready…" while
+  `prepareConversation` runs; photos and files for Messages agents), new
+  conversation grid grouped by product, Mac banner, and Settings (Mac name, key
+  fingerprint, forget, keep-awake).
+
+### UX iteration against the Demo Mac
+
+The simulator shares the Mac's network, so it reaches the Demo profile on the Mac's
+own Tailscale or LAN address. Nothing real is sent.
+
+1. Build the Mac frameworks once (the native test build in [Testing](testing.md)),
+   for example into `build/contributor-tests`.
+2. Serve the Demo profile and print a pairing link that is refreshed until a phone
+   pairs: `bash scripts/run_demo_mac.sh build/contributor-tests 1800`. Alternatively,
+   run a Demo preview app with `--remote-listen`, turn on Settings → Remote, and
+   choose Pair a phone.
+3. Build and install the phone app in a simulator:
+   ```sh
+   xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile -configuration Debug \
+     -derivedDataPath build/ios-mobile -destination 'platform=iOS Simulator,name=iPhone 17' build
+   xcrun simctl install booted build/ios-mobile/Build/Products/Debug-iphonesimulator/msgblastMobile.app
+   xcrun simctl launch booted com.msgblast.ios -pairLink "$(pbpaste)"
+   ```
+   `-pairLink` opens the pairing confirmation at launch (the simulator has no camera);
+   pasting the link into the pairing screen works too.
+4. Confirm the Mac name and key and choose Pair. The inbox, conversations and agent
+   grid then follow the Demo Mac live; the Demo replies to Messages sends after
+   about two seconds.
+
+Record phone reducer fixtures from the Demo Mac with
+`bash scripts/record_mobile_fixtures.sh build/contributor-tests`.
+
 ## Source map
 
 | Area | Source |
@@ -199,10 +259,13 @@ Use it only against a Demo Mac or a Mac whose owner authorized real sends.
 | Commands | `msgblast/Core/Remote/RemoteCommandExecutor.swift`, `msgblast/Remote/AppRemoteHost.swift`, `msgblast/App/SharedSend.swift` |
 | Sessions, listener | `msgblast/Core/Remote/RemoteServer.swift`, `RemoteListener.swift` |
 | Service and settings UI | `msgblast/Remote/RemoteService.swift`, `RemoteAppSignals.swift`, `msgblast/Windows/RemoteSettingsView.swift` |
+| Phone logic (iOS and macOS) | `msgblastMobile/Kit/Connection/`, `Store/`, `Models/` (`msgblastMobileKit.framework`) |
+| Phone screens | `msgblastMobile/App/`, `msgblastMobile/Views/` |
 
-## Limits (phase 1)
+## Limits
 
-- No phone app yet; the command-line client is the only client.
+- The phone app is for UX iteration: internal builds only, foreground connection
+  only (no background refresh or notifications), and no UI tests yet.
 - Reachability from a phone on cellular over Tailscale, the lock-screen send
   matrix, and display-sleep behavior are not yet measured; see the
   [phase 0 spike](plans/2026-10-26-ios-controller-spike.md).

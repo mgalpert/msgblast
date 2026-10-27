@@ -141,6 +141,24 @@ reads the snapshot, sends to a simulated Messages agent, and resumes. It needs a
 Tailscale or private LAN address and opens a port while it runs; it sends nothing
 real. It does not prove reachability from a phone on another network.
 
+### Phone app
+
+The phone's logic tests (`msgblastMobileTests`: connection state machine against a
+fake Mac over an in-memory transport, the reducer against fixtures recorded from
+the Demo Mac, the store, and presenters) run without a simulator:
+
+```sh
+xcodebuild -project msgblast.xcodeproj -scheme msgblastMobileKit -configuration Debug \
+  -derivedDataPath build/mobile-macos -destination 'platform=macOS,arch=arm64' test
+```
+
+The same bundle runs in a simulator with `-scheme msgblastMobile -destination
+'platform=iOS Simulator,name=iPhone 17' test`. Re-record its fixtures with
+`bash scripts/record_mobile_fixtures.sh <derived-data>` (Demo profile, simulated
+lock; the Mac's name is replaced with "Demo Mac"). There are no phone UI tests yet;
+[Remote control](remote-control.md#ux-iteration-against-the-demo-mac) lists the
+manual simulator check.
+
 ## Shared native app engine
 
 `DesktopAccessibilityTests` covers exact draft/URL metadata, bounded incomplete

@@ -438,6 +438,17 @@ These fix the headless gaps the survey found and are good hygiene on their own:
    conversation, availability-aware agent grid, shared and private sends,
    attempt status chips, end and acknowledge, attachments. Iterate on the
    messenger feel here before any live sends. Internal TestFlight.
+
+   **Status (2026-10-26):** first version landed on `ios-controller`: the
+   `msgblastMobile` target with logic in the cross-platform `msgblastMobileKit`,
+   endpoint racing with pinned TLS and Bonjour, reconnect and resume, a SQLite cache
+   with a pure reducer tested on fixtures recorded from the Demo Mac, and the
+   pairing, inbox, conversation, compose, new-conversation and settings screens.
+   Paired, sent shared and private messages, and saw simulated replies in the iPhone
+   17 simulator against the Demo profile. The phone review round also added
+   `prepareConversation`, `queryCommand`/`unknownCommand` and per-conversation
+   incomplete attempts on the Mac. Not yet: TestFlight, UI tests, background
+   behavior, device testing.
 3. **Live Dev validation over Tailscale:** real agents, lock and sleep
    behavior, focus-steal feedback, long desktop sends. Fix what the UX
    iteration missed.
