@@ -448,7 +448,8 @@ These fix the headless gaps the survey found and are good hygiene on their own:
    17 simulator against the Demo profile. The phone review round also added
    `prepareConversation`, `queryCommand`/`unknownCommand` and per-conversation
    incomplete attempts on the Mac. Not yet: TestFlight, UI tests, background
-   behavior, device testing.
+   behavior, device testing. Pending for TestFlight packaging: the iOS target
+   has no app icon yet (`ASSETCATALOG_COMPILER_APPICON_NAME` is empty).
 3. **Live Dev validation over Tailscale:** real agents, lock and sleep
    behavior, focus-steal feedback, long desktop sends. Fix what the UX
    iteration missed.
