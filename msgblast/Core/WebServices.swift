@@ -33,6 +33,8 @@ public struct WebSendAttempt: Codable, Equatable, Identifiable, Sendable {
     public var comparisonID: UUID?
     public var conversationURL: URL?
     public var callbackHash: Data?
+    // Identifies the private draft at submission time; older attempts omit it.
+    var nativeDraftRevision: UUID?
     // A safely observed chat identity survives invalidation of automatic receipt attribution.
     var recoveryConversationURL: URL?
     var receiptContext: WebReceiptContext?
@@ -91,8 +93,9 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localConfiguredSessionIDs: [String: String] = [:]
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
+    public var localDraftRevisions: [String: UUID] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, websiteEnabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, websiteEnabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localDraftRevisions, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
@@ -108,7 +111,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         dotsURL = try c.decodeIfPresent(URL.self, forKey: .dotsURL)
         savedAvatar = try c.decodeIfPresent(Data.self, forKey: .savedAvatar)
         grokBotRememberedConnection = try c.decodeIfPresent(Bool.self, forKey: .grokBotRememberedConnection)
-        legacyLocalStatePresent = c.contains(.localConversations) || c.contains(.localSessionIDs) || c.contains(.localDrafts)
+        legacyLocalStatePresent = c.contains(.localConversations) || c.contains(.localSessionIDs) || c.contains(.localDrafts) || c.contains(.localDraftRevisions)
         sessionID = try c.decode(UUID.self, forKey: .sessionID)
         displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
         draft = try c.decodeIfPresent(String.self, forKey: .draft) ?? ""
@@ -124,6 +127,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         localConfiguredSessionIDs = try c.decodeIfPresent([String: String].self, forKey: .localConfiguredSessionIDs) ?? [:]
         localPreviousSessionIDs = try c.decodeIfPresent([String: [String]].self, forKey: .localPreviousSessionIDs) ?? [:]
         localDrafts = try c.decodeIfPresent([String: String].self, forKey: .localDrafts) ?? [:]
+        localDraftRevisions = try c.decodeIfPresent([String: UUID].self, forKey: .localDraftRevisions) ?? [:]
         attempts = try c.decodeIfPresent([WebSendAttempt].self, forKey: .attempts) ?? []
     }
     public func encode(to encoder: Encoder) throws {
@@ -153,6 +157,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(localConversations, forKey: .localConversations)
         try c.encode(localSessionIDs, forKey: .localSessionIDs)
         try c.encode(localDrafts, forKey: .localDrafts)
+        try c.encode(localDraftRevisions, forKey: .localDraftRevisions)
         try c.encode(localSessionPolicyVersions, forKey: .localSessionPolicyVersions)
         try c.encode(localConfiguredSessionIDs, forKey: .localConfiguredSessionIDs)
         try c.encode(localPreviousSessionIDs, forKey: .localPreviousSessionIDs)
@@ -410,7 +415,7 @@ public enum WebProviderStateMigration {
         // Empty local keys were written even for web history. Without positive
         // provenance, retain the original receipt and its resend guard in both stores.
         let ambiguousAttempts = Set(nativeAttempts.filter { $0.status != .observed || !hasNativeHistory($0) }.map(\.id))
-        let hasNativeState = browser.legacyLocalStatePresent && (!browser.localConversations.isEmpty || !browser.localSessionIDs.isEmpty || browser.localDrafts.values.contains { !$0.isEmpty } || !nativeAttempts.isEmpty || !browser.draft.isEmpty)
+        let hasNativeState = browser.legacyLocalStatePresent && (!browser.localConversations.isEmpty || !browser.localSessionIDs.isEmpty || browser.localDrafts.values.contains { !$0.isEmpty } || !browser.localDraftRevisions.isEmpty || !nativeAttempts.isEmpty || !browser.draft.isEmpty)
         if hasNativeState {
             var local = WebWorkspaceState()
             local.selected = false
@@ -426,6 +431,7 @@ public enum WebProviderStateMigration {
             local.localConfiguredSessionIDs = try merge(local.localConfiguredSessionIDs, browser.localConfiguredSessionIDs)
             local.localPreviousSessionIDs = try merge(local.localPreviousSessionIDs, browser.localPreviousSessionIDs)
             local.localDrafts = try merge(local.localDrafts, browser.localDrafts)
+            local.localDraftRevisions = try merge(local.localDraftRevisions, browser.localDraftRevisions)
             for attempt in nativeAttempts {
                 if let existing = local.attempts.first(where: { $0.id == attempt.id }) {
                     guard existing == attempt else { throw CocoaError(.fileWriteFileExists) }
@@ -444,6 +450,7 @@ public enum WebProviderStateMigration {
         browser.localConversations = [:]
         browser.localSessionIDs = [:]
         browser.localDrafts = [:]
+        browser.localDraftRevisions = [:]
         browser.localConfiguredSessionIDs = [:]
         browser.localSessionPolicyVersions = [:]
         browser.localPreviousSessionIDs = [:]

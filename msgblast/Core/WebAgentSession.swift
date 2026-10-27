@@ -248,7 +248,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 if let saved = state.localDrafts[target] { state.draft = saved }
                 else if previous != nil || state.comparisonID == nil || state.localConversations[target] != nil {
                     state.draft = ""
-                } else { state.localDrafts["new"] = "" }
+                } else {
+                    // A new comparison inherits its unsent draft and its identity.
+                    state.localDraftRevisions[target] = state.localDraftRevisions["new"]
+                    state.localDrafts["new"] = ""
+                    state.localDraftRevisions["new"] = UUID()
+                }
+            } else if state.draft != previousDraft {
+                state.localDraftRevisions[state.comparisonID?.uuidString ?? "new"] = UUID()
             }
             state.localDrafts[state.comparisonID?.uuidString ?? "new"] = state.draft
             updateNativeSnapshot()
@@ -1668,6 +1675,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             error = "An earlier request did not complete. Review it before explicitly allowing another request; usage may have been consumed."
             return nil
         }
+        // Capture the identity of the draft before opening an app, which may
+        // suspend while the user edits or changes comparisons.
+        var submittedDraftRevision: UUID?
+        if state.draft == text, state.comparisonID == id || (state.comparisonID == nil && comparisonID == nil) {
+            let key = state.comparisonID?.uuidString ?? "new"
+            let previous = state
+            let revision = state.localDraftRevisions[key] ?? UUID()
+            state.localDraftRevisions[key] = revision
+            state.localDrafts[key] = state.draft
+            do { try save(); submittedDraftRevision = revision }
+            catch { state = previous; self.error = error.localizedDescription; return nil }
+        }
         isSending = true
         requestCancelled = false
         nativeCancellationRequestedBeforeShutdown = false
@@ -1682,6 +1701,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         var attempt = WebSendAttempt(text: text)
         attempt.comparisonID = id
+        attempt.nativeDraftRevision = submittedDraftRevision
         updateState { $0.comparisonID = id }
         state.attempts.insert(attempt, at: 0)
         var started = false
@@ -1833,8 +1853,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             try Task.checkCancellation()
             state.localConversations[id.uuidString] = history + [WebPageMessage(role: "assistant", text: answer.text)]
             if provider.desktopApp == nil { state.recordLocalSession(answer.sessionID, for: id) }
-            if state.draft == text { state.draft = "" }
-            state.localDrafts[id.uuidString] = state.draft
+            consumeNativeDraftIfUnchanged(attempt, comparison: id)
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
             if provider == .museApp {
                 attempt.conversationURL = state.museAppConversations[id.uuidString]?.url
@@ -2226,6 +2245,17 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return recoverableChatGPTAttempt() != nil
     }
 
+    private func consumeNativeDraftIfUnchanged(_ attempt: WebSendAttempt, comparison: UUID) {
+        let key = comparison.uuidString
+        guard let revision = attempt.nativeDraftRevision,
+              state.localDraftRevisions[key] == revision,
+              state.localDrafts[key] == attempt.text,
+              state.comparisonID != comparison || state.draft == attempt.text else { return }
+        state.localDrafts[key] = ""
+        state.localDraftRevisions[key] = UUID()
+        if state.comparisonID == comparison { state.draft = "" }
+    }
+
     private func finishRecoveredNativeReply(_ result: String, attempt: WebSendAttempt, comparison: UUID, chatgptBinding: ChatGPTConversationBinding? = nil, allowUnconfirmedWabi: Bool = false) throws {
         guard let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) else { return }
         let key = comparison.uuidString
@@ -2242,6 +2272,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let previous = state
         if let chatgptBinding { try state.recordChatGPTBinding(chatgptBinding) }
         state.localConversations[key] = messages
+        consumeNativeDraftIfUnchanged(attempt, comparison: comparison)
         state.attempts[index].status = .observed
         if allowUnconfirmedWabi { state.attempts[index].messageID = attempt.id.uuidString }
         state.attempts[index].detail = "Reply observed in the app conversation."

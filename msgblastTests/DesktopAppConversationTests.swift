@@ -945,6 +945,49 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
     }
 
+    func testRecoveredNativeReplyClearsOnlyItsUnchangedSubmittedDraft() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for scenario in ["unchanged", "edited", "retyped", "legacy", "other comparison"] {
+            let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+            defer { fixture.remove() }
+            let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+                .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+            }
+            let revision = UUID(), other = UUID()
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = scenario == "other comparison" ? other : comparison
+            workspace.draft = scenario == "other comparison" ? "Other conversation draft" : "Question"
+            workspace.localDrafts[comparison.uuidString] = "Question"
+            workspace.localDraftRevisions[comparison.uuidString] = revision
+            if scenario == "other comparison" { workspace.localDrafts[other.uuidString] = workspace.draft }
+            try workspace.recordWabiConversation(url, for: comparison)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+            attempt.nativeDraftRevision = scenario == "legacy" ? nil : revision
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            let storage = fixture.directory.appendingPathComponent("workspace.json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            if scenario == "edited" || scenario == "retyped" { session.updateState { $0.draft = "Next draft" } }
+            if scenario == "retyped" { session.updateState { $0.draft = "Question" } }
+            _ = await session.reconcileWabiReplyOnce()
+            session.beginShutdown()
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            XCTAssertEqual(saved.attempts.first?.status, .observed, scenario)
+            XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Question", "Late answer"], scenario)
+            let expected = scenario == "unchanged" ? "" : scenario == "edited" ? "Next draft" : scenario == "other comparison" ? "Other conversation draft" : "Question"
+            XCTAssertEqual(saved.draft, expected, scenario)
+            XCTAssertEqual(saved.localDrafts[comparison.uuidString], scenario == "other comparison" ? "" : expected, scenario)
+            let calls = try await finishedCalls(fixture)
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) }, scenario)
+        }
+    }
+
     func testWabiUnconfirmedSendRecoversOnlyAfterTheExactOutgoingAndReplyAppear() async throws {
         let comparison = UUID(), url = wabiURL
         let earlier: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier reply")]
@@ -3272,7 +3315,8 @@ final class DesktopAppDriverTests: XCTestCase {
         let recovered = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
         XCTAssertEqual(recovered.attempts.first?.status, .observed)
         XCTAssertEqual(recovered.localConversations[owner.uuidString]?.map(\.text), [prompt, "A late answer"])
-        XCTAssertEqual(recovered.draft, prompt)
+        XCTAssertEqual(recovered.draft, "", "The recovered reply clears the unchanged submitted draft")
+        XCTAssertEqual(recovered.localDrafts[owner.uuidString], "")
         let calls = try await finishedCalls(fixture, cleanupCount: 3)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 2)
         XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)

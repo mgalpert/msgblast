@@ -3,6 +3,54 @@ import XCTest
 
 @MainActor
 final class NativeDesktopStateTests: XCTestCase {
+    func testNativeSendClearsOnlyTheDraftThatWasActuallySubmitted() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = DesktopAppInstallationClient(inspect: { _ in
+            .init(url: URL(fileURLWithPath: "/Fixture/Claude.app"), processID: 42)
+        }, open: { _ in XCTFail("The fixture app is already running") })
+        for scenario in ["unchanged", "edited", "retyped"] {
+            let session = WebAgentSession(provider: .claudeApp, storageURL: directory.appendingPathComponent("\(scenario).json"), fixture: true, museApp: .shared, desktopApps: client)
+            defer { session.beginShutdown() }
+            session.setEnabled(true)
+            session.updateState { $0.desktopConversation = .init(name: "Claude") }
+            let id = UUID()
+            let ready = await session.openComparison(id, startNativeApp: true)
+            XCTAssertTrue(ready)
+            session.updateState { $0.draft = "Question" }
+            let send = Task { await session.send("Question", comparisonID: id) }
+            for _ in 0..<10000 where session.state.attempts.first?.status != .attempting { await Task.yield() }
+            XCTAssertEqual(session.state.attempts.first?.status, .attempting, "The test must edit while the reply is pending")
+            if scenario != "unchanged" { session.updateState { $0.draft = "New draft" } }
+            if scenario == "retyped" { session.updateState { $0.draft = "Question" } }
+            let attempt = await send.value
+            XCTAssertEqual(attempt?.status, .observed)
+            XCTAssertEqual(session.state.draft, scenario == "unchanged" ? "" : scenario == "edited" ? "New draft" : "Question", scenario)
+        }
+    }
+
+    func testLegacyNativeDraftAndAttemptDecodeWithoutRevisionMetadata() throws {
+        let comparison = UUID()
+        var workspace = WebWorkspaceState()
+        workspace.comparisonID = comparison
+        workspace.draft = "Unsent draft"
+        workspace.localDrafts[comparison.uuidString] = workspace.draft
+        var attempt = WebSendAttempt(text: "Earlier request", status: .uncertain)
+        attempt.comparisonID = comparison
+        workspace.attempts = [attempt]
+        var old = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(workspace)) as? [String: Any])
+        old.removeValue(forKey: "localDraftRevisions")
+        var attempts = try XCTUnwrap(old["attempts"] as? [[String: Any]])
+        attempts[0].removeValue(forKey: "nativeDraftRevision")
+        old["attempts"] = attempts
+        let restored = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONSerialization.data(withJSONObject: old))
+        XCTAssertEqual(restored.draft, "Unsent draft")
+        XCTAssertEqual(restored.localDrafts[comparison.uuidString], "Unsent draft")
+        XCTAssertTrue(restored.localDraftRevisions.isEmpty)
+        XCTAssertNil(restored.attempts.first?.nativeDraftRevision)
+        XCTAssertEqual(restored.attempts.first?.status, .uncertain)
+    }
+
     func testWorkspaceRemainsOwnedUntilAnIndependentReplyAndItsBroadcastBothFinish() {
         var gate = BroadcastReplyGate()
         XCTAssertTrue(gate.beginBroadcast())
