@@ -1210,6 +1210,83 @@ final class DesktopAppDriverTests: XCTestCase {
         assertNoInput(try await finishedCalls(fixture, cleanupCount: 2))
     }
 
+    func testGrokDiscoveryRechecksTheRelaunchedProcessBeforeBecomingReady() async throws {
+        try await assertGrokDiscoveryAfterRelaunch(restartAgain: false)
+    }
+
+    func testGrokDiscoveryStopsIfTheProcessKeepsChanging() async throws {
+        try await assertGrokDiscoveryAfterRelaunch(restartAgain: true)
+    }
+
+    private func assertGrokDiscoveryAfterRelaunch(restartAgain: Bool) async throws {
+        @MainActor final class InstalledApp {
+            var value = DesktopAppInstallation(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242)
+        }
+        func read(pid: Int, window: Int, names: [String]) -> [[String: Any]] {
+            var state = grok(bots: names)
+            state["pid"] = pid; state["window_id"] = window
+            return [step("list_apps", ["apps": [["bundle_id": DesktopAppProvider.grokBot.bundleID, "pid": pid, "running": true]]]),
+                    step("list_windows", ["windows": [["window_id": window, "title": "Fixture app", "is_on_screen": true, "bounds": ["width": 800, "height": 600]]]]), snapshot(state)]
+        }
+        let old = read(pid: 4242, window: 101, names: ["Fixture Bot", "Old Bot"])
+        let fresh = read(pid: 4243, window: 102, names: ["Fixture Bot", "New Bot"])
+        let last = restartAgain ? read(pid: 4244, window: 103, names: ["Fixture Bot", "Newest Bot"]) : fresh
+        let fixture = try driver(old + fresh + fresh + last)
+        defer { fixture.remove() }
+        let entered = expectation(description: "Saved-bot check has not resolved its process yet")
+        let enteredAgain = restartAgain ? expectation(description: "Revalidation has reached its saved-bot check") : nil
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        defer { release.finish() }
+        let firstReadiness = FirstCall()
+        let secondReadiness = FirstCall()
+        let run: DesktopAppConversation.ProcessRunner = { executable, arguments, environment, timeout, cancellation in
+            if arguments.dropFirst().first == "list_apps" {
+                let reads = try fixture.calls().filter({ $0.tool == "get_window_state" }).count
+                if reads == 1, firstReadiness.take() {
+                    entered.fulfill()
+                    for await _ in gate { break }
+                } else if reads == 3, let enteredAgain, secondReadiness.take() {
+                    enteredAgain.fulfill()
+                    for await _ in gate { break }
+                }
+            }
+            try Task.checkCancellation()
+            return try await DesktopAppConversation.execute(executable, arguments, environment, timeout, cancellation)
+        }
+        let installed = InstalledApp()
+        let client = DesktopAppInstallationClient(inspect: { _ in installed.value }, open: { _ in XCTFail("Discovery must not relaunch an app") })
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture, runProcess: run))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = binding; $0.draft = "Keep this msgblast draft" }
+        let connection = Task { await session.refreshGrokBots(activateIfNeeded: true) }
+        await fulfillment(of: [entered], timeout: 5)
+        installed.value = .init(url: installed.value.url, processID: 4243)
+        session.refreshDesktopInstallation()
+        await session.refreshGrokBots()
+        release.yield(())
+        if let enteredAgain {
+            await fulfillment(of: [enteredAgain], timeout: 5)
+            installed.value = .init(url: installed.value.url, processID: 4244)
+            session.refreshDesktopInstallation()
+            await session.refreshGrokBots()
+            release.yield(())
+        }
+        release.finish()
+        await connection.value
+        XCTAssertFalse(session.loading)
+        XCTAssertEqual(session.isReadyForOnboarding, !restartAgain, session.desktopStatus)
+        XCTAssertEqual(session.grokBotNames, restartAgain ? [] : ["Fixture Bot", "New Bot"], "Never restore the old process's bot list")
+        if restartAgain { XCTAssertTrue(session.desktopStatus.contains("changed while connecting"), session.desktopStatus) }
+        XCTAssertEqual(session.state.desktopConversation, binding)
+        XCTAssertEqual(session.state.draft, "Keep this msgblast draft")
+        XCTAssertTrue(session.state.attempts.isEmpty)
+        let calls = try await finishedCalls(fixture, cleanupCount: 4)
+        XCTAssertEqual(calls.filter { $0.tool == "get_window_state" }.compactMap { $0.arguments["pid"] as? Int }, [4242, 4243, 4243, restartAgain ? 4244 : 4243])
+        assertNoInput(calls)
+    }
+
     func testGrokDiscoveryAndSelectionWaitForReadinessRefresh() async throws {
         for choosing in [false, true] {
             let initial = grok(bots: ["Fixture Bot", "Other Bot"])

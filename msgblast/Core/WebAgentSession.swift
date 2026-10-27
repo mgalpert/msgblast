@@ -1211,31 +1211,46 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard provider == .grokBotApp, !loading, !isSending, !shuttingDown, !storageFailed else { return }
         refreshDesktopInstallation()
         guard desktopInstallation.isRunning else { grokBotNames = []; return }
-        let installation = desktopInstallation
-        desktopReady = false
-        desktopStatus = "Finding your bots…"
         loading = true
-        defer { loading = false }
-        updateNativeSnapshot()
-        do {
-            try await waitForDesktopRefresh()
-            let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await DesktopAppWorkflow.connection(.grokBot, driver: activateIfNeeded ? desktopDriver : nil) {
-                try await self.desktopDriver.availableGrokBots()
-            }
+        defer { loading = false; updateNativeSnapshot() }
+        // A restart can invalidate discovery while the saved bot is checked.
+        // Re-read the new process once; never restore its predecessor's list.
+        for _ in 0..<2 {
             refreshDesktopInstallation()
-            guard desktopInstallation == installation, !shuttingDown else { throw CancellationError() }
-            grokBotNames = names
-            desktopStatus = "Choose a bot to start chatting."
-        } catch {
-            grokBotNames = []
+            guard desktopInstallation.isRunning, !shuttingDown, !Task.isCancelled else { return }
+            let installation = desktopInstallation
             desktopReady = false
-            desktopStatus = error.localizedDescription
+            desktopStatus = "Finding your bots…"
+            updateNativeSnapshot()
+            do {
+                try await waitForDesktopRefresh()
+                let names = fixture ? ["Demo Bot", "Research Bot", "Writing Bot"] : try await DesktopAppWorkflow.connection(.grokBot, driver: activateIfNeeded ? desktopDriver : nil) {
+                    try await self.desktopDriver.availableGrokBots()
+                }
+                refreshDesktopInstallation()
+                guard desktopInstallation == installation else { continue }
+                guard !shuttingDown, !Task.isCancelled else { return }
+                grokBotNames = names
+                desktopStatus = "Choose a bot to start chatting."
+                if let name = state.desktopConversation?.name, grokBotNames.contains(name), isEnabled {
+                    connected = true
+                    await refreshDesktop(duringConnection: true)
+                }
+                refreshDesktopInstallation()
+                guard desktopInstallation == installation else { continue }
+                return
+            } catch {
+                refreshDesktopInstallation()
+                if desktopInstallation != installation, !shuttingDown, !Task.isCancelled { continue }
+                grokBotNames = []
+                desktopReady = false
+                desktopStatus = error.localizedDescription
+                return
+            }
         }
-        if let name = state.desktopConversation?.name, grokBotNames.contains(name), isEnabled {
-            connected = true
-            await refreshDesktop(duringConnection: true)
-        }
-        updateNativeSnapshot()
+        grokBotNames = []
+        desktopReady = false
+        desktopStatus = "Grok Bot changed while connecting. Try connecting again."
     }
 
     private func waitForDesktopRefresh() async throws {
