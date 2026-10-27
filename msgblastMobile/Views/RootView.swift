@@ -71,6 +71,7 @@ struct AgentAvatar: View {
     }
     static func color(_ product: String) -> Color {
         let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal, .indigo, .brown, .cyan, .mint]
-        return palette[abs(product.hashValue) % palette.count]
+        // Stable across launches (String.hashValue is seeded per process).
+        return palette[product.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF } % palette.count]
     }
 }
