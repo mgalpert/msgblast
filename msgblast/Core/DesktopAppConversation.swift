@@ -733,7 +733,8 @@ actor DesktopAppConversation {
         })
     }
 
-    // Read the selected bot only. Recovery never navigates, types, or sends.
+    // Read the selected bot only. Recovery can reveal its latest messages,
+    // but never switches conversations, types, or sends.
     func recoverGrokReply(_ receipt: GrokReplyReceipt) async throws -> String? {
         guard receipt.version == 1, !receipt.bot.isEmpty, !receipt.prompt.isEmpty else {
             throw DesktopAppError.unavailable("The saved Grok Bot request cannot be verified.")
@@ -744,16 +745,27 @@ actor DesktopAppConversation {
         defer { Task { await endSession(session) } }
         let target = try await target(.grokBot)
         let binding = DesktopConversationBinding(name: receipt.bot)
-        func readAnswer() async throws -> String? {
-            let state = try await snapshot(target, session: session)
+        var revealedLatest: String?
+        var candidate: String?
+        for read in 0..<2 {
+            var state = try await snapshot(target, session: session)
             try validate(state, app: .grokBot, binding: binding)
+            guard try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
+            if let latest = try state.grokLatestMessagesButton(), latest.label != revealedLatest {
+                revealedLatest = latest.label
+                _ = try await call("click", ["session": session, "element_token": latest.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+                state = try await snapshot(target, session: session)
+                try validate(state, app: .grokBot, binding: binding)
+            }
             guard !state.isGenerating, !state.grokIsWorking,
                   try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
-            return try state.grokReply(after: receipt.prompt, anchor: receipt.anchor)
+            guard let answer = try state.grokReply(after: receipt.prompt, anchor: receipt.anchor), !answer.isEmpty else { return nil }
+            if read == 0 {
+                candidate = answer
+                if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+            } else { return candidate == answer ? answer : nil }
         }
-        guard let answer = try await readAnswer(), !answer.isEmpty else { return nil }
-        if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
-        return try await readAnswer() == answer ? answer : nil
+        return nil
     }
 
     func endSession(_ session: String) async {

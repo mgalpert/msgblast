@@ -718,6 +718,44 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testGrokRecoveryRevealsLatestReplyWithoutResendingOrChangingBots() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        var stale = grok(reply: "", token: "s00000004")
+        var elements = try XCTUnwrap(stale["elements"] as? [[String: Any]])
+        let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+        elements.insert(element("AXButton", "1 new message", token: "s00000004:latest"), at: composer)
+        stale["elements"] = elements; stale["returned_element_count"] = elements.count; stale["total_element_count"] = elements.count
+        let reveal = step("click", [:], arguments: ["element_token": "s00000004:latest"])
+        let fixture = try driver([apps(), windows(), snapshot(stale), reveal, snapshot(grok(reply: "Late answer"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).recoverGrokReply(receipt)
+        XCTAssertEqual(answer, "Late answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "launch_app", "bring_to_front"].contains($0.tool) })
+        XCTAssertEqual(calls.first { $0.tool == "click" }?.arguments["element_token"] as? String, "s00000004:latest")
+    }
+
+    func testGrokRecoveryDoesNotRevealMessagesForAnotherBotOrRequest() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        for state in [grok(reply: "", name: "Other Bot"), grok(reply: "", outgoingPrompt: "Other request")] {
+            var stale = state
+            var elements = try XCTUnwrap(stale["elements"] as? [[String: Any]])
+            let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+            elements.insert(element("AXButton", "1 new message", token: "s00000001:latest"), at: composer)
+            stale["elements"] = elements; stale["returned_element_count"] = elements.count; stale["total_element_count"] = elements.count
+            let fixture = try driver([apps(), windows(), snapshot(stale, repeating: true)])
+            defer { fixture.remove() }
+            do {
+                let result = try await adapter(fixture).recoverGrokReply(receipt)
+                XCTAssertNil(result)
+            } catch { }
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+
     func testStoppingGrokRecoveryKeepsTheSentMessageAndPreventsLaterAttribution() async throws {
         let fixture = try driver([])
         defer { fixture.remove() }
