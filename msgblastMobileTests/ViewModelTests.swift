@@ -16,7 +16,7 @@ final class PresenterTests: XCTestCase {
         let prompt = try XCTUnwrap(presenter.turns(in: first.id, agentID: nil).first { $0.origin == .sharedPrompt })
         let chips = presenter.chips(for: prompt)
         XCTAssertEqual(chips.count, 1)
-        XCTAssertEqual(chips.first?.state, .sent, "Submitted Messages sends read Sent")
+        XCTAssertEqual(chips.first?.state, .replied, "A submitted Messages send with a later reply reads Replied")
         let agent = try XCTUnwrap(first.agentIDs.first)
         XCTAssertTrue(presenter.turns(in: first.id, agentID: agent).contains { $0.role == .assistant })
     }

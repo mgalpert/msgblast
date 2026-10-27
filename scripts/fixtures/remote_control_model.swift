@@ -204,7 +204,7 @@ extension SideChatModelCheck {
         let offer = try service.showPairingCode()
         try offer.url.absoluteString.write(toFile: offerFile, atomically: true, encoding: .utf8)
         FileHandle.standardError.write(Data("Demo Mac listening on \(service.endpoints.map(\.host)) port \(port)\n".utf8))
-        let deadline = Date().addingTimeInterval(180)
+        let deadline = Date().addingTimeInterval(Double(environment["MSGBLAST_REMOTE_LISTEN_SECONDS"] ?? "") ?? 180)
         // Optional triggers for recording phone fixtures: simulated lock/unlock (no real lock)
         // and a confirmed replacement pairing offer written next to the offer file.
         let lockFile = environment["MSGBLAST_REMOTE_LOCK_FILE"], unlockFile = environment["MSGBLAST_REMOTE_UNLOCK_FILE"]
@@ -213,6 +213,10 @@ extension SideChatModelCheck {
         while !FileManager.default.fileExists(atPath: doneFile), Date() < deadline {
             try await Task.sleep(for: .milliseconds(100))
             // Demo replies arrive asynchronously; the projection streams them to the client.
+            // Keep a fresh one-time code available until a phone pairs (UX iteration).
+            if service.pairing.device == nil, !service.pairing.isOfferValid || (service.pairing.offer.map { $0.expiresAt.timeIntervalSinceNow < 20 } ?? true) {
+                try? service.showPairingCode().url.absoluteString.write(toFile: offerFile, atomically: true, encoding: .utf8)
+            }
             if let lockFile, !locked, FileManager.default.fileExists(atPath: lockFile) { locked = true; service.power.simulate(locked: true) }
             if let unlockFile, locked, FileManager.default.fileExists(atPath: unlockFile) { locked = false; service.power.simulate(locked: false); try? FileManager.default.removeItem(atPath: unlockFile); try? FileManager.default.removeItem(atPath: lockFile ?? "") }
             if let replaceFile, !replaced, FileManager.default.fileExists(atPath: replaceFile) {

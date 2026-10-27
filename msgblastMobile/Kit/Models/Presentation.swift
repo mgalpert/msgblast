@@ -76,8 +76,12 @@ public struct ProjectionPresenter: Sendable {
         let attempts = state.attempts(in: turn.conversationID).filter { $0.text == turn.text && (turn.agentID == nil || $0.agentID == turn.agentID) }
         var latest: [String: RemoteAttempt] = [:]
         for attempt in attempts where latest[attempt.agentID].map({ ($0.created ?? .distantPast) <= (attempt.created ?? .distantPast) }) ?? true { latest[attempt.agentID] = attempt }
-        return latest.values.sorted { $0.agentID < $1.agentID }.map {
-            StatusChip(agentID: $0.agentID, agentName: shortName($0.agentID), state: ChipState($0.status), reason: $0.detail)
+        let replies = state.turns(in: turn.conversationID).filter { $0.role == .assistant }
+        return latest.values.sorted { $0.agentID < $1.agentID }.map { attempt in
+            var chip = ChipState(attempt.status)
+            // A Messages send stays "submitted"; a reply after it means the agent answered.
+            if chip == .sent, replies.contains(where: { $0.agentID == attempt.agentID && ($0.created ?? .distantPast) >= (turn.created ?? .distantFuture) }) { chip = .replied }
+            return StatusChip(agentID: attempt.agentID, agentName: shortName(attempt.agentID), state: chip, reason: attempt.detail)
         }
     }
 
