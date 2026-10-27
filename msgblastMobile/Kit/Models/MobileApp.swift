@@ -35,7 +35,8 @@ public final class MobileApp: ObservableObject {
         connection.$state.removeDuplicates().sink { [weak self] state in
             guard let self, !state.canSend else { return }
             self.store.connectionLost()
-            for (_, continuation) in self.waiting { continuation.resume(throwing: MobileConnectionError.notConnected) }
+            // These commands were sent; the connection ended before their result.
+            for (_, continuation) in self.waiting { continuation.resume(throwing: MobileConnectionError.unconfirmed) }
             self.waiting = [:]
         }.store(in: &subscriptions)
         connection.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
@@ -70,7 +71,7 @@ public final class MobileApp: ObservableObject {
             Task { [weak self] in
                 try? await Task.sleep(for: timeout)
                 guard let self, let pending = self.waiting.removeValue(forKey: command.clientCommandID) else { return }
-                pending.resume(throwing: MobileConnectionError.notConnected)
+                pending.resume(throwing: MobileConnectionError.unconfirmed)
             }
         }
     }

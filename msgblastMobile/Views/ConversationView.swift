@@ -112,7 +112,7 @@ struct ConversationView: View {
             do {
                 let result = try await app.perform(action)
                 if result.outcome == .rejected { actionError = result.message }
-            } catch { actionError = "Not confirmed by your Mac. \(error.localizedDescription)" }
+            } catch { actionError = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription }
         }
     }
 }

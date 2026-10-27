@@ -105,4 +105,9 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(connection.state, .unpaired)
         XCTAssertNil(connection.pairedMac)
     }
+
+    func testUnconfirmedIsNotNotConnected() {
+        XCTAssertTrue(MobileConnectionError.notConnected.errorDescription!.contains("Nothing was sent"))
+        XCTAssertFalse(MobileConnectionError.unconfirmed.errorDescription!.contains("Nothing was sent"))
+    }
 }

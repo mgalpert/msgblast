@@ -119,7 +119,7 @@ struct ComposeBar: View {
             } catch {
                 // The command is recorded as unconfirmed and never resent; keep the draft out of the way.
                 text = ""; attachments = []
-                message = "Unconfirmed: your Mac did not answer. Check the conversation before sending again."
+                message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
             }
         }
     }

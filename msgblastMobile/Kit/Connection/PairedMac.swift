@@ -78,11 +78,12 @@ public struct KeychainDeviceKeyStore: DeviceKeyStore {
 }
 
 public enum MobileConnectionError: LocalizedError, Equatable, Sendable {
-    case keychain, notConnected, notPaired, offerExpired
+    case keychain, notConnected, unconfirmed, notPaired, offerExpired
     public var errorDescription: String? {
         switch self {
         case .keychain: "This phone's key could not be saved in the Keychain."
         case .notConnected: "Not connected to your Mac. Nothing was sent."
+        case .unconfirmed: "Your Mac has not answered yet. Check the conversation before sending again."
         case .notPaired: "Pair with your Mac first."
         case .offerExpired: "This pairing code expired. Show a new one on your Mac."
         }
