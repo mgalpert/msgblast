@@ -206,14 +206,58 @@ public final class WebAgents: ObservableObject {
     }
 
     public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil) async -> [WebAgentID: WebSendAttempt] {
-        let tasks = executionGroups(sessions).map { group in Task { @MainActor in
+        await send(to: sessions) { session, handoff in
+            await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff)
+        }
+    }
+
+    static func send(to sessions: [WebAgentSession], perform: @escaping @MainActor @Sendable (WebAgentSession, @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt?) async -> [WebAgentID: WebSendAttempt] {
+        let operation = WebBroadcastOperation(perform)
+        return await withTaskGroup(of: (WebAgentID, WebSendAttempt?).self) { group in
+            for session in sessions where session.provider.desktopApp == nil {
+                group.addTask { await operation.send(session) }
+            }
+            var replies: [String: DesktopBroadcastHandoff] = [:]
+            for session in sessions where session.provider.desktopApp != nil {
+                // ChatGPT/Dots and copies of a bot share one native surface.
+                // Keep that surface owned until its reply has been collected.
+                let app = session.provider.desktopApp!.bundleID
+                await replies[app]?.wait()
+                guard !group.isCancelled else { break }
+                let input = DesktopBroadcastHandoff(), reply = DesktopBroadcastHandoff()
+                replies[app] = reply
+                group.addTask { await operation.send(session, input: input, reply: reply) }
+                await input.wait()
+            }
             var results: [WebAgentID: WebSendAttempt] = [:]
-            for session in group { results[session.id] = await session.send(text, comparisonID: comparisonID) }
+            for await (id, attempt) in group { results[id] = attempt }
             return results
-        } }
-        var results: [WebAgentID: WebSendAttempt] = [:]
-        for task in tasks { results.merge(await task.value, uniquingKeysWith: { _, latest in latest }) }
-        return results
+        }
+    }
+}
+
+@MainActor
+private final class WebBroadcastOperation {
+    let perform: @MainActor @Sendable (WebAgentSession, @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt?
+    init(_ perform: @escaping @MainActor @Sendable (WebAgentSession, @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt?) { self.perform = perform }
+    func send(_ session: WebAgentSession, input: DesktopBroadcastHandoff? = nil, reply: DesktopBroadcastHandoff? = nil) async -> (WebAgentID, WebSendAttempt?) {
+        defer { input?.finish(); reply?.finish() }
+        let attempt = await perform(session, { input?.finish() })
+        return (session.id, attempt)
+    }
+}
+
+@MainActor
+private final class DesktopBroadcastHandoff {
+    private var finished = false
+    private var waiting: CheckedContinuation<Void, Never>?
+    func finish() {
+        finished = true
+        waiting?.resume(); waiting = nil
+    }
+    func wait() async {
+        guard !finished else { return }
+        await withCheckedContinuation { waiting = $0 }
     }
 }
 

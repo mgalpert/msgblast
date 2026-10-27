@@ -2,6 +2,36 @@ import XCTest
 
 final class AgentGridWorkflowTests: XCTestCase {
     @MainActor
+    func testDotsSetupUsesOneConnectActionForInstallationAndReadiness() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        app.activate()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
+        app.buttons["Edit agents"].click()
+        let search = app.textFields["Search available agents"]
+        app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
+        search.click(); search.typeText("Dots")
+        XCTAssertTrue(app.buttons["Add Dots"].waitForExistence(timeout: 5))
+        app.buttons["Add Dots"].click()
+        XCTAssertTrue(app.buttons["Done setting up Dots"].waitForExistence(timeout: 5))
+        let enable = app.switches["Enable Dots"]
+        if String(describing: enable.value ?? "") != "1" { enable.click() }
+        let connect = app.buttons["Connect Dots"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Check connection"].exists)
+        XCTAssertFalse(app.buttons["Check installation"].exists)
+        connect.click()
+        XCTAssertTrue(app.staticTexts["Ready for your first prompt"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Check installation"].exists)
+        capture(app, name: "Dots single Connect action — simulated installation and readiness")
+        app.buttons["Done setting up Dots"].click()
+        app.buttons["Done editing agents"].click()
+        XCTAssertTrue(app.staticTexts["No comparisons"].exists, "Connecting must not send a message")
+    }
+
+    @MainActor
     func testEditGridHidesAddsReordersAndKeepsDraft() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]

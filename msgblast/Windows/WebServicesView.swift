@@ -730,6 +730,35 @@ private struct WebAgentPane: View {
         }
     }
 
+    private func nativeMessage(_ message: WebPageMessage, status: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(message.role == "user" ? "You" : session.name).font(.caption.bold()).foregroundStyle(.secondary)
+            Text((try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text))
+                .textSelection(.enabled)
+            if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
+        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+            .id(message.id)
+    }
+
+    private func nativeStatus(_ message: WebPageMessage) -> String? {
+        guard message.role == "user", let attempt = session.state.attempts.first(where: {
+            ($0.messageID ?? $0.id.uuidString) == message.id
+        }) else { return nil }
+        if attempt.status == .observed { return nil }
+        if attempt.messageID != nil { return "Sent" }
+        if attempt.status == .uncertain { return "Submission unconfirmed" }
+        return [.preparing, .attempting].contains(attempt.status) ? "Sending…" : nil
+    }
+
+    private var nativeMessages: [WebPageMessage] {
+        var messages = session.snapshot.messages
+        if let attempt = session.pendingNativeAttempt {
+            messages.append(WebPageMessage(id: attempt.id.uuidString, role: "user", text: attempt.text))
+        }
+        return messages
+    }
+
     private func nativeConversation(_ provider: PersonalAgentProvider?) -> some View {
         VStack(spacing: 12) {
             let connected = session.provider.desktopApp != nil ? session.desktopReady : session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
@@ -781,23 +810,19 @@ private struct WebAgentPane: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        if session.snapshot.messages.isEmpty {
+                        if session.snapshot.messages.isEmpty, session.pendingNativeAttempt == nil {
                             Text(session.provider.desktopApp != nil ? "Send a message to start a conversation." : connected ? "Ready to chat. Send a message below, or use the shared message box to ask your selected agents." : "Sign in to \(session.name) to start chatting. Your request stays in the message box until you send it.")
                                 .foregroundStyle(.secondary).padding(.vertical, 20)
                         }
-                        ForEach(session.snapshot.messages) { message in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(message.role == "user" ? "You" : session.name).font(.caption.bold()).foregroundStyle(.secondary)
-                                Text((try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text))
-                                    .textSelection(.enabled)
-                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
-                                .id(message.id)
+                        ForEach(nativeMessages) { message in
+                            nativeMessage(message, status: nativeStatus(message))
                         }
                         if session.isSending { ProgressView(session.provider == .grokbot ? "Sending to Grok Bot…" : "\(session.name) is replying…").id("replying") }
                     }
                 }.onChange(of: session.snapshot.messages.last?.id) { _, id in
                     if let id { proxy.scrollTo(id, anchor: .bottom) }
+                }.onChange(of: session.pendingNativeAttempt?.id) { _, id in
+                    if let id { proxy.scrollTo(id.uuidString, anchor: .bottom) }
                 }
             }
             if session.isSending, provider != nil || session.provider.desktopApp != nil { Button("Cancel \(session.name) reply") { session.cancelNativeRequest() } }
