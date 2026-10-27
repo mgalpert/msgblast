@@ -110,12 +110,6 @@ private final class ClaudeOneTransientRead: @unchecked Sendable {
     }
 }
 
-private final class ClaudeStartupReads: @unchecked Sendable {
-    private let lock = NSLock()
-    private var reads = 0
-    func isLoading() -> Bool { lock.withLock { reads += 1; return reads <= 3 } }
-}
-
 private actor ClaudeRecordedBindings {
     var prepared: [ClaudeConversationBinding] = []
     var bound: [ClaudeConversationBinding] = []
@@ -153,12 +147,13 @@ final class ClaudeAppDriverTests: XCTestCase {
         }
         func adapter(transientAfterSend: Bool = false, coldStart: Bool = false) -> ClaudeAppConversation {
             let failure = ClaudeOneTransientRead()
-            let startup = ClaudeStartupReads()
             let path = stage
             let observations = observations
             return ClaudeAppConversation(executable: executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5), readNative: { _, mode in
                 let stage = Int((try? String(contentsOf: path, encoding: .utf8)) ?? "0") ?? 0
-                if coldStart, startup.isLoading() { return try ClaudeAppObservation(root: .init(role: "AXWindow")) }
+                if coldStart, !self.calls().contains(where: { $0["tool"] as? String == "get_window_state" }) {
+                    return try ClaudeAppObservation(root: .init(role: "AXWindow"))
+                }
                 if transientAfterSend && stage == 2 && failure.claim() { throw ClaudeObservationError.transient("Claude's message history is incomplete.") }
                 if stage == 4, let unrelatedHistory = self.unrelatedHistory { return try ClaudeAppObservation(root: unrelatedHistory, mode: mode) }
                 let original = observations[min(stage, observations.count - 1)]
@@ -189,7 +184,7 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") })
     }
 
-    func testOnboardingWaitsForColdStartChatAddressWithoutInput() async throws {
+    func testOnboardingInitializesDriverSnapshotBeforeReadingColdNativeControls() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         try await fixture.adapter(coldStart: true).checkAvailable()
