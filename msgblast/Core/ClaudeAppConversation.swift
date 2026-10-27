@@ -135,6 +135,7 @@ actor ClaudeAppConversation {
         return saved
     }
     func reply(_ text: String, binding: ClaudeConversationBinding,
+               onSubmitAction: @Sendable () async -> Void = {},
                onPrepared: @Sendable (ClaudeConversationBinding) async throws -> Void,
                onBinding: @Sendable (ClaudeConversationBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Claude is already handling a request.") }
@@ -194,6 +195,7 @@ actor ClaudeAppConversation {
         guard try await native(target) == draft else { throw DesktopAppError.unavailable("Claude changed before Send. Review the preserved draft.") }
         return try await DesktopAppWorkflow.reply(app: "Claude", timing: timing, submit: {
             try await self.click(self.control(draftState, label: "Send message"), target: target, session: session)
+            await onSubmitAction()
         }, observe: {
             let (state, current) = try await self.observe(target, session: session)
             if let url = saved.url {

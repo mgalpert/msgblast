@@ -14,7 +14,7 @@ public enum DesktopAppProvider: String, Codable, Sendable {
         case .claude: ["com.anthropic.claudefordesktop"]
     } }
     var bundleID: String { bundleIDs[0] }
-    public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi, .chatgpt, .dots].contains(self) }
+    public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi, .chatgpt, .dots, .claude].contains(self) }
 }
 
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {

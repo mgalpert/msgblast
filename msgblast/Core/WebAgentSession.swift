@@ -1736,7 +1736,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     return PersonalAgentReply(text: answer, sessionID: "Dedicated Gemini conversation")
                 }
                 if let saved = claudeBinding {
-                    let answer = try await claudeApp.reply(text, binding: saved, onPrepared: { [weak self] pending in
+                    let answer = try await claudeApp.reply(text, binding: saved, onSubmitAction: submitAction, onPrepared: { [weak self] pending in
                         guard let self else { throw CancellationError() }
                         try await self.recordClaudeSubmission(pending)
                     }, onBinding: { [weak self] discovered in

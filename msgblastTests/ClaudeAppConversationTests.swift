@@ -119,8 +119,10 @@ private final class ClaudeOneTransientRead: @unchecked Sendable {
 private actor ClaudeRecordedBindings {
     var prepared: [ClaudeConversationBinding] = []
     var bound: [ClaudeConversationBinding] = []
+    var submissions = 0
     func prepare(_ value: ClaudeConversationBinding) { prepared.append(value) }
     func bind(_ value: ClaudeConversationBinding) { bound.append(value) }
+    func submitted() { submissions += 1 }
 }
 
 final class ClaudeAppDriverTests: XCTestCase {
@@ -342,8 +344,13 @@ final class ClaudeAppDriverTests: XCTestCase {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let recorded = ClaudeRecordedBindings()
-        let result = try await fixture.adapter().reply("First question", binding: fixture.binding, onPrepared: { await recorded.prepare($0) }, onBinding: { binding in
+        let result = try await fixture.adapter().reply("First question", binding: fixture.binding, onSubmitAction: {
+            XCTAssertEqual(try? String(contentsOf: fixture.stage, encoding: .utf8), "2")
+            await recorded.submitted()
+        }, onPrepared: { await recorded.prepare($0) }, onBinding: { binding in
             XCTAssertEqual(try String(contentsOf: fixture.stage, encoding: .utf8), "2")
+            let submissions = await recorded.submissions
+            XCTAssertEqual(submissions, 1, "Release foreground ownership after Send, before waiting for the reply")
             // At this callback the adapter has observed the owned outgoing but
             // has not yet read the completed-answer observation at stage 3.
             await recorded.bind(binding)
@@ -352,6 +359,8 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertEqual(result, "ANSWER")
         let prepared = await recorded.prepared
         let bound = await recorded.bound
+        let submissions = await recorded.submissions
+        XCTAssertEqual(submissions, 1)
         XCTAssertEqual(prepared.count, 1)
         XCTAssertNil(prepared[0].url)
         XCTAssertEqual(bound.count, 1)
