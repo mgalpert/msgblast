@@ -18,9 +18,13 @@ public final class LocalDatabase: @unchecked Sendable {
         }
         try execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB NOT NULL)")
         if let url {
-            // Cached conversations stay on this device and out of backups' plaintext where possible.
+            // Cached conversations stay on this device.
             #if os(iOS)
             try? (url as NSURL).setResourceValue(FileProtectionType.completeUntilFirstUserAuthentication, forKey: .fileProtectionKey)
+            // Derived from the Mac: never in iCloud or computer backups.
+            var excluded = url
+            var values = URLResourceValues(); values.isExcludedFromBackup = true
+            try? excluded.setResourceValues(values)
             #endif
         }
     }

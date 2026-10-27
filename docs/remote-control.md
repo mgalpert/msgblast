@@ -207,7 +207,8 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   locked, or asks to pair again when the Mac forgot this phone.
 - **Cache:** a SQLite file (system sqlite3) in the app's Application Support holds
   the projection, the last `seq`, per-device drafts, and each command with its last
-  result. The reducer is a pure function from events to state.
+  result. It is derived from the Mac, so it is excluded from iCloud and computer
+  backups. The reducer is a pure function from events to state.
 - **Rules:** nothing is queued while disconnected; a command without a final result
   is shown as unconfirmed and never resent, including `unknownCommand` after a Mac
   restart; drafts never leave the phone; forms of one product (ChatGPT web, Mac app,
