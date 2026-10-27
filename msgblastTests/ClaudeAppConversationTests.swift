@@ -42,6 +42,22 @@ final class ClaudeAppConversationTests: XCTestCase {
         XCTAssertEqual(observed.messages, [.init(role: .user, text: "Full prompt"), .init(role: .assistant, text: "Full answer")])
         XCTAssertEqual(observed.draft, "")
     }
+    func testAssistantHeadingExcerptDoesNotTruncateNativeReply() throws {
+        let paragraphs = ["First paragraph has more than its opening sentence. Keep this sentence too.",
+                          "Second paragraph contains the rest of the answer.", "END-OF-REPLY"]
+        var answer = article(2, 2, "Claude responded: First paragraph has more than its opening sentence.", "")
+        answer.children[1].children = paragraphs.map { .init(role: "AXStaticText", value: $0) }
+        answer.children.append(.init(role: "AXGroup", classes: ["sr-only"], children: [.init(role: "AXStaticText", value: "Response announcement")]))
+        let observed = try ClaudeAppObservation(root: tree([article(1, 2, "You said: Prompt", "Prompt"), answer]))
+        XCTAssertEqual(try ClaudeAppReceipt(baseline: [], prompt: "Prompt").reply(in: observed.messages), paragraphs.joined(separator: "\n\n"))
+    }
+    func testAssistantHeadingDoesNotSubstituteForAnUnrenderedBody() {
+        var answer = article(1, 1, "Claude responded: Summary only", "")
+        answer.children[1].children = []
+        XCTAssertThrowsError(try ClaudeAppObservation(root: tree([answer]))) { error in
+            guard case ClaudeObservationError.transient = error else { return XCTFail("Wait for the actual reply body instead of completing with its summary") }
+        }
+    }
     func testUnknownSenderOrMissingMessageIsNotAttributed() {
         XCTAssertThrowsError(try ClaudeAppObservation(root: tree([article(1, 1, "Unknown speaker", "Text")])))
         XCTAssertThrowsError(try ClaudeAppObservation(root: tree([article(2, 2, "Claude responded: Answer", "Answer")]))) { error in
