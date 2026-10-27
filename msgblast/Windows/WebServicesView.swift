@@ -389,20 +389,24 @@ struct AgentsWorkspaceView: View {
                 model.sharedDraftRevision.value == submittedDraftRevision && web.comparisonID == comparisonID
             }, clearDraft: {
                 model.setSharedDraft("")
-            }, web: { text in
-                let submitted = await WebAgents.send(text, to: readySessions, comparisonID: comparisonID, onInputsFinished: { barrier.finishNativeInputs() })
+            }, web: { text, confirmed in
+                let submitted = await WebAgents.send(text, to: readySessions, comparisonID: comparisonID,
+                    onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: confirmed)
                 return unsentAttempts.merging(submitted) { _, latest in latest }
-            }, messages: { text in
+            }, messages: { text, confirmed in
                 defer { if !Task.isCancelled { barrier.finishMessages() } }
                 guard !recipients.isEmpty else { return nil }
+                let states: [Submission]
                 if existingID != nil {
                     guard let i = model.index(comparisonID) else { return nil }
                     model.state.comparisons[i].allDraft = text
                     await model.followUp(comparisonID, recipients: Array(recipients), newAttemptID: followUpID)
-                    return model.comparison(comparisonID)?.followUps.contains(where: { $0.id == followUpID }) == true ? comparisonID : nil
+                    states = model.comparison(comparisonID)?.followUps.first(where: { $0.id == followUpID }).map { Array($0.states.values) } ?? []
+                } else {
+                    await model.submit(comparisonID, retry: false)
+                    states = model.comparison(comparisonID)?.members.filter { recipients.contains($0.id) }.map(\.submission) ?? []
                 }
-                await model.submit(comparisonID, retry: false)
-                return comparisonID
+                return AgentBroadcast.messagesResult(states: states, comparisonID: comparisonID, onConfirmed: confirmed)
             })
             let webSubmitted = result.web.values.filter { $0.status.confirmsSubmission }.count
             let messagesSubmitted = model.comparison(comparisonID).map { comparison in

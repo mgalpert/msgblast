@@ -3525,7 +3525,14 @@ final class DesktopAppDriverTests: XCTestCase {
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
         let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
-        let sent = await session.send(prompt, comparisonID: owner)
+        var confirmations = 0
+        let sent = await session.send(prompt, comparisonID: owner, onConfirmedSubmission: {
+            confirmations += 1
+            let persisted = try? JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: file))
+            XCTAssertEqual(persisted?.attempts.first?.status, .waiting, "Notify only after the outgoing receipt is durable")
+            XCTAssertEqual(persisted?.localConversations[owner.uuidString]?.map(\.text), [self.prompt])
+        })
+        XCTAssertEqual(confirmations, 1)
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)
         XCTAssertEqual(result.messageID, result.id.uuidString)
@@ -3553,7 +3560,9 @@ final class DesktopAppDriverTests: XCTestCase {
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
         let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
-        let sent = await session.send(prompt, comparisonID: owner)
+        var confirmations = 0
+        let sent = await session.send(prompt, comparisonID: owner, onConfirmedSubmission: { confirmations += 1 })
+        XCTAssertEqual(confirmations, 0, "An unconfirmed outgoing message must not clear the shared draft early")
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)
         let candidate = URL(string: "https://muse.ai/thread/\(thread.uuidString)")!

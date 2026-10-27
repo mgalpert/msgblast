@@ -389,22 +389,60 @@ public struct SharedDraftRevision: Sendable {
 
 @MainActor
 public enum AgentBroadcast {
+    /// A comparison identifier alone does not prove any Messages send occurred.
+    public static func messagesResult(states: [Submission], comparisonID: UUID, onConfirmed: @MainActor () -> Void) -> UUID? {
+        if states.contains(.submitted) { onConfirmed() }
+        return states.contains(where: \.mayHaveBeenSent) ? comparisonID : nil
+    }
+
     public static func send(
         draft: String,
-        currentDraft: @MainActor () -> String,
-        shouldClearDraft: @MainActor () -> Bool = { true },
-        clearDraft: @MainActor () -> Void,
+        currentDraft: @escaping @MainActor () -> String,
+        shouldClearDraft: @escaping @MainActor () -> Bool = { true },
+        clearDraft: @escaping @MainActor () -> Void,
         web: @MainActor @Sendable (String) async -> [WebAgentID: WebSendAttempt],
         messages: @MainActor @Sendable (String) async -> UUID?
     ) async -> AgentBroadcastResult {
+        await send(draft: draft, currentDraft: currentDraft, shouldClearDraft: shouldClearDraft, clearDraft: clearDraft,
+                   web: { text, _ in await web(text) }, messages: { text, _ in await messages(text) })
+    }
+
+    /// A recipient may report a durable submission before its reply arrives.
+    /// Uncertain results still use the final result path and are never resent.
+    public static func send(
+        draft: String,
+        currentDraft: @escaping @MainActor () -> String,
+        shouldClearDraft: @escaping @MainActor () -> Bool = { true },
+        clearDraft: @escaping @MainActor () -> Void,
+        web: @MainActor @Sendable (String, @escaping @MainActor @Sendable () -> Void) async -> [WebAgentID: WebSendAttempt],
+        messages: @MainActor @Sendable (String, @escaping @MainActor @Sendable () -> Void) async -> UUID?
+    ) async -> AgentBroadcastResult {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        async let webAttempts = web(text)
-        async let comparisonID = messages(text)
+        let consumption = BroadcastDraftConsumption(draft: draft, currentDraft: currentDraft, shouldClearDraft: shouldClearDraft, clearDraft: clearDraft)
+        let confirmed: @MainActor @Sendable () -> Void = { consumption.consumeIfOwned() }
+        async let webAttempts = web(text, confirmed)
+        async let comparisonID = messages(text, confirmed)
         let result = await AgentBroadcastResult(web: webAttempts, comparisonID: comparisonID)
         let mayHaveSent = result.comparisonID != nil || result.web.values.contains { [.observed, .waiting, .uncertain].contains($0.status) }
-        // Keep edits to the next message; a wholly rejected broadcast remains ready to correct.
-        if mayHaveSent && shouldClearDraft() && currentDraft() == draft { clearDraft() }
+        if mayHaveSent { consumption.consumeIfOwned() }
         return result
+    }
+}
+
+@MainActor
+private final class BroadcastDraftConsumption {
+    private let draft: String
+    private let currentDraft: @MainActor () -> String
+    private let shouldClearDraft: @MainActor () -> Bool
+    private let clearDraft: @MainActor () -> Void
+    private var consumed = false
+    init(draft: String, currentDraft: @escaping @MainActor () -> String, shouldClearDraft: @escaping @MainActor () -> Bool, clearDraft: @escaping @MainActor () -> Void) {
+        self.draft = draft; self.currentDraft = currentDraft; self.shouldClearDraft = shouldClearDraft; self.clearDraft = clearDraft
+    }
+    func consumeIfOwned() {
+        guard !consumed, shouldClearDraft(), currentDraft() == draft else { return }
+        consumed = true
+        clearDraft()
     }
 }
 

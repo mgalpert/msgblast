@@ -244,7 +244,8 @@ public final class WebAgents: ObservableObject {
     }
 
     public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil,
-                            onInputsFinished: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
+                            onInputsFinished: @escaping @MainActor @Sendable () -> Void = {},
+                            onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
         guard !hasConflictingNativeRecipients(sessions.map(\.provider)) else {
             var rejected: [WebAgentID: WebSendAttempt] = [:]
             for session in sessions {
@@ -256,7 +257,9 @@ public final class WebAgents: ObservableObject {
             return rejected
         }
         return await send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
-            await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff)
+            let attempt = await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff, onConfirmedSubmission: onConfirmedSubmission)
+            if attempt?.status.confirmsSubmission == true { onConfirmedSubmission() }
+            return attempt
         }
     }
 
