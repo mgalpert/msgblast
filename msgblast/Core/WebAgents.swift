@@ -18,7 +18,9 @@ public final class WebAgents: ObservableObject {
     public var availableSessions: [WebAgentSession] { sessions.filter { $0.isEnabled } }
     public var selected: [WebAgentSession] { availableSessions.filter { $0.state.selected && $0.provider.supportsSharedSubmissions } }
     public var displayed: [WebAgentSession] {
-        sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) }
+        let hasBothSavedChats = Self.hasConflictingNativeRecipients(archivedAgents.map(\.provider))
+        return sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) ||
+            (hasBothSavedChats && archivedAgents.contains($0.id) && [.chatgptApp, .dotsApp].contains($0.provider)) }
     }
     public var comparisonID: UUID? { workspaceSession.state.comparisonID }
     public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false) {
@@ -123,14 +125,29 @@ public final class WebAgents: ObservableObject {
     }
     public func restoreSelection(forAgentIDs agents: [WebAgentID]) {
         archivedAgents = Set(agents)
+        let firstSharedApp = agents.first { [.chatgptApp, .dotsApp].contains($0.provider) && session(for: $0)?.isEnabled == true }
         for session in sessions {
-            let selected = session.isEnabled && archivedAgents.contains(session.id)
+            let selected = session.isEnabled && archivedAgents.contains(session.id) &&
+                (![.chatgptApp, .dotsApp].contains(session.provider) || session.id == firstSharedApp)
             session.updateState { $0.selected = selected }
         }
     }
+    /// ChatGPT and Dots use the same native app and cannot be recipients together.
+    public static func hasConflictingNativeRecipients(_ providers: [WebProvider]) -> Bool {
+        providers.contains(.chatgptApp) && providers.contains(.dotsApp)
+    }
+    public func select(_ session: WebAgentSession, selected: Bool) {
+        guard !selected || session.isEnabled else { return }
+        if selected, [.chatgptApp, .dotsApp].contains(session.provider) {
+            for other in sessions where other !== session && [.chatgptApp, .dotsApp].contains(other.provider) && other.provider != session.provider && other.state.selected {
+                other.updateState { $0.selected = false }
+            }
+        }
+        session.updateState { $0.selected = selected }
+    }
     public func toggle(_ session: WebAgentSession) {
         guard session.isEnabled else { return }
-        session.updateState { $0.selected.toggle() }
+        select(session, selected: !session.state.selected)
         if session.state.selected {
             let id = comparisonID
             session.connect(automaticallyRefresh: !session.provider.usesNativeConversation)
@@ -217,7 +234,17 @@ public final class WebAgents: ObservableObject {
 
     public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil,
                             onInputsFinished: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
-        await send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
+        guard !hasConflictingNativeRecipients(sessions.map(\.provider)) else {
+            var rejected: [WebAgentID: WebSendAttempt] = [:]
+            for session in sessions {
+                var attempt = WebSendAttempt(text: text, status: .notSent)
+                attempt.comparisonID = comparisonID
+                attempt.detail = "Choose ChatGPT or Dots before sending."
+                rejected[session.id] = attempt
+            }
+            return rejected
+        }
+        return await send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
             await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff)
         }
     }

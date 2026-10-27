@@ -122,6 +122,62 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertEqual(events, ["chatgptApp input", "wabi input", "chatgpt reply", "dotsApp input"])
     }
 
+    func testSelectingChatGPTOrDotsReplacesTheOtherWithoutDisablingEither() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let chatgpt = try XCTUnwrap(agents.session(for: .init(provider: .chatgptApp)))
+        let dots = try XCTUnwrap(agents.session(for: .init(provider: .dotsApp)))
+        let wabi = try XCTUnwrap(agents.session(for: .init(provider: .wabi)))
+        [chatgpt, dots, wabi].forEach { $0.setEnabled(true) }
+        agents.toggle(chatgpt)
+        agents.toggle(wabi)
+        agents.toggle(dots)
+        XCTAssertFalse(chatgpt.state.selected)
+        XCTAssertTrue(dots.state.selected)
+        XCTAssertTrue(wabi.state.selected)
+        XCTAssertTrue(chatgpt.isEnabled && dots.isEnabled)
+        agents.toggle(chatgpt)
+        XCTAssertTrue(chatgpt.state.selected)
+        XCTAssertFalse(dots.state.selected)
+        XCTAssertTrue(wabi.state.selected)
+    }
+
+    func testRestoringOldComparisonWithChatGPTAndDotsSelectsOnlyOne() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let chatgpt = try XCTUnwrap(agents.session(for: .init(provider: .chatgptApp)))
+        let dots = try XCTUnwrap(agents.session(for: .init(provider: .dotsApp)))
+        [chatgpt, dots].forEach { $0.setEnabled(true) }
+        let comparison = UUID()
+        chatgpt.updateState { $0.localConversations[comparison.uuidString] = [WebPageMessage(id: "chatgpt-history", role: "assistant", text: "ChatGPT reply")] }
+        dots.updateState { $0.localConversations[comparison.uuidString] = [WebPageMessage(id: "dots-history", role: "assistant", text: "Dots reply")] }
+        agents.restoreSelection(forAgentIDs: [dots.id, chatgpt.id])
+        XCTAssertTrue(dots.state.selected)
+        XCTAssertFalse(chatgpt.state.selected)
+        XCTAssertTrue(agents.displayed.contains { $0 === chatgpt }, "Keep both saved conversation panes available")
+        XCTAssertTrue(agents.displayed.contains { $0 === dots })
+        XCTAssertEqual(chatgpt.messagesForComparison(comparison).map(\.text), ["ChatGPT reply"])
+        XCTAssertEqual(dots.messagesForComparison(comparison).map(\.text), ["Dots reply"])
+    }
+
+    func testConflictingNativeRecipientsNeverSubmitEvenIfSelectionWasBypassed() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessions = [WebProvider.chatgptApp, .dotsApp, .wabi].map {
+            WebAgentSession(provider: $0, storageURL: directory.appendingPathComponent($0.storageFilename), fixture: true)
+        }
+        defer { sessions.forEach { $0.beginShutdown() } }
+        sessions.forEach { $0.setEnabled(true) }
+        let results = await WebAgents.send("Do not submit", to: sessions, comparisonID: UUID())
+        XCTAssertEqual(results.count, 3)
+        XCTAssertTrue(results.values.allSatisfy { $0.status == .notSent })
+        XCTAssertTrue(sessions.allSatisfy { $0.state.attempts.isEmpty && $0.snapshot.messages.isEmpty })
+    }
+
     func testMixedBroadcastWaitsForWebsiteSubmissionBeforeOpeningPrivateReplies() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -450,9 +506,10 @@ final class NativeDesktopStateTests: XCTestCase {
         let ready = await agents.prepareComparison(id, for: sessions)
         XCTAssertTrue(ready)
         XCTAssertEqual(launches, 1, "Both providers use the same installed application")
-        let replies = await WebAgents.send("Compare", to: sessions, comparisonID: id)
-        XCTAssertEqual(replies.count, 2)
-        XCTAssertTrue(replies.values.allSatisfy { $0.status == .observed })
+        for session in sessions {
+            let replies = await WebAgents.send("Compare", to: [session], comparisonID: id)
+            XCTAssertEqual(replies[session.id]?.status, .observed)
+        }
         for session in sessions { session.beginShutdown() }
         agents.beginShutdown()
     }

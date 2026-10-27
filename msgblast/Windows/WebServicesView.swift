@@ -39,6 +39,9 @@ struct AgentsWorkspaceView: View {
     }
     private var sharedSendDisabledReason: String? {
         guard !busy else { return nil }
+        if WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) {
+            return "Choose ChatGPT or Dots."
+        }
         if !preparingDesktopSessions.isEmpty {
             return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
         }
@@ -49,7 +52,7 @@ struct AgentsWorkspaceView: View {
     }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return nativeComparison?.endedAt == nil && !busy && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
+        return nativeComparison?.endedAt == nil && !busy && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
             && selectedWebSessions.allSatisfy { $0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
@@ -290,7 +293,7 @@ struct AgentsWorkspaceView: View {
             return
         }
         model.webBroadcastBusy = true
-        session.updateState { $0.selected = true }
+        web.select(session, selected: true)
         if !session.provider.usesNativeConversation { session.connect() }
         Task { @MainActor in
             defer { model.webBroadcastBusy = false }

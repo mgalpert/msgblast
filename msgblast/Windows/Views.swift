@@ -682,7 +682,7 @@ struct RecipientPills: View {
                         model.coordinator?.prepareJoiningWebAgent(comparison.id)
                         if joined { return }
                         model.webBroadcastBusy = true
-                        session.updateState { $0.selected = true }
+                        model.webAgents.select(session, selected: true)
                         session.connect()
                         Task { @MainActor in
                             _ = await model.joinWebAgent(session, comparisonID: comparison.id)
