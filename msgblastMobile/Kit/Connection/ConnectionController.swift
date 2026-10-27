@@ -172,8 +172,11 @@ public final class MacConnection: ObservableObject {
             outgoing.forEach(transport.send)
             for event in events { handle(event) }
         } catch {
-            finishPairing(.failure(error))
-            lost("Your Mac's identity did not match. \(error.localizedDescription)", retry: pairing == nil && pairedMac != nil)
+            let reason = (error as? RemoteProtocolError) == .authenticationFailed
+                ? "Your Mac's identity did not match."
+                : "The connection to your Mac failed: \(error.localizedDescription)"
+            finishPairing(.failure(RemotePairingError(message: reason)))
+            lost(reason, retry: pairing == nil && pairedMac != nil)
         }
     }
 
