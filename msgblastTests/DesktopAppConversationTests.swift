@@ -1058,6 +1058,41 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testUnsentLaterRequestDoesNotBlockEarlierWabiRecovery() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for laterStatus in [WebSendStatus.preparing, .notSent, .observed, .dismissed] {
+            let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+            defer { fixture.remove() }
+            let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+                .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+            }
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            try workspace.recordWabiConversation(url, for: comparison)
+            var earlier = WebSendAttempt(text: "Question", status: .uncertain)
+            earlier.comparisonID = comparison; earlier.wabiReplyReceipt = receipt
+            var later = WebSendAttempt(text: "Later question", status: laterStatus)
+            later.comparisonID = comparison
+            workspace.attempts = [later, earlier]
+            let storage = fixture.directory.appendingPathComponent("\(laterStatus.rawValue).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            _ = await session.reconcileWabiReplyOnce()
+            session.beginShutdown()
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            let safeToRecover = laterStatus == .preparing || laterStatus == .notSent
+            XCTAssertEqual(saved.attempts.first(where: { $0.id == earlier.id })?.status, safeToRecover ? .observed : .uncertain)
+            XCTAssertEqual(saved.attempts.first(where: { $0.id == later.id })?.status, laterStatus == .preparing ? .notSent : laterStatus)
+            XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text) ?? [], safeToRecover ? ["Question", "Late answer"] : [])
+            let calls = safeToRecover ? try await finishedCalls(fixture) : try fixture.calls()
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+        }
+    }
+
     func testLegacyWabiRecoveryHandlesADeletedMiddleRowWithoutResending() async throws {
         let comparison = UUID(), url = wabiURL
         let baseline = (0..<13).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .assistant : .user, text: "Earlier \($0)") }

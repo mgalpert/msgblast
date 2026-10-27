@@ -45,7 +45,7 @@ struct AgentsWorkspaceView: View {
         if !preparingDesktopSessions.isEmpty {
             return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
         }
-        let drafts = selectedWebSessions.filter { $0.provider.desktopApp == nil && $0.snapshot.hasDraft }.map { $0.name }
+        let drafts = selectedWebSessions.filter { !$0.provider.usesNativeConversation && $0.snapshot.hasDraft }.map { $0.name }
         guard !drafts.isEmpty else { return nil }
         let names = drafts.formatted(.list(type: .and))
         return "Finish or clear the draft in \(names), or deselect \(names) to send to the other agents."
@@ -54,7 +54,7 @@ struct AgentsWorkspaceView: View {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         return nativeComparison?.endedAt == nil && !busy && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
-            && selectedWebSessions.allSatisfy { $0.provider.desktopApp != nil || ($0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text)) }
+            && selectedWebSessions.allSatisfy { $0.provider.usesNativeConversation || ($0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text)) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
     }
 
@@ -341,25 +341,43 @@ struct AgentsWorkspaceView: View {
                 showingConnectionIntro = true
                 return
             }
-            guard let preparation = await web.prepareComparisonRecipients(existingID, for: sessions, startNativeApps: true),
-                  existingID.flatMap({ model.comparison($0)?.endedAt }) == nil else { return }
-            let readySessions = sessions.filter { preparation[$0.id] == true }
-            let failedSessions = sessions.filter { preparation[$0.id] != true }
-            // Website sign-in and joining an existing comparison retain their
-            // explicit setup flow; do not silently change their conversation context.
-            guard failedSessions.allSatisfy({ $0.provider.desktopApp != nil }),
-                  existingID.map({ id in failedSessions.allSatisfy { model.comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } }) ?? true,
-                  !readySessions.isEmpty || !recipients.isEmpty else { return }
-            let failures = failedSessions.map { ($0, $0.error ?? $0.snapshot.reason) }
+            // New comparisons and already-joined native apps can prepare one
+            // recipient at a time while Messages submits independently.
+            let progressiveNative = !sessions.isEmpty && sessions.allSatisfy { $0.provider.desktopApp != nil } &&
+                (existingID.map { id in sessions.allSatisfy { model.comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } } ?? true)
             let comparisonID: UUID
-            if let existingID { comparisonID = existingID }
-            else {
-                guard let id = await model.prepareWebComparison(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), recipientIDs: recipients, agents: sessions.map(\.id)) else { return }
-                comparisonID = id
-            }
-            if existingID != nil {
-                for session in readySessions where model.comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) != true {
-                    guard await model.joinWebAgent(session, comparisonID: comparisonID) else { return }
+            var readySessions: [WebAgentSession] = []
+            var unsent: [WebAgentID: WebSendAttempt] = [:]
+            var planned: [WebAgentID: UUID] = [:]
+            if progressiveNative {
+                if let existingID { comparisonID = existingID }
+                else {
+                    guard let id = await model.prepareWebComparison(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), recipientIDs: recipients, agents: sessions.map(\.id)) else { return }
+                    comparisonID = id
+                }
+            } else {
+                guard let preparation = await web.prepareComparisonRecipients(existingID, for: sessions, startNativeApps: true, allowSavedPrivateDraft: true),
+                      existingID.flatMap({ model.comparison($0)?.endedAt }) == nil else { return }
+                readySessions = sessions.filter { preparation[$0.id] == true }
+                let failedSessions = sessions.filter { preparation[$0.id] != true }
+                // Website sign-in and joining an existing comparison retain their explicit setup flow.
+                guard failedSessions.allSatisfy({ $0.provider.desktopApp != nil }),
+                      existingID.map({ id in failedSessions.allSatisfy { model.comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } }) ?? true,
+                      !readySessions.isEmpty || !recipients.isEmpty else { return }
+                let failures = failedSessions.map { ($0, $0.error ?? $0.snapshot.reason) }
+                if let existingID { comparisonID = existingID }
+                else {
+                    guard let id = await model.prepareWebComparison(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), recipientIDs: recipients, agents: sessions.map(\.id)) else { return }
+                    comparisonID = id
+                }
+                if existingID != nil {
+                    for session in readySessions where model.comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) != true {
+                        guard await model.joinWebAgent(session, comparisonID: comparisonID) else { return }
+                    }
+                }
+                for (session, reason) in failures {
+                    guard let attempt = session.recordUnsentPreparation(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), comparisonID: comparisonID, reason: reason) else { return }
+                    unsent[session.id] = attempt
                 }
             }
             guard model.comparison(comparisonID)?.endedAt == nil else { return }
@@ -369,12 +387,20 @@ struct AgentsWorkspaceView: View {
                 do { try model.save() } catch { model.error = error.localizedDescription; return }
             }
             do { try model.freezeSharedContext(comparisonID) } catch { model.error = error.localizedDescription; return }
-            var unsent: [WebAgentID: WebSendAttempt] = [:]
-            for (session, reason) in failures {
-                guard let attempt = session.recordUnsentPreparation(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), comparisonID: comparisonID, reason: reason) else { return }
-                unsent[session.id] = attempt
+            if progressiveNative {
+                for session in sessions {
+                    guard let attempt = session.planNativePreparation(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), comparisonID: comparisonID) else {
+                        for earlier in sessions {
+                            if let id = planned[earlier.id] { _ = earlier.failNativePreparation(id, reason: "The request could not be prepared. Nothing was sent.") }
+                        }
+                        return
+                    }
+                    planned[session.id] = attempt.id
+                }
             }
             let unsentAttempts = unsent
+            let plannedAttempts = planned
+            let preparedSessions = readySessions
             let allRecipients = model.comparison(comparisonID).map { comparison in
                 Set(comparison.resolvedWebAgentIDs) == Set(sessions.map(\.id)) && Set(comparison.members.map(\.id)) == recipients
             } ?? false
@@ -390,8 +416,14 @@ struct AgentsWorkspaceView: View {
             }, clearDraft: {
                 model.setSharedDraft("")
             }, web: { text, confirmed in
-                let submitted = await WebAgents.send(text, to: readySessions, comparisonID: comparisonID,
-                    onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: confirmed)
+                let submitted: [WebAgentID: WebSendAttempt]
+                if progressiveNative {
+                    submitted = await web.prepareAndSendPlanned(text, to: sessions, comparisonID: comparisonID, plannedAttempts: plannedAttempts,
+                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: confirmed)
+                } else {
+                    submitted = await WebAgents.send(text, to: preparedSessions, comparisonID: comparisonID,
+                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: confirmed)
+                }
                 return unsentAttempts.merging(submitted) { _, latest in latest }
             }, messages: { text, confirmed in
                 defer { if !Task.isCancelled { barrier.finishMessages() } }

@@ -67,6 +67,12 @@ public final class WebAgents: ObservableObject {
         }
         for session in sessions { observe(session) }
         setComparison(workspaceSession.state.comparisonID)
+        // Older saved selections may contain both recipients. Keep ChatGPT
+        // selected on startup; the user can switch to Dots at any time.
+        if let chatgpt = sessions.first(where: { $0.provider == .chatgptApp && $0.isEnabled && $0.state.selected }),
+           sessions.contains(where: { $0.provider == .dotsApp && $0.isEnabled && $0.state.selected }) {
+            select(chatgpt, selected: true)
+        }
     }
     private func observe(_ session: WebAgentSession) {
         session.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
@@ -204,14 +210,14 @@ public final class WebAgents: ObservableObject {
         }
         return groups
     }
-    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false) async -> Bool {
-        guard let results = await prepareComparisonRecipients(id, for: sessions, startNativeApps: startNativeApps) else { return false }
+    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false) async -> Bool {
+        guard let results = await prepareComparisonRecipients(id, for: sessions, startNativeApps: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft) else { return false }
         return sessions.allSatisfy { results[$0.id] == true }
     }
 
     /// A nil result means preparation was cancelled or its workspace changed;
     /// individual false values represent recipients that were not ready.
-    public func prepareComparisonRecipients(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false) async -> [WebAgentID: Bool]? {
+    public func prepareComparisonRecipients(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false) async -> [WebAgentID: Bool]? {
         guard !shuttingDown else { return nil }
         // Muse stores the workspace identity even when it is deselected.
         setComparison(id)
@@ -224,7 +230,7 @@ public final class WebAgents: ObservableObject {
                 var results: [WebAgentID: Bool] = [:]
                 for session in group {
                     guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
-                    results[session.id] = await session.openComparison(id, startNativeApp: startNativeApps)
+                    results[session.id] = await session.openComparison(id, startNativeApp: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft)
                 }
                 return results
             } }
@@ -243,6 +249,43 @@ public final class WebAgents: ObservableObject {
         return results
     }
 
+    /// Prepare each native app immediately before handing it the already-saved prompt.
+    /// Other transports can submit concurrently without racing native window focus.
+    public func prepareAndSendPlanned(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID,
+                                      plannedAttempts: [WebAgentID: UUID],
+                                      onInputsFinished: @escaping @MainActor @Sendable () -> Void = {},
+                                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
+        guard sessions.allSatisfy({ $0.provider.desktopApp != nil }),
+              !Self.hasConflictingNativeRecipients(sessions.map(\.provider)) else {
+            var rejected: [WebAgentID: WebSendAttempt] = [:]
+            for session in sessions {
+                if let id = plannedAttempts[session.id], let attempt = session.failNativePreparation(id, reason: "Choose compatible app agents before sending.") { rejected[session.id] = attempt }
+            }
+            onInputsFinished()
+            return rejected
+        }
+        var results = await Self.send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
+            guard let attemptID = plannedAttempts[session.id] else { return nil }
+            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == comparisonID,
+                  let ready = await self.prepareComparisonRecipients(comparisonID, for: [session], startNativeApps: true, allowSavedPrivateDraft: true),
+                  ready[session.id] == true, !Task.isCancelled, !self.shuttingDown, self.comparisonID == comparisonID else {
+                let reason = Task.isCancelled || self.shuttingDown ? "Stopped before sending." : session.error ?? session.snapshot.reason
+                return session.failNativePreparation(attemptID, reason: reason)
+            }
+            let attempt = await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff,
+                                             onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: attemptID, consumePrivateDraft: false)
+            if attempt?.status.confirmsSubmission == true { onConfirmedSubmission() }
+            return attempt ?? session.failNativePreparation(attemptID, reason: session.error ?? session.snapshot.reason)
+        }
+        // Cancellation may stop the scheduler before it reaches later apps.
+        for session in sessions where results[session.id] == nil {
+            if let id = plannedAttempts[session.id], let attempt = session.failNativePreparation(id, reason: "Stopped before sending.") {
+                results[session.id] = attempt
+            }
+        }
+        return results
+    }
+
     public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil,
                             onInputsFinished: @escaping @MainActor @Sendable () -> Void = {},
                             onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
@@ -257,7 +300,7 @@ public final class WebAgents: ObservableObject {
             return rejected
         }
         return await send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
-            let attempt = await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff, onConfirmedSubmission: onConfirmedSubmission)
+            let attempt = await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff, onConfirmedSubmission: onConfirmedSubmission, consumePrivateDraft: false)
             if attempt?.status.confirmsSubmission == true { onConfirmedSubmission() }
             return attempt
         }

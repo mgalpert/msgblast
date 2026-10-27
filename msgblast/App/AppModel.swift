@@ -550,12 +550,12 @@ final class AppModel: ObservableObject {
                 session.updateState { $0.selected = false }
                 return false
             }
-            guard await webAgents.prepareComparison(comparisonID, for: [session]),
+            guard await webAgents.prepareComparison(comparisonID, for: [session], allowSavedPrivateDraft: true),
                   comparison(comparisonID)?.endedAt == nil else { return false }
             // Save membership before sending so an interrupted join is never automatically repeated.
             state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])
             try save()
-            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID)
+            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID, consumePrivateDraft: false)
             if attempt == nil || attempt?.status == .notSent {
                 state.comparisons[i].setWebAgents(state.comparisons[i].resolvedWebAgentIDs.filter { $0 != session.id })
                 try save()

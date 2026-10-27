@@ -520,6 +520,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { self.error = "Could not save the unsent request: \(error.localizedDescription)"; return nil }
     }
 
+    /// Persist each recipient's intent before another transport can submit.
+    public func planNativePreparation(_ text: String, comparisonID: UUID) -> WebSendAttempt? {
+        guard provider.desktopApp != nil, isEnabled, !storageFailed, !isSending,
+              state.comparisonID == comparisonID, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        var attempt = WebSendAttempt(text: text, status: .preparing)
+        attempt.comparisonID = comparisonID
+        state.attempts.insert(attempt, at: 0)
+        do { try save(); objectWillChange.send(); return attempt }
+        catch { self.error = "Could not save the request: \(error.localizedDescription)"; return nil }
+    }
+
+    /// Only a request that never reached native submission can become retryable.
+    @discardableResult
+    public func failNativePreparation(_ attemptID: UUID, reason: String) -> WebSendAttempt? {
+        guard !storageFailed, let index = state.attempts.firstIndex(where: { $0.id == attemptID }),
+              state.attempts[index].status == .preparing else { return nil }
+        state.attempts[index].status = .notSent
+        state.attempts[index].detail = reason
+        do { try save(); objectWillChange.send(); return state.attempts[index] }
+        catch { self.error = "Could not save the unsent request: \(error.localizedDescription)"; return nil }
+    }
+
     public var isAutomaticallyWaitingForNativeReply: Bool {
         guard !isSending, let latest = latestComparisonAttempt else { return false }
         let attempt = recoverableDotsAttempt() ?? recoverableWabiAttempt() ?? recoverableMuseAttempt() ??
@@ -556,7 +578,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
 
     /// Only an explicit first submission may launch an app without a comparison ID.
     @discardableResult
-    public func openComparison(_ id: UUID?, startNativeApp: Bool = false) async -> Bool {
+    public func openComparison(_ id: UUID?, startNativeApp: Bool = false, allowSavedPrivateDraft: Bool = false) async -> Bool {
         guard !isSending else { return false }
         if state.comparisonID != id {
             if provider == .geminiApp { geminiConfigurationError = nil; geminiOptions = .init() }
@@ -579,7 +601,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             await refresh()
             if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
             if snapshot.ready { await prepareAdditionalDesktopConversation() }
-            let ready = snapshot.ready && snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasIncompleteNativeRequest(for: id)
+            let ready = snapshot.ready && (allowSavedPrivateDraft || snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && !hasIncompleteNativeRequest(for: id)
             if ready { error = nil }
             else if !snapshot.ready || hasIncompleteNativeRequest(for: id) { error = snapshot.reason }
             else { error = "\(provider.name) has an unsent draft. It was preserved." }
@@ -994,10 +1016,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @discardableResult
     public func send(_ text: String, comparisonID: UUID? = nil,
                      onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {},
-                     onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {}) async -> WebSendAttempt? {
+                     onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
+                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
-        if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID) }
-        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission) }
+        guard plannedAttemptID == nil || provider.desktopApp != nil else { return nil }
+        if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft) }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
@@ -1668,10 +1692,17 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         storageURL.deletingLastPathComponent().appendingPathComponent("local-conversations/\(provider.localConversationDirectoryName)/\(id.uuidString)", isDirectory: true)
     }
 
-    private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt? {
+    private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void, plannedAttemptID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
+        let planned: WebSendAttempt?
+        if let plannedAttemptID {
+            guard provider.desktopApp != nil, state.comparisonID == id,
+                  let existing = state.attempts.first(where: { $0.id == plannedAttemptID }),
+                  existing.status == .preparing, existing.comparisonID == id, existing.text == text else { return nil }
+            planned = existing
+        } else { planned = nil }
         guard !hasIncompleteNativeRequest(for: id) else {
             error = "An earlier request did not complete. Review it before explicitly allowing another request; usage may have been consumed."
             return nil
@@ -1679,7 +1710,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // Capture the identity of the draft before opening an app, which may
         // suspend while the user edits or changes comparisons.
         var submittedDraftRevision: UUID?
-        if state.draft == text, state.comparisonID == id || (state.comparisonID == nil && comparisonID == nil) {
+        if consumePrivateDraft, state.draft == text, state.comparisonID == id || (state.comparisonID == nil && comparisonID == nil) {
             let key = state.comparisonID?.uuidString ?? "new"
             let previous = state
             let revision = state.localDraftRevisions[key] ?? UUID()
@@ -1700,11 +1731,18 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             } catch is CancellationError { return nil }
             catch { self.error = error.localizedDescription; return nil }
         }
-        var attempt = WebSendAttempt(text: text)
+        if let plannedAttemptID {
+            guard !requestCancelled, !shuttingDown, state.comparisonID == id,
+                  let current = state.attempts.first(where: { $0.id == plannedAttemptID }),
+                  current.status == .preparing, current.comparisonID == id, current.text == text else { return nil }
+        }
+        var attempt = planned ?? WebSendAttempt(text: text)
         attempt.comparisonID = id
         attempt.nativeDraftRevision = submittedDraftRevision
         updateState { $0.comparisonID = id }
-        state.attempts.insert(attempt, at: 0)
+        if let plannedAttemptID, let index = state.attempts.firstIndex(where: { $0.id == plannedAttemptID }) {
+            state.attempts[index] = attempt
+        } else { state.attempts.insert(attempt, at: 0) }
         var started = false
         var foreground: DesktopForegroundLease?
         do {
@@ -1716,8 +1754,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             await refresh()
             guard !shuttingDown, !requestCancelled else { throw CancellationError() }
             guard snapshot.ready else { throw WebSessionFailure.notSent(snapshot.reason) }
-            guard snapshot.draft.isEmpty || snapshot.draft == text else {
-                throw WebSessionFailure.notSent("\(provider.name) has a draft. Send or clear it before using the shared composer.")
+            guard !consumePrivateDraft || snapshot.draft.isEmpty || snapshot.draft == text else {
+                throw WebSessionFailure.notSent("\(provider.name) has a draft. Send or clear it before continuing.")
             }
             let user = WebPageMessage(id: attempt.id.uuidString, role: "user", text: text)
             let history = (state.localConversations[id.uuidString] ?? []) + [user]
@@ -2066,9 +2104,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let confirmed = attempt.messageID == attempt.id.uuidString && messages.last == outgoing
         // The persisted pre-send receipt can also prove a previously
         // unconfirmed send, but only by matching the exact outgoing and reply
-        // in the saved thread; later attempts and existing outgoing IDs block it.
+        // in the saved thread. A later attempt blocks attribution unless it
+        // was never submitted, and an existing outgoing ID also blocks it.
+        let laterAttempts = state.attempts.prefix { $0.id != attempt.id }.filter { $0.comparisonID == comparison }
         let awaitingProof = attempt.status == .uncertain && attempt.messageID == nil &&
-            state.attempts.first(where: { $0.comparisonID == comparison })?.id == attempt.id &&
+            laterAttempts.allSatisfy { [.preparing, .notSent].contains($0.status) } &&
             !messages.contains(where: { $0.id == outgoing.id })
         guard (confirmed || awaitingProof),
               !messages.contains(where: { $0.id == "native-reply-\(attempt.id.uuidString)" }) else { return nil }
@@ -2688,7 +2728,7 @@ extension WebAgentSession {
             throw error
         }
     }
-    private func sendGrokBot(_ text: String, comparisonID: UUID?) async -> WebSendAttempt? {
+    private func sendGrokBot(_ text: String, comparisonID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !configuringGrokBot, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let comparisonID = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: comparisonID) else { error = "Wait for Grok Bot's previous reply or stop waiting before sending another request."; return nil }
@@ -2700,7 +2740,7 @@ extension WebAgentSession {
         do {
             try save()
             guard fixture || grokBotCredentials != nil else { throw WebSessionFailure.notSent("Connect Grok Bot in Settings before sending.") }
-            guard state.draft.isEmpty || state.draft == text else { throw WebSessionFailure.notSent("Grok Bot has a draft. Send or clear it before using the shared composer.") }
+            guard !consumePrivateDraft || state.draft.isEmpty || state.draft == text else { throw WebSessionFailure.notSent("Grok Bot has a draft. Send or clear it before continuing.") }
             if !fixture { try await startGrokBotConnection() }
             let token = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0).base64EncodedString() }
             attempt.callbackHash = Data(SHA256.hash(data: Data(token.utf8)))
@@ -2720,7 +2760,7 @@ extension WebAgentSession {
                 attempt.detail = fixture ? "Simulated webhook accepted. Waiting for the simulated callback." : attempt.status == .waiting ? "Grok Bot accepted the request. Keep msgblast open and this Mac awake for its reply." : "The reply connection ended during submission. Check Grok Bot before continuing."
                 try store(attempt)
             }
-            if state.draft == text { state.draft = ""; state.localDrafts[comparisonID.uuidString] = ""; try save() }
+            if consumePrivateDraft && state.draft == text { state.draft = ""; state.localDrafts[comparisonID.uuidString] = ""; try save() }
             connect()
         } catch {
             if let saved = state.attempts.first(where: { $0.id == attempt.id && [.observed, .notSent].contains($0.status) }) { attempt = saved }

@@ -212,6 +212,27 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertEqual(dots.messagesForComparison(comparison).map(\.text), ["Dots reply"])
     }
 
+    func testStartupNormalizesPreviouslySavedChatGPTAndDotsSelection() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for provider in [WebProvider.chatgptApp, .dotsApp] {
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true)
+            session.setEnabled(true)
+            session.updateState { $0.selected = true }
+            session.beginShutdown()
+        }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let chatgpt = try XCTUnwrap(agents.session(for: .init(provider: .chatgptApp)))
+        let dots = try XCTUnwrap(agents.session(for: .init(provider: .dotsApp)))
+        XCTAssertTrue(chatgpt.state.selected)
+        XCTAssertFalse(dots.state.selected)
+        XCTAssertTrue(chatgpt.isEnabled && dots.isEnabled)
+        agents.toggle(dots)
+        XCTAssertFalse(chatgpt.state.selected)
+        XCTAssertTrue(dots.state.selected)
+    }
+
     func testConflictingNativeRecipientsNeverSubmitEvenIfSelectionWasBypassed() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -570,6 +591,225 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertEqual(reopened.state.draft, "A separate app draft")
         XCTAssertNil(reopened.recordUnsentPreparation("Wrong workspace", comparisonID: UUID(), reason: "Not ready"))
         XCTAssertEqual(reopened.state.attempts.count, 1)
+    }
+
+    func testPlannedNativePreparationDoesNotHoldMessagesAndPreservesFailures() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        defer { release.finish() }
+        let appBlocked = expectation(description: "The first app is still opening")
+        let messageSubmitted = expectation(description: "Messages submitted while the app was opening")
+        var running: Set<URL> = []
+        let client = DesktopAppInstallationClient(inspect: { app in
+            let url = URL(fileURLWithPath: "/Fixture/\(app.name).app")
+            return .init(url: url, processID: running.contains(url) ? 42 : nil)
+        }, open: { url in
+            if url.lastPathComponent == "Wabi.app" {
+                appBlocked.fulfill()
+                for await _ in gate { break }
+                throw NSError(domain: "FixtureLaunch", code: 1, userInfo: [NSLocalizedDescriptionKey: "Wabi could not open."])
+            }
+            running.insert(url)
+        })
+        let sessions = [WebProvider.wabi, .claudeApp].map { provider in
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: client)
+            session.setEnabled(true)
+            session.updateState { $0.desktopConversation = .init(name: provider.name) }
+            return session
+        }
+        let agents = WebAgents(directory: directory.appendingPathComponent("workspace"), fixture: true)
+        defer { sessions.forEach { $0.beginShutdown() }; agents.beginShutdown() }
+        let comparison = UUID(), text = "A shared question"
+        agents.setComparison(comparison)
+        sessions.forEach { $0.updateState { $0.comparisonID = comparison } }
+        sessions[0].updateState { $0.draft = "A separate app draft" }
+        var planned: [WebAgentID: UUID] = [:]
+        for session in sessions {
+            let attempt = try XCTUnwrap(session.planNativePreparation(text, comparisonID: comparison))
+            planned[session.id] = attempt.id
+        }
+        let intent = planned
+        var draft = text
+        let broadcast = Task { @MainActor in
+            await AgentBroadcast.send(draft: text, currentDraft: { draft }, clearDraft: { draft = "" }, web: { text, confirmed in
+                await agents.prepareAndSendPlanned(text, to: sessions, comparisonID: comparison, plannedAttempts: intent, onConfirmedSubmission: confirmed)
+            }, messages: { _, confirmed in
+                confirmed(); messageSubmitted.fulfill(); return comparison
+            })
+        }
+        await fulfillment(of: [appBlocked, messageSubmitted], timeout: 3)
+        XCTAssertEqual(draft, "", "Confirmed Messages submission should not wait for app setup")
+        XCTAssertEqual(sessions[0].state.attempts.first?.status, .preparing)
+        XCTAssertEqual(sessions[1].state.attempts.first?.status, .preparing)
+        XCTAssertTrue(sessions[1].snapshot.messages.isEmpty)
+        release.yield(()); release.finish()
+        let result = await broadcast.value
+        XCTAssertEqual(result.comparisonID, comparison)
+        XCTAssertEqual(result.web[sessions[0].id]?.status, .notSent)
+        XCTAssertEqual(result.web[sessions[0].id]?.id, intent[sessions[0].id])
+        XCTAssertEqual(result.web[sessions[1].id]?.status, .observed)
+        XCTAssertEqual(result.web[sessions[1].id]?.id, intent[sessions[1].id])
+        XCTAssertEqual(sessions[0].state.draft, "A separate app draft")
+        XCTAssertEqual(sessions[0].state.attempts.count, 1)
+        XCTAssertEqual(sessions[1].state.attempts.count, 1)
+        let reopened = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent(WebProvider.wabi.storageFilename), fixture: true, museApp: .shared, desktopApps: client)
+        defer { reopened.beginShutdown() }
+        XCTAssertEqual(reopened.state.attempts.first?.status, .notSent)
+        XCTAssertEqual(reopened.state.attempts.first?.text, text)
+    }
+
+    func testReadyNativeAgentSubmitsBeforeNextAgentFinishesPreparation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        defer { release.finish() }
+        let secondBlocked = expectation(description: "The next app is still opening")
+        var running: Set<URL> = [URL(fileURLWithPath: "/Fixture/Wabi.app")]
+        let client = DesktopAppInstallationClient(inspect: { app in
+            let url = URL(fileURLWithPath: "/Fixture/\(app.name).app")
+            return .init(url: url, processID: running.contains(url) ? 42 : nil)
+        }, open: { url in
+            secondBlocked.fulfill()
+            for await _ in gate { break }
+            running.insert(url)
+        })
+        let sessions = [WebProvider.wabi, .claudeApp].map { provider in
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: client)
+            session.setEnabled(true)
+            session.updateState { $0.desktopConversation = .init(name: provider.name) }
+            return session
+        }
+        let agents = WebAgents(directory: directory.appendingPathComponent("workspace"), fixture: true)
+        defer { sessions.forEach { $0.beginShutdown() }; agents.beginShutdown() }
+        let comparison = UUID(), text = "A shared question"
+        agents.setComparison(comparison)
+        sessions.forEach { $0.updateState { $0.comparisonID = comparison } }
+        var planned: [WebAgentID: UUID] = [:]
+        for session in sessions { planned[session.id] = try XCTUnwrap(session.planNativePreparation(text, comparisonID: comparison)).id }
+        let send = Task { await agents.prepareAndSendPlanned(text, to: sessions, comparisonID: comparison, plannedAttempts: planned) }
+        await fulfillment(of: [secondBlocked], timeout: 3)
+        XCTAssertEqual(sessions[0].state.attempts.first?.status, .observed)
+        XCTAssertEqual(sessions[0].state.localConversations[comparison.uuidString]?.map(\.text), [text, "Wabi fixture reply: \(text)"])
+        XCTAssertEqual(sessions[1].state.attempts.first?.status, .preparing)
+        release.yield(()); release.finish()
+        let result = await send.value
+        XCTAssertEqual(result[sessions[0].id]?.status, .observed)
+        XCTAssertEqual(result[sessions[1].id]?.status, .observed)
+        XCTAssertEqual(sessions[0].state.attempts.count, 1)
+        XCTAssertEqual(sessions[1].state.attempts.count, 1)
+    }
+
+    func testPlannedNativePromptCannotBeReplacedWithDifferentText() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let session = try XCTUnwrap(agents.session(for: .init(provider: .wabi)))
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi") }
+        let comparison = UUID()
+        agents.setComparison(comparison)
+        let planned = try XCTUnwrap(session.planNativePreparation("Original", comparisonID: comparison))
+        let result = await agents.prepareAndSendPlanned("Different", to: [session], comparisonID: comparison, plannedAttempts: [session.id: planned.id])
+        XCTAssertEqual(result[session.id]?.status, .notSent)
+        XCTAssertEqual(result[session.id]?.text, "Original")
+        XCTAssertTrue(session.state.localConversations[comparison.uuidString]?.isEmpty ?? true)
+        XCTAssertEqual(session.state.attempts.count, 1)
+    }
+
+    func testPlannedNativePreparationDoesNotSendAfterWorkspaceChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        defer { release.finish() }
+        let appBlocked = expectation(description: "The app is opening")
+        var running = false
+        let client = DesktopAppInstallationClient(inspect: { _ in
+            .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: running ? 42 : nil)
+        }, open: { _ in
+            appBlocked.fulfill()
+            for await _ in gate { break }
+            running = true
+        })
+        let session = WebAgentSession(provider: .wabi, storageURL: directory.appendingPathComponent("wabi.json"), fixture: true, museApp: .shared, desktopApps: client)
+        let agents = WebAgents(directory: directory.appendingPathComponent("workspace"), fixture: true)
+        defer { session.beginShutdown(); agents.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi") }
+        let comparison = UUID(), other = UUID(), text = "Question"
+        agents.setComparison(comparison)
+        session.updateState { $0.comparisonID = comparison }
+        let planned = try XCTUnwrap(session.planNativePreparation(text, comparisonID: comparison))
+        let send = Task { await agents.prepareAndSendPlanned(text, to: [session], comparisonID: comparison, plannedAttempts: [session.id: planned.id]) }
+        await fulfillment(of: [appBlocked], timeout: 3)
+        agents.setComparison(other)
+        session.updateState { $0.comparisonID = other }
+        release.yield(()); release.finish()
+        let result = await send.value
+        XCTAssertEqual(agents.comparisonID, other)
+        XCTAssertEqual(session.state.comparisonID, other)
+        XCTAssertEqual(result[session.id]?.id, planned.id)
+        XCTAssertEqual(result[session.id]?.status, .notSent)
+        XCTAssertTrue(session.state.localConversations[comparison.uuidString]?.isEmpty ?? true)
+        XCTAssertTrue(session.state.localConversations[other.uuidString]?.isEmpty ?? true)
+    }
+
+    func testSharedNativeSendPreservesMatchingAndDifferentPrivateDrafts() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for privateDraft in ["Shared question", "A different private draft"] {
+            let agents = WebAgents(directory: directory.appendingPathComponent(UUID().uuidString), fixture: true)
+            defer { agents.beginShutdown() }
+            let session = try XCTUnwrap(agents.session(for: .init(provider: .claudeApp)))
+            session.setEnabled(true)
+            session.updateState { $0.desktopConversation = .init(name: "Claude") }
+            let comparison = UUID(), text = "Shared question"
+            agents.setComparison(comparison)
+            session.updateState { $0.draft = privateDraft }
+            let planned = try XCTUnwrap(session.planNativePreparation(text, comparisonID: comparison))
+            let result = await agents.prepareAndSendPlanned(text, to: [session], comparisonID: comparison, plannedAttempts: [session.id: planned.id])
+            XCTAssertEqual(result[session.id]?.status, .observed, privateDraft)
+            XCTAssertEqual(session.state.draft, privateDraft, "A shared send must not consume a private draft")
+            XCTAssertEqual(session.state.localDrafts[comparison.uuidString], privateDraft)
+            XCTAssertEqual(session.state.localConversations[comparison.uuidString]?.first?.text, text)
+        }
+    }
+
+    func testSharedNativeSendOutsideProgressivePathPreservesPrivateDraft() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let session = try XCTUnwrap(agents.session(for: .init(provider: .claudeApp)))
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Claude") }
+        let comparison = UUID(), text = "Shared question"
+        agents.setComparison(comparison)
+        session.updateState { $0.draft = "A private draft" }
+        let ready = await agents.prepareComparison(comparison, for: [session], startNativeApps: true, allowSavedPrivateDraft: true)
+        XCTAssertTrue(ready)
+        let result = await WebAgents.send(text, to: [session], comparisonID: comparison)
+        XCTAssertEqual(result[session.id]?.status, .observed)
+        XCTAssertEqual(session.state.draft, "A private draft")
+        XCTAssertEqual(session.state.localDrafts[comparison.uuidString], "A private draft")
+    }
+
+    func testInterruptedPlannedNativeRequestBecomesRetryableWithoutSending() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appendingPathComponent("wabi.json"), comparison = UUID()
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: true)
+        session.setEnabled(true)
+        session.updateState { $0.comparisonID = comparison; $0.desktopConversation = .init(name: "Wabi") }
+        let planned = try XCTUnwrap(session.planNativePreparation("Question", comparisonID: comparison))
+        session.beginShutdown()
+        let reopened = WebAgentSession(provider: .wabi, storageURL: storage, fixture: true)
+        defer { reopened.beginShutdown() }
+        XCTAssertEqual(reopened.state.attempts.first?.id, planned.id)
+        XCTAssertEqual(reopened.state.attempts.first?.status, .notSent)
+        XCTAssertEqual(reopened.state.attempts.first?.text, "Question")
+        XCTAssertTrue(reopened.state.localConversations[comparison.uuidString]?.isEmpty ?? true)
     }
 
     func testChatGPTAndDotsShareOneAppLaunchDuringBroadcastPreparation() async throws {
