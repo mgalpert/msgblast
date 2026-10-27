@@ -139,6 +139,12 @@ public final class MacConnection: ObservableObject {
         transport.send(try driver.frame(.command(command)))
     }
 
+    /// Asks the Mac for a full snapshot (after an unknown change kind or a gap).
+    public func requestSnapshot() {
+        guard state.canSend, let transport, let driver, let frame = try? driver.frame(.subscribe(sinceSeq: nil)) else { return }
+        transport.send(frame)
+    }
+
     // MARK: Internals
 
     private func open(_ endpoints: [MacEndpoint], spki: Data, driver: RemoteClientDriver) {
