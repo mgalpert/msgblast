@@ -71,3 +71,5 @@ and revisions rather than making permanent claims about the latest version.
 ## Sharing statistics
 
 The [telemetry contract](../telemetry/README.md) documents the optional native collector and Cloudflare intake. [Metric definitions](../telemetry/metrics.md) describe first-day adoption and elapsed-day retention.
+
+- [Multiple provider accounts](multiple-accounts.md): account profiles, provider research, and native app limits.

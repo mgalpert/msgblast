@@ -2,6 +2,37 @@ import XCTest
 
 final class WebServiceWorkflowTests: XCTestCase {
     @MainActor
+    func testAddNamedAccountFromSettingsAndOpenSeparateSignIn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
+        app.typeKey(",", modifierFlags: .command)
+        let add = app.buttons["add-account-chatgpt"]
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -1200)
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.click()
+        let name = app.textFields["Agent name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.click(); name.typeKey("a", modifierFlags: .command); name.typeText("ChatGPT Work")
+        XCTAssertFalse(app.switches["Use another account"].exists, "Adding an account must always isolate its sign-in")
+        app.buttons["Add account"].click()
+        let signIn = app.buttons["Sign in to ChatGPT Work"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 5))
+        signIn.click()
+        XCTAssertTrue(app.staticTexts["Sign in to ChatGPT Work"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Demo website · sign-in is simulated; no provider account is contacted."].exists)
+        capture(app, name: "Separate account website — simulated sign-in")
+        app.buttons["Done"].click()
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["ChatGPT Work"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["ChatGPT Work"].value as? String, "Not selected")
+    }
+
+    @MainActor
     private func selectWebFixtureRecipients(_ app: XCUIApplication) {
         // New profiles explicitly enable website alternatives in Settings.
         app.typeKey(",", modifierFlags: .command)

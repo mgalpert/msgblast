@@ -757,21 +757,60 @@ struct AppSettingsView: View {
 private struct WebAgentSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var web: WebAgents
+    @State private var configuration: AgentConfigurationAction?
+    @State private var signIn: WebAgentID?
+    private var busy: Bool { model.busy || model.webBroadcastBusy }
 
     var body: some View {
+        Text("Use separate website profiles for work and personal accounts. Mac app connections use the account selected in that app.")
+            .font(.caption).foregroundStyle(.secondary)
         ForEach(WebProvider.settingsOnlyWebProviders) { provider in
-            Toggle(provider.name, isOn: Binding(
-                get: { web.session(for: WebAgentID(provider: provider))?.isEnabled == true },
-                set: { enabled in
-                    web.setEnabled(enabled, for: provider)
-                    if enabled {
-                        var grid = model.agentGridLayout
-                        grid.add(WebAgentID(provider: provider).gridID)
-                        _ = model.setAgentGrid(grid)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(web.sessions.filter { $0.provider == provider }, id: \.id) { session in
+                    HStack {
+                        Toggle(session.name, isOn: Binding(
+                            get: { session.isEnabled },
+                            set: { enabled in
+                                session.setEnabled(enabled)
+                                if enabled {
+                                    var grid = model.agentGridLayout
+                                    grid.add(session.id.gridID)
+                                    _ = model.setAgentGrid(grid)
+                                }
+                            }
+                        )).toggleStyle(.switch)
+                            .accessibilityIdentifier(session.id.instance == nil ? "enable-web-\(provider.rawValue)" : "enable-web-\(session.id.id)")
+                        if provider.supportsCopies {
+                            Button("Sign in…") { signIn = session.id }
+                                .accessibilityLabel("Sign in to \(session.name)")
+                                .disabled(!session.isEnabled)
+                            if session.id.instance != nil {
+                                Button("Rename…") { configuration = .rename(session.id) }
+                                    .accessibilityLabel("Rename \(session.name)")
+                            }
+                        }
                     }
                 }
-            )).toggleStyle(.switch).accessibilityIdentifier("enable-web-\(provider.rawValue)")
-                .disabled(model.busy || model.webBroadcastBusy)
+                if provider.supportsCopies {
+                    Button("Add \(provider.name) account…") { configuration = .addAccount(WebAgentID(provider: provider)) }
+                        .accessibilityIdentifier("add-account-\(provider.rawValue)")
+                }
+            }.disabled(busy)
+        }
+        .sheet(item: $configuration) { action in
+            AgentConfigurationSheet(action: action, web: web, busy: busy) { session in
+                var grid = model.agentGridLayout
+                grid.add(session.id.gridID)
+                guard model.setAgentGrid(grid) else { throw AppFailure.blocked(model.error ?? "Could not add the account to your grid.") }
+            }
+        }
+        .sheet(item: $signIn) { id in
+            if let session = web.session(for: id) {
+                VStack(alignment: .trailing, spacing: 12) {
+                    Button("Done") { signIn = nil }.keyboardShortcut(.cancelAction)
+                    WebAccountSignInView(session: session)
+                }.padding(20).frame(width: 600, height: 550)
+            }
         }
     }
 }
