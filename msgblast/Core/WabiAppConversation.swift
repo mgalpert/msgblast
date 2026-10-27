@@ -374,10 +374,26 @@ actor WabiAppConversation {
     private func click(_ element: DesktopAppSnapshot.Element, _ target: DesktopAppConversation.Target, session: String) async throws {
         _ = try await driver.call("click", ["element_token": element.element_token!, "session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
     }
-    private func settled(_ target: DesktopAppConversation.Target, session: String, purpose: WabiReadPurpose = .conversation, expected: (DesktopAppSnapshot, WabiAppObservation) throws -> Bool) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
-        try await DesktopAppWorkflow.wait(timeout: .seconds(8), interval: timing.pollInterval,
+    private func settled(_ target: DesktopAppConversation.Target, session: String, purpose: WabiReadPurpose = .conversation,
+                         refreshNavigation: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)? = nil,
+                         canRefresh: (DesktopAppSnapshot, WabiAppObservation) -> Bool = { _, _ in false },
+                         expected: (DesktopAppSnapshot, WabiAppObservation) throws -> Bool) async throws -> (DesktopAppSnapshot, WabiAppObservation) {
+        var refreshRequested = false
+        var refreshed = false
+        return try await DesktopAppWorkflow.wait(timeout: .seconds(8), interval: timing.pollInterval,
             failure: "Wabi did not open the expected chat. Nothing was sent or retried.",
-            read: { try await self.observe(target, session: session, purpose: purpose) }, ready: { try expected($0.0, $0.1) })
+            read: {
+                if refreshRequested && !refreshed, let refreshNavigation {
+                    refreshed = true
+                    try await refreshNavigation(target, session)
+                }
+                return try await self.observe(target, session: session, purpose: purpose)
+            }, ready: { observation in
+                let (state, native) = observation
+                let ready = try expected(state, native)
+                if !ready && !refreshed && canRefresh(state, native) { refreshRequested = true }
+                return ready
+            })
     }
 
     func checkAvailable() async throws {
@@ -393,7 +409,7 @@ actor WabiAppConversation {
         try empty(state, native)
         _ = try button(state, "New chat")
     }
-    func prepare(savedURL: URL?) async throws -> URL {
+    func prepare(savedURL: URL?, refreshNavigation: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)? = nil) async throws -> URL {
         guard !occupied else { throw DesktopAppError.unavailable("Wabi is already handling a request.") }
         occupied = true
         defer { occupied = false }
@@ -407,12 +423,14 @@ actor WabiAppConversation {
         if let savedURL {
             guard WabiThread.isValid(savedURL) else { throw DesktopAppError.unavailable("The saved Wabi chat address is invalid. No replacement was created.") }
             if native.url == savedURL { return savedURL }
+            let original = native.url
             let links = native.links.filter { $0.url == savedURL }
             guard links.count == 1 else { throw DesktopAppError.unavailable("Open this comparison's saved chat in Wabi and try again. No replacement chat was created.") }
             let matches = state.body.filter { $0.role == "AXLink" && $0.label == links[0].label && $0.enabled != false && $0.element_token != nil }
             guard matches.count == 1 else { throw DesktopAppError.unavailable("The saved Wabi chat's sidebar entry is ambiguous. Open it in Wabi and try again.") }
             try await click(matches[0], target, session: session)
-            (state, native) = try await settled(target, session: session) { _, native in native.url == savedURL && native.draft != nil }
+            (state, native) = try await settled(target, session: session, refreshNavigation: refreshNavigation,
+                canRefresh: { state, native in native.url == original && native.draft == "" && !state.isGenerating }) { _, native in native.url == savedURL && native.draft != nil }
             try empty(state, native)
             guard native.url == savedURL else { throw DesktopAppError.unavailable("Wabi did not open the saved chat. No message was sent or replacement created.") }
             return savedURL
@@ -421,7 +439,8 @@ actor WabiAppConversation {
         let existing = Set(native.links.map(\.url))
         if !openChooser {
             try await click(button(state, "New chat"), target, session: session)
-            (state, native) = try await settled(target, session: session, purpose: .readiness) { state, native in
+            (state, native) = try await settled(target, session: session, purpose: .readiness, refreshNavigation: refreshNavigation,
+                canRefresh: { state, native in native.url == original && (native.draft == nil || native.draft == "") && !state.isGenerating }) { state, native in
                 (native.draft == nil || native.draft == "") && WabiAppProfile.isNewChatChooser(state)
             }
         }
@@ -429,7 +448,8 @@ actor WabiAppConversation {
             throw DesktopAppError.unavailable("Wabi did not open its New chat chooser. Nothing was sent.")
         }
         try await click(WabiAppProfile.newAIChatChoice(state), target, session: session)
-        (state, native) = try await settled(target, session: session) { _, native in native.url != original && native.draft != nil }
+        (state, native) = try await settled(target, session: session, refreshNavigation: refreshNavigation,
+            canRefresh: { state, native in native.url == original && (native.draft == nil || native.draft == "") && WabiAppProfile.isNewChatChooser(state) && !state.isGenerating }) { _, native in native.url != original && native.draft != nil }
         try empty(state, native)
         guard native.url != original, !existing.contains(native.url),
               state.body.filter({ $0.role == "AXHeading" }).compactMap(\.label) == ["New chat"],

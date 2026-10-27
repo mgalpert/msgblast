@@ -1567,7 +1567,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         if isSending || desktopDriver.delivery == .background {
                             let url: URL
                             if fixture { url = saved ?? URL(string: "wabi://app/threads/\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))")! }
-                            else { url = try await wabiApp.prepare(savedURL: saved) }
+                            else {
+                                let refreshNavigation: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)?
+                                if isSending && desktopDriver.delivery == .foreground {
+                                    let driver = desktopDriver
+                                    refreshNavigation = { target, session in try await driver.activate(target, session: session) }
+                                } else { refreshNavigation = nil }
+                                url = try await wabiApp.prepare(savedURL: saved, refreshNavigation: refreshNavigation)
+                            }
                             guard generation == comparisonGeneration, state.comparisonID == comparison, !shuttingDown else { throw CancellationError() }
                             try state.recordWabiConversation(url, for: comparison)
                             try save()

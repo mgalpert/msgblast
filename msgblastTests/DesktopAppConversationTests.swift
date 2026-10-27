@@ -2446,6 +2446,28 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertFalse(calls.contains { $0.tool == "type_text" })
     }
 
+    func testWabiRefreshesStaleNavigationWithoutRepeatingEitherClick() async throws {
+        let creation = wabiCreationSteps()
+        var open = creation[3]; open["native"] = wabiNative()
+        var firstRefresh = activation(); firstRefresh["native"] = wabiNative(draft: nil)
+        var create = creation[5]; create["native"] = wabiNative(draft: nil)
+        var secondRefresh = activation()
+        secondRefresh["native"] = wabiNative(url: otherWabiURL, messages: [.init(role: .assistant, text: "What can I do for you?")])
+        let oldChat = snapshot(wabiWith([element("AXButton", "New chat", token: "s00000001:new")]))
+        let fixture = try driver(Array(creation.prefix(3)) + [open, oldChat, firstRefresh, creation[4],
+                                                               create, creation[4], secondRefresh, creation[6]])
+        defer { fixture.remove() }
+        let control = DesktopAppConversation(executable: fixture.executable)
+        let created = try await wabiAdapter(fixture).prepare(savedURL: nil, refreshNavigation: { target, session in
+            try await control.activate(target, session: session)
+        })
+        XCTAssertEqual(created, otherWabiURL)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.compactMap { $0.arguments["element_token"] as? String }, ["s00000001:new", "s00000002:new"])
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 2)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key"].contains($0.tool) })
+    }
+
     func testWabiChooserTargetsAIOptionWhenToolbarRemainsAccessible() async throws {
         for retainedDraft: String? in [nil, ""] {
             var steps = wabiCreationSteps()
