@@ -85,8 +85,12 @@ final class FakeMac {
     }
     private(set) var sessions: [Session] = []
     var reachable: Set<String> = ["100.64.0.1:4000", "192.168.1.2:4000"]
+    /// Every transport stays silent, like an address that never answers (stuck in `.preparing`).
+    var silent = false
+    private(set) var transports: [TestTransport] = []
     func transport(for endpoint: MacEndpoint, spki: Data) -> ClientTransport {
-        let transport = TestTransport(label: endpoint.label, reachable: reachable.contains(endpoint.label) && spki == self.spki)
+        let transport = TestTransport(label: endpoint.label, reachable: reachable.contains(endpoint.label) && spki == self.spki, silent: silent)
+        transports.append(transport)
         transport.onConnect = { [weak self, weak transport] in
             guard let self, let transport else { return }
             connections += 1
@@ -105,13 +109,15 @@ final class TestTransport: ClientTransport {
     var onState: ((ClientTransportState) -> Void)?
     let label: String
     let reachable: Bool
+    /// Never reports any state, so only the racer's deadline can end the attempt.
+    let silent: Bool
     var onConnect: (() -> Void)?
     var server: FakeMac.Session?
     private(set) var closed = false
-    init(label: String, reachable: Bool) { self.label = label; self.reachable = reachable }
+    init(label: String, reachable: Bool, silent: Bool = false) { self.label = label; self.reachable = reachable; self.silent = silent }
     func start() {
         Task { @MainActor in
-            guard !self.closed else { return }
+            guard !self.closed, !self.silent else { return }
             if self.reachable { self.onConnect?(); self.onState?(.ready) } else { self.onState?(.failed("unreachable")) }
         }
     }

@@ -34,6 +34,8 @@ public struct ConnectionTiming: Sendable {
     public var heartbeat: Duration = .seconds(20)
     public var silenceLimit: Duration = .seconds(45)
     public var backoff: [Duration] = [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(16), .seconds(30)]
+    /// How long the endpoint race may run before it gives up on every address.
+    public var raceTimeout: Duration = .seconds(15)
     public init() {}
 }
 
@@ -167,7 +169,7 @@ public final class MacConnection: ObservableObject {
         stopTransport()
         raceStarted = now()
         self.driver = driver
-        racer.race(endpoints, make: { [makeTransport] in makeTransport($0, spki) }) { [weak self] result in
+        racer.race(endpoints, timeout: timing.raceTimeout, make: { [makeTransport] in makeTransport($0, spki) }) { [weak self] result in
             guard let self, self.driver === driver else { return }
             switch result {
             case .success(let transport):
@@ -177,7 +179,13 @@ public final class MacConnection: ObservableObject {
                 transport.onState = { [weak self] state in if state != .ready { self?.lost("The connection closed.") } }
                 do { transport.send(try driver.start()) } catch { self.lost(error.localizedDescription) }
             case .failure(let failure):
-                self.lost(failure.reasons.first ?? "Your Mac could not be reached.")
+                if self.pairing != nil {
+                    // Keep the race failure itself so the pairing screen can tell an unreachable Mac apart.
+                    self.lastError = failure.errorDescription
+                    self.pairingFailed(failure)
+                } else {
+                    self.lost(failure.errorDescription ?? "Your Mac could not be reached.")
+                }
             }
         }
     }

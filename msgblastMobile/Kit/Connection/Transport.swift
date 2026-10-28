@@ -105,15 +105,24 @@ public final class NetworkClientTransport: ClientTransport {
 }
 
 /// Tries every candidate at once and keeps the first that completes TLS with the pinned key.
+/// The race has one deadline: a connection to an unreachable address can stay in
+/// `.preparing` until the TCP timeout, so when the deadline passes with no winner every
+/// contender is cancelled and the race fails.
 @MainActor
 public final class EndpointRacer {
     private var contenders: [ClientTransport] = []
     private var winner: ClientTransport?
     private var failures: [String] = []
+    private var deadline: Task<Void, Never>?
 
     public init() {}
 
-    public func race(_ endpoints: [MacEndpoint], make: (MacEndpoint) -> ClientTransport, completion: @escaping (Result<ClientTransport, RaceFailure>) -> Void) {
+    public static func unreachableReason(addresses: Int) -> String {
+        "Your Mac could not be reached at \(addresses) \(addresses == 1 ? "address" : "addresses")."
+    }
+
+    public func race(_ endpoints: [MacEndpoint], timeout: Duration = .seconds(15), make: (MacEndpoint) -> ClientTransport,
+                     completion: @escaping (Result<ClientTransport, RaceFailure>) -> Void) {
         cancel()
         guard !endpoints.isEmpty else { completion(.failure(RaceFailure(reasons: ["No address for this Mac."]))); return }
         var remaining = endpoints.count
@@ -129,19 +138,34 @@ public final class EndpointRacer {
                     transport.onState = nil
                     for other in self.contenders where other !== transport { other.onState = nil; other.cancel() }
                     self.contenders = []
+                    self.deadline?.cancel(); self.deadline = nil
                     completion(.success(transport))
                 case .failed, .closed:
                     guard self.winner == nil else { return }
                     if case .failed(let reason) = state { self.failures.append("\(transport.label): \(reason)") }
                     remaining -= 1
-                    if remaining == 0 { self.contenders = []; completion(.failure(RaceFailure(reasons: self.failures))) }
+                    if remaining == 0 {
+                        self.contenders = []
+                        self.deadline?.cancel(); self.deadline = nil
+                        completion(.failure(RaceFailure(reasons: self.failures)))
+                    }
                 }
             }
             transport.start()
         }
+        guard winner == nil, !contenders.isEmpty else { return }
+        let count = endpoints.count
+        deadline = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled, let self, self.winner == nil, !self.contenders.isEmpty else { return }
+            let failures = self.failures
+            self.cancel()
+            completion(.failure(RaceFailure(reasons: [Self.unreachableReason(addresses: count)] + failures, timedOut: true)))
+        }
     }
 
     public func cancel() {
+        deadline?.cancel(); deadline = nil
         for contender in contenders { contender.onState = nil; contender.cancel() }
         contenders = []
         winner = nil
@@ -149,6 +173,11 @@ public final class EndpointRacer {
     }
 }
 
-public struct RaceFailure: Error, Equatable, Sendable {
+/// No candidate connected. The first reason is the one to show.
+public struct RaceFailure: LocalizedError, Equatable, Sendable {
     public var reasons: [String]
+    /// The race deadline passed with no winner (for example Tailscale is off on the phone).
+    public var timedOut = false
+    public init(reasons: [String], timedOut: Bool = false) { self.reasons = reasons; self.timedOut = timedOut }
+    public var errorDescription: String? { reasons.first ?? "Your Mac could not be reached." }
 }

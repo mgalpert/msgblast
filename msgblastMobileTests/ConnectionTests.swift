@@ -147,6 +147,58 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(app.store.draft("new|all"), "", "Drafts for the previous Mac are dropped only on success")
     }
 
+    func testPairingGivesUpOnSilentAddressesAtTheRaceDeadline() async throws {
+        let mac = FakeMac()
+        mac.silent = true  // Like Tailscale off on the phone: every address hangs in .preparing.
+        let (connection, _, saved) = make(mac)
+        connection.timing.raceTimeout = .milliseconds(100)
+        var result: Result<PairedMac, Error>?
+        let started = Date()
+        connection.pair(offer: mac.offer(), deviceName: "Phone") { result = $0 }
+        XCTAssertEqual(connection.state, .pairing)
+        await settle { result != nil }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.9, "The deadline ends the attempt, not a TCP timeout")
+        guard case .failure(let error) = result else { return XCTFail("Pairing must fail, got \(String(describing: result))") }
+        let failure = try XCTUnwrap(error as? RaceFailure)
+        XCTAssertTrue(failure.timedOut)
+        XCTAssertEqual(failure.reasons.first, "Your Mac could not be reached at 2 addresses.")
+        XCTAssertEqual(error.localizedDescription, "Your Mac could not be reached at 2 addresses.")
+        XCTAssertEqual(connection.state, .unpaired)
+        XCTAssertNil(saved())
+        XCTAssertNil(connection.pairedMac)
+        XCTAssertEqual(mac.transports.count, 2)
+        XCTAssertTrue(mac.transports.allSatisfy(\.closed), "Every contender is cancelled at the deadline")
+
+        // A retry is a fresh race with new contenders.
+        mac.silent = false
+        var retried: Result<PairedMac, Error>?
+        connection.pair(offer: mac.offer(), deviceName: "Phone") { retried = $0 }
+        await settle { retried != nil && connection.state == .connected }
+        XCTAssertNotNil(try retried?.get())
+        XCTAssertEqual(mac.transports.count, 4)
+    }
+
+    func testConnectGivesUpOnSilentAddressesAndBacksOff() async throws {
+        let mac = FakeMac()
+        let (connection, events, _) = make(mac)
+        connection.pair(offer: mac.offer(), deviceName: "Phone") { _ in }
+        await settle { connection.state == .connected && !events().isEmpty }
+        connection.stop()
+        mac.silent = true
+        connection.timing.raceTimeout = .milliseconds(100)
+        connection.timing.backoff = [.seconds(30)]
+        let before = mac.transports.count
+        connection.connect()
+        XCTAssertEqual(connection.state, .connecting)
+        await settle { if case .reconnecting = connection.state { true } else { false } }
+        guard case .reconnecting(let attempt, _) = connection.state else { return XCTFail("\(connection.state)") }
+        XCTAssertEqual(attempt, 1)
+        XCTAssertEqual(connection.lastError, "Your Mac could not be reached at 2 addresses.")
+        XCTAssertTrue(mac.transports.dropFirst(before).allSatisfy(\.closed))
+        XCTAssertNotNil(connection.pairedMac, "An unreachable Mac keeps the pairing")
+        connection.stop()
+    }
+
     func testUnconfirmedIsNotNotConnected() {
         XCTAssertTrue(MobileConnectionError.notConnected.errorDescription!.contains("Nothing was sent"))
         XCTAssertFalse(MobileConnectionError.unconfirmed.errorDescription!.contains("Nothing was sent"))
