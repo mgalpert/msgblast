@@ -81,6 +81,35 @@ class PreviewPlanTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             preview.configure_info(info, bad, "a" * 40)
 
+    def test_development_remote_is_a_separate_live_development_identity(self):
+        info = {"CFBundleIdentifier": "com.msgblast.mac", "CFBundleName": "msgblast"}
+        variant = preview.VARIANTS["development-remote"]
+        remote = preview.configure_info(info, variant, "c" * 40)
+        self.assertEqual(remote["CFBundleIdentifier"], "com.msgblast.development.remote")
+        self.assertEqual(remote["CFBundleName"], "msgblast Dev Remote")
+        self.assertEqual(remote["CFBundleDisplayName"], "msgblast Dev Remote")
+        self.assertEqual(remote["msgblastSupportDirectory"], "msgblast-Dev-Remote")
+        self.assertEqual(remote["msgblastPreviewVariant"], "development-remote")
+        self.assertEqual(remote["CFBundleIconFile"], "AppIcon")
+        self.assertFalse(remote["msgblastDemo"])
+        self.assertTrue(remote["msgblastDisableUpdates"])
+        self.assertEqual(remote["SUFeedURL"], "")
+        self.assertFalse(remote["SUAllowsAutomaticUpdates"])
+        preview.verify_configured_info(remote, variant, "c" * 40)
+        self.assertEqual(preview.expected_icon_color(variant), "blue-green")
+        self.assertEqual(variant["icon_source"], preview.BLUE_GREEN)
+        self.assertEqual(variant["app_name"], "msgblast Dev Remote.app")
+        self.assertEqual(variant["artifact_prefix"], "msgblast-dev-remote")
+        development = preview.VARIANTS["development"]
+        for key in ("bundle_id", "app_name", "support_directory", "artifact_prefix"):
+            self.assertNotEqual(variant[key], development[key])
+        with self.assertRaises(RuntimeError):
+            preview.verify_configured_info(preview.configure_info(info, development, "c" * 40), variant, "c" * 40)
+
+    def test_all_keeps_building_only_dev_and_demo(self):
+        self.assertEqual([variant["id"] for variant in preview.selected_variants("all")], ["development", "demo"])
+        self.assertEqual([variant["id"] for variant in preview.selected_variants("development-remote")], ["development-remote"])
+
     def test_workspace_copy_refuses_the_source_tree(self):
         with self.assertRaises(RuntimeError):
             preview.copy_workspace(preview.ROOT / "build-preview-inside")
@@ -438,6 +467,12 @@ Evidence-SHA: {sha}
         self.assertIn("not a fixture", development)
         self.assertIn("msgblast-Dev", development)
         self.assertIn("/Applications/msgblast.app", development)
+        remote = build.instructions(preview.VARIANTS["development-remote"])
+        self.assertIn("msgblast Dev Remote.app", remote)
+        self.assertIn("belong to com.msgblast.development.remote", remote)
+        self.assertIn("msgblast-Dev-Remote", remote)
+        self.assertNotIn("belong to com.msgblast.development,", remote)
+        self.assertIn("belong to com.msgblast.development,", development)
 
     def test_main_executable_never_precedes_its_debug_dylib(self):
         import sys

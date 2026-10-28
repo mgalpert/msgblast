@@ -162,7 +162,7 @@ def package_variant(workspace, variant, source_revision, output, enable_dev_tele
     except RuntimeError as error:
         raise SystemExit(f"{variant['id']} {error}") from error
     info = preview.configure_info(built_info, variant, source_revision)
-    if enable_dev_telemetry and variant["id"] == "development":
+    if enable_dev_telemetry and variant["development"]:
         info["msgblastTelemetryEndpoint"] = "https://msgblast.app/api/telemetry"
     with info_path.open("wb") as file:
         plistlib.dump(info, file)
@@ -232,12 +232,14 @@ def instructions(variant, stable=False):
                 "which other local demo builds also use, and is separate from production and from msgblast Dev." + shared)
     permission_note = ("Keep this signing identity and installed path for subsequent builds; verify permission retention after updates. "
                        if stable else "Permissions may need to be granted again after a rebuild because the ad-hoc code hash changes. ")
-    return ("Unzip msgblast Dev.app and use it to exercise this branch with live data. Do not pass --demo or --isolated-demo; "
+    separate = (" It does not share its bundle ID, permissions, preferences, or saved state with msgblast Dev."
+                if variant["id"] != "development" else "")
+    return (f"Unzip {variant['app_name']} and use it to exercise this branch with live data. Do not pass --demo or --isolated-demo; "
             "use the blue msgblast Demo.app for fixtures and simulated demonstrations. It is not a fixture and can read real Messages. "
-            "Grant this bundle Full Disk Access, Contacts, and Messages Automation. Those permissions belong to com.msgblast.development, "
+            f"Grant this bundle Full Disk Access, Contacts, and Messages Automation. Those permissions belong to {variant['bundle_id']}, "
             "and do not transfer from com.msgblast.mac. " + permission_note +
             "Preferences are the standard defaults for that bundle ID. Grok Bot remembers its connection using hardware-encrypted storage when a Secure Enclave is available. Settings labels session-only storage if no secure backend is available. "
-            "Saved state is in ~/Library/Application Support/msgblast-Dev." + shared)
+            f"Saved state is in ~/Library/Application Support/{variant['support_directory']}.{separate}" + shared)
 
 
 def main():
@@ -246,7 +248,8 @@ def main():
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--enable-dev-telemetry", action="store_true", help="Enable consent-controlled real Dev statistics through Cloudflare; Demo remains disabled")
-    parser.add_argument("--variant", choices=("all", "development", "demo"), default="all")
+    parser.add_argument("--variant", choices=("all", *preview.VARIANTS), default="all",
+                        help="all builds msgblast Dev and msgblast Demo; development-remote is only built when named")
     parser.add_argument("--signing-identity", help="Maintainer Developer ID Application identity; never falls back to ad-hoc")
     parser.add_argument("--team-id")
     parser.add_argument("--keychain", type=Path)
@@ -272,9 +275,8 @@ def main():
     records = []
     with tempfile.TemporaryDirectory(prefix="msgblast-preview-") as temporary:
         workspace = preview.copy_workspace(Path(temporary) / "src")
-        for variant in preview.VARIANTS.values():
-            if args.variant == "all" or args.variant == variant["id"]:
-                records.append(package_variant(workspace, variant, args.sha, output, args.enable_dev_telemetry, signing))
+        for variant in preview.selected_variants(args.variant):
+            records.append(package_variant(workspace, variant, args.sha, output, args.enable_dev_telemetry, signing))
     if len({record["compiled_icon_sha256"] for record in records}) != len(records):
         raise SystemExit("Compiled preview icons are identical, so artwork selection did not change the app")
     if len({record["compiled_icon"] for record in records}) != len(records):
