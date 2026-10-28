@@ -19,9 +19,13 @@ actor ChatGPTAppConversation {
         for attempt in 0..<3 {
             try Task.checkCancellation()
             do { return try await Task.detached { try reader(target) }.value }
-            catch ChatGPTObservationError.transient {
-                guard attempt < 2 else { throw ChatGPTObservationError.transient }
-                try await Task.sleep(for: timing.pollInterval)
+            catch {
+                switch error {
+                case ChatGPTObservationError.transient, DesktopAccessibilityError.incomplete, DesktopAccessibilityError.invalidElement:
+                    guard attempt < 2 else { throw error }
+                    try await Task.sleep(for: timing.pollInterval)
+                default: throw error
+                }
             }
         }
         throw ChatGPTObservationError.transient

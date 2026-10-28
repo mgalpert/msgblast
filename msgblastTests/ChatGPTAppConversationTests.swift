@@ -1326,6 +1326,42 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         }
     }
 
+    func testNativeTreeReplacementAfterNewChatRetriesReadsWithoutReplayingNavigation() async throws {
+        final class Fault: @unchecked Sendable {
+            let lock = NSLock()
+            var throwsCount = 0
+            func read(_ root: ChatGPTAXNode, persistent: Bool, error: DesktopAccessibilityError) throws -> ChatGPTAXNode {
+                try lock.withLock {
+                    if root.label == "ChatGPT", persistent || throwsCount == 0 {
+                        throwsCount += 1
+                        throw error
+                    }
+                    return root
+                }
+            }
+        }
+        for error in [DesktopAccessibilityError.incomplete, .invalidElement] {
+            for persistent in [false, true] {
+                let f = try fixture(existingWork: true, codexMode: true)
+                defer { try? FileManager.default.removeItem(at: f.directory) }
+                let fault = Fault()
+                let adapter = f.adapter(transformNative: { try fault.read($0, persistent: persistent, error: error) })
+                do {
+                    let answer = try await adapter.reply("First question", binding: f.binding, onPrepared: { _ in }, onBinding: { _ in })
+                    XCTAssertFalse(persistent)
+                    XCTAssertEqual(answer, "ANSWER")
+                    XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), f.binding.firstMessage("First question"))
+                } catch { XCTAssertTrue(persistent, error.localizedDescription) }
+                let mutations = f.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+                XCTAssertEqual(mutations.prefix(3).compactMap { ($0["arguments"] as? [String: Any])?["element_token"] as? String }.map { $0.components(separatedBy: ":")[0] }, ["0", "1", "2"])
+                if persistent {
+                    XCTAssertEqual(mutations.count, 3, "A persistent read failure must stop before typing")
+                    XCTAssertLessThanOrEqual(fault.throwsCount, 3, "Native read retries must remain bounded")
+                }
+            }
+        }
+    }
+
     func testOwnPartialOutgoingBubbleSettlesWithoutSecondSendOrPrematureBinding() async throws {
         let fixture = try fixture(); defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let recorded = ChatGPTRecordedBindings()
