@@ -203,7 +203,7 @@ struct DiagnosticPayload: Codable, Equatable {
     init(_ facts: DiagnosticFacts) {
         version = DiagnosticPayload.token(facts.version, pattern: #"^[0-9A-Za-z._-]{1,32}$"#)
         buildNumber = DiagnosticPayload.token(facts.buildNumber, pattern: #"^[0-9A-Za-z._-]{1,32}$"#)
-        let bundle = DiagnosticPayload.token(facts.bundleIdentifier, pattern: #"^com\.msgblast\.[A-Za-z0-9-]{1,40}$"#)
+        let bundle = DiagnosticPayload.token(facts.bundleIdentifier, pattern: #"^com\.msgblast\.[A-Za-z0-9-]{1,40}(?:\.[A-Za-z0-9-]{1,40})?$"#)
         bundleIdentifier = bundle
         variant = DiagnosticPayload.variant(for: bundle)
         fixtureMode = facts.fixtureMode
@@ -239,11 +239,11 @@ struct DiagnosticPayload: Codable, Equatable {
     private static func count(_ value: Int) -> Int { min(max(value, 0), 1_000_000) }
 
     private static func variant(for bundle: String) -> String {
+        if AppBundleIdentity.isDevelopment(bundle) { return "development" }
         switch bundle {
-        case "com.msgblast.mac": "production"
-        case "com.msgblast.development": "development"
-        case "com.msgblast.demo": "demo"
-        default: "other"
+        case AppBundleIdentity.production: return "production"
+        case "com.msgblast.demo": return "demo"
+        default: return "other"
         }
     }
 
