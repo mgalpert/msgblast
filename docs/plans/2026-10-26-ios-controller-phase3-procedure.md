@@ -9,8 +9,9 @@ results and the original lock-screen questions are in
 
 ## Ground rules for this run
 
-- Use the blue-green **msgblast Dev** preview built from this branch. Leave the
-  installed `/Applications/msgblast.app` and its support folder alone.
+- Use the blue-green **msgblast Dev Remote** preview built from this branch. Leave the
+  installed `/Applications/msgblast.app`, any existing msgblast Dev, and their
+  support folders alone.
 - Do not pass `--demo` or `--isolated-demo` to Dev. The blue Demo app simulates
   agents and replies; **nothing it shows counts as evidence for this run.**
 - No real iMessage sends unless you pick a recipient you own (for example your own
@@ -28,12 +29,18 @@ results and the original lock-screen questions are in
 - The Mac with Xcode 27, Tailscale running and signed in.
 - An iPhone on iOS 26 or later with Tailscale installed and signed in to the same
   tailnet, Developer Mode on (Settings → Privacy & Security → Developer Mode).
-- This branch checked out. Dev preview built from it (the reviewer's local build
-  was from `6d8465845cc06bb75c4df810afad71482e197daa`; rebuild if the branch moved):
+- This branch checked out, and the **msgblast Dev Remote** preview built from it
+  (rebuild if the branch moved):
   ```sh
   python3 scripts/build_preview_apps.py --sha "$(git rev-parse HEAD)" \
-    --run-url "Local build (no Actions run)" --output build/phase3-preview --variant development
+    --run-url "Local build (no Actions run)" --output build/phase3-preview --variant development-remote
   ```
+  This is a separate app from msgblast Dev: bundle ID `com.msgblast.development.remote`,
+  saved state in `~/Library/Application Support/msgblast-Dev-Remote`. It shares
+  nothing with an existing msgblast Dev, so it starts with no conversations, agent
+  sign-ins or permissions. Before the run, grant it Full Disk Access, Contacts and
+  Messages Automation yourself, and sign in to the website agents you plan to use.
+  That setup is the only System Settings change this run expects.
 
 ## Steps
 
@@ -56,12 +63,14 @@ results and the original lock-screen questions are in
 Record: iOS version, Xcode version, whether the bundle id had to change.
 Pass: the app opens on the "Pair with your Mac" screen.
 
-### 2. Run Dev with remote control on and pair by QR
+### 2. Run msgblast Dev Remote with remote control on and pair by QR
 
-1. Unzip or open `build/phase3-preview/msgblast Dev.app` (Open Anyway if macOS asks).
-2. Dev → Settings → Remote: turn on "Allow a paired phone…". Network: Tailscale if
-   available. Keep this Mac awake: on. Send iMessages from the phone: **off**.
-3. Note the Status line (it lists the addresses Dev listens on) and the Mac
+1. Unzip or open `build/phase3-preview/msgblast Dev Remote.app` (Open Anyway if
+   macOS asks). Its saved state is in `~/Library/Application Support/msgblast-Dev-Remote`.
+2. msgblast Dev Remote → Settings → Remote: turn on "Allow a paired phone…".
+   Network: Tailscale if available. Keep this Mac awake: on. Send iMessages from
+   the phone: **off**.
+3. Note the Status line (it lists the addresses the app listens on) and the Mac
    identity line (Secure Enclave expected).
 4. Choose **Pair a phone…**. On the phone choose "Scan the pairing code" and scan.
 5. Compare the Mac name and the **Key** fingerprint shown on the phone with the
@@ -69,7 +78,7 @@ Pass: the app opens on the "Pair with your Mac" screen.
 
 Record: listening addresses, identity storage, whether name and fingerprint matched,
 time from Pair to the inbox.
-Pass: fingerprints match; the phone shows the inbox with your Dev conversations and
+Pass: fingerprints match; the phone shows the inbox with your msgblast Dev Remote conversations and
 no banner; the Mac pane shows the phone as "Connected now".
 
 ### 3. First connection over Tailscale on Wi-Fi, then cellular

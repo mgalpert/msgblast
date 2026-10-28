@@ -66,6 +66,12 @@ use Apple credentials, read release secrets, or change the committed green icon.
 The first run needs network access for pinned Sparkle, cloudflared, and CuaDriver assets.
 It builds both variants by default; `--variant development` or `--variant demo`
 builds just one.
+`--variant development-remote` builds a third app, **msgblast Dev Remote**
+(`com.msgblast.development.remote`, saved state in
+`~/Library/Application Support/msgblast-Dev-Remote`), for live testing with the
+phone app. It works like msgblast Dev but keeps its own permissions, preferences and
+saved state, so it never touches an existing msgblast Dev. It is only built when you
+ask for it by name.
 
 | App | Icon / bundle ID | Behavior | Saved app state |
 | --- | --- | --- | --- |
