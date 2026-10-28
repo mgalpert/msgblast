@@ -29,6 +29,106 @@ final class NativeDesktopStateTests: XCTestCase {
         }
     }
 
+    func testFirstExplicitNativeSendConnectsWithoutASeparateSetupClick() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = DesktopAppInstallationClient(inspect: { app in
+            .init(url: URL(fileURLWithPath: "/Fixture/\(app.name).app"), processID: 42)
+        }, open: { _ in XCTFail("The installed fixture is already running") })
+        for provider in [WebProvider.museApp, .wabi, .claudeApp, .chatgptApp, .dotsApp] {
+            let storage = directory.appendingPathComponent(provider.storageFilename)
+            let session = WebAgentSession(provider: provider, storageURL: storage, fixture: true, museApp: .shared, desktopApps: client)
+            defer { session.beginShutdown() }
+            session.setEnabled(true)
+            session.refreshDesktopInstallation()
+            XCTAssertNil(session.state.desktopConversation)
+            XCTAssertTrue(session.canSubmitNativePrompt, "An enabled installed app should accept its first explicit prompt: \(provider)")
+            let id = UUID()
+            let ready = await session.openComparison(id, startNativeApp: true)
+            XCTAssertTrue(ready, "First-send setup must not require a separate Connect click: \(session.error ?? session.snapshot.reason)")
+            XCTAssertTrue(session.state.attempts.isEmpty, "Connection preparation must not send a message")
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            XCTAssertEqual(saved.desktopConversation?.name, provider.desktopApp?.name)
+            guard ready else { continue }
+            let reply = await session.send("A first question", comparisonID: id)
+            XCTAssertEqual(reply?.status, .observed)
+            XCTAssertEqual(session.state.attempts.count, 1)
+            XCTAssertEqual(session.state.localConversations[id.uuidString]?.filter { $0.role == "user" }.map(\.text), ["A first question"])
+        }
+    }
+
+    func testFirstPrivateNativeSendConnectsAndConsumesOnlyItsOwnDraft() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = DesktopAppInstallationClient(inspect: { _ in
+            .init(url: URL(fileURLWithPath: "/Fixture/Claude.app"), processID: 42)
+        }, open: { _ in XCTFail("The fixture is already running") })
+        let session = WebAgentSession(provider: .claudeApp, storageURL: directory.appendingPathComponent("claude.json"), fixture: true, museApp: .shared, desktopApps: client)
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.draft = "Private first question" }
+        let result = await session.send("Private first question")
+        XCTAssertEqual(result?.status, .observed)
+        XCTAssertEqual(session.state.desktopConversation?.name, "Claude")
+        XCTAssertEqual(session.state.draft, "")
+        XCTAssertEqual(session.state.attempts.count, 1)
+        let id = try XCTUnwrap(result?.comparisonID)
+        XCTAssertEqual(session.state.localConversations[id.uuidString]?.filter { $0.role == "user" }.map(\.text), ["Private first question"])
+    }
+
+    func testFirstSetupIsNotRememberedWhenTheFinalDraftGateRejectsPreparation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = DesktopAppInstallationClient(inspect: { _ in
+            .init(url: URL(fileURLWithPath: "/Fixture/Claude.app"), processID: 42)
+        }, open: { _ in XCTFail("The fixture is already running") })
+        let storage = directory.appendingPathComponent("claude.json")
+        let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: true, museApp: .shared, desktopApps: client)
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        session.updateState { $0.draft = "Preserve my private draft" }
+        let ready = await session.openComparison(UUID(), startNativeApp: true)
+        XCTAssertFalse(ready)
+        XCTAssertEqual(session.state.draft, "Preserve my private draft")
+        XCTAssertNil(session.state.desktopConversation, "A failed final readiness gate must not complete setup")
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertNil(saved.desktopConversation)
+        XCTAssertTrue(saved.attempts.isEmpty)
+    }
+
+    func testAutomaticNativeSetupDoesNotGuessBotsOrReplaceUntrackedHistory() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = DesktopAppInstallationClient(inspect: { app in
+            .init(url: URL(fileURLWithPath: "/Fixture/\(app.name).app"), processID: 42)
+        }, open: { _ in XCTFail("The installed fixture is already running") })
+        for provider in [WebProvider.grokBotApp, .museApp, .wabi, .claudeApp, .chatgptApp, .dotsApp] {
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: client)
+            defer { session.beginShutdown() }
+            session.setEnabled(true)
+            session.refreshDesktopInstallation()
+            let passive = await session.openComparison(nil)
+            XCTAssertFalse(passive)
+            XCTAssertNil(session.state.desktopConversation, "Browsing must not connect or choose a destination")
+            let id = UUID()
+            let history = [WebPageMessage(id: "old-message", role: "user", text: "Earlier native conversation")]
+            session.updateState { $0.comparisonID = id; $0.localConversations[id.uuidString] = history }
+            let ready = await session.openComparison(id, startNativeApp: true)
+            XCTAssertFalse(ready, "A first send must not replace untracked native history")
+            XCTAssertNil(session.state.desktopConversation, "Only verified setup may be saved")
+            XCTAssertEqual(session.state.localConversations[id.uuidString], history)
+            XCTAssertTrue(session.state.attempts.isEmpty)
+            XCTAssertFalse(session.canSubmitNativePrompt, "Untracked history must not enable Send or Retry")
+            if provider != .grokBotApp {
+                for _ in 0..<2 {
+                    let result = await session.send("Do not submit into a replacement chat", comparisonID: id)
+                    XCTAssertNil(result, "A rejected Retry must not append another failed attempt")
+                }
+                XCTAssertTrue(session.state.attempts.isEmpty)
+            }
+        }
+    }
+
     func testLegacyNativeDraftAndAttemptDecodeWithoutRevisionMetadata() throws {
         let comparison = UUID()
         var workspace = WebWorkspaceState()

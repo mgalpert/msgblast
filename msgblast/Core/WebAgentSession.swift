@@ -147,10 +147,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var isStorageAvailable: Bool { !storageFailed }
     private var script: WebPageScript { WebPageScript(provider: provider) }
 
+    private var defaultDesktopConversation: DesktopConversationBinding? {
+        guard provider.isAvailableInBuild, let app = provider.desktopApp, app != .grokBot else { return nil }
+        return .init(name: app.name)
+    }
+
     public var canSubmitNativePrompt: Bool {
-        guard isEnabled, !storageFailed, !loading, !isSending, !shuttingDown else { return false }
+        guard isEnabled, !storageFailed, !loading, !isSending, !shuttingDown,
+              !hasUntrackedDesktopHistory(for: state.comparisonID) else { return false }
         return snapshot.ready || (provider.desktopApp != nil && desktopInstallation.isInstalled &&
-            state.desktopConversation != nil &&
+            (state.desktopConversation != nil || defaultDesktopConversation != nil) &&
             !hasIncompleteNativeRequest(for: state.comparisonID))
     }
 
@@ -598,11 +604,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 guard state.comparisonID == id, !shuttingDown else { return false }
             }
             guard state.comparisonID == id, !shuttingDown else { return false }
-            await refresh()
+            if provider.desktopApp != nil {
+                await refreshDesktop(connectIfNeeded: startNativeApp || foregroundPreparation)
+            } else { await refresh() }
             if provider == .geminiApp, snapshot.ready { await configureGemini(geminiPreferences) }
             if snapshot.ready { await prepareAdditionalDesktopConversation(foreground: foregroundPreparation) }
+            guard state.comparisonID == id, !shuttingDown, isEnabled else { return false }
             let ready = snapshot.ready && (allowSavedPrivateDraft || snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && !hasIncompleteNativeRequest(for: id)
-            if ready { error = nil }
+            if ready {
+                if state.desktopConversation == nil, let binding = defaultDesktopConversation {
+                    state.desktopConversation = binding
+                    do { try save() }
+                    catch {
+                        state.desktopConversation = nil
+                        desktopReady = false
+                        desktopStatus = error.localizedDescription
+                        self.error = error.localizedDescription
+                        updateNativeSnapshot()
+                        return false
+                    }
+                }
+                error = nil
+            }
             else if !snapshot.ready || hasIncompleteNativeRequest(for: id) { error = snapshot.reason }
             else { error = "\(provider.name) has an unsent draft. It was preserved." }
             return ready
@@ -1509,15 +1532,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
     }
 
-    private func refreshDesktop(duringConnection: Bool = false) async {
+    private func refreshDesktop(duringConnection: Bool = false, connectIfNeeded: Bool = false) async {
         guard let app = provider.desktopApp, provider.isAvailableInBuild, (!loading || duringConnection), !refreshing, !shuttingDown else { return }
         refreshing = true
         let generation = comparisonGeneration
+        let candidate = state.desktopConversation ?? ((connectIfNeeded || isSending) ? defaultDesktopConversation : nil)
         defer { refreshing = false }
         refreshDesktopInstallation()
         desktopReady = false
         guard desktopInstallation.isRunning else { updateNativeSnapshot(); return }
-        if let binding = state.desktopConversation {
+        if let binding = candidate {
             do {
                 if app == .claude || chatgptKind != nil {
                     guard !hasIncompleteNativeRequest(for: state.comparisonID) else { throw WebSessionFailure.notReady("Review the previous native app request before continuing.") }
@@ -1703,10 +1727,28 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         storageURL.deletingLastPathComponent().appendingPathComponent("local-conversations/\(provider.localConversationDirectoryName)/\(id.uuidString)", isDirectory: true)
     }
 
+    private func hasUntrackedDesktopHistory(for comparison: UUID?) -> Bool {
+        guard let app = provider.desktopApp, let comparison,
+              state.localConversations[comparison.uuidString]?.isEmpty == false else { return false }
+        switch app {
+        case .muse: return (try? state.museAppBinding(for: comparison)) == nil
+        case .wabi: return (try? state.wabiConversation(for: comparison)) == nil
+        case .claude: return (try? state.claudeBinding(for: comparison)) == nil
+        case .chatgpt: return (try? state.chatgptBinding(for: comparison, kind: .chatgpt)) == nil
+        case .dots: return (try? state.chatgptBinding(for: comparison, kind: .dots)) == nil
+        case .gemini: return (try? state.geminiBinding(for: comparison)) == nil
+        case .grokBot: return false
+        }
+    }
+
     private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void, plannedAttemptID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
+        guard !hasUntrackedDesktopHistory(for: id) else {
+            error = "This history has no tracked native chat. Start a new comparison; its history was preserved."
+            return nil
+        }
         let planned: WebSendAttempt?
         if let plannedAttemptID {
             guard provider.desktopApp != nil, state.comparisonID == id,
@@ -1907,6 +1949,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let answer = try await withTaskCancellationHandler { try await request.value } onCancel: { request.cancel() }
             try Task.checkCancellation()
             state.localConversations[id.uuidString] = history + [WebPageMessage(role: "assistant", text: answer.text)]
+            if state.desktopConversation == nil { state.desktopConversation = defaultDesktopConversation }
             if provider.desktopApp == nil { state.recordLocalSession(answer.sessionID, for: id) }
             consumeNativeDraftIfUnchanged(attempt, comparison: id)
             if provider == .claudeApp { attempt.conversationURL = state.claudeConversations[id.uuidString]?.url }
@@ -1969,6 +2012,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts[index].status = .waiting
         state.attempts[index].messageID = attemptID.uuidString
         state.attempts[index].detail = "Outgoing message observed in the app. Waiting for its reply."
+        if state.desktopConversation == nil { state.desktopConversation = defaultDesktopConversation }
         try save()
         updateNativeSnapshot()
     }
