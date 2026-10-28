@@ -589,6 +589,9 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertEqual(try WabiAppReceipt(baseline: [], prompt: "Question").reply(in: messages), answer)
         let receipt = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: "Question", baseline: [])
         XCTAssertEqual(try receipt.reply(in: messages), answer)
+        let oldReceipt = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: "Next", baseline: [oldMessage])
+        let later = [messages[1], WabiAppMessage(role: .user, text: "Next"), WabiAppMessage(role: .assistant, text: "Later reply")]
+        XCTAssertEqual(try oldReceipt.reply(in: later), "Later reply", "Receipts saved before presentation formatting must still match")
     }
 
     func testWabi015ReadinessIgnoresIncompleteHistoryWithoutAttributingIt() throws {
