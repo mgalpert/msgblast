@@ -46,7 +46,9 @@ retaining the Sending status.
 
 Busy agents remain visible and unavailable for selection. A broadcast uses only
 available recipients without clearing a busy agent's saved selection or changing
-its pending request. Completing the reply restores availability.
+its pending request. Completing the reply restores availability. A saved choice
+does not add an agent to a comparison that started without it: its pane and
+follow-ups stay limited to that comparison's members until the user adds it.
 
 Muse, Grok Bot, Wabi, ChatGPT, and Dots use foreground input. An explicit send
 acquires one shared desktop transaction, brings the

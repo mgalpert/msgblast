@@ -713,10 +713,11 @@ final class DesktopAppConversationTests: XCTestCase {
         let comparison = UUID()
         session.updateState { $0.localConversations[comparison.uuidString] = [WebPageMessage(role: "assistant", text: "Earlier shared chat")] }
         let attempt = await session.send("Continue", comparisonID: comparison)
-        XCTAssertEqual(attempt?.status, .notSent)
+        XCTAssertNil(attempt, "Untracked history must be rejected before creating a send attempt")
+        XCTAssertTrue(session.state.attempts.isEmpty)
         XCTAssertNil(session.state.conversationURLs[comparison.uuidString])
         XCTAssertEqual(session.state.localConversations[comparison.uuidString]?.map(\.text), ["Earlier shared chat"])
-        XCTAssertTrue(attempt?.detail?.contains("without a tracked dedicated chat") == true)
+        XCTAssertTrue(session.error?.contains("no tracked native chat") == true)
     }
 
     @MainActor

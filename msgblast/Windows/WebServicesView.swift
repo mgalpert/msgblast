@@ -21,6 +21,7 @@ struct AgentsWorkspaceView: View {
     @State private var editingAgents = false
     @State private var hiddenMembers: Set<UUID> = []
     @State private var hiddenWebAgents: Set<WebAgentID> = []
+    @State private var requestedAgents: Set<WebAgentID> = []
     private var sending: Bool { model.busy || model.webBroadcastBusy || web.sessions.contains { $0.isSending } }
     private var canUseOtherRecipients: Bool {
         !model.busy && model.webBroadcastBusy && model.webBroadcastReplyGate.canBrowseWhileWaiting &&
@@ -34,7 +35,11 @@ struct AgentsWorkspaceView: View {
             (showingComparison || shown.contains(ids[$0.id] ?? .messages($0.id))) }
     }
     private var selectedWebSessions: [WebAgentSession] {
-        web.broadcastSelection.filter { showingComparison || model.isVisibleInAgentGrid($0.id.gridID) }
+        let members = showingComparison ? nativeComparison.map { Set($0.resolvedWebAgentIDs) } : nil
+        return web.broadcastSelection.filter { session in
+            if let members { return members.contains(session.id) }
+            return showingComparison || model.isVisibleInAgentGrid(session.id.gridID)
+        }
     }
     private var attachmentComparisonID: UUID? { showingComparison ? nativeComparison?.id : nil }
     private var attachments: [MessageAttachment] { model.attachmentDraft(comparisonID: attachmentComparisonID) }
@@ -89,11 +94,11 @@ struct AgentsWorkspaceView: View {
         .overlay { if showingConnectionIntro { connectionIntro } }
         .task { if !model.webBroadcastBusy { web.connectSelected() } }
         .onChange(of: web.comparisonID) { _, _ in
-            if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = [] }
+            if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = []; requestedAgents = [] }
         }
         .onChange(of: newBlastRequest) { _, _ in
             showingConnectionIntro = false; editingAgents = false
-            if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = [] }
+            if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = []; requestedAgents = [] }
         }
         .onChange(of: showingComparison) { _, value in if value { editingAgents = false } }
         .toolbar {
@@ -146,10 +151,12 @@ struct AgentsWorkspaceView: View {
     private var nativeComparison: Comparison? { (windowComparisonID ?? web.comparisonID).flatMap { model.comparison($0) } }
 
     private var displayedSessions: [WebAgentSession] {
-        if let windowComparisonID, let comparison = model.comparison(windowComparisonID) {
+        if let comparison = nativeComparison {
             let joined = comparison.resolvedWebAgentIDs.compactMap { web.session(for: $0) }
             // Keep a joining agent's sign-in/preparation pane in this window too.
-            let preparing = web.comparisonID == windowComparisonID ? web.selected.filter { !comparison.resolvedWebAgentIDs.contains($0.id) } : []
+            let preparing = web.comparisonID == comparison.id ? web.sessions.filter {
+                requestedAgents.contains($0.id) && !comparison.resolvedWebAgentIDs.contains($0.id)
+            } : []
             return (joined + preparing).filter { !hiddenWebAgents.contains($0.id) }
         }
         return web.displayed.filter { !hiddenWebAgents.contains($0.id) }
@@ -241,8 +248,9 @@ struct AgentsWorkspaceView: View {
                     Text("Send to").font(.caption).foregroundStyle(.secondary)
                     ForEach(model.recipientWebSessions(for: nativeComparison), id: \.id) { session in
                         let agentBusy = web.isBusyForSelection(session)
-                        recipient(session.name, selected: session.isEnabled && session.state.selected && !agentBusy, agentBusy: agentBusy) { selectRecipient(session) }
-                            .disabled(agentBusy || !session.isEnabled || (model.webBroadcastBusy && nativeComparison.map { !$0.resolvedWebAgentIDs.contains(session.id) } == true))
+                        let joined = nativeComparison?.resolvedWebAgentIDs.contains(session.id) ?? true
+                        recipient(session.name, selected: session.isEnabled && session.state.selected && !agentBusy && joined, agentBusy: agentBusy) { selectRecipient(session) }
+                            .disabled(agentBusy || !session.isEnabled || (model.webBroadcastBusy && !joined))
                     }
                     ForEach(model.recipientMessageAgents(for: nativeComparison)) { agent in
                         recipient(agent.name, selected: model.state.selection.contains(agent.id)) {
@@ -300,6 +308,7 @@ struct AgentsWorkspaceView: View {
             return
         }
         guard !model.webBroadcastBusy else { return }
+        requestedAgents.insert(session.id)
         model.webBroadcastBusy = true
         web.select(session, selected: true)
         if !session.provider.usesNativeConversation { session.connect() }

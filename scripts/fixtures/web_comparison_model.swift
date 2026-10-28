@@ -54,6 +54,9 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         for child in view.subviews { if let editor = privateEditor(in: child) { return editor } }
         return nil
     }
+    @MainActor static func editors(in view: NSView) -> [AttachmentTextView] {
+        (view as? AttachmentTextView).map { [$0] } ?? view.subviews.flatMap { editors(in: $0) }
+    }
     @MainActor static func transcriptText(_ text: String, in view: NSView) -> NSTextView? {
         if let value = view as? NSTextView, !(value is AttachmentTextView), value.string == text { return value }
         for child in view.subviews { if let value = transcriptText(text, in: child) { return value } }
@@ -670,7 +673,9 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         busyGridModel.state.agentGrid = .init(visibleIDs: [busyWabi.id.gridID, readyClaude.id.gridID, .messages(gridContact.id)])
         busyGridModel.setSharedDraft("Send to available recipients while Wabi is busy")
         let busyGridWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1200, height: 800), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        busyGridWindow.contentView = NSHostingView(rootView: AgentsWorkspaceView(model: busyGridModel, web: busyGridModel.webAgents, showingComparison: .constant(false)))
+        var gridShowsComparison = false
+        busyGridWindow.contentView = NSHostingView(rootView: AgentsWorkspaceView(model: busyGridModel, web: busyGridModel.webAgents,
+            showingComparison: Binding(get: { gridShowsComparison }, set: { gridShowsComparison = $0 })))
         busyGridWindow.orderBack(nil)
         try await waitUntil {
             busyGridWindow.contentView.flatMap { privateEditor(in: $0) }?.string == busyGridModel.state.draft
@@ -688,9 +693,24 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         precondition(gridComparison.members.map(\.id) == [gridContact.id])
         precondition(busyWabi.state.selected, "Sending from the grid must preserve a busy agent's saved selection")
         precondition(busyWabi.state.attempts == [earlierRequest], "The earlier request must not be dismissed, reassigned or resent")
+        try await waitUntil {
+            editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Claude" }
+        }
+        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "A busy nonmember must not appear as an empty pane in the new comparison")
         busyWabi.updateState { $0.attempts[0].status = .observed }
         precondition(busyGridModel.webAgents.broadcastSelection.contains { $0.id == busyWabi.id }, "Completing the reply restores availability without another selection click")
+        busyGridModel.setSharedDraft("Follow up only with the recipients of this comparison")
+        try await waitUntil {
+            editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Shared prompt" && $0.string == busyGridModel.state.draft }
+        }
+        let followupEditor = editors(in: busyGridWindow.contentView!).first { $0.accessibilityLabel() == "Shared prompt" }!
+        followupEditor.sendMessage?()
+        try await waitUntil {
+            readyClaude.state.attempts.count == 2 && readyClaude.state.attempts.first?.status == .observed &&
+                busyGridModel.state.comparisons.first?.followUps.count == 1 && !busyGridModel.webBroadcastBusy
+        }
         precondition(busyWabi.state.attempts.count == 1)
+        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "Completing another conversation must not join this comparison")
         busyGridWindow.orderOut(nil)
         busyGridWindow.contentView = nil
         busyGridModel.timer?.invalidate()
