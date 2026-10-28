@@ -79,7 +79,7 @@ enum WabiObservationError: LocalizedError, Sendable {
     var errorDescription: String? { switch self { case .transient(let message): message } }
 }
 
-enum WabiReadPurpose: Sendable { case readiness, conversation }
+enum WabiReadPurpose: Sendable { case readiness, conversation, sentWaiting }
 
 enum WabiNativeMessages {
     private static func listText(_ list: WabiAXNode) -> String? {
@@ -119,14 +119,29 @@ enum WabiNativeMessages {
         return blocks.joined(separator: "\n\n")
     }
     static func read(_ root: WabiAXNode, purpose: WabiReadPurpose = .conversation) throws -> [WabiAppMessage] {
-        guard purpose == .conversation else { return [] }
+        guard purpose != .readiness else { return [] }
         let nodes = root.descendants
         // Wabi 0.1.11 and 0.1.15 expose sender-specific message frames through native
         // AXDOMClassList. Refuse unknown frames rather than infer a speaker
         // from text, position, color, or a delivery receipt.
         let frameClasses: Set<String> = ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e"]
-        let frames = nodes.filter { $0.role == "AXGroup" && frameClasses.isSubset(of: Set($0.classes)) }
-        guard !frames.isEmpty, frames.count == nodes.filter({ $0.role == "AXPopUpButton" && $0.label == "Add reaction" }).count else {
+        var frames = nodes.filter { $0.role == "AXGroup" && frameClasses.isSubset(of: Set($0.classes)) }
+        let reactions = nodes.filter { $0.role == "AXPopUpButton" && $0.label == "Add reaction" }.count
+        // While Wabi prepares a reply, its AX tree can contain an empty
+        // assistant frame after the complete outgoing message. Ignore only
+        // that trailing placeholder: it is not a reply, and every preceding
+        // frame must still have its own reaction control.
+        if purpose == .sentWaiting, frames.count >= 2, frames.count == reactions + 1,
+           let pending = frames.last, let outgoing = frames.dropLast().last,
+           pending.classes.contains("xqcrz7y"), !pending.classes.contains("xpvyfi4"),
+           outgoing.classes.contains("xpvyfi4"), !outgoing.classes.contains("xqcrz7y"),
+           !pending.descendants.contains(where: { $0.role == "AXStaticText" || ($0.role == "AXPopUpButton" && $0.label == "Add reaction") }),
+           frames.dropLast().allSatisfy({ frame in
+               frame.descendants.filter { $0.role == "AXPopUpButton" && $0.label == "Add reaction" }.count == 1
+           }) {
+            frames.removeLast()
+        }
+        guard !frames.isEmpty, frames.count == reactions else {
             throw WabiObservationError.transient("Wabi's messages are still updating. No sender or reply was inferred.")
         }
         return try frames.map { frame in
@@ -633,7 +648,7 @@ actor WabiAppConversation {
         return try await DesktopAppWorkflow.reply(app: "Wabi", timing: timing, onSubmitAction: onSubmitAction, releaseFocus: releaseFocus, submit: {
             try await self.click(state.sendButton(app: .wabi), target, session: session)
         }, observe: {
-            (state, native) = try await self.observe(target, session: session)
+            (state, native) = try await self.observe(target, session: session, purpose: .sentWaiting)
             guard native.url == url else { throw DesktopAppError.unavailable("Wabi switched chats while waiting. No automatic resend.") }
             let answer = try receipt.reply(in: native.messages)
             if native.draft == "", !receipt.unchanged(native.messages), !submissionObserved {

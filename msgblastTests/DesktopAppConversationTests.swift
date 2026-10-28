@@ -660,6 +660,31 @@ final class DesktopAppConversationTests: XCTestCase {
                        [.init(role: .assistant, text: "Example message")])
     }
 
+    func testWabiEmptyPendingAssistantFrameAllowsOutgoingConfirmationWithoutAttributingReply() throws {
+        func frame(_ sender: String, _ text: String) -> WabiAXNode {
+            .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: [
+                .init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction"), .init(role: "AXStaticText", value: "5:13 PM")])
+        }
+        let greeting = frame("xqcrz7y", "Welcome")
+        let outgoing = frame("xpvyfi4", "Question")
+        let pending = WabiAXNode(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", "xqcrz7y"])
+        let root = WabiAXNode(role: "AXWebArea", children: [greeting, outgoing, pending])
+        let messages = try WabiNativeMessages.read(root, purpose: .sentWaiting)
+        XCTAssertEqual(messages, [.init(role: .assistant, text: "Welcome"), .init(role: .user, text: "Question")])
+        XCTAssertThrowsError(try WabiNativeMessages.read(root), "A pending reply must still block a new send")
+        let receipt = WabiAppReceipt(baseline: [.init(role: .assistant, text: "Welcome")], prompt: "Question")
+        XCTAssertFalse(receipt.unchanged(messages), "The exact outgoing message confirms submission")
+        XCTAssertNil(try receipt.reply(in: messages), "The empty assistant frame is not a reply")
+
+        let wrongSender = WabiAXNode(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", "xpvyfi4"])
+        let partial = WabiAXNode(role: "AXGroup", classes: pending.classes, children: [.init(role: "AXStaticText", value: "Partial answer")])
+        for children in [[greeting, outgoing, wrongSender], [greeting, outgoing, partial], [greeting, pending, outgoing],
+                         [greeting, pending], [greeting, outgoing, pending, pending],
+                         [greeting, outgoing, pending, .init(role: "AXPopUpButton", label: "Add reaction")]] {
+            XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: children), purpose: .sentWaiting), "Ambiguous or incomplete message layouts must not be attributed")
+        }
+    }
+
     func testWabiIncompleteIncomingFrameHasNoAttributedBodyUntilLayoutSettles() throws {
         func frame(_ sender: String, _ text: String, timestamp: Bool = true) -> WabiAXNode {
             var children: [WabiAXNode] = [.init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction")]
@@ -2447,6 +2472,43 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
     }
 
+    func testWabiConfirmsOutgoingWhileEmptyReplyFrameIsStillPending() async throws {
+        let welcome = WabiAppMessage(role: .assistant, text: "Welcome")
+        let outgoing = WabiAppMessage(role: .user, text: prompt)
+        var initial = windows(); initial["native"] = wabiNative(messages: [welcome])
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt, messages: [welcome])
+        var sent = step("click", [:]); sent["native"] = wabiNative(messages: [welcome, outgoing])
+        var waiting = snapshot(wabi()); waiting["native"] = wabiNative(messages: [welcome, outgoing])
+        var completed = snapshot(wabi(reply: "Finished answer"), repeating: true)
+        completed["native"] = wabiNative(messages: [welcome, outgoing, .init(role: .assistant, text: "Finished answer")])
+        completed["wait_for_release"] = true
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent, waiting, completed])
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("native.json")
+        let adapter = WabiAppConversation(executable: fixture.executable,
+            timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(5), callTimeout: 3)) { _, purpose in
+            let observation = try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+            guard purpose == .sentWaiting, observation.messages.count == 2 else { return observation }
+            func frame(_ sender: String, _ text: String) -> WabiAXNode {
+                .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: [
+                    .init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction"), .init(role: "AXStaticText", value: "5:13 PM")])
+            }
+            let pending = WabiAXNode(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", "xqcrz7y"])
+            let messages = try WabiNativeMessages.read(.init(role: "AXWebArea", children: [frame("xqcrz7y", "Welcome"), frame("xpvyfi4", outgoing.text), pending]), purpose: .sentWaiting)
+            return WabiAppObservation(url: observation.url, draft: observation.draft, links: observation.links,
+                                      messages: messages, composerFocused: observation.composerFocused)
+        }
+        let submitted = expectation(description: "Outgoing confirmed before the reply is available")
+        let task = Task { try await adapter.reply(prompt, in: wabiURL, onSubmitted: { submitted.fulfill() }) }
+        await fulfillment(of: [submitted], timeout: 4)
+        try Data().write(to: fixture.directory.appendingPathComponent("release"))
+        let answer = try await task.value
+        XCTAssertEqual(answer, "Finished answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
     func testWabiReplyMayFinishDuringReadbackWithoutReplayingInput() async throws {
         var initial = windows(); initial["native"] = wabiNative()
         var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt)
@@ -2914,10 +2976,10 @@ final class DesktopAppDriverTests: XCTestCase {
         return WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(2), callTimeout: 3)) { target, purpose in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             let observation = try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
-            if unreadableHistory, purpose == .conversation, observation.url == URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa") {
+            if unreadableHistory, purpose != .readiness, observation.url == URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa") {
                 throw WabiObservationError.transient("Historical layout unavailable")
             }
-            if purpose == .conversation, observation.messages.contains(where: { $0.role == .user }), neverSettlesAfterSend || (transientAfterSend && fault.shouldFail()) {
+            if purpose != .readiness, observation.messages.contains(where: { $0.role == .user }), neverSettlesAfterSend || (transientAfterSend && fault.shouldFail()) {
                 throw WabiObservationError.transient("Wabi's messages are still updating. No sender or reply was inferred.")
             }
             return WabiAppObservation(url: observation.url, draft: observation.draft, links: observation.links,
