@@ -94,4 +94,27 @@ final class MobileAppTests: XCTestCase {
         app.forgetMac()
         XCTAssertEqual(app.connection.state, .unpaired)
     }
+
+    func testRepairingReturnsOnlyOnceTheNewInboxIsReady() async throws {
+        let mac = FakeMac()
+        let app = MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(),
+                            defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                            makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        XCTAssertTrue(app.inboxReady)
+
+        // Pairing again replaces the cache; the call waits for the new Mac's snapshot.
+        mac.snapshotDelay = .milliseconds(200)
+        let started = ContinuousClock.now
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        XCTAssertTrue(app.inboxReady, "Returns onto a filled inbox")
+        XCTAssertEqual(app.store.projection.seq, 10)
+        XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .milliseconds(200))
+
+        // A failed attempt throws and keeps the existing pairing, so a sheet can stay open.
+        let before = app.connection.pairedMac
+        var wrong = mac.offer(); wrong.code = "wrong"
+        do { _ = try await app.pairAndWaitForInbox(offer: wrong, deviceName: "Phone"); XCTFail("A wrong code must not pair") } catch {}
+        XCTAssertEqual(app.connection.pairedMac, before)
+    }
 }

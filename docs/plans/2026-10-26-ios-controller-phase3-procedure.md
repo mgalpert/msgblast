@@ -163,6 +163,14 @@ Pass: the phone warned before sending; the chip ends at *Replied*, or at
 2. Phone → Settings → Forget this Mac. Expected: the pairing screen; cached
    conversations are gone from the phone.
 3. On the Mac pane: Forget the phone, then Pair a phone and pair again by QR.
+4. While the phone is still paired, open a new pairing link on the phone (for
+   example from the Camera app). Expected: the pairing sheet opens and stays open
+   while you compare the name and Key fingerprint; it does not close by itself and
+   cannot be swiped away. Tap Cancel: it closes and the existing pairing stays.
+5. Open the link again with Tailscale off on the phone (cellular) and tap Pair.
+   Expected: after about 15 seconds the sheet still shows, with "Your Mac could not
+   be reached…" and the Tailscale hint under Pair. Turn Tailscale on and tap Pair
+   again: the sheet closes only once the new Mac's inbox has loaded.
 
 Record: what each step showed on both devices.
 Pass: a failed or expired code never breaks the existing pairing; after Forget and

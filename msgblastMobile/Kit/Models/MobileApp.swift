@@ -96,6 +96,20 @@ public final class MobileApp: ObservableObject {
         }
     }
 
+    /// The inbox has the paired Mac's first snapshot.
+    public var inboxReady: Bool { store.projection.seq != nil }
+
+    /// Pairs, then waits (up to `inboxTimeout`) for the new Mac's first snapshot, so a
+    /// pairing sheet closes onto a filled inbox. A failed pairing throws as `pair` does.
+    public func pairAndWaitForInbox(offer: RemotePairingOffer, deviceName: String, inboxTimeout: Duration = .seconds(10)) async throws -> PairedMac {
+        let mac = try await pair(offer: offer, deviceName: deviceName)
+        let deadline = ContinuousClock.now + inboxTimeout
+        while !inboxReady && ContinuousClock.now < deadline && connection.pairedMac == mac {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return mac
+    }
+
     public func forgetMac() {
         connection.forget()
         store.forgetMac()

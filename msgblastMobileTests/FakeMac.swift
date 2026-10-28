@@ -13,6 +13,8 @@ final class FakeMac {
     var snapshot: RemoteSnapshot
     var commands: [RemoteCommand] = []
     var answerCommands = true
+    /// Holds the first snapshot back, like a Mac that takes a moment to build it.
+    var snapshotDelay: Duration?
     var lockedOnConnect = false
     var forgetOnResume = false
     private(set) var connections = 0
@@ -73,7 +75,11 @@ final class FakeMac {
                 case .subscribe(let since):
                     sinceSeq = since
                     if mac.lockedOnConnect { send(.error(RemoteErrorMessage(code: .macLocked, message: "Disconnected: your Mac is locked."))); return }
-                    if let since, since == mac.snapshot.seq { send(.events(events: [], latestSeq: since)) } else { send(.snapshot(mac.snapshot)) }
+                    if let since, since == mac.snapshot.seq { send(.events(events: [], latestSeq: since)) }
+                    else if let delay = mac.snapshotDelay {
+                        let snapshot = mac.snapshot
+                        Task { @MainActor [weak self] in try? await Task.sleep(for: delay); self?.send(.snapshot(snapshot)) }
+                    } else { send(.snapshot(mac.snapshot)) }
                 case .command(let command):
                     mac.commands.append(command)
                     if mac.answerCommands { send(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied))) }

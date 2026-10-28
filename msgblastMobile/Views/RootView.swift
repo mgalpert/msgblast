@@ -4,6 +4,9 @@ import msgblastMobileKit
 struct RootView: View {
     @ObservedObject var app: MobileApp
     @Binding var incomingLink: String?
+    /// The pairing sheet over an already paired Mac. Its own state, so consuming the link
+    /// never closes it; only a successful pairing or Cancel does.
+    @State private var showingRepair = false
 
     var body: some View {
         Group {
@@ -14,9 +17,20 @@ struct RootView: View {
                     .safeAreaInset(edge: .top, spacing: 0) { MacBanner(app: app) }
             }
         }
-        .sheet(isPresented: Binding(get: { incomingLink != nil && app.connection.pairedMac != nil }, set: { if !$0 { incomingLink = nil } })) {
-            NavigationStack { PairingView(app: app, incomingLink: $incomingLink) }
+        .sheet(isPresented: $showingRepair) {
+            NavigationStack { PairingView(app: app, incomingLink: $incomingLink, close: { showingRepair = false }) }
+                .interactiveDismissDisabled()  // Closes only on success or Cancel.
         }
+        .onAppear { presentRepairIfNeeded() }
+        .onChange(of: incomingLink) { _, _ in presentRepairIfNeeded() }
+    }
+}
+
+extension RootView {
+    /// A link that arrives while a Mac is paired opens the pairing sheet. When no Mac is
+    /// paired the root pairing screen reads it instead.
+    fileprivate func presentRepairIfNeeded() {
+        if incomingLink != nil && app.connection.pairedMac != nil { showingRepair = true }
     }
 }
 

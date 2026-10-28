@@ -8,6 +8,8 @@ import msgblastRemoteProtocol
 struct PairingView: View {
     @ObservedObject var app: MobileApp
     @Binding var incomingLink: String?
+    /// Set when shown as a sheet over a paired Mac: closes it (Cancel, or after a pairing whose inbox is ready).
+    var close: (() -> Void)? = nil
     @State private var link = ""
     @State private var offer: RemotePairingOffer?
     @State private var error: String?
@@ -15,7 +17,6 @@ struct PairingView: View {
     @State private var unreachable = false
     @State private var pairing = false
     @State private var scanning = false
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Form {
@@ -57,6 +58,9 @@ struct PairingView: View {
             }
         }
         .navigationTitle("Pair with your Mac")
+        .toolbar {
+            if let close { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { close() }.disabled(pairing) } }
+        }
         .sheet(isPresented: $scanning) { ScannerView { code in scanning = false; read(code) } }
         .onAppear { if let incomingLink { read(incomingLink); self.incomingLink = nil } }
         .onChange(of: incomingLink) { _, value in if let value { read(value); incomingLink = nil } }
@@ -79,8 +83,10 @@ struct PairingView: View {
         unreachable = false
         Task {
             do {
-                _ = try await app.pair(offer: offer, deviceName: UIDevice.current.name)
-                dismiss()
+                // As a sheet, close onto the new Mac's filled inbox. At the root, RootView
+                // swaps to the inbox by itself once a Mac is paired.
+                _ = try await app.pairAndWaitForInbox(offer: offer, deviceName: UIDevice.current.name)
+                close?()
             } catch {
                 // Stay on this screen so Pair can be tapped again; each try is a fresh race.
                 self.unreachable = (error as? RaceFailure) != nil
