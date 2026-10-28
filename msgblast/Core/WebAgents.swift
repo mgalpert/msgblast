@@ -173,7 +173,9 @@ public final class WebAgents: ObservableObject {
             }
         }
     }
-    public func connectSelected() { availableSessions.filter { $0.state.selected }.forEach { $0.connect() } }
+    public func connectSelected() {
+        availableSessions.filter { $0.state.selected || $0.incompleteDesktopAttempt != nil }.forEach { $0.connect() }
+    }
     public func signInRequired(for sessions: [WebAgentSession]) async -> [WebAgentID] {
         let tasks = sessions.filter { !$0.provider.usesNativeConversation }.map { session in
             Task { @MainActor in (session.id, await session.checkSignIn()) }

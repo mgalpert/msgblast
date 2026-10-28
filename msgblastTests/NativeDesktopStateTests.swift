@@ -353,6 +353,27 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertEqual(agents.broadcastSelection.map(\.id), [chatgpt.id])
     }
 
+    func testStartupConnectsUnselectedPendingAppsWithoutSelectingOrResendingThem() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let wabi = try XCTUnwrap(agents.session(for: .init(provider: .wabi)))
+        let claude = try XCTUnwrap(agents.session(for: .init(provider: .claudeApp)))
+        let disabled = try XCTUnwrap(agents.session(for: .init(provider: .museApp)))
+        for session in [wabi, claude, disabled] { session.setEnabled(true); agents.select(session, selected: false) }
+        disabled.setEnabled(false)
+        var pending = WebSendAttempt(text: "Earlier request", status: .waiting)
+        pending.comparisonID = UUID(); pending.messageID = pending.id.uuidString
+        for session in [wabi, disabled] { session.updateState { $0.attempts = [pending] } }
+        agents.connectSelected()
+        XCTAssertTrue(wabi.connected, "A busy agent excluded from the next broadcast must still resume reading its pending reply after restart")
+        XCTAssertFalse(wabi.state.selected)
+        XCTAssertEqual(wabi.state.attempts, [pending])
+        XCTAssertFalse(claude.connected, "Unselected idle apps need no startup work")
+        XCTAssertFalse(disabled.connected, "An explicitly disabled app must stay disconnected")
+    }
+
     func testConflictingNativeRecipientsNeverSubmitEvenIfSelectionWasBypassed() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
