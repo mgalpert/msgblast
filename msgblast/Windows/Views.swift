@@ -185,7 +185,7 @@ struct MainView: View {
     private enum DetailSelection { case agents, discover }
     @StateObject private var captureLayout = ChatCaptureLayout()
     @State private var selection = DetailSelection.agents
-    @State private var showingComparison = false
+    @State private var showingComparison: Bool
     private var sidebarSelectionColor: Color { Color.primary.opacity(controlActiveState == .inactive ? 0.06 : 0.10) }
     private var sidebarIconColor: Color { controlActiveState == .inactive ? .secondary : .accentColor }
     private var showingAgents: Bool { selection == .agents && !showingComparison }
@@ -195,13 +195,23 @@ struct MainView: View {
         self.model = model
         self.web = model.webAgents
         self.updater = updater
+        _showingComparison = State(initialValue: model.webAgents.comparisonID.flatMap { model.comparison($0) } != nil)
+    }
+
+    private func showAgentGrid() {
+        if !showingComparison && web.comparisonID == nil {
+            selection = .agents
+        } else if model.requestNewBlast() {
+            selection = .agents
+            showingComparison = false
+        }
     }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $captureLayout.sidebarVisibility) {
             List {
                 Section {
-                    Button { selection = .agents; showingComparison = false } label: {
+                    Button { showAgentGrid() } label: {
                         sidebarLabel("Agents", systemImage: "person.2.fill", selected: showingAgents)
                     }.buttonStyle(.plain).accessibilityLabel("Agents")
                         .accessibilityValue(showingAgents ? "Selected" : "Not selected")
@@ -269,7 +279,7 @@ struct MainView: View {
         .tint(.blue)
         .focusedSceneValue(\.mainWindowActions, model.error != nil ? nil : MainWindowActions(
             newBlast: { model.requestNewBlast() },
-            showAgents: { selection = .agents; showingComparison = false },
+            showAgents: { showAgentGrid() },
             showDiscover: { selection = .discover },
             canStartBlast: model.canStartNewBlast))
         .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat }
