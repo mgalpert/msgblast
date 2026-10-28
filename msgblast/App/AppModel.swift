@@ -18,21 +18,25 @@ final class AppModel: ObservableObject {
     var webBroadcastInputsFinished: Bool { webBroadcastReplyGate.inputsFinished }
     var independentNativeReplies: Int { webBroadcastReplyGate.independentReplies }
 
-    func beginSharedWebBroadcast(nativeOnly: Bool = false) -> Bool {
-        guard !webBroadcastBusy, webBroadcastReplyGate.beginBroadcast(nativeOnly: nativeOnly) else { return false }
+    func beginSharedWebBroadcast(nativeOnly: Bool = false, comparisonID: UUID? = nil) -> UUID? {
+        guard !webBroadcastBusy || webBroadcastReplyGate.canBrowseWhileWaiting,
+              let id = webBroadcastReplyGate.beginBroadcast(nativeOnly: nativeOnly, comparisonID: comparisonID) else { return nil }
         webBroadcastBusy = true
-        return true
+        return id
     }
-    func finishSharedWebInputs() {
+    func bindSharedWebBroadcast(_ id: UUID, to comparisonID: UUID) -> Bool {
+        webBroadcastReplyGate.bindComparison(comparisonID, to: id)
+    }
+    func finishSharedWebInputs(_ id: UUID) {
         guard webBroadcastBusy else { return }
-        webBroadcastReplyGate.finishInputs()
+        webBroadcastReplyGate.finishInputs(id)
     }
-    func confirmSharedWebSubmission() {
+    func confirmSharedWebSubmission(_ id: UUID) {
         guard webBroadcastBusy else { return }
-        webBroadcastReplyGate.confirmSubmission()
+        webBroadcastReplyGate.confirmSubmission(id)
     }
-    func finishSharedWebBroadcast() {
-        webBroadcastReplyGate.finishBroadcast()
+    func finishSharedWebBroadcast(_ id: UUID) {
+        webBroadcastReplyGate.finishBroadcast(id)
         if !webBroadcastReplyGate.busy { finishWebBroadcastOwnership() }
     }
     func beginIndependentNativeReply() -> Bool {
@@ -665,7 +669,7 @@ final class AppModel: ObservableObject {
         let available = demo ? chats : try database?.chats() ?? []
         guard available.contains(where: { $0.id == chat.id && $0.eligible && ChatResolver.normalize($0.handle) == ChatResolver.normalize(chat.handle) }) else { throw AppFailure.blocked("The saved destination is no longer an eligible one-to-one Messages chat. Nothing was sent.") }
     }
-    func submit(_ id: UUID, retry: Bool, only memberID: UUID? = nil) async {
+    func submit(_ id: UUID, retry: Bool, only memberID: UUID? = nil, telemetryManagedExternally: Bool = false) async {
         guard let i = index(id), state.comparisons[i].endedAt == nil, !busy else { return }
         let telemetryStarted = Date()
         let previouslySubmitted = Set(state.comparisons[i].members.filter { $0.submission == .submitted }.map(\.id))
@@ -722,7 +726,7 @@ final class AppModel: ObservableObject {
                 persist()
             }
         }
-        if !webBroadcastBusy {
+        if !telemetryManagedExternally {
             let submitted = state.comparisons[i].members.filter { $0.submission == .submitted && !previouslySubmitted.contains($0.id) }.count
             if submitted > 0 { recordMessageSubmission(kind: .shared, recipientCount: submitted, started: telemetryStarted, logicalID: id) }
             else { recordOperation(.send, success: false, started: telemetryStarted) }
@@ -768,7 +772,7 @@ final class AppModel: ObservableObject {
         }
         if changed { try save() }
     }
-    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil) async {
+    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil, telemetryManagedExternally: Bool = false) async {
         guard let i = index(id), state.comparisons[i].endedAt == nil, !busy,
               memberID == nil || !webBroadcastBusy || webBroadcastInputsFinished else { return }
         do { try freezeSharedContext(id) } catch { self.error = error.localizedDescription; return }
@@ -846,7 +850,7 @@ final class AppModel: ObservableObject {
             let completed = state.comparisons[i].followUps[k]
             state.comparisons[i].recordSharedFollowUp(completed)
             try save()
-            if !webBroadcastBusy || memberID != nil {
+            if !telemetryManagedExternally {
                 let submitted = completed.states.filter { $0.value == .submitted && !previouslySubmitted.contains($0.key) }.count
                 if submitted > 0 { recordMessageSubmission(kind: memberID == nil ? .shared : .private, recipientCount: submitted, started: telemetryStarted, logicalID: completed.id) }
                 else { recordOperation(.send, success: false, started: telemetryStarted) }

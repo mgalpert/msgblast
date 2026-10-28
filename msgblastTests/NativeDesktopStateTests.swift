@@ -51,44 +51,78 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertEqual(restored.attempts.first?.status, .uncertain)
     }
 
-    func testWorkspaceRemainsOwnedUntilAnIndependentReplyAndItsBroadcastBothFinish() {
+    func testWorkspaceRemainsOwnedUntilAnIndependentReplyAndItsBroadcastBothFinish() throws {
         var gate = BroadcastReplyGate()
-        XCTAssertTrue(gate.beginBroadcast())
+        let broadcast = try XCTUnwrap(gate.beginBroadcast())
         XCTAssertFalse(gate.beginIndependentReply(), "Do not start a private reply while the broadcast is still entering input")
-        gate.finishInputs()
+        gate.finishInputs(broadcast)
         XCTAssertTrue(gate.beginIndependentReply())
         XCTAssertFalse(gate.beginIndependentReply(), "Native private input must remain serialized")
-        gate.finishBroadcast()
+        gate.finishBroadcast(broadcast)
         XCTAssertTrue(gate.busy, "Finishing the first broadcast must not unlock a private reply in flight")
         XCTAssertFalse(gate.inputsFinished)
-        XCTAssertFalse(gate.beginBroadcast())
+        XCTAssertNil(gate.beginBroadcast())
         gate.finishIndependentReply()
         XCTAssertFalse(gate.busy)
-        XCTAssertTrue(gate.beginBroadcast())
+        XCTAssertNotNil(gate.beginBroadcast())
     }
 
-    func testNativeBroadcastAllowsBrowsingOnlyAfterInputAndAConfirmedSubmission() {
+    func testNativeBroadcastAllowsBrowsingOnlyAfterInputAndAConfirmedSubmission() throws {
         var gate = BroadcastReplyGate()
-        XCTAssertTrue(gate.beginBroadcast(nativeOnly: true))
+        let first = try XCTUnwrap(gate.beginBroadcast(nativeOnly: true))
         XCTAssertFalse(gate.canBrowseWhileWaiting)
-        gate.confirmSubmission()
+        gate.confirmSubmission(first)
         XCTAssertFalse(gate.canBrowseWhileWaiting, "The other app inputs still own their destinations")
-        gate.finishInputs()
+        gate.finishInputs(first)
         XCTAssertTrue(gate.canBrowseWhileWaiting)
         XCTAssertTrue(gate.beginIndependentReply())
         XCTAssertFalse(gate.canBrowseWhileWaiting, "A private send also owns the workspace")
         gate.finishIndependentReply()
         XCTAssertTrue(gate.canBrowseWhileWaiting)
-        gate.finishBroadcast()
+        gate.finishBroadcast(first)
         XCTAssertFalse(gate.canBrowseWhileWaiting)
 
-        XCTAssertTrue(gate.beginBroadcast(nativeOnly: true))
-        gate.finishInputs()
+        let unconfirmed = try XCTUnwrap(gate.beginBroadcast(nativeOnly: true))
+        gate.finishInputs(unconfirmed)
         XCTAssertFalse(gate.canBrowseWhileWaiting, "An unconfirmed send must retain its draft ownership")
-        gate.finishBroadcast()
-        XCTAssertTrue(gate.beginBroadcast())
-        gate.finishInputs(); gate.confirmSubmission()
+        gate.finishBroadcast(unconfirmed)
+        let website = try XCTUnwrap(gate.beginBroadcast())
+        gate.finishInputs(website); gate.confirmSubmission(website)
         XCTAssertFalse(gate.canBrowseWhileWaiting, "Website sessions cannot safely switch during a send")
+    }
+
+    func testIndependentSharedBroadcastCanStartWhileAnEarlierNativeReplyIsPending() throws {
+        var gate = BroadcastReplyGate()
+        let firstComparison = UUID(), secondComparison = UUID()
+        let first = try XCTUnwrap(gate.beginBroadcast(nativeOnly: true, comparisonID: firstComparison))
+        gate.finishInputs(first)
+        gate.confirmSubmission(first)
+        XCTAssertTrue(gate.canBrowseWhileWaiting)
+        XCTAssertNil(gate.beginBroadcast(nativeOnly: true, comparisonID: firstComparison), "A second send in the same conversation must preserve message order")
+        XCTAssertFalse(gate.bindComparison(UUID(), to: first), "A broadcast cannot change conversations after it is bound")
+        let second = try XCTUnwrap(gate.beginBroadcast(nativeOnly: true, comparisonID: secondComparison), "A new independent shared send should not wait for an earlier app reply")
+        XCTAssertFalse(gate.bindComparison(firstComparison, to: second), "An active comparison cannot be rebound to a different broadcast")
+        XCTAssertFalse(gate.canBrowseWhileWaiting, "The new broadcast still owns input")
+        gate.finishBroadcast(first)
+        XCTAssertTrue(gate.busy, "The earlier reply must not unlock the later broadcast")
+        gate.confirmSubmission(first)
+        gate.finishInputs(first)
+        XCTAssertFalse(gate.canBrowseWhileWaiting, "A stale callback cannot confirm or finish another broadcast")
+        gate.confirmSubmission(second)
+        gate.finishInputs(second)
+        XCTAssertTrue(gate.canBrowseWhileWaiting)
+        gate.finishBroadcast(second)
+        XCTAssertFalse(gate.busy)
+
+        let slow = try XCTUnwrap(gate.beginBroadcast(nativeOnly: true, comparisonID: firstComparison))
+        gate.finishInputs(slow); gate.confirmSubmission(slow)
+        let fast = try XCTUnwrap(gate.beginBroadcast(nativeOnly: true, comparisonID: secondComparison))
+        gate.finishInputs(fast); gate.confirmSubmission(fast)
+        gate.finishBroadcast(fast)
+        XCTAssertTrue(gate.busy, "Finishing the newer reply must keep the older request owned")
+        XCTAssertTrue(gate.canBrowseWhileWaiting)
+        gate.finishBroadcast(slow)
+        XCTAssertFalse(gate.busy)
     }
 
     func testIndependentReplyDoesNotTakeAWaitingAgentsSharedAppSurface() throws {
@@ -109,9 +143,18 @@ final class NativeDesktopStateTests: XCTestCase {
         pending.comparisonID = comparison; pending.messageID = pending.id.uuidString
         dots.updateState { $0.attempts = [pending] }
         XCTAssertFalse(agents.canSendIndependentNativeReply(to: chatgpt, comparisonID: comparison), "ChatGPT and Dots share one app")
+        XCTAssertFalse(agents.canUseNativeSurface(to: chatgpt, comparisonID: comparison), "A new shared send cannot take an app owned by Dots")
         XCTAssertFalse(agents.canSendIndependentNativeReply(to: dots, comparisonID: comparison), "Never send a second request to a waiting agent")
         XCTAssertTrue(agents.canSendIndependentNativeReply(to: wabi, comparisonID: comparison), "An independent app can still receive a private reply")
         XCTAssertFalse(agents.canSendIndependentNativeReply(to: wabi, comparisonID: UUID()), "A different comparison must not take the request")
+        var wabiPending = WebSendAttempt(text: "Wabi is still working", status: .waiting)
+        wabiPending.comparisonID = comparison; wabiPending.messageID = wabiPending.id.uuidString
+        wabi.updateState { $0.attempts = [wabiPending] }
+        XCTAssertFalse(agents.canSendIndependentNativeReply(to: wabi, comparisonID: comparison), "A ready-looking app with an unresolved send still owns its surface")
+        XCTAssertFalse(agents.canUseNativeSurface(to: wabi, comparisonID: comparison))
+        wabi.updateState { $0.attempts = [] }
+        XCTAssertTrue(agents.canSendIndependentNativeReply(to: wabi, comparisonID: comparison))
+        XCTAssertTrue(agents.canUseNativeSurface(to: wabi, comparisonID: comparison))
         dots.acknowledgeIncompleteRequest()
         XCTAssertTrue(agents.canSendIndependentNativeReply(to: chatgpt, comparisonID: comparison))
     }

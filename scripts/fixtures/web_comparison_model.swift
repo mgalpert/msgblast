@@ -602,26 +602,57 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         browseModel.setSharedDraft("First chat draft")
         let browseB = await browseModel.prepareWebComparison("Second chat", recipientIDs: [], agents: [.init(provider: .wabi)])!
         browseModel.setSharedDraft("Second chat draft")
-        precondition(browseModel.beginSharedWebBroadcast(nativeOnly: true))
+        let browseBroadcast = browseModel.beginSharedWebBroadcast(nativeOnly: true, comparisonID: browseB)!
         browseModel.openWebComparison(browseA, present: false)
         precondition(browseModel.webAgents.comparisonID == browseB, "Input handoff must finish before switching")
-        browseModel.finishSharedWebInputs()
+        browseModel.finishSharedWebInputs(browseBroadcast)
         precondition(!browseModel.requestNewBlast(), "An unconfirmed submission still owns its draft")
-        browseModel.confirmSharedWebSubmission()
+        browseModel.confirmSharedWebSubmission(browseBroadcast)
         browseModel.openWebComparison(browseA, present: false)
         precondition(browseModel.webAgents.comparisonID == browseA && browseModel.state.draft == "First chat draft")
         precondition(!browseModel.requestNewBlast(agent: .web(.wabi)), "Quick chat cannot navigate a busy app")
         precondition(browseModel.requestNewBlast())
         browseModel.setSharedDraft("New chat draft")
-        browseModel.finishSharedWebBroadcast()
-        precondition(browseModel.webAgents.comparisonID == nil && browseModel.state.draft == "New chat draft")
+        let secondBroadcast = browseModel.beginSharedWebBroadcast(nativeOnly: true)!
+        let secondComparison = await browseModel.prepareWebComparison("New independent chat", recipientIDs: [], agents: [.init(provider: .claudeApp)])!
+        precondition(browseModel.bindSharedWebBroadcast(secondBroadcast, to: secondComparison))
+        precondition(!browseModel.requestNewBlast(), "The new broadcast owns input until it is handed off")
+        browseModel.finishSharedWebBroadcast(browseBroadcast)
+        precondition(browseModel.webBroadcastBusy && !browseModel.requestNewBlast(), "An older completion must not unlock the new broadcast")
+        browseModel.finishSharedWebInputs(browseBroadcast)
+        browseModel.confirmSharedWebSubmission(browseBroadcast)
+        precondition(!browseModel.requestNewBlast(), "Stale callbacks cannot release the new broadcast")
+        browseModel.finishSharedWebInputs(secondBroadcast)
+        browseModel.confirmSharedWebSubmission(secondBroadcast)
+        precondition(browseModel.webBroadcastReplyGate.canBrowseWhileWaiting)
+        browseModel.finishSharedWebBroadcast(secondBroadcast)
+        precondition(browseModel.webAgents.comparisonID == secondComparison && browseModel.state.draft == "New chat draft")
         browseModel.openWebComparison(browseB, present: false)
         precondition(browseModel.state.draft == "Second chat draft")
         let browseSaved = try browseModel.local.load()
         precondition(browseSaved.workspaceDrafts?[browseA.uuidString] == "First chat draft")
         browseModel.timer?.invalidate()
         await browseModel.webAgents.cancelAndWait()
-        print("PASS: actual AppModel permits browsing only after native input and confirmation, retains each draft, and does not reopen a departed workspace when the reply finishes.")
+        print("PASS: actual AppModel permits independent broadcasts after native input and confirmation, isolates completion callbacks, and retains each workspace draft.")
+        let independentMessages = AppModel()
+        let oldAppComparison = await independentMessages.prepareWebComparison("Earlier app prompt", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        let oldAppBroadcast = independentMessages.beginSharedWebBroadcast(nativeOnly: true, comparisonID: oldAppComparison)!
+        independentMessages.finishSharedWebInputs(oldAppBroadcast)
+        independentMessages.confirmSharedWebSubmission(oldAppBroadcast)
+        precondition(independentMessages.requestNewBlast())
+        let independentRecipient = independentMessages.state.agents[0]
+        independentMessages.setSharedDraft("A separate Messages prompt")
+        await independentMessages.start(recipientIDs: [independentRecipient.id])
+        let messagesComparison = independentMessages.state.comparisons[0]
+        precondition(messagesComparison.id != oldAppComparison && messagesComparison.members.count == 1)
+        precondition(messagesComparison.members[0].submission == .submitted && messagesComparison.members[0].anchor != nil)
+        precondition(independentMessages.webBroadcastBusy, "Messages must not finish the earlier app's broadcast")
+        independentMessages.finishSharedWebBroadcast(oldAppBroadcast)
+        precondition(independentMessages.comparison(oldAppComparison)?.prompt == "Earlier app prompt")
+        precondition(independentMessages.comparison(messagesComparison.id)?.prompt == "A separate Messages prompt")
+        independentMessages.timer?.invalidate()
+        await independentMessages.webAgents.cancelAndWait()
+        print("PASS: actual AppModel submits a separate simulated Messages conversation while the earlier native app reply remains owned.")
         let model = AppModel()
         precondition(model.demo && model.local.url.path.contains("UIFixture"))
         model.coordinator = WindowCoordinator(model: model)
@@ -815,7 +846,7 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
             return [.muse: receipt]
         }, messages: { text in
             model.state.comparisons[raceIndex].allDraft = text
-            await model.followUp(raceID, recipients: [recipient.id], newAttemptID: broadcastID)
+            await model.followUp(raceID, recipients: [recipient.id], newAttemptID: broadcastID, telemetryManagedExternally: true)
             gate.messagesFinished = true
             return raceID
         })

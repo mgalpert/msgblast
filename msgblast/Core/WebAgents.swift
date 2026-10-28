@@ -182,9 +182,14 @@ public final class WebAgents: ObservableObject {
     public var hasNativeRequests: Bool { sessions.contains { $0.provider.usesNativeConversation && $0.isSending } }
     /// A private reply may proceed after a broadcast's inputs have finished,
     /// provided no other request owns the same native app surface.
-    public func canSendIndependentNativeReply(to session: WebAgentSession, comparisonID: UUID) -> Bool {
+    public func canSendIndependentNativeReply(to session: WebAgentSession, comparisonID: UUID?) -> Bool {
+        canUseNativeSurface(to: session, comparisonID: comparisonID) && session.canSubmitNativePrompt
+    }
+    /// Preparation may still be needed, but another request must not own this app.
+    public func canUseNativeSurface(to session: WebAgentSession, comparisonID: UUID?) -> Bool {
         guard sessions.contains(where: { $0 === session }), let app = session.provider.desktopApp,
-              session.state.comparisonID == comparisonID, !session.isSending, session.canSubmitNativePrompt else { return false }
+              session.state.comparisonID == comparisonID, !session.isSending,
+              session.incompleteDesktopAttempt == nil else { return false }
         return !sessions.contains { other in
             other !== session && other.provider.desktopApp?.bundleID == app.bundleID &&
                 (other.isSending || other.incompleteDesktopAttempt != nil)

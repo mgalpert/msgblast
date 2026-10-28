@@ -22,7 +22,11 @@ struct AgentsWorkspaceView: View {
     @State private var hiddenMembers: Set<UUID> = []
     @State private var hiddenWebAgents: Set<WebAgentID> = []
     private var sending: Bool { model.busy || model.webBroadcastBusy || web.sessions.contains { $0.isSending } }
-    private var busy: Bool { (windowComparisonID != nil && web.comparisonID != windowComparisonID) || sending }
+    private var canUseOtherRecipients: Bool {
+        !model.busy && model.webBroadcastBusy && model.webBroadcastReplyGate.canBrowseWhileWaiting &&
+            model.webBroadcastReplyGate.canBeginBroadcast(in: web.comparisonID)
+    }
+    private var busy: Bool { (windowComparisonID != nil && web.comparisonID != windowComparisonID) || (sending && !canUseOtherRecipients) }
     private var nativeRecipients: [Agent] {
         let ids = model.messageGridIDs
         let shown = Set(model.agentGridLayout.visibleIDs)
@@ -37,10 +41,22 @@ struct AgentsWorkspaceView: View {
     private var preparingDesktopSessions: [WebAgentSession] {
         selectedWebSessions.filter { $0.provider.desktopApp != nil && $0.loading }
     }
+    private var unavailableDuringAnotherBroadcast: [WebAgentSession] {
+        guard canUseOtherRecipients else { return [] }
+        return selectedWebSessions.filter { session in
+            if session.provider.desktopApp != nil {
+                return !web.canUseNativeSurface(to: session, comparisonID: web.comparisonID)
+            }
+            return session.isSending
+        }
+    }
     private var sharedSendDisabledReason: String? {
         guard !busy else { return nil }
         if WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) {
             return "Choose ChatGPT or Dots."
+        }
+        if !unavailableDuringAnotherBroadcast.isEmpty {
+            return "Wait for \(unavailableDuringAnotherBroadcast.map(\.name).formatted(.list(type: .and))) to finish responding."
         }
         if !preparingDesktopSessions.isEmpty {
             return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
@@ -52,7 +68,7 @@ struct AgentsWorkspaceView: View {
     }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return nativeComparison?.endedAt == nil && !busy && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
+        return nativeComparison?.endedAt == nil && !busy && unavailableDuringAnotherBroadcast.isEmpty && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
             && selectedWebSessions.allSatisfy { $0.provider.usesNativeConversation || ($0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text)) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
@@ -70,7 +86,7 @@ struct AgentsWorkspaceView: View {
             if showingComparison {
                 comparisonPanes
             } else {
-                AgentGridView(model: model, web: web, editing: $editingAgents, busy: busy,
+                AgentGridView(model: model, web: web, editing: $editingAgents, busy: sending, selectionBusy: busy,
                     toggleMessages: toggle, openChat: { session in
                         if web.comparisonID == nil { model.deselectHiddenGridRecipients(); model.persist() }
                         if !session.state.selected { web.toggle(session) }
@@ -102,7 +118,7 @@ struct AgentsWorkspaceView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button(editingAgents ? "Done" : "Edit") { editingAgents.toggle() }
                         .accessibilityLabel(editingAgents ? "Done editing agents" : "Edit agents")
-                        .disabled(busy)
+                        .disabled(sending)
                 }
             }
             if windowComparisonID == nil && !model.state.comparisons.isEmpty { ToolbarItem(placement: .navigation) {
@@ -170,7 +186,7 @@ struct AgentsWorkspaceView: View {
                 HStack(spacing: 0) {
                     ForEach(displayedSessions, id: \.id) { session in
                         if session.id != displayedSessions.first?.id { Divider() }
-                        WebAgentPane(session: session, account: model.personalAgent, busy: busy, allowPrivateReplyWhileBusy: canReplyWhileBroadcasting(to: session), endedMessages: archivedMessages(for: session), removalDisabled: sending, sendNative: { sendDirect($0, to: session) }, removeFromView: {
+                        WebAgentPane(session: session, account: model.personalAgent, busy: sending || (windowComparisonID != nil && web.comparisonID != windowComparisonID), allowPrivateReplyWhileBusy: canReplyWhileBroadcasting(to: session), endedMessages: archivedMessages(for: session), removalDisabled: sending, sendNative: { sendDirect($0, to: session) }, removeFromView: {
                             if windowComparisonID == nil || web.comparisonID == windowComparisonID {
                                 session.updateState { $0.selected = false }
                             }
@@ -237,11 +253,12 @@ struct AgentsWorkspaceView: View {
                     Text("Send to").font(.caption).foregroundStyle(.secondary)
                     ForEach(model.recipientWebSessions(for: nativeComparison), id: \.id) { session in
                         recipient(session.name, selected: session.isEnabled && session.state.selected) { selectRecipient(session) }
-                            .disabled(!session.isEnabled)
+                            .disabled(!session.isEnabled || (model.webBroadcastBusy && nativeComparison.map { !$0.resolvedWebAgentIDs.contains(session.id) } == true))
                     }
                     ForEach(model.recipientMessageAgents(for: nativeComparison)) { agent in
                         recipient(agent.name, selected: model.state.selection.contains(agent.id)) {
                             if let comparison = nativeComparison, !comparison.members.contains(where: { $0.id == agent.id }) {
+                                guard !model.webBroadcastBusy else { return }
                                 model.webBroadcastBusy = true
                                 Task { @MainActor in
                                     defer { model.webBroadcastBusy = false }
@@ -249,7 +266,7 @@ struct AgentsWorkspaceView: View {
                                 }
                             } else { hiddenMembers.remove(agent.id); toggle(agent.id) }
                         }
-                            .disabled(model.route(agent) == nil)
+                            .disabled(model.route(agent) == nil || (model.webBroadcastBusy && nativeComparison.map { !$0.members.contains(where: { $0.id == agent.id }) } == true))
                             .help("Messages · \(agent.name)")
                     }
                 }
@@ -292,6 +309,7 @@ struct AgentsWorkspaceView: View {
             web.toggle(session)
             return
         }
+        guard !model.webBroadcastBusy else { return }
         model.webBroadcastBusy = true
         web.select(session, selected: true)
         if !session.provider.usesNativeConversation { session.connect() }
@@ -332,10 +350,10 @@ struct AgentsWorkspaceView: View {
         let broadcastCreated = Date()
         let existingID = showingComparison ? nativeComparison?.id : nil
         let nativeOnly = !sessions.isEmpty && sessions.allSatisfy { $0.provider.desktopApp != nil }
-        guard model.beginSharedWebBroadcast(nativeOnly: nativeOnly) else { return }
+        guard let broadcast = model.beginSharedWebBroadcast(nativeOnly: nativeOnly, comparisonID: existingID) else { return }
         showingComparison = true
         Task { @MainActor in
-            defer { model.finishSharedWebBroadcast() }
+            defer { model.finishSharedWebBroadcast(broadcast) }
             let needsSignIn = await web.signInRequired(for: sessions)
             if !needsSignIn.isEmpty {
                 signInProviders = needsSignIn
@@ -381,7 +399,7 @@ struct AgentsWorkspaceView: View {
                     unsent[session.id] = attempt
                 }
             }
-            guard model.comparison(comparisonID)?.endedAt == nil else { return }
+            guard model.bindSharedWebBroadcast(broadcast, to: comparisonID), model.comparison(comparisonID)?.endedAt == nil else { return }
             if let i = model.index(comparisonID) {
                 let previous = model.state.comparisons[i].resolvedWebAgentIDs
                 model.state.comparisons[i].setWebAgents(previous + sessions.map(\.id))
@@ -410,7 +428,7 @@ struct AgentsWorkspaceView: View {
             let barrier = BroadcastSubmissionBarrier {
                 guard !Task.isCancelled, !sessions.isEmpty,
                       web.comparisonID == comparisonID, model.comparison(comparisonID)?.endedAt == nil else { return }
-                model.finishSharedWebInputs()
+                model.finishSharedWebInputs(broadcast)
             }
             let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, shouldClearDraft: {
                 model.sharedDraftRevision.value == submittedDraftRevision && web.comparisonID == comparisonID
@@ -419,7 +437,7 @@ struct AgentsWorkspaceView: View {
             }, web: { text, confirmed in
                 let didConfirm: @MainActor @Sendable () -> Void = {
                     confirmed()
-                    model.confirmSharedWebSubmission()
+                    model.confirmSharedWebSubmission(broadcast)
                 }
                 let submitted: [WebAgentID: WebSendAttempt]
                 if progressiveNative {
@@ -437,15 +455,15 @@ struct AgentsWorkspaceView: View {
                 if existingID != nil {
                     guard let i = model.index(comparisonID) else { return nil }
                     model.state.comparisons[i].allDraft = text
-                    await model.followUp(comparisonID, recipients: Array(recipients), newAttemptID: followUpID)
+                    await model.followUp(comparisonID, recipients: Array(recipients), newAttemptID: followUpID, telemetryManagedExternally: true)
                     states = model.comparison(comparisonID)?.followUps.first(where: { $0.id == followUpID }).map { Array($0.states.values) } ?? []
                 } else {
-                    await model.submit(comparisonID, retry: false)
+                    await model.submit(comparisonID, retry: false, telemetryManagedExternally: true)
                     states = model.comparison(comparisonID)?.members.filter { recipients.contains($0.id) }.map(\.submission) ?? []
                 }
                 return AgentBroadcast.messagesResult(states: states, comparisonID: comparisonID, onConfirmed: {
                     confirmed()
-                    model.confirmSharedWebSubmission()
+                    model.confirmSharedWebSubmission(broadcast)
                 })
             })
             let webSubmitted = result.web.values.filter { $0.status.confirmsSubmission }.count
@@ -472,7 +490,7 @@ struct AgentsWorkspaceView: View {
     private func sendDirect(_ text: String, to session: WebAgentSession) {
         guard nativeComparison?.endedAt == nil else { return }
         let independent = canReplyWhileBroadcasting(to: session)
-        guard (!busy || independent), session.isEnabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard (!model.webBroadcastBusy || independent), (!busy || independent), session.isEnabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let existingID = nativeComparison?.id
         if independent {
             guard model.beginIndependentNativeReply() else { return }

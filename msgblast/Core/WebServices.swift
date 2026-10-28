@@ -349,27 +349,43 @@ public final class BroadcastSubmissionBarrier {
 /// Keep the workspace owned until both the shared broadcast and any private
 /// reply started during it have completed.
 public struct BroadcastReplyGate: Sendable {
-    public private(set) var broadcastActive = false
-    public private(set) var inputsFinished = false
+    private struct Broadcast: Sendable {
+        let nativeOnly: Bool
+        var comparisonID: UUID?
+        var inputsFinished = false
+        var confirmedSubmission = false
+    }
+    private var broadcasts: [UUID: Broadcast] = [:]
+    public var broadcastActive: Bool { !broadcasts.isEmpty }
+    public var inputsFinished: Bool { broadcastActive && broadcasts.values.allSatisfy(\.inputsFinished) }
     public private(set) var independentReplies = 0
-    private var nativeOnly = false
-    private var confirmedSubmission = false
     public var busy: Bool { broadcastActive || independentReplies > 0 }
     public var canBrowseWhileWaiting: Bool {
-        broadcastActive && nativeOnly && inputsFinished && confirmedSubmission && independentReplies == 0
+        broadcastActive && independentReplies == 0 && broadcasts.values.allSatisfy {
+            $0.nativeOnly && $0.inputsFinished && $0.confirmedSubmission
+        }
     }
     public init() {}
-    public mutating func beginBroadcast(nativeOnly: Bool = false) -> Bool {
-        guard !busy else { return false }
-        broadcastActive = true; inputsFinished = false
-        self.nativeOnly = nativeOnly; confirmedSubmission = false
+    public func canBeginBroadcast(in comparisonID: UUID?) -> Bool {
+        !busy || (canBrowseWhileWaiting && !broadcasts.values.contains { $0.comparisonID == comparisonID })
+    }
+    public mutating func beginBroadcast(nativeOnly: Bool = false, comparisonID: UUID? = nil) -> UUID? {
+        guard canBeginBroadcast(in: comparisonID) else { return nil }
+        let id = UUID()
+        broadcasts[id] = Broadcast(nativeOnly: nativeOnly, comparisonID: comparisonID)
+        return id
+    }
+    public mutating func bindComparison(_ comparisonID: UUID, to id: UUID) -> Bool {
+        guard let current = broadcasts[id], current.comparisonID == nil || current.comparisonID == comparisonID,
+              !broadcasts.contains(where: { $0.key != id && $0.value.comparisonID == comparisonID }) else { return false }
+        broadcasts[id]?.comparisonID = comparisonID
         return true
     }
-    public mutating func confirmSubmission() {
-        if broadcastActive { confirmedSubmission = true }
+    public mutating func confirmSubmission(_ id: UUID) {
+        broadcasts[id]?.confirmedSubmission = true
     }
-    public mutating func finishInputs() {
-        if broadcastActive { inputsFinished = true }
+    public mutating func finishInputs(_ id: UUID) {
+        broadcasts[id]?.inputsFinished = true
     }
     public mutating func beginIndependentReply() -> Bool {
         guard broadcastActive, inputsFinished, independentReplies == 0 else { return false }
@@ -379,8 +395,8 @@ public struct BroadcastReplyGate: Sendable {
     public mutating func finishIndependentReply() {
         if independentReplies > 0 { independentReplies -= 1 }
     }
-    public mutating func finishBroadcast() {
-        broadcastActive = false; inputsFinished = false; nativeOnly = false; confirmedSubmission = false
+    public mutating func finishBroadcast(_ id: UUID) {
+        broadcasts.removeValue(forKey: id)
     }
 }
 

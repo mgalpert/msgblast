@@ -289,7 +289,7 @@ struct MainView: View {
                             .padding(.vertical, 2)
                     }
                     .help("New Blast").accessibilityLabel("New Blast")
-                    .disabled(model.busy || model.webBroadcastBusy || web.sessions.contains { $0.isSending })
+                    .disabled(!model.canStartNewBlast)
                 }
             }
         }

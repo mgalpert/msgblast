@@ -7,6 +7,7 @@ struct AgentGridView: View {
     @ObservedObject var web: WebAgents
     @Binding var editing: Bool
     let busy: Bool
+    let selectionBusy: Bool
     let toggleMessages: (UUID) -> Void
     let openChat: (WebAgentSession) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -158,12 +159,14 @@ struct AgentGridView: View {
     }
 
     private func tile(_ entry: AgentGridEntry, available: Bool, size: CGFloat, scroll: ScrollViewProxy) -> some View {
+        let canSelect = !available && !editing && (session(for: entry.id)?.isEnabled == true ||
+            model.messageAgent(for: entry.id).map { model.route($0) != nil } == true)
         let tile = AgentGridTile(entry: entry, size: size, avatars: avatars, editing: editing,
             available: available, selected: selected(entry.id), arrived: arrived == entry.id || dragging == entry.id,
             subtitle: available || editing ? nil : subtitle(entry.id),
             action: { if available { add(entry.id, scroll: scroll) } else if !editing { activate(entry.id) } },
             hide: { hide(entry.id) })
-            .disabled(busy)
+            .disabled(selectionBusy || (busy && !canSelect))
             .id(entry.id.id)
         return Group {
             if editing && !available {
