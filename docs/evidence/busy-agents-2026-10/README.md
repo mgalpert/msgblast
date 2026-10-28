@@ -1,6 +1,6 @@
 # Busy app agents
 
-Captured from committed source `8218449e93b38f80dccec3e35ea0308e30084b58` in the isolated blue **msgblast Demo PR 87 fixture**. Later source changes only reveal virtualized Grok Bot history and do not change this demonstrated interface.
+Captured from committed source `8218449e93b38f80dccec3e35ea0308e30084b58` in the isolated blue **msgblast Demo PR 87 fixture**. Later source changes improve native input and reply reading without changing this demonstrated Busy selection interface.
 
 The earlier Wabi request is a seeded pending state; Claude and Messages replies use simulated transports and synthetic identities. No real Messages or provider request was sent for this recording. It demonstrates disabled Busy selection, exclusion from the next broadcast, and available recipients completing without manually deselecting Wabi. Live Dev validation is reported separately in PR #87.
 
