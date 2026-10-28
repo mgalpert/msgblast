@@ -26,6 +26,11 @@ struct WabiAppMessage: Codable, Equatable, Sendable {
     enum Role: String, Codable, Sendable { case user, assistant }
     let role: Role
     let text: String
+    // Keep the original AX text for existing receipt digests. Presentation is
+    // transient and never changes message identity or persisted receipt bytes.
+    var presentation: String? = nil
+    private enum CodingKeys: String, CodingKey { case role, text }
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.role == rhs.role && lhs.text == rhs.text }
 }
 
 private enum WabiHistoryWindow {
@@ -65,6 +70,42 @@ enum WabiObservationError: LocalizedError, Sendable {
 enum WabiReadPurpose: Sendable { case readiness, conversation }
 
 enum WabiNativeMessages {
+    private static func listText(_ list: WabiAXNode) -> String? {
+        let pieces = list.descendants.filter { ["AXListMarker", "AXStaticText"].contains($0.role) }
+        var items: [String] = []
+        var current: String?
+        for piece in pieces {
+            let value = piece.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            if piece.role == "AXListMarker" {
+                if let current { items.append(current) }
+                current = value
+            } else {
+                guard var item = current else { return nil }
+                let punctuation = ".,;:!?%)]}”’".contains(value.first!)
+                let opening = "([{“‘".contains(item.last!)
+                item += (punctuation || opening ? "" : " ") + value
+                current = item
+            }
+        }
+        if let current { items.append(current) }
+        return items.isEmpty ? nil : items.joined(separator: "\n")
+    }
+    private static func presentation(_ frame: WabiAXNode, timestamp: String) -> String? {
+        var blocks: [String] = []
+        var sawList = false
+        func collect(_ node: WabiAXNode) {
+            if node.role == "AXList", let list = listText(node) {
+                sawList = true; blocks.append(list); return
+            }
+            if node.role == "AXStaticText" { blocks.append(node.value); return }
+            for child in node.children { collect(child) }
+        }
+        collect(frame)
+        guard sawList, blocks.last == timestamp else { return nil }
+        blocks.removeLast()
+        return blocks.joined(separator: "\n\n")
+    }
     static func read(_ root: WabiAXNode, purpose: WabiReadPurpose = .conversation) throws -> [WabiAppMessage] {
         guard purpose == .conversation else { return [] }
         let nodes = root.descendants
@@ -87,7 +128,8 @@ enum WabiNativeMessages {
             text.removeLast()
             let body = text.joined(separator: "\n\n")
             guard !body.isEmpty else { throw WabiObservationError.transient("Wabi's message body is still updating. No reply was attributed.") }
-            return WabiAppMessage(role: own ? .user : .assistant, text: body)
+            return WabiAppMessage(role: own ? .user : .assistant, text: body,
+                                  presentation: presentation(frame, timestamp: timestamp))
         }
     }
 }
@@ -149,7 +191,7 @@ struct WabiAppReceipt {
                 guard let outgoing = added.first, outgoing.role == .user,
                       outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
                 if added.count == 1 { waiting = true }
-                else if let answer = added.last, answer.role == .assistant { candidates.insert(answer.text) }
+                else if let answer = added.last, answer.role == .assistant { candidates.insert(answer.presentation ?? answer.text) }
             }
             for old in acceptableHistory where ordered.starts(with: old) {
                 let added = ordered.dropFirst(old.count)
@@ -157,7 +199,7 @@ struct WabiAppReceipt {
                 guard let outgoing = added.first, outgoing.role == .user,
                       outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
                 if added.count == 1 { waiting = true }
-                else if let answer = added.last, answer.role == .assistant { candidates.insert(answer.text) }
+                else if let answer = added.last, answer.role == .assistant { candidates.insert(answer.presentation ?? answer.text) }
             }
         }
         guard candidates.count <= 1 else { throw DesktopAppError.unavailable("Wabi's new reply is ambiguous. Review the saved chat.") }
@@ -271,7 +313,7 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
                 guard let outgoing = added.first, outgoing.role == .user,
                       outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
                 if added.count == 1 { waiting = true }
-                else if let answer = added.last, answer.role == .assistant, !answer.text.isEmpty { answers.insert(answer.text) }
+                else if let answer = added.last, answer.role == .assistant, !answer.text.isEmpty { answers.insert(answer.presentation ?? answer.text) }
             }
         }
         guard answers.count <= 1 else { throw DesktopAppError.unavailable("Wabi's new reply is ambiguous.") }

@@ -562,6 +562,35 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [.init(role: "AXPopUpButton", label: "Add reaction")])))
     }
 
+    func testWabiNumberedReplyKeepsItemsReadableWithoutChangingReceiptDigests() throws {
+        // Wabi exposes a numbered list as one AXList with marker and individual
+        // word nodes; the enclosing message still has one sender and timestamp.
+        let list = WabiAXNode(role: "AXList", children: [
+            .init(role: "AXListMarker", value: "1."), .init(role: "AXStaticText", value: "A"),
+            .init(role: "AXStaticText", value: "garden"), .init(role: "AXStaticText", value: "."),
+            .init(role: "AXListMarker", value: "2."), .init(role: "AXStaticText", value: "A"),
+            .init(role: "AXStaticText", value: "pond.")
+        ])
+        func frame(_ sender: String, _ body: [WabiAXNode]) -> WabiAXNode {
+            .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender],
+                  children: body + [.init(role: "AXPopUpButton", label: "Add reaction"), .init(role: "AXStaticText", value: "5:13 PM")])
+        }
+        let root = WabiAXNode(role: "AXWebArea", children: [frame("xpvyfi4", [.init(role: "AXStaticText", value: "Question")]),
+            frame("xqcrz7y", [.init(role: "AXStaticText", value: "Here are two:"), list, .init(role: "AXStaticText", value: "Done.")])])
+        let messages = try WabiNativeMessages.read(root)
+        let raw = "Here are two:\n\nA\n\ngarden\n\n.\n\nA\n\npond.\n\nDone."
+        XCTAssertEqual(messages[1].text, raw, "Existing receipt digests use this exact AX text")
+        XCTAssertEqual(messages[1].presentation, "Here are two:\n\n1. A garden.\n2. A pond.\n\nDone.")
+        let oldMessage = WabiAppMessage(role: .assistant, text: raw)
+        XCTAssertEqual(messages[1], oldMessage)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(try encoder.encode(messages[1]), try encoder.encode(oldMessage))
+        let answer = "Here are two:\n\n1. A garden.\n2. A pond.\n\nDone."
+        XCTAssertEqual(try WabiAppReceipt(baseline: [], prompt: "Question").reply(in: messages), answer)
+        let receipt = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: "Question", baseline: [])
+        XCTAssertEqual(try receipt.reply(in: messages), answer)
+    }
+
     func testWabi015ReadinessIgnoresIncompleteHistoryWithoutAttributingIt() throws {
         // Sanitized shape from Wabi 0.1.15: ten sender-marked frames, nine
         // reaction controls. No user's conversation text is part of the fixture.
