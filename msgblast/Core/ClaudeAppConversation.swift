@@ -197,7 +197,7 @@ actor ClaudeAppConversation {
         guard draft.url == baseline.url, draft.messages == baseline.messages, draft.draft == prompt, draft.composerFocused, !draft.generating, !draftState.isGenerating else { throw DesktopAppError.unavailable("Claude's prepared draft or conversation changed. Send was not pressed; review the preserved text.") }
         guard try await native(target) == draft else { throw DesktopAppError.unavailable("Claude changed before Send. Review the preserved draft.") }
         var submissionObserved = false
-        return try await DesktopAppWorkflow.reply(app: "Claude", timing: timing, submit: {
+        return try await DesktopAppWorkflow.reply(app: "Claude", timing: timing, clock: timing.replyClock, submit: {
             try await self.click(self.control(draftState, label: "Send message"), target: target, session: session)
             await onSubmitAction()
         }, observe: {

@@ -148,6 +148,22 @@ private actor ClaudeRecordedBindings {
     func receipt() { receiptCount += 1 }
 }
 
+// Let the first observation confirm the outgoing message, then hold the reply
+// loop until the request is cancelled. Runner load cannot advance its deadline.
+private final class ClaudeHeldReplyClock: Clock, @unchecked Sendable {
+    typealias Instant = ContinuousClock.Instant
+    let now = ContinuousClock.now
+    let minimumResolution: Duration = .nanoseconds(1)
+    private let lock = NSLock()
+    private var sleeps = 0
+
+    func sleep(until deadline: Instant, tolerance: Duration?) async throws {
+        let first = lock.withLock { sleeps += 1; return sleeps == 1 }
+        try Task.checkCancellation()
+        if !first { try await Task.sleep(for: .seconds(3600)) }
+    }
+}
+
 final class ClaudeAppDriverTests: XCTestCase {
     private struct Fixture: Sendable {
         let directory: URL
@@ -497,13 +513,18 @@ final class ClaudeAppDriverTests: XCTestCase {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.desktopConversation = .init(name: "Claude"); workspace.comparisonID = fixture.binding.comparisonID
             try JSONEncoder().encode(workspace).write(to: storage)
-            let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(8), callTimeout: 5)
+            let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(8), callTimeout: 5, replyClock: .init(ClaudeHeldReplyClock()))
             let adapter = fixture.adapter(timing: timing), driver = DesktopAppConversation(executable: fixture.executable)
             let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, desktopDriver: driver, claudeApp: adapter)
-            let sending = Task { await session.send("First question", comparisonID: fixture.binding.comparisonID) }
-            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-            while session.state.attempts.first?.status != .waiting, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-            XCTAssertEqual(session.state.attempts.first?.status, .waiting)
+            let confirmed = expectation(description: "Claude's outgoing message was recorded for \(scenario)")
+            let sending = Task { await session.send("First question", comparisonID: fixture.binding.comparisonID, onConfirmedSubmission: { confirmed.fulfill() }) }
+            await fulfillment(of: [confirmed], timeout: 60)
+            guard session.state.attempts.first?.status == .waiting else {
+                session.beginShutdown()
+                _ = await sending.value
+                XCTFail("Claude never recorded the outgoing message for \(scenario)")
+                return
+            }
             if shutdown { await session.cancelAndWait() }
             else {
                 session.cancelNativeRequest()
