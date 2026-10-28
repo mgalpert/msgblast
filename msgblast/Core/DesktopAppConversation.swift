@@ -149,7 +149,9 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             guard button.role == "AXButton", let index = button.element_index,
                   button.enabled != false, button.element_token != nil, var name = button.label else { return nil }
             let listed = button.parent_index.map { listIndexes.contains($0) } == true
-            if name.hasSuffix(", Unread activity") { name.removeLast(", Unread activity".count) }
+            while let suffix = [", Unread activity", ", Working"].first(where: { name.hasSuffix($0) }) {
+                name.removeLast(suffix.count)
+            }
             // The unread badge replaces the main-bot image. Its pinned button
             // retains the accessible Main Bot suffix outside the regular list.
             let main = mainBotIndexes.contains(index) || (!listed && name.hasSuffix(", Main Bot"))

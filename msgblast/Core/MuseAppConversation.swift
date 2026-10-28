@@ -49,7 +49,7 @@ actor MuseAppConversation {
         try state.checkReadable()
         return state
     }
-    private func pixelClick(_ target: DesktopAppConversation.Target, session: String, expectedURL: URL? = nil, focusOnly: Bool = false,
+    private func pixelClick(_ target: DesktopAppConversation.Target, session: String, expectedURL: URL? = nil, focusOnly: Bool = false, openingSidebar: Bool = false,
                             select: (DesktopAppSnapshot) throws -> DesktopAppSnapshot.Element?) async throws -> Bool {
         let before = try await observe(target)
         try empty(before)
@@ -67,6 +67,7 @@ actor MuseAppConversation {
         }
         let after = try await observe(target)
         try empty(after)
+        if openingSidebar && after.sidebarOpen { return false }
         guard after.url == before.url, after.windowBounds != nil, after.windowBounds == fresh.window_bounds else {
             throw DesktopAppError.unavailable("Muse's chat or window geometry changed while its screenshot was captured. Nothing was clicked.")
         }
@@ -108,6 +109,17 @@ actor MuseAppConversation {
             try await click(headers[0], target: target, session: session)
         }
         state = try await snapshot(target, session: session)
+        if !state.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) {
+            _ = try await pixelClick(target, session: session, openingSidebar: true) { fresh in
+                if fresh.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) { return nil }
+                let headers = fresh.body.filter { $0.role == "AXButton" && ($0.label ?? "").contains("Open chat and side chats") }
+                guard headers.count == 1 else { throw DesktopAppError.unavailable("Muse's chat list could not be opened.") }
+                return headers[0]
+            }
+            state = try await DesktopAppWorkflow.wait(timeout: .seconds(5), interval: timing.pollInterval,
+                failure: "Muse did not open its side-chat list.", read: { try await self.snapshot(target, session: session) },
+                ready: { $0.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) })
+        }
         guard state.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) else {
             throw DesktopAppError.unavailable("Muse did not open its side-chat list.")
         }

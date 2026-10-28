@@ -904,6 +904,22 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertTrue(try fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
     }
 
+    func testGrokWorkingBadgeKeepsPendingReplyBoundToTheSelectedBot() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        let working = grok(reply: "", generating: true, bots: ["Fixture Bot, Working"])
+        let fixture = try driver([apps(), windows(), snapshot(working, repeating: true)])
+        defer { fixture.remove() }
+        let conversation = adapter(fixture)
+        let pending = try await conversation.recoverGrokReply(receipt)
+        XCTAssertNil(pending, "Working is activity on the same bot, not a lost destination")
+        assertNoInput(try await finishedCalls(fixture))
+        try fixture.replacePlan([apps(), windows(), snapshot(grok(reply: "Finished answer"), repeating: true)])
+        let answer = try await conversation.recoverGrokReply(receipt)
+        XCTAssertEqual(answer, "Finished answer")
+        assertNoInput(try await finishedCalls(fixture, cleanupCount: 2))
+    }
+
     func testGrokRecoveryNeverAttributesAnotherBotOrUnrelatedMessage() async throws {
         let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
         let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
@@ -4219,6 +4235,48 @@ final class DesktopAppDriverTests: XCTestCase {
             let path = try XCTUnwrap(calls.last { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
             XCTAssertFalse(FileManager.default.fileExists(atPath: path))
         }
+    }
+
+    func testMuseSideChatMenuUsesCapturedClickWhenAccessibilityPressOnlyFocusesHeader() async throws {
+        var initial = windows()
+        var main = museObservation(); main.url = URL(string: "https://muse.ai/")!
+        initial["native"] = try object(main)
+        let header = element("AXButton", "Saved chat Open chat and side chats", token: "s00000001:header")
+        let closed: [String: Any] = ["elements": [header]]
+        var listed = main; listed.sidebarOpen = true
+        let fixture = try driver([apps(.muse), initial, snapshot(closed),
+            try museStep("click", observation: main, token: "s00000001:header"), snapshot(closed),
+            capturedNavigation(closed), try museStep("click", observation: listed),
+            snapshot(["elements": [element("AXButton", "New side chat", token: "s00000002:new")]]),
+            try museStep("click", observation: museObservation(), token: "s00000002:new")])
+        defer { fixture.remove() }
+        let prepared = try await museAdapter(fixture).prepare(comparisonID: UUID(), binding: nil)
+        XCTAssertNil(prepared.threadID)
+        let calls = try await finishedCalls(fixture)
+        let clicks = calls.filter { $0.tool == "click" }
+        XCTAssertEqual(clicks.count, 3, "Open the list once through the capture after the semantic action has no effect, then create one chat")
+        XCTAssertEqual(clicks[1].arguments["capture_id"] as? String, "muse-resized-capture")
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" || $0.tool == "press_key" })
+        assertMuseBackground(calls)
+    }
+
+    func testMuseDoesNotToggleChatListClosedWhenSemanticNavigationFinishesAfterCapture() async throws {
+        var initial = windows()
+        var main = museObservation(); main.url = URL(string: "https://muse.ai/")!
+        initial["native"] = try object(main)
+        let closed: [String: Any] = ["elements": [element("AXButton", "Saved chat Open chat and side chats", token: "s00000001:header")]]
+        var listed = main; listed.sidebarOpen = true
+        var lateCapture = capturedNavigation(closed)
+        lateCapture["native"] = try object(listed)
+        let fixture = try driver([apps(.muse), initial, snapshot(closed),
+            try museStep("click", observation: main, token: "s00000001:header"), snapshot(closed), lateCapture,
+            snapshot(["elements": [element("AXButton", "New side chat", token: "s00000002:new")]]),
+            try museStep("click", observation: museObservation(), token: "s00000002:new")])
+        defer { fixture.remove() }
+        _ = try await museAdapter(fixture).prepare(comparisonID: UUID(), binding: nil)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "An already-open sidebar must not receive a second toggle")
+        XCTAssertFalse(calls.contains { $0.arguments["capture_id"] != nil })
     }
 
     func testMuseNewSideChatCanPrepareBeforeWebKitReportsEditorFocus() async throws {
