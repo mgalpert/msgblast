@@ -37,9 +37,21 @@ private enum WabiHistoryWindow {
     // Bound receipt size and hashing work for unusually long native chats.
     static let maximumDropped = 16
     static func minimumRetained(_ count: Int) -> Int { max(3, count / 2 + count % 2) }
+    static func canonical(_ messages: [WabiAppMessage]) -> [WabiAppMessage] {
+        messages.map { .init(role: $0.role, text: $0.text.split(whereSeparator: \.isWhitespace).joined(separator: " ")) }
+    }
     // Wabi may omit one older accessible row while keeping the newest rows.
     // Require a substantial exact overlap and an intact recent tail.
     static func matchesMissingOlderRow<T: Equatable>(baseline: [T], observed: [T]) -> Bool {
+        // A short chat may lose one middle row when Wabi virtualizes it.
+        // Retain both endpoints and require a unique exact deletion.
+        if (3...6).contains(baseline.count), observed.count == baseline.count - 1,
+           baseline.first == observed.first, baseline.last == observed.last {
+            let matches = (1..<(baseline.count - 1)).filter { index in
+                Array(baseline.prefix(index)) + Array(baseline.dropFirst(index + 1)) == observed
+            }
+            if matches.count == 1 { return true }
+        }
         guard baseline.count >= 7, observed.count >= minimumRetained(baseline.count),
               observed.count >= 6, baseline.count > observed.count,
               baseline.suffix(3).elementsEqual(observed.suffix(3)) else { return false }
@@ -166,10 +178,11 @@ struct WabiAppReceipt {
     }
 
     func unchanged(_ messages: [WabiAppMessage]) -> Bool {
-        acceptableHistory.contains(messages) || acceptableHistory.contains(Array(messages.reversed())) ||
+        let observed = WabiHistoryWindow.canonical(messages)
+        return acceptableHistory.map(WabiHistoryWindow.canonical).contains(observed) || acceptableHistory.map(WabiHistoryWindow.canonical).contains(Array(observed.reversed())) ||
             [baseline, Array(baseline.reversed())].contains { history in
-                WabiHistoryWindow.matchesMissingOlderRow(baseline: history, observed: messages) ||
-                    WabiHistoryWindow.matchesMissingOlderRow(baseline: history, observed: Array(messages.reversed()))
+                WabiHistoryWindow.matchesMissingOlderRow(baseline: WabiHistoryWindow.canonical(history), observed: observed) ||
+                    WabiHistoryWindow.matchesMissingOlderRow(baseline: WabiHistoryWindow.canonical(history), observed: Array(observed.reversed()))
             }
     }
 
@@ -186,14 +199,14 @@ struct WabiAppReceipt {
         for ordered in [messages, Array(messages.reversed())] {
             for oldCount in max(0, ordered.count - 2)...ordered.count {
                 let old = Array(ordered.prefix(oldCount))
-                guard [baseline, Array(baseline.reversed())].contains(where: { WabiHistoryWindow.matchesMissingOlderRow(baseline: $0, observed: old) }) else { continue }
+                guard [baseline, Array(baseline.reversed())].contains(where: { WabiHistoryWindow.matchesMissingOlderRow(baseline: WabiHistoryWindow.canonical($0), observed: WabiHistoryWindow.canonical(old)) }) else { continue }
                 let added = ordered.dropFirst(oldCount)
                 guard let outgoing = added.first, outgoing.role == .user,
                       outgoing.text.split(whereSeparator: \.isWhitespace) == prompt.split(whereSeparator: \.isWhitespace) else { continue }
                 if added.count == 1 { waiting = true }
                 else if let answer = added.last, answer.role == .assistant { candidates.insert(answer.presentation ?? answer.text) }
             }
-            for old in acceptableHistory where ordered.starts(with: old) {
+            for old in acceptableHistory where WabiHistoryWindow.canonical(ordered).starts(with: WabiHistoryWindow.canonical(old)) {
                 let added = ordered.dropFirst(old.count)
                 guard added.count <= 2 else { continue }
                 guard let outgoing = added.first, outgoing.role == .user,
@@ -228,6 +241,12 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
     let overlapDigests: [WabiHistoryDigest]?
     // Optional per-row hashes allow one older virtualized row to disappear.
     let messageDigests: [Data]?
+    // Optional canonical digests let new receipts survive Wabi changing only
+    // whitespace or word-node boundaries. Older raw digests remain readable.
+    let canonicalBaselineDigest: Data?
+    let canonicalReversedBaselineDigest: Data?
+    let canonicalOverlapDigests: [WabiHistoryDigest]?
+    let canonicalMessageDigests: [Data]?
     var automaticRecovery = true
 
     init(comparisonID: UUID, url: URL, prompt: String, baseline: [WabiAppMessage]) throws {
@@ -236,6 +255,10 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
         baselineDigest = try Self.digest(baseline)
         reversedBaselineDigest = try Self.digest(Array(baseline.reversed()))
         messageDigests = baseline.count <= 512 ? try baseline.map { try Self.digest([$0]) } : nil
+        let canonical = WabiHistoryWindow.canonical(baseline)
+        canonicalBaselineDigest = try Self.digest(canonical)
+        canonicalReversedBaselineDigest = try Self.digest(Array(canonical.reversed()))
+        canonicalMessageDigests = baseline.count <= 512 ? try canonical.map { try Self.digest([$0]) } : nil
         let minimum = WabiHistoryWindow.minimumRetained(baseline.count)
         var overlaps: [WabiHistoryDigest] = []
         if baseline.count > minimum {
@@ -248,6 +271,17 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
             }
         }
         overlapDigests = overlaps
+        var canonicalOverlaps: [WabiHistoryDigest] = []
+        if canonical.count > minimum {
+            for history in [canonical, Array(canonical.reversed())] {
+                let limit = min(WabiHistoryWindow.maximumDropped, history.count - minimum)
+                for drop in 1...limit {
+                    let suffix = Array(history.dropFirst(drop))
+                    canonicalOverlaps.append(.init(retained: suffix.count, digest: try Self.digest(suffix)))
+                }
+            }
+        }
+        canonicalOverlapDigests = canonicalOverlaps
     }
 
     private static func digest(_ messages: [WabiAppMessage]) throws -> Data {
@@ -274,13 +308,32 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
                 throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
             }
         }
+        if let canonicalBaselineDigest, canonicalBaselineDigest.count != 32 { throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.") }
+        if let canonicalReversedBaselineDigest, canonicalReversedBaselineDigest.count != 32 { throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.") }
+        if let canonicalMessageDigests, canonicalMessageDigests.count != baselineCount || canonicalMessageDigests.count > 512 || canonicalMessageDigests.contains(where: { $0.count != 32 }) {
+            throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
+        }
+        if let canonicalOverlapDigests {
+            let minimum = WabiHistoryWindow.minimumRetained(baselineCount)
+            guard canonicalOverlapDigests.count <= 2 * WabiHistoryWindow.maximumDropped,
+                  canonicalOverlapDigests.allSatisfy({ $0.digest.count == 32 && $0.retained >= minimum && $0.retained < baselineCount && baselineCount - $0.retained <= WabiHistoryWindow.maximumDropped }) else {
+                throw DesktopAppError.unavailable("Wabi's saved chat could not be verified.")
+            }
+        }
         var answers: Set<String> = []
         var waiting = false
-        if let knownHistory, knownHistory.count >= baselineCount {
-            let history = Array(knownHistory.suffix(baselineCount))
-            let hash = try Self.digest(history)
-            if hash == baselineDigest || hash == reversedBaselineDigest {
-                return try WabiAppReceipt(baseline: history, prompt: prompt).reply(in: messages)
+        if let knownHistory {
+            var candidates: [[WabiAppMessage]] = []
+            if knownHistory.count >= baselineCount { candidates.append(Array(knownHistory.suffix(baselineCount))) }
+            if baselineCount > 0, knownHistory.count >= baselineCount - 1 {
+                let greeting = WabiAppMessage(role: .assistant, text: "What can I do for you?")
+                candidates.append([greeting] + Array(knownHistory.suffix(baselineCount - 1)))
+            }
+            for history in candidates {
+                let hash = try Self.digest(history)
+                if hash == baselineDigest || hash == reversedBaselineDigest {
+                    return try WabiAppReceipt(baseline: history, prompt: prompt).reply(in: messages)
+                }
             }
         }
         for ordered in [messages, Array(messages.reversed())] {
@@ -290,22 +343,31 @@ struct WabiReplyReceipt: Codable, Equatable, Sendable {
             for retained in minimumCandidate...maximumCandidate {
                 let old = Array(ordered.prefix(retained))
                 let hash = try Self.digest(old)
-                let fullMatch = retained == baselineCount && (hash == baselineDigest || hash == reversedBaselineDigest)
+                let canonicalOld = WabiHistoryWindow.canonical(old)
+                let canonicalHash = try Self.digest(canonicalOld)
+                let fullMatch = retained == baselineCount && (hash == baselineDigest || hash == reversedBaselineDigest || canonicalHash == canonicalBaselineDigest || canonicalHash == canonicalReversedBaselineDigest)
                 var greetingMatch = false
                 if retained >= 2, retained == baselineCount - 1 {
                     let restored = [WabiAppMessage(role: .assistant, text: "What can I do for you?")] + old
                     let restoredHash = try Self.digest(restored)
-                    greetingMatch = restoredHash == baselineDigest || restoredHash == reversedBaselineDigest
+                    let restoredCanonical = try Self.digest(WabiHistoryWindow.canonical(restored))
+                    greetingMatch = restoredHash == baselineDigest || restoredHash == reversedBaselineDigest ||
+                        restoredCanonical == canonicalBaselineDigest || restoredCanonical == canonicalReversedBaselineDigest
                 }
                 let minimum = WabiHistoryWindow.minimumRetained(baselineCount)
                 let overlapMatch = retained >= minimum && retained < baselineCount && baselineCount - retained <= WabiHistoryWindow.maximumDropped &&
-                    (overlapDigests?.contains { $0.retained == retained && $0.digest == hash } ?? false)
+                    ((overlapDigests?.contains { $0.retained == retained && $0.digest == hash } ?? false) || (canonicalOverlapDigests?.contains { $0.retained == retained && $0.digest == canonicalHash } ?? false))
                 let rowMatch: Bool
                 if let messageDigests {
                     let observed = try old.map { try Self.digest([$0]) }
-                    rowMatch = [messageDigests, Array(messageDigests.reversed())].contains {
+                    let rawRowMatch = [messageDigests, Array(messageDigests.reversed())].contains {
                         WabiHistoryWindow.matchesMissingOlderRow(baseline: $0, observed: observed)
                     }
+                    let canonicalRowMatch = try canonicalMessageDigests.map { digests in
+                        let observed = try canonicalOld.map { try Self.digest([$0]) }
+                        return [digests, Array(digests.reversed())].contains { WabiHistoryWindow.matchesMissingOlderRow(baseline: $0, observed: observed) }
+                    } ?? false
+                    rowMatch = rawRowMatch || canonicalRowMatch
                 } else { rowMatch = false }
                 guard fullMatch || greetingMatch || overlapMatch || rowMatch else { continue }
                 let added = ordered.dropFirst(retained)

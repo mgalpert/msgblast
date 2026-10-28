@@ -400,6 +400,47 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try receipt.reply(in: [.init(role: .assistant, text: "Changed history"), rendered, answer]))
     }
 
+    func testWabiMatchesReplyWhenOneInteriorOldMessageIsVirtualized() throws {
+        let old: [WabiAppMessage] = [.init(role: .assistant, text: "What can I do for you?"),
+            .init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier reply")]
+        let outgoing = WabiAppMessage(role: .user, text: "Next question")
+        let answer = WabiAppMessage(role: .assistant, text: "New answer")
+        let live = WabiAppReceipt(baseline: old, prompt: outgoing.text)
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: outgoing.text, baseline: old)
+        let observed = [old[0], old[2], outgoing, answer]
+        XCTAssertEqual(try live.reply(in: observed), "New answer")
+        XCTAssertEqual(try saved.reply(in: observed), "New answer")
+        for unsafe in [[old[0], old[1], outgoing, answer],
+                       [old[0], old[2], .init(role: .user, text: "Another question"), answer]] {
+            XCTAssertThrowsError(try live.reply(in: unsafe))
+            XCTAssertThrowsError(try saved.reply(in: unsafe))
+        }
+        let repeated = [old[0], old[1], old[1], old[2]]
+        let ambiguous = [old[0], old[1], old[2], outgoing, answer]
+        XCTAssertThrowsError(try WabiAppReceipt(baseline: repeated, prompt: outgoing.text).reply(in: ambiguous))
+        let repeatedReceipt = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: outgoing.text, baseline: repeated)
+        XCTAssertThrowsError(try repeatedReceipt.reply(in: ambiguous), "Do not guess which repeated row disappeared")
+    }
+
+    func testWabiVirtualizedReplyMatchesWhitespaceChangesAndOldReceipts() throws {
+        let old: [WabiAppMessage] = [.init(role: .assistant, text: "What can I do for you?"),
+            .init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "A \n\n garden.\n\nA \n\n pond.")]
+        let visible = [old[0], WabiAppMessage(role: .assistant, text: "A\n\ngarden.\n\nA\n\npond."),
+                       .init(role: .user, text: "Next question"), .init(role: .assistant, text: "New answer")]
+        let live = WabiAppReceipt(baseline: old, prompt: "Next question")
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: "Next question", baseline: old)
+        XCTAssertEqual(try live.reply(in: visible), "New answer")
+        XCTAssertEqual(try saved.reply(in: visible), "New answer")
+        var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { legacyJSON.removeValue(forKey: key) }
+        let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+        XCTAssertEqual(try legacy.reply(in: visible, knownHistory: Array(old.dropFirst())), "New answer")
+        var altered = visible
+        altered[1] = .init(role: .assistant, text: "A garden. A lake.")
+        XCTAssertThrowsError(try saved.reply(in: altered))
+        XCTAssertThrowsError(try legacy.reply(in: altered, knownHistory: Array(old.dropFirst())))
+    }
+
     func testWabiReceiptRejectsChangedHistoryAndForeignOutgoingMessages() throws {
         let old: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier answer")]
         let prompt = WabiAppMessage(role: .user, text: "New question")
@@ -476,6 +517,7 @@ final class DesktopAppConversationTests: XCTestCase {
         let localHistory = [WabiAppMessage(role: .user, text: "Older local message")] + baseline
         var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
         legacyJSON.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { legacyJSON.removeValue(forKey: key) }
         let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
         XCTAssertEqual(try legacy.reply(in: current, knownHistory: localHistory), answer.text)
         var changed = current; changed[0] = .init(role: .user, text: "Changed")
@@ -484,6 +526,9 @@ final class DesktopAppConversationTests: XCTestCase {
         let recentMissing = Array(baseline.dropLast()) + [prompt, answer]
         XCTAssertThrowsError(try live.reply(in: recentMissing))
         XCTAssertThrowsError(try saved.reply(in: recentMissing))
+        let penultimateMissing = Array(baseline.dropLast(2)) + [baseline.last!, prompt, answer]
+        XCTAssertThrowsError(try live.reply(in: penultimateMissing), "A long history must retain its recent tail")
+        XCTAssertThrowsError(try saved.reply(in: penultimateMissing), "A long history must retain its recent tail")
         XCTAssertThrowsError(try saved.reply(in: Array(baseline.dropFirst(8)) + [prompt, answer]))
         XCTAssertThrowsError(try saved.reply(in: Array(current.dropLast(2)) + [.init(role: .user, text: "Other question"), answer]))
     }
@@ -515,6 +560,7 @@ final class DesktopAppConversationTests: XCTestCase {
         var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         legacyJSON.removeValue(forKey: "overlapDigests")
         legacyJSON.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { legacyJSON.removeValue(forKey: key) }
         let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
         XCTAssertThrowsError(try legacy.reply(in: window + [outgoing, answer]), "An old receipt alone cannot prove a shifted window")
         XCTAssertEqual(try legacy.reply(in: window + [outgoing, answer], knownHistory: baseline), answer.text)
@@ -1090,6 +1136,43 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testWabiRecoversLegacyReceiptAfterAnOldRowDisappearsWithoutResending() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "What can I do for you?"),
+            .init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "A \n\n garden.\n\nA \n\n pond.")]
+        let created = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Next question", baseline: baseline)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(created)) as? [String: Any])
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { json.removeValue(forKey: key) }
+        let receipt = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let visible: [WabiAppMessage] = [baseline[0], .init(role: .assistant, text: "A\n\ngarden.\n\nA\n\npond."),
+                                         .init(role: .user, text: "Next question"), .init(role: .assistant, text: "New answer")]
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            .init(url: url, draft: "", links: [], messages: visible)
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) },
+                                                   open: { _ in XCTFail("Recovery must not launch Wabi") })
+        var state = WebWorkspaceState()
+        state.enabled = true; state.comparisonID = comparison
+        try state.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Next question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.wabiReplyReceipt = receipt
+        state.attempts = [attempt]
+        state.localConversations[comparison.uuidString] = Array(baseline.dropFirst()).map { .init(role: $0.role.rawValue, text: $0.text) }
+        let storage = fixture.directory.appendingPathComponent("legacy-window.json")
+        try JSONEncoder().encode(state).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        _ = await session.reconcileWabiReplyOnce()
+        session.beginShutdown()
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Earlier question", baseline[2].text, "Next question", "New answer"])
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
     func testUnsentLaterRequestDoesNotBlockEarlierWabiRecovery() async throws {
         let comparison = UUID(), url = wabiURL
         let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
@@ -1131,6 +1214,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let generated = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(generated)) as? [String: Any])
         json.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { json.removeValue(forKey: key) }
         let receipt = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
         let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
         defer { fixture.remove() }
@@ -1167,6 +1251,7 @@ final class DesktopAppDriverTests: XCTestCase {
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(generated)) as? [String: Any])
         json.removeValue(forKey: "overlapDigests")
         json.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { json.removeValue(forKey: key) }
         let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
         for historyMatches in [true, false] {
