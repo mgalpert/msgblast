@@ -91,6 +91,22 @@ final class ChatGPTAppConversationTests: XCTestCase {
             XCTAssertFalse(native.isNew)
         }
     }
+    func testCodexSplitWorkspacesBootstrapOnlyWhenEveryDraftIsEmpty() throws {
+        let mode = ChatGPTAXNode(role: "AXPopUpButton", label: "Switch mode, current mode: Codex")
+        let empty = field("Work with Codex", value: "Work with Codex", placeholder: true)
+        for fields in [[empty], [empty, empty]] {
+            let root = window(composer: fields[0], extra: [mode] + Array(fields.dropFirst()))
+            let native = try ChatGPTAppObservation(root: root)
+            XCTAssertTrue(native.codexBootstrap)
+            XCTAssertEqual(native.draft, "")
+        }
+        for value in ["Keep my task draft", "Work with Codex"] {
+            let occupied = field("Work with Codex", value: value, placeholder: false)
+            XCTAssertThrowsError(try ChatGPTAppObservation(root: window(composer: empty, extra: [mode, occupied])))
+            let single = try ChatGPTAppObservation(root: window(composer: occupied, extra: [mode]))
+            XCTAssertEqual(single.draft, value)
+        }
+    }
     func testEmptyChatComposerAcceptsPlaceholderWithoutTrailingNewline() throws {
         XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(value: "Ask ChatGPT"))).draft, "")
         XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(value: "Ask ChatGPT", placeholder: false))).draft, "Ask ChatGPT")

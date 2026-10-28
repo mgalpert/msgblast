@@ -171,10 +171,20 @@ struct ChatGPTAppObservation: Sendable {
         }
         nodes = safe(web)
         guard !nodes.contains(where: { ["AXDialog", "AXSheet"].contains($0.role) }) else { throw DesktopAppError.unavailable("Dismiss ChatGPT’s dialog before continuing.") }
-        let codexFields = nodes.filter { $0.role == "AXTextArea" && $0.label == "Work with ChatGPT" }
-        if nodes.filter({ $0.role == "AXPopUpButton" && ["Switch mode, current mode: Codex", "Switch mode, current mode: ChatGPT"].contains($0.label) }).count == 1, codexFields.count == 1, let value = codexFields[0].value {
+        let codexFields = nodes.filter { $0.role == "AXTextArea" && ["Work with ChatGPT", "Work with Codex"].contains($0.label) }
+        if nodes.filter({ $0.role == "AXPopUpButton" && ["Switch mode, current mode: Codex", "Switch mode, current mode: ChatGPT"].contains($0.label) }).count == 1, !codexFields.isEmpty {
+            func workDraft(_ field: ChatGPTAXNode) throws -> String {
+                guard let value = field.value else { throw DesktopAppError.unavailable("ChatGPT’s work draft is unavailable. Nothing was changed.") }
+                return field.descendants.contains(where: { $0.classes.contains("placeholder") }) && [field.label, field.label + "\n", "\n"].contains(value) ? "" : value
+            }
+            let drafts = try codexFields.map(workDraft)
+            // Split Codex workspaces have several editors. Switching to ChatGPT
+            // is safe only when every one is empty; never choose a task to edit.
+            guard codexFields.count == 1 || drafts.allSatisfy(\.isEmpty) else {
+                throw DesktopAppError.unavailable("ChatGPT has an unsent work draft. It was preserved.")
+            }
             let composer = codexFields[0]; self.composer = composer; kind = .chatgpt; codexBootstrap = true
-            draft = composer.descendants.contains(where: { $0.classes.contains("placeholder") }) && ["Work with ChatGPT", "Work with ChatGPT\n", "\n"].contains(value) ? "" : value
+            draft = drafts[0]
             generating = false; messages = []; return
         }
         codexBootstrap = false
