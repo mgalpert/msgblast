@@ -127,6 +127,16 @@ actor ChatGPTAppConversation {
         recovered.fallbackTitle = native.title
         return recovered
     }
+    private func chooseChatGPTMode(_ native: ChatGPTAppObservation, target: DesktopAppConversation.Target, session: String) async throws -> ChatGPTAppObservation {
+        let choice = try native.control(label: "ChatGPT Create, learn, and explore", role: "AXMenuItem")
+        try await action(control: choice, target: target, session: session, expected: native)
+        return try await DesktopAppWorkflow.wait(timeout: .seconds(5), interval: timing.pollInterval,
+            failure: "ChatGPT’s mode did not change. No input was sent.", read: {
+                let current = try await self.read(target)
+                try self.idle(current)
+                return current
+            }, ready: { $0.nodes.filter { $0.role == "AXPopUpButton" && $0.label == "Switch mode, current mode: ChatGPT" }.count == 1 })
+    }
     private func open(_ binding: ChatGPTConversationBinding, target: DesktopAppConversation.Target, session: String) async throws -> ChatGPTAppObservation {
         guard binding.title != nil || binding.firstPrompt == nil else { throw DesktopAppError.unavailable("The first native ChatGPT submission was interrupted. Review its conversation; nothing will be resent.") }
         var native: ChatGPTAppObservation
@@ -140,9 +150,7 @@ actor ChatGPTAppConversation {
             if !codexMode.isEmpty {
                 try await action(control: native.unique(codexMode), target: target, session: session, expected: native)
                 native = try await read(target)
-                let choice = try native.control(label: "ChatGPT Create, learn, and explore", role: "AXMenuItem")
-                try await action(control: choice, target: target, session: session, expected: native)
-                native = try await read(target)
+                native = try await chooseChatGPTMode(native, target: target, session: session)
             }
             guard native.nodes.filter({ $0.role == "AXPopUpButton" && $0.label == "Switch mode, current mode: ChatGPT" }).count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s mode did not change. No input was sent.") }
             try idle(native)
@@ -188,9 +196,7 @@ actor ChatGPTAppConversation {
         if switchers.count == 1, switchers[0].label != "Switch mode, current mode: ChatGPT" {
             try await action(control: switchers[0], target: target, session: session, expected: native)
             native = try await read(target)
-            let choice = try native.control(label: "ChatGPT Create, learn, and explore", role: "AXMenuItem")
-            try await action(control: choice, target: target, session: session, expected: native)
-            native = try await read(target)
+            native = try await chooseChatGPTMode(native, target: target, session: session)
         }
         let chat = try native.control(label: "Chat", role: "AXCheckBox")
         if chat.value != "1" {

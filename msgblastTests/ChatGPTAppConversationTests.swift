@@ -529,7 +529,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             (try? String(contentsOf: directory.appendingPathComponent("calls.jsonl"), encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? []
         }
     }
-    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false, unreadableStart: Bool = false, unreadDotStart: Bool = false, preparation: Preparation = .ready) throws -> Fixture {
+    private func fixture(kind: ChatGPTAppKind = .chatgpt, followup: Bool = false, wrongOutgoing: Bool = false, unknownSend: Bool = false, wrongPID: Bool = false, reopen: Bool = false, duplicateTitle: Bool = false, question: String = "First question", dropNewline: Bool = false, existingWork: Bool = false, codexMode: Bool = false, dotSetup: Bool = false, newChatWork: Bool = false, dotSetupDestination: Bool = false, nativeParagraphs: Bool = false, renameFailure: Bool = false, fallbackResume: Bool = false, renamedResume: Bool = false, zeroHeightSidebar: Bool = false, unreadableStart: Bool = false, unreadDotStart: Bool = false, preparation: Preparation = .ready) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("chatgpt-submit-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var binding = ChatGPTConversationBinding(comparisonID: UUID(uuidString: "AA000000-0000-0000-0000-000000000001")!, kind: kind)
@@ -661,6 +661,16 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             let workField = control("AXTextArea", "Work with ChatGPT", value: "\n", x: 0, children: [.init(role: "AXGroup", subrole: "AXEmptyGroup", classes: ["placeholder"])])
             roots.insert(.init(role: "AXWindow", label: "Existing task", children: [.init(role: "AXWebArea", url: "app://-/index.html", children: [newChat, .init(role: "AXPopUpButton", label: "Switch mode, current mode: ChatGPT"), .init(role: "AXGroup", id: "task-chat-panel", children: [workField])])]), at: 0)
             actions.insert(["tool": "click", "label": "New chat", "role": "AXButton"], at: 0)
+        }
+        if codexMode {
+            var work = roots[0]
+            let switcher = try XCTUnwrap(work.children[0].children.firstIndex { $0.role == "AXPopUpButton" })
+            work.children[0].children[switcher] = control("AXPopUpButton", "Switch mode, current mode: Codex", x: 40)
+            var menu = work
+            menu.children[0].children.append(control("AXMenuItem", "ChatGPT Create, learn, and explore", x: 50))
+            roots.insert(contentsOf: [work, menu], at: 0)
+            actions.insert(contentsOf: [["tool": "click", "label": "Switch mode, current mode: Codex", "role": "AXPopUpButton"],
+                                       ["tool": "click", "label": "ChatGPT Create, learn, and explore", "role": "AXMenuItem"]], at: 0)
         }
         if preparation.needsFocus {
             var unfocused = roots[0]
@@ -1275,6 +1285,45 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(mutations.first?["tool"] as? String, "click")
         XCTAssertTrue(((mutations.first?["arguments"] as? [String: Any])?["element_token"] as? String)?.hasPrefix("0:") == true)
         XCTAssertEqual(try String(contentsOf: fixture.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), fixture.binding.firstMessage("First question"))
+    }
+
+    func testCodexModeTransitionSettlesWithoutRepeatingNavigationOrOverwritingDrafts() async throws {
+        final class Transition: @unchecked Sendable {
+            let lock = NSLock()
+            var delayed = false
+            func read(_ root: ChatGPTAXNode, foreignDraft: Bool) -> ChatGPTAXNode {
+                lock.withLock {
+                    guard !delayed, root.label == "Existing task",
+                          let mode = root.children[0].children.firstIndex(where: { $0.label == "Switch mode, current mode: ChatGPT" }) else { return root }
+                    delayed = true
+                    var stale = root
+                    stale.children[0].children[mode].label = "Switch mode, current mode: Codex"
+                    if foreignDraft {
+                        stale.children[0].children[2].children[0].value = "Keep this work draft"
+                        stale.children[0].children[2].children[0].children = []
+                    }
+                    return stale
+                }
+            }
+        }
+        for foreignDraft in [false, true] {
+            let f = try fixture(existingWork: true, codexMode: true)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let transition = Transition()
+            let adapter = f.adapter(transformNative: { transition.read($0, foreignDraft: foreignDraft) })
+            do {
+                let answer = try await adapter.reply("First question", binding: f.binding, onPrepared: { _ in }, onBinding: { _ in })
+                XCTAssertFalse(foreignDraft)
+                XCTAssertEqual(answer, "ANSWER")
+                XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), f.binding.firstMessage("First question"))
+            } catch {
+                XCTAssertTrue(foreignDraft, error.localizedDescription)
+                XCTAssertTrue(error.localizedDescription.contains("draft"), error.localizedDescription)
+            }
+            let mutations = f.calls().filter { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") }
+            XCTAssertEqual(mutations.prefix(2).compactMap { ($0["arguments"] as? [String: Any])?["element_token"] as? String }.map { $0.components(separatedBy: ":")[0] }, ["0", "1"], "Open the picker and choose ChatGPT exactly once")
+            if foreignDraft { XCTAssertEqual(mutations.count, 2, "Never navigate or type after a work draft appears") }
+        }
     }
 
     func testOwnPartialOutgoingBubbleSettlesWithoutSecondSendOrPrematureBinding() async throws {
