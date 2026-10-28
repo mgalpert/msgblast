@@ -156,6 +156,7 @@ private final class ClaudeHeldReplyClock: Clock, @unchecked Sendable {
     let minimumResolution: Duration = .nanoseconds(1)
     private let lock = NSLock()
     private var sleeps = 0
+    var sleepCount: Int { lock.withLock { sleeps } }
 
     func sleep(until deadline: Instant, tolerance: Duration?) async throws {
         let first = lock.withLock { sleeps += 1; return sleeps == 1 }
@@ -513,7 +514,8 @@ final class ClaudeAppDriverTests: XCTestCase {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.desktopConversation = .init(name: "Claude"); workspace.comparisonID = fixture.binding.comparisonID
             try JSONEncoder().encode(workspace).write(to: storage)
-            let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(8), callTimeout: 5, replyClock: .init(ClaudeHeldReplyClock()))
+            let replyClock = ClaudeHeldReplyClock()
+            let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(8), callTimeout: 5, replyClock: .init(replyClock))
             let adapter = fixture.adapter(timing: timing), driver = DesktopAppConversation(executable: fixture.executable)
             let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: .demo, desktopDriver: driver, claudeApp: adapter)
             let confirmed = expectation(description: "Claude's outgoing message was recorded for \(scenario)")
@@ -525,6 +527,7 @@ final class ClaudeAppDriverTests: XCTestCase {
                 XCTFail("Claude never recorded the outgoing message for \(scenario)")
                 return
             }
+            XCTAssertGreaterThan(replyClock.sleepCount, 0, "Claude must use the controlled reply deadline in this test")
             if shutdown { await session.cancelAndWait() }
             else {
                 session.cancelNativeRequest()
