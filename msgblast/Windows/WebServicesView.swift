@@ -325,10 +325,7 @@ struct AgentsWorkspaceView: View {
             model.state.selection = recipients
             do { try model.save() }
             catch { model.state.selection = previousSelection; model.error = error.localizedDescription; return }
-            let included = Set(sessions.map(\.id))
-            for session in web.sessions where session.provider.supportsSharedSubmissions && session.state.selected && !included.contains(session.id) {
-                session.updateState { $0.selected = false }
-            }
+            model.deselectHiddenGridRecipients()
         }
         if !showingComparison && selectedWebSessions.isEmpty {
             Task { await model.start(recipientIDs: recipients) }

@@ -653,6 +653,49 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         independentMessages.timer?.invalidate()
         await independentMessages.webAgents.cancelAndWait()
         print("PASS: actual AppModel submits a separate simulated Messages conversation while the earlier native app reply remains owned.")
+        let busyGridModel = AppModel()
+        for session in busyGridModel.webAgents.sessions { session.setEnabled(false) }
+        let busyWabi = busyGridModel.webAgents.session(for: .init(provider: .wabi))!
+        let readyClaude = busyGridModel.webAgents.session(for: .init(provider: .claudeApp))!
+        for session in [busyWabi, readyClaude] {
+            session.setEnabled(true)
+            busyGridModel.webAgents.select(session, selected: true)
+        }
+        var earlierRequest = WebSendAttempt(text: "Earlier Wabi question", status: .waiting)
+        earlierRequest.comparisonID = UUID()
+        earlierRequest.messageID = earlierRequest.id.uuidString
+        busyWabi.updateState { $0.attempts = [earlierRequest] }
+        let gridContact = busyGridModel.state.agents[0]
+        busyGridModel.state.selection = [gridContact.id]
+        busyGridModel.state.agentGrid = .init(visibleIDs: [busyWabi.id.gridID, readyClaude.id.gridID, .messages(gridContact.id)])
+        busyGridModel.setSharedDraft("Send to available recipients while Wabi is busy")
+        let busyGridWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1200, height: 800), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        busyGridWindow.contentView = NSHostingView(rootView: AgentsWorkspaceView(model: busyGridModel, web: busyGridModel.webAgents, showingComparison: .constant(false)))
+        busyGridWindow.orderBack(nil)
+        try await waitUntil {
+            busyGridWindow.contentView.flatMap { privateEditor(in: $0) }?.string == busyGridModel.state.draft
+        }
+        let gridEditor = privateEditor(in: busyGridWindow.contentView!)!
+        precondition(gridEditor.sendMessage != nil)
+        gridEditor.sendMessage?()
+        try await waitUntil {
+            readyClaude.state.attempts.first?.status == .observed &&
+                busyGridModel.state.comparisons.first?.members.first?.submission == .submitted &&
+                !busyGridModel.webBroadcastBusy
+        }
+        let gridComparison = busyGridModel.state.comparisons[0]
+        precondition(gridComparison.resolvedWebAgentIDs == [readyClaude.id], "The busy app must not join or receive this broadcast")
+        precondition(gridComparison.members.map(\.id) == [gridContact.id])
+        precondition(busyWabi.state.selected, "Sending from the grid must preserve a busy agent's saved selection")
+        precondition(busyWabi.state.attempts == [earlierRequest], "The earlier request must not be dismissed, reassigned or resent")
+        busyWabi.updateState { $0.attempts[0].status = .observed }
+        precondition(busyGridModel.webAgents.broadcastSelection.contains { $0.id == busyWabi.id }, "Completing the reply restores availability without another selection click")
+        precondition(busyWabi.state.attempts.count == 1)
+        busyGridWindow.orderOut(nil)
+        busyGridWindow.contentView = nil
+        busyGridModel.timer?.invalidate()
+        await busyGridModel.webAgents.cancelAndWait()
+        print("PASS: actual Agents grid composer broadcasts to ready App Agent and Messages recipients, preserves the busy app selection and request, and restores availability when its reply completes. Simulated providers and Messages; no live sends.")
         let model = AppModel()
         precondition(model.demo && model.local.url.path.contains("UIFixture"))
         model.coordinator = WindowCoordinator(model: model)
