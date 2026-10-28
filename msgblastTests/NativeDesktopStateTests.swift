@@ -159,6 +159,37 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertTrue(agents.canSendIndependentNativeReply(to: chatgpt, comparisonID: comparison))
     }
 
+    func testBusyAppCannotBeSelectedInAnotherConversationOrThroughItsSharedSurface() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let chatgpt = try XCTUnwrap(agents.session(for: .init(provider: .chatgptApp)))
+        let dots = try XCTUnwrap(agents.session(for: .init(provider: .dotsApp)))
+        let claude = try XCTUnwrap(agents.session(for: .init(provider: .claudeApp)))
+        for session in [chatgpt, dots, claude] { session.setEnabled(true); agents.select(session, selected: false) }
+        agents.select(chatgpt, selected: true)
+        agents.select(claude, selected: true)
+        var pending = WebSendAttempt(text: "An earlier question", status: .waiting)
+        pending.comparisonID = UUID(); pending.messageID = pending.id.uuidString
+        chatgpt.updateState { $0.attempts = [pending] }
+        agents.setComparison(UUID())
+        XCTAssertTrue(chatgpt.state.selected, "The prior selection can still exist when navigating to a new conversation")
+        XCTAssertEqual(agents.broadcastSelection.map(\.id), [claude.id], "A stale selection must not block or receive the new broadcast")
+        agents.select(chatgpt, selected: false)
+        agents.select(chatgpt, selected: true)
+        agents.select(dots, selected: true)
+        XCTAssertEqual(agents.selected.map(\.id), [claude.id], "Busy agents must be unavailable without making the user deselect them")
+        XCTAssertEqual(chatgpt.state.attempts, [pending], "Selection must not dismiss, resend, or reassign a pending request")
+        XCTAssertTrue(agents.isBusyForSelection(chatgpt))
+        XCTAssertTrue(agents.isBusyForSelection(dots))
+        XCTAssertFalse(agents.isBusyForSelection(claude))
+        chatgpt.updateState { $0.attempts[0].status = .observed }
+        agents.select(dots, selected: true)
+        XCTAssertTrue(dots.state.selected, "The shared app becomes selectable when its reply finishes")
+        XCTAssertEqual(Set(agents.broadcastSelection.map(\.id)), Set([claude.id, dots.id]))
+    }
+
     func testNextAppSubmitsAfterInputHandoffWhilePreviousReplyIsPending() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

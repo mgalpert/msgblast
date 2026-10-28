@@ -34,29 +34,17 @@ struct AgentsWorkspaceView: View {
             (showingComparison || shown.contains(ids[$0.id] ?? .messages($0.id))) }
     }
     private var selectedWebSessions: [WebAgentSession] {
-        web.selected.filter { showingComparison || model.isVisibleInAgentGrid($0.id.gridID) }
+        web.broadcastSelection.filter { showingComparison || model.isVisibleInAgentGrid($0.id.gridID) }
     }
     private var attachmentComparisonID: UUID? { showingComparison ? nativeComparison?.id : nil }
     private var attachments: [MessageAttachment] { model.attachmentDraft(comparisonID: attachmentComparisonID) }
     private var preparingDesktopSessions: [WebAgentSession] {
         selectedWebSessions.filter { $0.provider.desktopApp != nil && $0.loading }
     }
-    private var unavailableDuringAnotherBroadcast: [WebAgentSession] {
-        guard canUseOtherRecipients else { return [] }
-        return selectedWebSessions.filter { session in
-            if session.provider.desktopApp != nil {
-                return !web.canUseNativeSurface(to: session, comparisonID: web.comparisonID)
-            }
-            return session.isSending
-        }
-    }
     private var sharedSendDisabledReason: String? {
         guard !busy else { return nil }
         if WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) {
             return "Choose ChatGPT or Dots."
-        }
-        if !unavailableDuringAnotherBroadcast.isEmpty {
-            return "Wait for \(unavailableDuringAnotherBroadcast.map(\.name).formatted(.list(type: .and))) to finish responding."
         }
         if !preparingDesktopSessions.isEmpty {
             return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
@@ -68,7 +56,7 @@ struct AgentsWorkspaceView: View {
     }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return nativeComparison?.endedAt == nil && !busy && unavailableDuringAnotherBroadcast.isEmpty && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
+        return nativeComparison?.endedAt == nil && !busy && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
             && selectedWebSessions.allSatisfy { $0.provider.usesNativeConversation || ($0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text)) }
             && (nativeRecipients.isEmpty || (model.databaseAvailable && nativeRecipients.allSatisfy { model.route($0) != nil }))
@@ -252,8 +240,9 @@ struct AgentsWorkspaceView: View {
                 HStack(spacing: 8) {
                     Text("Send to").font(.caption).foregroundStyle(.secondary)
                     ForEach(model.recipientWebSessions(for: nativeComparison), id: \.id) { session in
-                        recipient(session.name, selected: session.isEnabled && session.state.selected) { selectRecipient(session) }
-                            .disabled(!session.isEnabled || (model.webBroadcastBusy && nativeComparison.map { !$0.resolvedWebAgentIDs.contains(session.id) } == true))
+                        let agentBusy = web.isBusyForSelection(session)
+                        recipient(session.name, selected: session.isEnabled && session.state.selected && !agentBusy, agentBusy: agentBusy) { selectRecipient(session) }
+                            .disabled(agentBusy || !session.isEnabled || (model.webBroadcastBusy && nativeComparison.map { !$0.resolvedWebAgentIDs.contains(session.id) } == true))
                     }
                     ForEach(model.recipientMessageAgents(for: nativeComparison)) { agent in
                         recipient(agent.name, selected: model.state.selection.contains(agent.id)) {
@@ -292,18 +281,19 @@ struct AgentsWorkspaceView: View {
         }.padding(20)
     }
 
-    private func recipient(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func recipient(_ title: String, selected: Bool, agentBusy: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                 Text(title)
+                if agentBusy { Text("Busy").foregroundStyle(.secondary) }
             }.font(.caption.weight(.medium)).padding(.horizontal, 10).padding(.vertical, 6)
         }.buttonStyle(.plain).background(selected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08), in: Capsule())
-            .accessibilityLabel("Recipient \(title)").accessibilityValue(selected ? "Selected" : "Not selected").disabled(busy)
+            .accessibilityLabel("Recipient \(title)").accessibilityValue(agentBusy ? "Busy" : selected ? "Selected" : "Not selected").disabled(busy || agentBusy)
     }
 
     private func selectRecipient(_ session: WebAgentSession) {
-        guard !busy, session.provider.supportsSharedSubmissions else { return }
+        guard !busy, !web.isBusyForSelection(session), session.provider.supportsSharedSubmissions else { return }
         hiddenWebAgents.remove(session.id)
         guard let comparison = nativeComparison, !comparison.resolvedWebAgentIDs.contains(session.id) else {
             web.toggle(session)

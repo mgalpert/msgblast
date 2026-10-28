@@ -17,6 +17,14 @@ public final class WebAgents: ObservableObject {
     @Published private var archivedAgents: Set<WebAgentID> = []
     public var availableSessions: [WebAgentSession] { sessions.filter { $0.isEnabled } }
     public var selected: [WebAgentSession] { availableSessions.filter { $0.state.selected && $0.provider.supportsSharedSubmissions } }
+    public var broadcastSelection: [WebAgentSession] { selected.filter { !isBusyForSelection($0) } }
+
+    public func isBusyForSelection(_ session: WebAgentSession) -> Bool {
+        if session.isSending { return true }
+        guard let app = session.provider.desktopApp else { return false }
+        return sessions.contains { $0.provider.desktopApp?.bundleID == app.bundleID &&
+            ($0.isSending || $0.incompleteDesktopAttempt != nil) }
+    }
     public var displayed: [WebAgentSession] {
         let hasBothSavedChats = Self.hasConflictingNativeRecipients(archivedAgents.map(\.provider))
         return sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) ||
@@ -143,7 +151,7 @@ public final class WebAgents: ObservableObject {
         providers.contains(.chatgptApp) && providers.contains(.dotsApp)
     }
     public func select(_ session: WebAgentSession, selected: Bool) {
-        guard !selected || session.isEnabled else { return }
+        guard !selected || (session.isEnabled && !isBusyForSelection(session)) else { return }
         if selected, [.chatgptApp, .dotsApp].contains(session.provider) {
             for other in sessions where other !== session && [.chatgptApp, .dotsApp].contains(other.provider) && other.provider != session.provider && other.state.selected {
                 other.updateState { $0.selected = false }
@@ -152,7 +160,7 @@ public final class WebAgents: ObservableObject {
         session.updateState { $0.selected = selected }
     }
     public func toggle(_ session: WebAgentSession) {
-        guard session.isEnabled else { return }
+        guard session.isEnabled, !isBusyForSelection(session) else { return }
         select(session, selected: !session.state.selected)
         if session.state.selected {
             let id = comparisonID
@@ -187,13 +195,9 @@ public final class WebAgents: ObservableObject {
     }
     /// Preparation may still be needed, but another request must not own this app.
     public func canUseNativeSurface(to session: WebAgentSession, comparisonID: UUID?) -> Bool {
-        guard sessions.contains(where: { $0 === session }), let app = session.provider.desktopApp,
-              session.state.comparisonID == comparisonID, !session.isSending,
-              session.incompleteDesktopAttempt == nil else { return false }
-        return !sessions.contains { other in
-            other !== session && other.provider.desktopApp?.bundleID == app.bundleID &&
-                (other.isSending || other.incompleteDesktopAttempt != nil)
-        }
+        guard sessions.contains(where: { $0 === session }), session.provider.desktopApp != nil,
+              session.state.comparisonID == comparisonID else { return false }
+        return !isBusyForSelection(session)
     }
     public func beginShutdown() {
         shuttingDown = true
