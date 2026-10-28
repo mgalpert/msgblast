@@ -11,6 +11,8 @@ struct PairingView: View {
     @State private var link = ""
     @State private var offer: RemotePairingOffer?
     @State private var error: String?
+    /// The last Pair attempt could not reach any of the Mac's addresses.
+    @State private var unreachable = false
     @State private var pairing = false
     @State private var scanning = false
     @Environment(\.dismiss) private var dismiss
@@ -39,9 +41,16 @@ struct PairingView: View {
                     Text("Check that the Mac shows the same name. The code works once and expires \(offer.expiresAt.formatted(.relative(presentation: .named))).")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button(pairing ? "Pairing…" : "Pair") { pair(offer) }.disabled(pairing)
+                    if let error {
+                        Text(error).foregroundStyle(.red)
+                        if unreachable {
+                            Text("Check that Tailscale is connected on this phone, or that both devices are on the same Wi-Fi.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
-            if let error { Section { Text(error).foregroundStyle(.red) } }
+            if offer == nil, let error { Section { Text(error).foregroundStyle(.red) } }
             Section {
                 Text("Your phone talks only to your Mac, over your local network or Tailscale, encrypted end to end. Sign-ins, permissions and keys stay on the Mac.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -55,6 +64,7 @@ struct PairingView: View {
 
     private func read(_ text: String) {
         error = nil
+        unreachable = false
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)), let parsed = try? RemotePairingOffer(url: url) else {
             error = "That is not a msgblast pairing code."; return
         }
@@ -65,11 +75,17 @@ struct PairingView: View {
 
     private func pair(_ offer: RemotePairingOffer) {
         pairing = true
+        error = nil
+        unreachable = false
         Task {
             do {
                 _ = try await app.pair(offer: offer, deviceName: UIDevice.current.name)
                 dismiss()
-            } catch { self.error = error.localizedDescription }
+            } catch {
+                // Stay on this screen so Pair can be tapped again; each try is a fresh race.
+                self.unreachable = (error as? RaceFailure) != nil
+                self.error = error.localizedDescription
+            }
             pairing = false
         }
     }
