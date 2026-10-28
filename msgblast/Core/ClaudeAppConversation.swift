@@ -137,6 +137,8 @@ actor ClaudeAppConversation {
     func reply(_ text: String, binding: ClaudeConversationBinding,
                onSubmitAction: @Sendable () async -> Void = {},
                onPrepared: @Sendable (ClaudeConversationBinding) async throws -> Void,
+               onReceipt: @Sendable ([ClaudeAppMessage], String) async throws -> Void = { _, _ in },
+               onSubmitted: @Sendable () async throws -> Void = {},
                onBinding: @Sendable (ClaudeConversationBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Claude is already handling a request.") }
         occupied = true; defer { occupied = false }
@@ -159,6 +161,7 @@ actor ClaudeAppConversation {
         var saved = binding
         if saved.firstPrompt == nil { saved.firstPrompt = prompt }
         try await onPrepared(saved)
+        try await onReceipt(baseline.messages, prompt)
         guard try await native(target) == before else { throw DesktopAppError.unavailable("Claude changed before input. Nothing was typed.") }
         var point = (x: 0, y: 0)
         var current = before
@@ -193,7 +196,8 @@ actor ClaudeAppConversation {
         _ = try composer(draftState, draft)
         guard draft.url == baseline.url, draft.messages == baseline.messages, draft.draft == prompt, draft.composerFocused, !draft.generating, !draftState.isGenerating else { throw DesktopAppError.unavailable("Claude's prepared draft or conversation changed. Send was not pressed; review the preserved text.") }
         guard try await native(target) == draft else { throw DesktopAppError.unavailable("Claude changed before Send. Review the preserved draft.") }
-        return try await DesktopAppWorkflow.reply(app: "Claude", timing: timing, submit: {
+        var submissionObserved = false
+        return try await DesktopAppWorkflow.reply(app: "Claude", timing: timing, clock: timing.replyClock, submit: {
             try await self.click(self.control(draftState, label: "Send message"), target: target, session: session)
             await onSubmitAction()
         }, observe: {
@@ -202,13 +206,44 @@ actor ClaudeAppConversation {
                 guard current.url == url else { throw DesktopAppError.unavailable("Claude switched conversations while waiting. No automatic resend.") }
             } else if ClaudeChatURL.isChat(current.url) {
                 if !current.messages.isEmpty {
+                    if let first = current.messages.first, first.role == .user, first.text != prompt,
+                       !first.text.isEmpty, prompt.hasPrefix(first.text) { return nil }
                     guard current.messages.first == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Claude's created chat did not contain this comparison's first prompt.") }
                     saved.url = current.url
                     try await onBinding(saved)
                 }
             } else if !ClaudeChatURL.isNew(current.url) { throw DesktopAppError.unavailable("Claude's conversation address changed unexpectedly.") }
-            guard saved.url != nil, current.draft.isEmpty, !current.generating, !state.isGenerating else { return nil }
-            return try receipt.reply(in: current.messages)
+            guard saved.url != nil else { return nil }
+            let answer = try receipt.reply(in: current.messages)
+            if current.draft.isEmpty, current.messages.count > baseline.messages.count,
+               current.messages[baseline.messages.count] == .init(role: .user, text: prompt), !submissionObserved {
+                try await onSubmitted()
+                submissionObserved = true
+            }
+            guard current.draft.isEmpty, !current.generating, !state.isGenerating else { return nil }
+            return answer
         })
+    }
+
+    /// Read only the currently selected owned chat; never navigate or resend.
+    func recoverReply(_ receipt: ClaudeReplyReceipt, binding: ClaudeConversationBinding) async throws -> String? {
+        guard !occupied else { return nil }
+        guard receipt.version == 1, binding.comparisonID == receipt.comparisonID,
+              let url = binding.url, ClaudeChatURL.isChat(url), receipt.initialURL == nil || receipt.initialURL == url else {
+            throw DesktopAppError.unavailable("Claude's saved chat could not be verified.")
+        }
+        occupied = true; defer { occupied = false }
+        let session = "msgblast-claude-recovery-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
+        let target = try await driver.target(.claude)
+        func answer() async throws -> String? {
+            let (state, observation) = try await observe(target, session: session)
+            guard observation.url == url else { throw DesktopAppError.unavailable("Claude's selected chat changed. No reply was attributed.") }
+            guard !observation.generating, !state.isGenerating else { return nil }
+            return try receipt.reply(in: observation.messages)
+        }
+        guard let first = try await answer() else { return nil }
+        if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+        return try await answer() == first ? first : nil
     }
 }

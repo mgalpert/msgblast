@@ -120,6 +120,7 @@ public struct Message: Identifiable, Hashable, Sendable {
 public enum Submission: String, Codable, Sendable {
     case ready, sending, submitted, failed, uncertain
     public var canRetry: Bool { self == .failed }
+    public var mayHaveBeenSent: Bool { self == .sending || self == .submitted || self == .uncertain }
     public static func failure(afterAttempt: Bool, error: Error) -> Submission {
         if case SendFailure.notSubmitted = error { return .failed }
         return afterAttempt ? .uncertain : .failed

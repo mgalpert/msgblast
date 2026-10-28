@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public struct MuseSideChatBinding: Codable, Equatable, Sendable {
     public let comparisonID: UUID
@@ -144,6 +145,43 @@ struct MuseAppReceipt {
         guard !added.isEmpty else { return nil }
         guard added.first == MuseAppMessage(role: .user, text: prompt), added.dropFirst().allSatisfy({ $0.role == .assistant }) else {
             throw DesktopAppError.unavailable("Another request appeared in Muse. No reply was attributed to this comparison.")
+        }
+        let answer = added.dropFirst().map(\.text).joined(separator: "\n\n")
+        return answer.isEmpty ? nil : answer
+    }
+}
+
+struct MuseReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    let requestID: UUID
+    let initialThreadID: UUID?
+    let prompt: String
+    let baselineCount: Int
+    let baselineDigest: Data
+    var automaticRecovery = true
+
+    init(comparisonID: UUID, requestID: UUID, initialThreadID: UUID?, prompt: String, baseline: [MuseAppMessage]) throws {
+        self.comparisonID = comparisonID; self.requestID = requestID; self.initialThreadID = initialThreadID
+        self.prompt = prompt; baselineCount = baseline.count; baselineDigest = try Self.digest(baseline)
+    }
+
+    private static func digest(_ messages: [MuseAppMessage]) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return Data(SHA256.hash(data: try encoder.encode(messages)))
+    }
+
+    func reply(in messages: [MuseAppMessage]) throws -> String? {
+        guard version == 1, !prompt.isEmpty, baselineCount >= 0, baselineDigest.count == 32,
+              messages.count >= baselineCount,
+              try Self.digest(Array(messages.prefix(baselineCount))) == baselineDigest else {
+            throw DesktopAppError.unavailable("Muse's saved chat history changed. No reply was attributed.")
+        }
+        let added = messages.dropFirst(baselineCount)
+        guard !added.isEmpty else { return nil }
+        guard added.first == MuseAppMessage(role: .user, text: prompt),
+              added.dropFirst().allSatisfy({ $0.role == .assistant }) else {
+            throw DesktopAppError.unavailable("Another request appeared in Muse. No reply was attributed.")
         }
         let answer = added.dropFirst().map(\.text).joined(separator: "\n\n")
         return answer.isEmpty ? nil : answer

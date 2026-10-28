@@ -109,7 +109,7 @@ private struct QuickAccessMenu: View {
                 }
             }
             if model.quickChatAgents.isEmpty { Text("No connected agents") }
-        }.disabled(!model.canStartNewBlast || model.quickChatAgents.isEmpty)
+        }.disabled(!model.canStartNewBlast || model.webBroadcastBusy || model.quickChatAgents.isEmpty)
         Button("Show msgblast", action: showWorkspace)
         Divider()
         Button("Settings…") { NSApp.activate(ignoringOtherApps: true); openSettings() }

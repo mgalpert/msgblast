@@ -58,14 +58,23 @@ contributor instructions, the entered idea, and the installed version/build;
 **Copy Prompt** writes that visible text to the clipboard. Links open in the
 default browser. Closing the window discards its local draft.
 
-There are four distinct connection types:
+Connections use separate transports:
 
 | Connection | How it works |
 | --- | --- |
 | Messages | Existing one-to-one iMessage chats, read-only history, and Apple Events submission |
+| App Agents | Installed native Muse, Grok Bot, Wabi, ChatGPT, Dots and Claude apps, with verified destinations and per-comparison receipts |
 | Websites | Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, and Hark inside persistent WebKit stores |
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
+
+For an installed, enabled App Agent with a known destination, the first explicit
+send opens the app and checks its conversation without requiring a separate
+Connect click. Setup is remembered only after those checks succeed. Grok Bot
+still requires the user to choose a bot. Passive viewing does not establish a
+new connection, and missing native history bindings never create replacement
+conversations. Busy app agents are unavailable for selection while other
+recipients can continue; confirmed replies return to their original comparison.
 
 Website login does not authenticate a CLI. CLI configuration does not replace the
 website. Grok Bot is distinct from Grok's website. Comparisons keep each provider's

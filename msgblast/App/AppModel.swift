@@ -12,6 +12,54 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     @Published var busy = false
     @Published var webBroadcastBusy = false
+    private(set) var sharedDraftRevision = SharedDraftRevision()
+    @Published private(set) var webBroadcastReplyGate = BroadcastReplyGate()
+    private var deferredWorkspacePreparation: UUID?
+    var webBroadcastInputsFinished: Bool { webBroadcastReplyGate.inputsFinished }
+    var independentNativeReplies: Int { webBroadcastReplyGate.independentReplies }
+
+    func beginSharedWebBroadcast(nativeOnly: Bool = false, comparisonID: UUID? = nil) -> UUID? {
+        guard !webBroadcastBusy || webBroadcastReplyGate.canBrowseWhileWaiting,
+              let id = webBroadcastReplyGate.beginBroadcast(nativeOnly: nativeOnly, comparisonID: comparisonID) else { return nil }
+        webBroadcastBusy = true
+        return id
+    }
+    func bindSharedWebBroadcast(_ id: UUID, to comparisonID: UUID) -> Bool {
+        webBroadcastReplyGate.bindComparison(comparisonID, to: id)
+    }
+    func finishSharedWebInputs(_ id: UUID) {
+        guard webBroadcastBusy else { return }
+        webBroadcastReplyGate.finishInputs(id)
+    }
+    func confirmSharedWebSubmission(_ id: UUID) {
+        guard webBroadcastBusy else { return }
+        webBroadcastReplyGate.confirmSubmission(id)
+    }
+    func finishSharedWebBroadcast(_ id: UUID) {
+        webBroadcastReplyGate.finishBroadcast(id)
+        if !webBroadcastReplyGate.busy { finishWebBroadcastOwnership() }
+    }
+    func beginIndependentNativeReply() -> Bool {
+        guard webBroadcastBusy else { return false }
+        return webBroadcastReplyGate.beginIndependentReply()
+    }
+    func finishIndependentNativeReply() {
+        guard independentNativeReplies > 0 else { return }
+        webBroadcastReplyGate.finishIndependentReply()
+        if !webBroadcastReplyGate.busy { finishWebBroadcastOwnership() }
+    }
+    private func finishWebBroadcastOwnership() {
+        webBroadcastBusy = false
+        guard let id = deferredWorkspacePreparation else {
+            webAgents.connectSelected()
+            return
+        }
+        deferredWorkspacePreparation = nil
+        Task { @MainActor in
+            guard !webBroadcastBusy, webAgents.comparisonID == id else { return }
+            _ = await webAgents.prepareComparison(id, for: webAgents.selected)
+        }
+    }
     @Published var webComparisonRequest = UUID()
     @Published var newBlastRequest = UUID()
     private(set) var newBlastShowsChat = false
@@ -433,18 +481,21 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func setSharedDraft(_ text: String) {
+        sharedDraftRevision.edited(from: state.draft, to: text)
         state.draft = text
         if state.workspaceDrafts == nil { state.workspaceDrafts = [:] }
         state.workspaceDrafts?[webAgents.comparisonID?.uuidString ?? "new"] = text
         persist()
     }
     var canStartNewBlast: Bool {
-        !needsOnboarding && !needsSharingChoice && error == nil && !busy && !webBroadcastBusy && !webAgents.sessions.contains { $0.isSending }
+        !needsOnboarding && !needsSharingChoice && error == nil && !busy &&
+            (webBroadcastReplyGate.canBrowseWhileWaiting || (!webBroadcastBusy && !webAgents.sessions.contains { $0.isSending }))
     }
     @discardableResult
     func requestNewBlast(agent: AgentGridID? = nil) -> Bool {
         guard canStartNewBlast else { return false }
         if let agent {
+            guard !webBroadcastBusy else { return false }
             guard quickChatAgents.contains(where: { $0.id == agent }) else { return false }
         }
         selectWorkspace(nil)
@@ -477,9 +528,11 @@ final class AppModel: ObservableObject {
         }
     }
     func selectWorkspace(_ id: UUID?, promotingDraft: Bool = false) {
+        deferredWorkspacePreparation = nil
         if id == nil { deselectHiddenGridRecipients(); persist() }
         let previous = webAgents.comparisonID
         guard previous != id else { return }
+        sharedDraftRevision.switchedWorkspace(promotingDraft: promotingDraft)
         var drafts = state.workspaceDrafts ?? [:]
         drafts[previous?.uuidString ?? "new"] = state.draft
         let key = id?.uuidString ?? "new"
@@ -521,12 +574,12 @@ final class AppModel: ObservableObject {
                 session.updateState { $0.selected = false }
                 return false
             }
-            guard await webAgents.prepareComparison(comparisonID, for: [session]),
+            guard await webAgents.prepareComparison(comparisonID, for: [session], allowSavedPrivateDraft: true, foregroundPreparation: true),
                   comparison(comparisonID)?.endedAt == nil else { return false }
             // Save membership before sending so an interrupted join is never automatically repeated.
             state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])
             try save()
-            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID)
+            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID, consumePrivateDraft: false)
             if attempt == nil || attempt?.status == .notSent {
                 state.comparisons[i].setWebAgents(state.comparisons[i].resolvedWebAgentIDs.filter { $0 != session.id })
                 try save()
@@ -558,11 +611,14 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func openWebComparison(_ id: UUID, present: Bool = true) {
-        guard !webBroadcastBusy, let comparison = comparison(id) else { return }
+        guard !busy, (!webBroadcastBusy || webBroadcastReplyGate.canBrowseWhileWaiting), let comparison = comparison(id) else { return }
         selectWorkspace(id)
         state.selection = Set(comparison.members.map(\.id))
         webAgents.restoreSelection(forAgentIDs: comparison.resolvedWebAgentIDs)
         if present { webComparisonRequest = UUID() }
+        // The previous broadcast still owns its native app surfaces. Browsing
+        // history must not navigate an app away from an in-flight reply.
+        guard !webBroadcastBusy else { deferredWorkspacePreparation = id; return }
         let sessions = webAgents.selected
         Task {
             guard webAgents.comparisonID == id else { return }
@@ -613,7 +669,7 @@ final class AppModel: ObservableObject {
         let available = demo ? chats : try database?.chats() ?? []
         guard available.contains(where: { $0.id == chat.id && $0.eligible && ChatResolver.normalize($0.handle) == ChatResolver.normalize(chat.handle) }) else { throw AppFailure.blocked("The saved destination is no longer an eligible one-to-one Messages chat. Nothing was sent.") }
     }
-    func submit(_ id: UUID, retry: Bool, only memberID: UUID? = nil) async {
+    func submit(_ id: UUID, retry: Bool, only memberID: UUID? = nil, telemetryManagedExternally: Bool = false) async {
         guard let i = index(id), state.comparisons[i].endedAt == nil, !busy else { return }
         let telemetryStarted = Date()
         let previouslySubmitted = Set(state.comparisons[i].members.filter { $0.submission == .submitted }.map(\.id))
@@ -670,7 +726,7 @@ final class AppModel: ObservableObject {
                 persist()
             }
         }
-        if !webBroadcastBusy {
+        if !telemetryManagedExternally {
             let submitted = state.comparisons[i].members.filter { $0.submission == .submitted && !previouslySubmitted.contains($0.id) }.count
             if submitted > 0 { recordMessageSubmission(kind: .shared, recipientCount: submitted, started: telemetryStarted, logicalID: id) }
             else { recordOperation(.send, success: false, started: telemetryStarted) }
@@ -716,8 +772,9 @@ final class AppModel: ObservableObject {
         }
         if changed { try save() }
     }
-    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil) async {
-        guard let i = index(id), state.comparisons[i].endedAt == nil, !busy, memberID == nil || !webBroadcastBusy else { return }
+    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil, telemetryManagedExternally: Bool = false) async {
+        guard let i = index(id), state.comparisons[i].endedAt == nil, !busy,
+              memberID == nil || !webBroadcastBusy || webBroadcastInputsFinished else { return }
         do { try freezeSharedContext(id) } catch { self.error = error.localizedDescription; return }
         let comparison = state.comparisons[i]
         let selected = recipientIDs.map(Set.init)
@@ -793,7 +850,7 @@ final class AppModel: ObservableObject {
             let completed = state.comparisons[i].followUps[k]
             state.comparisons[i].recordSharedFollowUp(completed)
             try save()
-            if !webBroadcastBusy {
+            if !telemetryManagedExternally {
                 let submitted = completed.states.filter { $0.value == .submitted && !previouslySubmitted.contains($0.key) }.count
                 if submitted > 0 { recordMessageSubmission(kind: memberID == nil ? .shared : .private, recipientCount: submitted, started: telemetryStarted, logicalID: completed.id) }
                 else { recordOperation(.send, success: false, started: telemetryStarted) }

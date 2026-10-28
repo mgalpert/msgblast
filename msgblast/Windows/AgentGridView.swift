@@ -7,6 +7,7 @@ struct AgentGridView: View {
     @ObservedObject var web: WebAgents
     @Binding var editing: Bool
     let busy: Bool
+    let selectionBusy: Bool
     let toggleMessages: (UUID) -> Void
     let openChat: (WebAgentSession) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -158,12 +159,15 @@ struct AgentGridView: View {
     }
 
     private func tile(_ entry: AgentGridEntry, available: Bool, size: CGFloat, scroll: ScrollViewProxy) -> some View {
+        let agentBusy = session(for: entry.id).map { web.isBusyForSelection($0) } ?? false
+        let canSelect = !available && !editing && (session(for: entry.id)?.isEnabled == true ||
+            model.messageAgent(for: entry.id).map { model.route($0) != nil } == true)
         let tile = AgentGridTile(entry: entry, size: size, avatars: avatars, editing: editing,
             available: available, selected: selected(entry.id), arrived: arrived == entry.id || dragging == entry.id,
             subtitle: available || editing ? nil : subtitle(entry.id),
             action: { if available { add(entry.id, scroll: scroll) } else if !editing { activate(entry.id) } },
             hide: { hide(entry.id) })
-            .disabled(busy)
+            .disabled(selectionBusy || (busy && !canSelect) || (!editing && !available && agentBusy))
             .id(entry.id.id)
         return Group {
             if editing && !available {
@@ -224,12 +228,13 @@ struct AgentGridView: View {
     }
 
     private func selected(_ id: AgentGridID) -> Bool {
-        if let session = session(for: id) { return session.isEnabled && session.state.selected }
+        if let session = session(for: id) { return session.isEnabled && session.state.selected && !web.isBusyForSelection(session) }
         if let agent = model.messageAgent(for: id) { return model.state.selection.contains(agent.id) }
         return false
     }
 
     private func subtitle(_ id: AgentGridID) -> String? {
+        if let session = session(for: id), web.isBusyForSelection(session) { return "Busy" }
         if let agent = model.messageAgent(for: id), model.route(agent) == nil { return model.messageConnectionStatus(agent) }
         if case .runtime = id { return "Local setup" }
         if let session = session(for: id), !session.provider.supportsSharedSubmissions { return "Manual chat" }

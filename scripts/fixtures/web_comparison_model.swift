@@ -54,6 +54,9 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         for child in view.subviews { if let editor = privateEditor(in: child) { return editor } }
         return nil
     }
+    @MainActor static func editors(in view: NSView) -> [AttachmentTextView] {
+        (view as? AttachmentTextView).map { [$0] } ?? view.subviews.flatMap { editors(in: $0) }
+    }
     @MainActor static func transcriptText(_ text: String, in view: NSView) -> NSTextView? {
         if let value = view as? NSTextView, !(value is AttachmentTextView), value.string == text { return value }
         for child in view.subviews { if let value = transcriptText(text, in: child) { return value } }
@@ -597,6 +600,122 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         quickModel.timer?.invalidate()
         await quickModel.webAgents.cancelAndWait()
         print("PASS: quick access excludes hidden agents and selects grid Messages, a named website copy, and CLI exclusively; preserves drafts/selections and blocks during sends without submitting.")
+        let browseModel = AppModel()
+        let browseA = await browseModel.prepareWebComparison("First chat", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        browseModel.setSharedDraft("First chat draft")
+        let browseB = await browseModel.prepareWebComparison("Second chat", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        browseModel.setSharedDraft("Second chat draft")
+        let browseBroadcast = browseModel.beginSharedWebBroadcast(nativeOnly: true, comparisonID: browseB)!
+        browseModel.openWebComparison(browseA, present: false)
+        precondition(browseModel.webAgents.comparisonID == browseB, "Input handoff must finish before switching")
+        browseModel.finishSharedWebInputs(browseBroadcast)
+        precondition(!browseModel.requestNewBlast(), "An unconfirmed submission still owns its draft")
+        browseModel.confirmSharedWebSubmission(browseBroadcast)
+        browseModel.openWebComparison(browseA, present: false)
+        precondition(browseModel.webAgents.comparisonID == browseA && browseModel.state.draft == "First chat draft")
+        precondition(!browseModel.requestNewBlast(agent: .web(.wabi)), "Quick chat cannot navigate a busy app")
+        precondition(browseModel.requestNewBlast())
+        browseModel.setSharedDraft("New chat draft")
+        let secondBroadcast = browseModel.beginSharedWebBroadcast(nativeOnly: true)!
+        let secondComparison = await browseModel.prepareWebComparison("New independent chat", recipientIDs: [], agents: [.init(provider: .claudeApp)])!
+        precondition(browseModel.bindSharedWebBroadcast(secondBroadcast, to: secondComparison))
+        precondition(!browseModel.requestNewBlast(), "The new broadcast owns input until it is handed off")
+        browseModel.finishSharedWebBroadcast(browseBroadcast)
+        precondition(browseModel.webBroadcastBusy && !browseModel.requestNewBlast(), "An older completion must not unlock the new broadcast")
+        browseModel.finishSharedWebInputs(browseBroadcast)
+        browseModel.confirmSharedWebSubmission(browseBroadcast)
+        precondition(!browseModel.requestNewBlast(), "Stale callbacks cannot release the new broadcast")
+        browseModel.finishSharedWebInputs(secondBroadcast)
+        browseModel.confirmSharedWebSubmission(secondBroadcast)
+        precondition(browseModel.webBroadcastReplyGate.canBrowseWhileWaiting)
+        browseModel.finishSharedWebBroadcast(secondBroadcast)
+        precondition(browseModel.webAgents.comparisonID == secondComparison && browseModel.state.draft == "New chat draft")
+        browseModel.openWebComparison(browseB, present: false)
+        precondition(browseModel.state.draft == "Second chat draft")
+        let browseSaved = try browseModel.local.load()
+        precondition(browseSaved.workspaceDrafts?[browseA.uuidString] == "First chat draft")
+        browseModel.timer?.invalidate()
+        await browseModel.webAgents.cancelAndWait()
+        print("PASS: actual AppModel permits independent broadcasts after native input and confirmation, isolates completion callbacks, and retains each workspace draft.")
+        let independentMessages = AppModel()
+        let oldAppComparison = await independentMessages.prepareWebComparison("Earlier app prompt", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        let oldAppBroadcast = independentMessages.beginSharedWebBroadcast(nativeOnly: true, comparisonID: oldAppComparison)!
+        independentMessages.finishSharedWebInputs(oldAppBroadcast)
+        independentMessages.confirmSharedWebSubmission(oldAppBroadcast)
+        precondition(independentMessages.requestNewBlast())
+        let independentRecipient = independentMessages.state.agents[0]
+        independentMessages.setSharedDraft("A separate Messages prompt")
+        await independentMessages.start(recipientIDs: [independentRecipient.id])
+        let messagesComparison = independentMessages.state.comparisons[0]
+        precondition(messagesComparison.id != oldAppComparison && messagesComparison.members.count == 1)
+        precondition(messagesComparison.members[0].submission == .submitted && messagesComparison.members[0].anchor != nil)
+        precondition(independentMessages.webBroadcastBusy, "Messages must not finish the earlier app's broadcast")
+        independentMessages.finishSharedWebBroadcast(oldAppBroadcast)
+        precondition(independentMessages.comparison(oldAppComparison)?.prompt == "Earlier app prompt")
+        precondition(independentMessages.comparison(messagesComparison.id)?.prompt == "A separate Messages prompt")
+        independentMessages.timer?.invalidate()
+        await independentMessages.webAgents.cancelAndWait()
+        print("PASS: actual AppModel submits a separate simulated Messages conversation while the earlier native app reply remains owned.")
+        let busyGridModel = AppModel()
+        for session in busyGridModel.webAgents.sessions { session.setEnabled(false) }
+        let busyWabi = busyGridModel.webAgents.session(for: .init(provider: .wabi))!
+        let readyClaude = busyGridModel.webAgents.session(for: .init(provider: .claudeApp))!
+        for session in [busyWabi, readyClaude] {
+            session.setEnabled(true)
+            busyGridModel.webAgents.select(session, selected: true)
+        }
+        var earlierRequest = WebSendAttempt(text: "Earlier Wabi question", status: .waiting)
+        earlierRequest.comparisonID = UUID()
+        earlierRequest.messageID = earlierRequest.id.uuidString
+        busyWabi.updateState { $0.attempts = [earlierRequest] }
+        let gridContact = busyGridModel.state.agents[0]
+        busyGridModel.state.selection = [gridContact.id]
+        busyGridModel.state.agentGrid = .init(visibleIDs: [busyWabi.id.gridID, readyClaude.id.gridID, .messages(gridContact.id)])
+        busyGridModel.setSharedDraft("Send to available recipients while Wabi is busy")
+        let busyGridWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1200, height: 800), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        var gridShowsComparison = false
+        busyGridWindow.contentView = NSHostingView(rootView: AgentsWorkspaceView(model: busyGridModel, web: busyGridModel.webAgents,
+            showingComparison: Binding(get: { gridShowsComparison }, set: { gridShowsComparison = $0 })))
+        busyGridWindow.orderBack(nil)
+        try await waitUntil {
+            busyGridWindow.contentView.flatMap { privateEditor(in: $0) }?.string == busyGridModel.state.draft
+        }
+        let gridEditor = privateEditor(in: busyGridWindow.contentView!)!
+        precondition(gridEditor.sendMessage != nil)
+        gridEditor.sendMessage?()
+        try await waitUntil {
+            readyClaude.state.attempts.first?.status == .observed &&
+                busyGridModel.state.comparisons.first?.members.first?.submission == .submitted &&
+                !busyGridModel.webBroadcastBusy
+        }
+        let gridComparison = busyGridModel.state.comparisons[0]
+        precondition(gridComparison.resolvedWebAgentIDs == [readyClaude.id], "The busy app must not join or receive this broadcast")
+        precondition(gridComparison.members.map(\.id) == [gridContact.id])
+        precondition(busyWabi.state.selected, "Sending from the grid must preserve a busy agent's saved selection")
+        precondition(busyWabi.state.attempts == [earlierRequest], "The earlier request must not be dismissed, reassigned or resent")
+        try await waitUntil {
+            editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Claude" }
+        }
+        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "A busy nonmember must not appear as an empty pane in the new comparison")
+        busyWabi.updateState { $0.attempts[0].status = .observed }
+        precondition(busyGridModel.webAgents.broadcastSelection.contains { $0.id == busyWabi.id }, "Completing the reply restores availability without another selection click")
+        busyGridModel.setSharedDraft("Follow up only with the recipients of this comparison")
+        try await waitUntil {
+            editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Shared prompt" && $0.string == busyGridModel.state.draft }
+        }
+        let followupEditor = editors(in: busyGridWindow.contentView!).first { $0.accessibilityLabel() == "Shared prompt" }!
+        followupEditor.sendMessage?()
+        try await waitUntil {
+            readyClaude.state.attempts.count == 2 && readyClaude.state.attempts.first?.status == .observed &&
+                busyGridModel.state.comparisons.first?.followUps.count == 1 && !busyGridModel.webBroadcastBusy
+        }
+        precondition(busyWabi.state.attempts.count == 1)
+        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "Completing another conversation must not join this comparison")
+        busyGridWindow.orderOut(nil)
+        busyGridWindow.contentView = nil
+        busyGridModel.timer?.invalidate()
+        await busyGridModel.webAgents.cancelAndWait()
+        print("PASS: actual Agents grid composer broadcasts to ready App Agent and Messages recipients, preserves the busy app selection and request, and restores availability when its reply completes. Simulated providers and Messages; no live sends.")
         let model = AppModel()
         precondition(model.demo && model.local.url.path.contains("UIFixture"))
         model.coordinator = WindowCoordinator(model: model)
@@ -790,7 +909,7 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
             return [.muse: receipt]
         }, messages: { text in
             model.state.comparisons[raceIndex].allDraft = text
-            await model.followUp(raceID, recipients: [recipient.id], newAttemptID: broadcastID)
+            await model.followUp(raceID, recipients: [recipient.id], newAttemptID: broadcastID, telemetryManagedExternally: true)
             gate.messagesFinished = true
             return raceID
         })
@@ -836,25 +955,28 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
             session.setEnabled(true)
             await session.connectDesktopConversation()
         }
-        let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: nativeSessions.map(\.id))!
-        let nativeReplies = await WebAgents.send("Native comparison fixture", to: nativeSessions, comparisonID: nativeID)
-        precondition(nativeReplies.count == 3 && nativeReplies.values.allSatisfy { $0.status == .observed })
-        let savedBindings = nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] }
-        let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
-        nativeModel.webAgents.setComparison(nil)
-        nativeModel.openWebComparison(nativeID)
-        for _ in 0..<100 where !nativeSessions.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
-            try await Task.sleep(for: .milliseconds(10))
+        for sharedApp in nativeSessions.prefix(2) {
+            let pair = [sharedApp, nativeSessions[2]]
+            let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: pair.map(\.id))!
+            let nativeReplies = await WebAgents.send("Native comparison fixture", to: pair, comparisonID: nativeID)
+            precondition(nativeReplies.count == 2 && nativeReplies.values.allSatisfy { $0.status == .observed })
+            let savedBinding = sharedApp.state.chatgptConversations[nativeID.uuidString]
+            let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
+            nativeModel.webAgents.setComparison(nil)
+            nativeModel.openWebComparison(nativeID)
+            for _ in 0..<100 where !pair.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            precondition(pair.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
+            precondition(sharedApp.state.chatgptConversations[nativeID.uuidString] == savedBinding)
+            precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
+            precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(pair.map(\.id)))
+            let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
+            precondition(savedNativeComparison.resolvedWebAgentIDs == pair.map(\.id))
         }
-        precondition(nativeSessions.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
-        precondition(nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] } == savedBindings)
-        precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
-        precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(nativeSessions.map(\.id)))
-        let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
-        precondition(savedNativeComparison.resolvedWebAgentIDs == nativeSessions.map(\.id))
         nativeModel.webAgents.beginShutdown()
         await nativeModel.webAgents.cancelAndWait()
-        print("PASS: actual AppModel + LocalStore reopen the three native providers with the same owned bindings and exact membership. Demo simulation; no live apps or sends.")
+        print("PASS: actual AppModel + LocalStore reopen ChatGPT and Dots separately with Claude, retaining owned bindings and exact membership. Demo simulation; no live apps or sends.")
         let choiceModel = AppModel()
         let businessAddress = "urn:biz:00000000-0000-0000-0000-000000000001"
         let businessChat = Chat(id: "iMessage;-;" + businessAddress, handle: businessAddress, lastActivity: 0, displayName: "Fixture Poke", businessConversation: true)

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import ImageIO
 
@@ -20,6 +21,16 @@ public enum DesktopAppProvider: String, Codable, Sendable {
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {
     public let name: String
     public init(name: String) { self.name = name }
+}
+
+// Keep only hashes of the prior native conversation in persistent state.
+struct GrokReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    let bot: String
+    let prompt: String
+    let anchor: DesktopAppSnapshot.GrokHistoryAnchor
+    var automaticRecovery = true
 }
 
 enum DesktopAppError: LocalizedError {
@@ -138,7 +149,9 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             guard button.role == "AXButton", let index = button.element_index,
                   button.enabled != false, button.element_token != nil, var name = button.label else { return nil }
             let listed = button.parent_index.map { listIndexes.contains($0) } == true
-            if name.hasSuffix(", Unread activity") { name.removeLast(", Unread activity".count) }
+            while let suffix = [", Unread activity", ", Working"].first(where: { name.hasSuffix($0) }) {
+                name.removeLast(suffix.count)
+            }
             // The unread badge replaces the main-bot image. Its pinned button
             // retains the accessible Main Bot suffix outside the regular list.
             let main = mainBotIndexes.contains(index) || (!listed && name.hasSuffix(", Main Bot"))
@@ -210,19 +223,20 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         }
         return ends
     }
-    struct GrokHistoryAnchor: Sendable {
-        let text: [String]
+    struct GrokHistoryAnchor: Codable, Equatable, Sendable {
+        let digests: [Data]
+        private static func digest(_ text: String) -> Data { Data(SHA256.hash(data: Data(text.utf8))) }
         init(history: [String], bot: String) {
             let speakers = history.indices.filter { history[$0] == "You" || history[$0] == bot }
             let start = speakers.dropLast().last ?? history.startIndex
-            text = Array(history.dropFirst(start))
+            digests = history.dropFirst(start).map(Self.digest)
         }
         func boundary(in history: [String]) -> Int? {
-            if text.isEmpty { return nil }
-            guard history.count >= text.count else { return nil }
-            let matches = (0...(history.count - text.count)).filter { history[$0..<($0 + text.count)].elementsEqual(text) }
+            guard !digests.isEmpty, digests.allSatisfy({ $0.count == 32 }), history.count >= digests.count else { return nil }
+            let historyDigests = history.map(Self.digest)
+            let matches = (0...(history.count - digests.count)).filter { historyDigests[$0..<($0 + digests.count)].elementsEqual(digests) }
             guard matches.count == 1 else { return nil }
-            return matches[0] + text.count
+            return matches[0] + digests.count
         }
         func matchesEnd(of history: [String]) -> Bool { boundary(in: history) == history.count }
     }
@@ -256,7 +270,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     func grokLatestMessagesButton() throws -> Element? {
         let buttons = try transcript(app: .grokBot).filter {
             $0.role == "AXButton" && $0.enabled != false && $0.element_token != nil &&
-            ($0.label ?? "").range(of: #"^\d+ new messages?$"#, options: .regularExpression) != nil
+            ($0.label == "Scroll to bottom" || ($0.label ?? "").range(of: #"^\d+ new messages?$"#, options: .regularExpression) != nil)
         }
         guard buttons.count <= 1 else { throw DesktopAppError.incompleteSnapshot }
         return buttons.first
@@ -400,7 +414,7 @@ actor DesktopAppConversation {
         let window_id: Int
         let exact_window_effect: Exact
     }
-    private func activate(_ target: Target, session: String) async throws {
+    func activate(_ target: Target, session: String) async throws {
         let result = try await call("bring_to_front", ["session": session],
                                     numbers: ["pid": target.pid, "window_id": target.window], as: FocusResult.self)
         guard result.activated, result.pid == target.pid, result.window_id == target.window,
@@ -640,9 +654,18 @@ actor DesktopAppConversation {
             }
             try await self.input(step.input, focus: step.before.isEmpty, point: point, target: target, session: session)
         }, after: { step in
+            var refreshRequested = false
+            var refreshed = false
             let verified = try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: self.timing.pollInterval,
                 failure: "Grok Bot did not confirm the prepared draft. Send was not clicked; review the preserved text.",
                 read: {
+                    // Electron can defer publishing typed text until its window
+                    // becomes active again. Refresh the already-owned window
+                    // once, without typing or submitting a second time.
+                    if refreshRequested && !refreshed && self.delivery == .foreground {
+                        refreshed = true
+                        try await self.activate(target, session: session)
+                    }
                     let candidate = try await self.snapshot(target, session: session)
                     return (candidate, try await self.grokState(candidate, target: target))
                 }, ready: { observation in
@@ -659,6 +682,7 @@ actor DesktopAppConversation {
                           try history.matchesEnd(of: candidate.historyText(app: .grokBot)), !candidate.isGenerating else {
                         throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
                     }
+                    if !nativeReady || !driverReady { refreshRequested = true }
                     return nativeReady && driverReady
                 })
             state = verified.0
@@ -667,6 +691,7 @@ actor DesktopAppConversation {
     }
     func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding,
                onSubmitAction: @Sendable () async -> Void = {},
+               onReceipt: @Sendable (DesktopAppSnapshot.GrokHistoryAnchor) async throws -> Void = { _ in },
                onSubmitted: @Sendable () async throws -> Void = {},
                releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
         guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
@@ -690,12 +715,13 @@ actor DesktopAppConversation {
         let field = try state.composer(app: app)
         let draft = app == .grokBot ? try await grokState(state, target: target).draft : field.draft
         guard draft.isEmpty else { throw DesktopAppError.unavailable("\(app.name) has an unsent draft. It was preserved.") }
+        try await onReceipt(receipt)
         state = try await typeGrokDraft(prompt, initial: state, target: target, session: session, binding: binding, image: image)
         let button = try state.sendButton(app: app)
         var submissionObserved = false
         var revealedLatestMessages: String?
         return try await DesktopAppWorkflow.reply(app: app.name, timing: timing, clock: timing.replyClock, onSubmitAction: onSubmitAction, releaseFocus: releaseFocus,
-            continueWaiting: { submissionObserved && state.grokIsWorking }, submit: {
+            submit: {
             _ = try await self.call("click", ["session": session, "element_token": button.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
         }, observe: {
             state = try await self.snapshot(target, session: session)
@@ -717,6 +743,50 @@ actor DesktopAppConversation {
             }
             return !state.isGenerating ? answer : nil
         })
+    }
+
+    // Read the selected bot only. Recovery can reveal its latest messages,
+    // but never switches conversations, types, or sends.
+    func recoverGrokReply(_ receipt: GrokReplyReceipt) async throws -> String? {
+        guard receipt.version == 1, !receipt.bot.isEmpty, !receipt.prompt.isEmpty else {
+            throw DesktopAppError.unavailable("The saved Grok Bot request cannot be verified.")
+        }
+        guard occupied.insert(.grokBot).inserted else { return nil }
+        defer { occupied.remove(.grokBot) }
+        let session = "msgblast-grok-recovery-\(UUID())"
+        defer { Task { await endSession(session) } }
+        let target = try await target(.grokBot)
+        let binding = DesktopConversationBinding(name: receipt.bot)
+        var revealedLatest: String?
+        var candidate: String?
+        for read in 0..<2 {
+            var state = try await snapshot(target, session: session)
+            try validate(state, app: .grokBot, binding: binding)
+            // A scrolled virtualized viewport can omit both the saved anchor
+            // and our outgoing message. Reveal the current transcript first;
+            // attribution still requires both after revalidating the bot.
+            if let latest = try state.grokLatestMessagesButton(), latest.label == "Scroll to bottom", latest.label != revealedLatest {
+                revealedLatest = latest.label
+                _ = try await call("click", ["session": session, "element_token": latest.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+                state = try await snapshot(target, session: session)
+                try validate(state, app: .grokBot, binding: binding)
+            }
+            guard try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
+            if let latest = try state.grokLatestMessagesButton(), latest.label != revealedLatest {
+                revealedLatest = latest.label
+                _ = try await call("click", ["session": session, "element_token": latest.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+                state = try await snapshot(target, session: session)
+                try validate(state, app: .grokBot, binding: binding)
+            }
+            guard !state.isGenerating, !state.grokIsWorking,
+                  try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
+            guard let answer = try state.grokReply(after: receipt.prompt, anchor: receipt.anchor), !answer.isEmpty else { return nil }
+            if read == 0 {
+                candidate = answer
+                if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+            } else { return candidate == answer ? answer : nil }
+        }
+        return nil
     }
 
     func endSession(_ session: String) async {

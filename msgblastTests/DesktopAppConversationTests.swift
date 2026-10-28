@@ -400,6 +400,47 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try receipt.reply(in: [.init(role: .assistant, text: "Changed history"), rendered, answer]))
     }
 
+    func testWabiMatchesReplyWhenOneInteriorOldMessageIsVirtualized() throws {
+        let old: [WabiAppMessage] = [.init(role: .assistant, text: "What can I do for you?"),
+            .init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier reply")]
+        let outgoing = WabiAppMessage(role: .user, text: "Next question")
+        let answer = WabiAppMessage(role: .assistant, text: "New answer")
+        let live = WabiAppReceipt(baseline: old, prompt: outgoing.text)
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: outgoing.text, baseline: old)
+        let observed = [old[0], old[2], outgoing, answer]
+        XCTAssertEqual(try live.reply(in: observed), "New answer")
+        XCTAssertEqual(try saved.reply(in: observed), "New answer")
+        for unsafe in [[old[0], old[1], outgoing, answer],
+                       [old[0], old[2], .init(role: .user, text: "Another question"), answer]] {
+            XCTAssertThrowsError(try live.reply(in: unsafe))
+            XCTAssertThrowsError(try saved.reply(in: unsafe))
+        }
+        let repeated = [old[0], old[1], old[1], old[2]]
+        let ambiguous = [old[0], old[1], old[2], outgoing, answer]
+        XCTAssertThrowsError(try WabiAppReceipt(baseline: repeated, prompt: outgoing.text).reply(in: ambiguous))
+        let repeatedReceipt = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: outgoing.text, baseline: repeated)
+        XCTAssertThrowsError(try repeatedReceipt.reply(in: ambiguous), "Do not guess which repeated row disappeared")
+    }
+
+    func testWabiVirtualizedReplyMatchesWhitespaceChangesAndOldReceipts() throws {
+        let old: [WabiAppMessage] = [.init(role: .assistant, text: "What can I do for you?"),
+            .init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "A \n\n garden.\n\nA \n\n pond.")]
+        let visible = [old[0], WabiAppMessage(role: .assistant, text: "A\n\ngarden.\n\nA\n\npond."),
+                       .init(role: .user, text: "Next question"), .init(role: .assistant, text: "New answer")]
+        let live = WabiAppReceipt(baseline: old, prompt: "Next question")
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: "Next question", baseline: old)
+        XCTAssertEqual(try live.reply(in: visible), "New answer")
+        XCTAssertEqual(try saved.reply(in: visible), "New answer")
+        var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { legacyJSON.removeValue(forKey: key) }
+        let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+        XCTAssertEqual(try legacy.reply(in: visible, knownHistory: Array(old.dropFirst())), "New answer")
+        var altered = visible
+        altered[1] = .init(role: .assistant, text: "A garden. A lake.")
+        XCTAssertThrowsError(try saved.reply(in: altered))
+        XCTAssertThrowsError(try legacy.reply(in: altered, knownHistory: Array(old.dropFirst())))
+    }
+
     func testWabiReceiptRejectsChangedHistoryAndForeignOutgoingMessages() throws {
         let old: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier answer")]
         let prompt = WabiAppMessage(role: .user, text: "New question")
@@ -415,6 +456,147 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try receipt.reply(in: old + [prompt, foreign, answer]))
     }
 
+    func testSavedWabiReceiptMatchesOnlyItsOriginalConversationHistory() throws {
+        let url = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
+        let previous: [WabiAppMessage] = [.init(role: .user, text: "Private earlier question"), .init(role: .assistant, text: "Private earlier answer")]
+        let receipt = try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: "Next question\nplease", baseline: previous)
+        let outgoing = WabiAppMessage(role: .user, text: "Next question please")
+        let response = WabiAppMessage(role: .assistant, text: "A later answer")
+        let persisted = try JSONEncoder().encode(receipt)
+        XCTAssertFalse(String(decoding: persisted, as: UTF8.self).contains("Private earlier"))
+        let restored = try JSONDecoder().decode(WabiReplyReceipt.self, from: persisted)
+        XCTAssertNil(try restored.reply(in: previous + [outgoing]))
+        XCTAssertEqual(try restored.reply(in: previous + [outgoing, response]), "A later answer")
+        XCTAssertEqual(try restored.reply(in: Array((previous + [outgoing, response]).reversed())), "A later answer")
+        XCTAssertThrowsError(try restored.reply(in: [.init(role: .assistant, text: "Other history"), previous[1], outgoing, response]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [.init(role: .user, text: "Someone else's question"), response]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [outgoing, .init(role: .user, text: "Another question")]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [outgoing, response, response]))
+    }
+
+    func testWabiReceiptAcceptsOnlyTheDisappearingInitialGreeting() throws {
+        let url = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
+        let greeting = WabiAppMessage(role: .assistant, text: "What can I do for you?")
+        let earlier: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier reply")]
+        let outgoing = WabiAppMessage(role: .user, text: "New question")
+        let answer = WabiAppMessage(role: .assistant, text: "New reply")
+        let baseline = [greeting] + earlier
+        let live = WabiAppReceipt(baseline: baseline, prompt: outgoing.text)
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: outgoing.text, baseline: baseline)
+        XCTAssertTrue(live.unchanged(earlier), "A disappearing greeting alone does not prove that Send occurred")
+        XCTAssertNil(try live.reply(in: earlier))
+        XCTAssertNil(try saved.reply(in: earlier))
+        for messages in [earlier + [outgoing, answer], Array((earlier + [outgoing, answer]).reversed())] {
+            XCTAssertEqual(try live.reply(in: messages), answer.text)
+            XCTAssertEqual(try saved.reply(in: messages), answer.text)
+        }
+        XCTAssertNil(try live.reply(in: earlier + [outgoing]))
+        XCTAssertNil(try saved.reply(in: earlier + [outgoing]))
+        let edited = [WabiAppMessage(role: .user, text: "Edited earlier question"), earlier[1], outgoing, answer]
+        XCTAssertThrowsError(try live.reply(in: edited))
+        XCTAssertThrowsError(try saved.reply(in: edited))
+        let differentGreeting = [WabiAppMessage(role: .assistant, text: "A different greeting")] + earlier
+        XCTAssertThrowsError(try WabiAppReceipt(baseline: differentGreeting, prompt: outgoing.text).reply(in: earlier + [outgoing, answer]))
+        XCTAssertThrowsError(try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: outgoing.text, baseline: differentGreeting).reply(in: earlier + [outgoing, answer]))
+        XCTAssertThrowsError(try saved.reply(in: earlier + [.init(role: .user, text: "Someone else's question"), answer]))
+    }
+
+    func testWabiReceiptRecoversWhenAnOlderMiddleMessageDisappears() throws {
+        let baseline = (0..<13).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .assistant : .user, text: "Message \($0)") }
+        let prompt = WabiAppMessage(role: .user, text: "Question")
+        let answer = WabiAppMessage(role: .assistant, text: "Answer")
+        let current = Array(baseline.prefix(2)) + Array(baseline.dropFirst(3)) + [prompt, answer]
+        let live = WabiAppReceipt(baseline: baseline, prompt: prompt.text)
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: prompt.text, baseline: baseline)
+        let beforeOutgoing = Array(current.dropLast(2))
+        XCTAssertTrue(live.unchanged(beforeOutgoing))
+        XCTAssertNil(try live.reply(in: beforeOutgoing))
+        XCTAssertNil(try saved.reply(in: beforeOutgoing))
+        XCTAssertEqual(try live.reply(in: current), answer.text)
+        XCTAssertEqual(try saved.reply(in: current), answer.text)
+        let localHistory = [WabiAppMessage(role: .user, text: "Older local message")] + baseline
+        var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        legacyJSON.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { legacyJSON.removeValue(forKey: key) }
+        let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+        XCTAssertEqual(try legacy.reply(in: current, knownHistory: localHistory), answer.text)
+        var changed = current; changed[0] = .init(role: .user, text: "Changed")
+        XCTAssertThrowsError(try live.reply(in: changed))
+        XCTAssertThrowsError(try saved.reply(in: changed))
+        let recentMissing = Array(baseline.dropLast()) + [prompt, answer]
+        XCTAssertThrowsError(try live.reply(in: recentMissing))
+        XCTAssertThrowsError(try saved.reply(in: recentMissing))
+        let penultimateMissing = Array(baseline.dropLast(2)) + [baseline.last!, prompt, answer]
+        XCTAssertThrowsError(try live.reply(in: penultimateMissing), "A long history must retain its recent tail")
+        XCTAssertThrowsError(try saved.reply(in: penultimateMissing), "A long history must retain its recent tail")
+        XCTAssertThrowsError(try saved.reply(in: Array(baseline.dropFirst(8)) + [prompt, answer]))
+        XCTAssertThrowsError(try saved.reply(in: Array(current.dropLast(2)) + [.init(role: .user, text: "Other question"), answer]))
+    }
+
+    func testWabiReceiptMatchesAnOverlappingHistoryWindow() throws {
+        let url = URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!
+        let baseline = (0..<10).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .user : .assistant, text: "Earlier message \($0)") }
+        let outgoing = WabiAppMessage(role: .user, text: "New question")
+        let answer = WabiAppMessage(role: .assistant, text: "New reply")
+        let live = WabiAppReceipt(baseline: baseline, prompt: outgoing.text)
+        let saved = try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: outgoing.text, baseline: baseline)
+        let window = Array(baseline.dropFirst())
+        XCTAssertTrue(live.unchanged(window), "A shifted history window alone is not a submission")
+        XCTAssertNil(try live.reply(in: window + [outgoing]))
+        XCTAssertNil(try saved.reply(in: window + [outgoing]))
+        for messages in [window + [outgoing, answer], Array((window + [outgoing, answer]).reversed())] {
+            XCTAssertEqual(try live.reply(in: messages), answer.text)
+            XCTAssertEqual(try saved.reply(in: messages), answer.text)
+        }
+        let changed = [WabiAppMessage(role: .user, text: "Changed history")] + Array(window.dropFirst()) + [outgoing, answer]
+        XCTAssertThrowsError(try live.reply(in: changed))
+        XCTAssertThrowsError(try saved.reply(in: changed))
+        XCTAssertThrowsError(try saved.reply(in: window + [.init(role: .user, text: "Foreign question"), answer]))
+        let tooLittleHistory = Array(baseline.suffix(2)) + [outgoing, answer]
+        XCTAssertThrowsError(try live.reply(in: tooLittleHistory))
+        XCTAssertThrowsError(try saved.reply(in: tooLittleHistory))
+        let encoded = try JSONEncoder().encode(saved)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("Earlier message"))
+        var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacyJSON.removeValue(forKey: "overlapDigests")
+        legacyJSON.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { legacyJSON.removeValue(forKey: key) }
+        let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
+        XCTAssertThrowsError(try legacy.reply(in: window + [outgoing, answer]), "An old receipt alone cannot prove a shifted window")
+        XCTAssertEqual(try legacy.reply(in: window + [outgoing, answer], knownHistory: baseline), answer.text)
+        let wrongHistory = [.init(role: WabiAppMessage.Role.user, text: "Changed")] + Array(baseline.dropFirst())
+        XCTAssertThrowsError(try legacy.reply(in: window + [outgoing, answer], knownHistory: wrongHistory))
+        var invalidJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        invalidJSON["overlapDigests"] = [["retained": 1, "digest": Data(repeating: 0, count: 32).base64EncodedString()]]
+        let invalid = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: invalidJSON))
+        XCTAssertThrowsError(try invalid.reply(in: baseline + [outgoing, answer]), "Malformed overlap receipts must not be used")
+        let longBaseline = (0..<40).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .user : .assistant, text: "Earlier \($0)") }
+        let longLive = WabiAppReceipt(baseline: longBaseline, prompt: outgoing.text)
+        let longSaved = try WabiReplyReceipt(comparisonID: UUID(), url: url, prompt: outgoing.text, baseline: longBaseline)
+        XCTAssertEqual(try longLive.reply(in: Array(longBaseline.dropFirst(16)) + [outgoing, answer]), answer.text)
+        XCTAssertEqual(try longSaved.reply(in: Array(longBaseline.dropFirst(16)) + [outgoing, answer]), answer.text)
+        XCTAssertThrowsError(try longLive.reply(in: Array(longBaseline.dropFirst(17)) + [outgoing, answer]))
+        XCTAssertThrowsError(try longSaved.reply(in: Array(longBaseline.dropFirst(17)) + [outgoing, answer]))
+    }
+
+    func testSavedMuseReceiptChecksBaselineAndRejectsAnotherRequest() throws {
+        let previous: [MuseAppMessage] = [.init(role: .user, text: "Private earlier question"), .init(role: .assistant, text: "Private earlier answer")]
+        let receipt = try MuseReplyReceipt(comparisonID: UUID(), requestID: UUID(), initialThreadID: UUID(), prompt: "Next question", baseline: previous)
+        let outgoing = MuseAppMessage(role: .user, text: "Next question")
+        let first = MuseAppMessage(role: .assistant, text: "First part")
+        let second = MuseAppMessage(role: .assistant, text: "Second part")
+        let data = try JSONEncoder().encode(receipt)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("Private earlier"))
+        let restored = try JSONDecoder().decode(MuseReplyReceipt.self, from: data)
+        XCTAssertNil(try restored.reply(in: previous + [outgoing]))
+        XCTAssertEqual(try restored.reply(in: previous + [outgoing, first, second]), "First part\n\nSecond part")
+        XCTAssertThrowsError(try restored.reply(in: [.init(role: .user, text: "Different history"), previous[1], outgoing, first]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [.init(role: .user, text: "Someone else's question"), first]))
+        XCTAssertThrowsError(try restored.reply(in: previous + [outgoing, first, .init(role: .user, text: "Another request")]))
+    }
+
+
+
     func testWabiNativeMessageFramesProveSendersAndKeepLiteralMetadataText() throws {
         func frame(_ sender: String, _ text: String) -> WabiAXNode {
             .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: [
@@ -424,6 +606,38 @@ final class DesktopAppConversationTests: XCTestCase {
         XCTAssertEqual(try WabiNativeMessages.read(root), [.init(role: .user, text: "Read"), .init(role: .assistant, text: "5:13 PM")])
         XCTAssertThrowsError(try WabiNativeMessages.read(frame("unknown", "A message")))
         XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [.init(role: "AXPopUpButton", label: "Add reaction")])))
+    }
+
+    func testWabiNumberedReplyKeepsItemsReadableWithoutChangingReceiptDigests() throws {
+        // Wabi exposes a numbered list as one AXList with marker and individual
+        // word nodes; the enclosing message still has one sender and timestamp.
+        let list = WabiAXNode(role: "AXList", children: [
+            .init(role: "AXListMarker", value: "1."), .init(role: "AXStaticText", value: "A"),
+            .init(role: "AXStaticText", value: "garden"), .init(role: "AXStaticText", value: "."),
+            .init(role: "AXListMarker", value: "2."), .init(role: "AXStaticText", value: "A"),
+            .init(role: "AXStaticText", value: "pond.")
+        ])
+        func frame(_ sender: String, _ body: [WabiAXNode]) -> WabiAXNode {
+            .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender],
+                  children: body + [.init(role: "AXPopUpButton", label: "Add reaction"), .init(role: "AXStaticText", value: "5:13 PM")])
+        }
+        let root = WabiAXNode(role: "AXWebArea", children: [frame("xpvyfi4", [.init(role: "AXStaticText", value: "Question")]),
+            frame("xqcrz7y", [.init(role: "AXStaticText", value: "Here are two:"), list, .init(role: "AXStaticText", value: "Done.")])])
+        let messages = try WabiNativeMessages.read(root)
+        let raw = "Here are two:\n\nA\n\ngarden\n\n.\n\nA\n\npond.\n\nDone."
+        XCTAssertEqual(messages[1].text, raw, "Existing receipt digests use this exact AX text")
+        XCTAssertEqual(messages[1].presentation, "Here are two:\n\n1. A garden.\n2. A pond.\n\nDone.")
+        let oldMessage = WabiAppMessage(role: .assistant, text: raw)
+        XCTAssertEqual(messages[1], oldMessage)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(try encoder.encode(messages[1]), try encoder.encode(oldMessage))
+        let answer = "Here are two:\n\n1. A garden.\n2. A pond.\n\nDone."
+        XCTAssertEqual(try WabiAppReceipt(baseline: [], prompt: "Question").reply(in: messages), answer)
+        let receipt = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: "Question", baseline: [])
+        XCTAssertEqual(try receipt.reply(in: messages), answer)
+        let oldReceipt = try WabiReplyReceipt(comparisonID: UUID(), url: URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa")!, prompt: "Next", baseline: [oldMessage])
+        let later = [messages[1], WabiAppMessage(role: .user, text: "Next"), WabiAppMessage(role: .assistant, text: "Later reply")]
+        XCTAssertEqual(try oldReceipt.reply(in: later), "Later reply", "Receipts saved before presentation formatting must still match")
     }
 
     func testWabi015ReadinessIgnoresIncompleteHistoryWithoutAttributingIt() throws {
@@ -444,6 +658,31 @@ final class DesktopAppConversationTests: XCTestCase {
         }
         XCTAssertEqual(try WabiNativeMessages.read(.init(role: "AXWebArea", children: [frame(complete: true)])),
                        [.init(role: .assistant, text: "Example message")])
+    }
+
+    func testWabiEmptyPendingAssistantFrameAllowsOutgoingConfirmationWithoutAttributingReply() throws {
+        func frame(_ sender: String, _ text: String) -> WabiAXNode {
+            .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: [
+                .init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction"), .init(role: "AXStaticText", value: "5:13 PM")])
+        }
+        let greeting = frame("xqcrz7y", "Welcome")
+        let outgoing = frame("xpvyfi4", "Question")
+        let pending = WabiAXNode(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", "xqcrz7y"])
+        let root = WabiAXNode(role: "AXWebArea", children: [greeting, outgoing, pending])
+        let messages = try WabiNativeMessages.read(root, purpose: .sentWaiting)
+        XCTAssertEqual(messages, [.init(role: .assistant, text: "Welcome"), .init(role: .user, text: "Question")])
+        XCTAssertThrowsError(try WabiNativeMessages.read(root), "A pending reply must still block a new send")
+        let receipt = WabiAppReceipt(baseline: [.init(role: .assistant, text: "Welcome")], prompt: "Question")
+        XCTAssertFalse(receipt.unchanged(messages), "The exact outgoing message confirms submission")
+        XCTAssertNil(try receipt.reply(in: messages), "The empty assistant frame is not a reply")
+
+        let wrongSender = WabiAXNode(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", "xpvyfi4"])
+        let partial = WabiAXNode(role: "AXGroup", classes: pending.classes, children: [.init(role: "AXStaticText", value: "Partial answer")])
+        for children in [[greeting, outgoing, wrongSender], [greeting, outgoing, partial], [greeting, pending, outgoing],
+                         [greeting, pending], [greeting, outgoing, pending, pending],
+                         [greeting, outgoing, pending, .init(role: "AXPopUpButton", label: "Add reaction")]] {
+            XCTAssertThrowsError(try WabiNativeMessages.read(.init(role: "AXWebArea", children: children), purpose: .sentWaiting), "Ambiguous or incomplete message layouts must not be attributed")
+        }
     }
 
     func testWabiIncompleteIncomingFrameHasNoAttributedBodyUntilLayoutSettles() throws {
@@ -474,10 +713,11 @@ final class DesktopAppConversationTests: XCTestCase {
         let comparison = UUID()
         session.updateState { $0.localConversations[comparison.uuidString] = [WebPageMessage(role: "assistant", text: "Earlier shared chat")] }
         let attempt = await session.send("Continue", comparisonID: comparison)
-        XCTAssertEqual(attempt?.status, .notSent)
+        XCTAssertNil(attempt, "Untracked history must be rejected before creating a send attempt")
+        XCTAssertTrue(session.state.attempts.isEmpty)
         XCTAssertNil(session.state.conversationURLs[comparison.uuidString])
         XCTAssertEqual(session.state.localConversations[comparison.uuidString]?.map(\.text), ["Earlier shared chat"])
-        XCTAssertTrue(attempt?.detail?.contains("without a tracked dedicated chat") == true)
+        XCTAssertTrue(session.error?.contains("no tracked native chat") == true)
     }
 
     @MainActor
@@ -593,6 +833,633 @@ final class DesktopAppConversationTests: XCTestCase {
 /// local JSON plan; it cannot discover or contact the installed Cua service.
 @MainActor
 final class DesktopAppDriverTests: XCTestCase {
+    func testGrokLateReplyIsRecoveredWithoutSendingAndSurvivesReload() async throws {
+        let comparison = UUID()
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: comparison, bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        let fixture = try driver([apps(), windows(), snapshot(grok(reply: "Late answer"), repeating: true)])
+        defer { fixture.remove() }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) },
+                                                   open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep my next draft"
+        workspace.desktopConversation = .init(name: "Fixture Bot")
+        var attempt = WebSendAttempt(text: prompt, status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.grokReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: prompt)]
+        let storage = fixture.directory.appendingPathComponent("workspace.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture))
+        session.connect(automaticallyRefresh: false)
+        XCTAssertTrue(session.isAutomaticallyWaitingForNativeReply)
+        let remaining = await session.reconcileGrokReplyOnce()
+        XCTAssertFalse(session.isAutomaticallyWaitingForNativeReply)
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let savedData = try Data(contentsOf: storage)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: savedData)
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), [prompt, "Late answer"])
+        XCTAssertEqual(saved.draft, "Keep my next draft")
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(receipt), as: UTF8.self).contains("Earlier unrelated"))
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app", "bring_to_front"].contains($0.tool) })
+    }
+
+    func testGrokRecoveryRejectsUnconfirmedCancelledAndAmbiguousRequests() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let comparison = UUID()
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier question", "Fixture Bot", "Earlier answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: comparison, bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        for scenario in ["unconfirmed", "cancelled", "wrong bot", "multiple requests", "missing outgoing", "interleaved", "wrong comparison", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            workspace.desktopConversation = .init(name: scenario == "wrong bot" ? "Other Bot" : "Fixture Bot")
+            var attempt = WebSendAttempt(text: prompt, status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.grokReplyReceipt = receipt
+            if scenario == "unconfirmed" { attempt.messageID = nil }
+            if scenario == "cancelled" { attempt.grokReplyReceipt?.automaticRecovery = false }
+            if scenario == "wrong comparison" { attempt.grokReplyReceipt = .init(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor) }
+            if scenario == "unsupported version" { attempt.grokReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[comparison.uuidString] = [] }
+            if scenario == "interleaved" { workspace.localConversations[comparison.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "multiple requests" {
+                var second = WebSendAttempt(text: "Another request", status: .uncertain)
+                second.comparisonID = comparison; workspace.attempts.append(second)
+            }
+            let storage = fixture.directory.appendingPathComponent("grok-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client)
+            session.connect(automaticallyRefresh: false)
+            XCTAssertFalse(session.isAutomaticallyWaitingForNativeReply, scenario)
+            let remaining = await session.reconcileGrokReplyOnce()
+            XCTAssertFalse(remaining, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(try fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
+    }
+
+    func testGrokWorkingBadgeKeepsPendingReplyBoundToTheSelectedBot() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        let working = grok(reply: "", generating: true, bots: ["Fixture Bot, Working"])
+        let fixture = try driver([apps(), windows(), snapshot(working, repeating: true)])
+        defer { fixture.remove() }
+        let conversation = adapter(fixture)
+        let pending = try await conversation.recoverGrokReply(receipt)
+        XCTAssertNil(pending, "Working is activity on the same bot, not a lost destination")
+        assertNoInput(try await finishedCalls(fixture))
+        try fixture.replacePlan([apps(), windows(), snapshot(grok(reply: "Finished answer"), repeating: true)])
+        let answer = try await conversation.recoverGrokReply(receipt)
+        XCTAssertEqual(answer, "Finished answer")
+        assertNoInput(try await finishedCalls(fixture, cleanupCount: 2))
+    }
+
+    func testGrokRecoveryNeverAttributesAnotherBotOrUnrelatedMessage() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        for state in [grok(reply: "Wrong bot answer", name: "Other Bot"),
+                      grok(reply: "Ambiguous bot answer", bots: ["Fixture Bot", "Fixture Bot"]),
+                      grok(reply: "Other request answer", outgoingPrompt: "Different request")] {
+            let fixture = try driver([apps(), windows(), snapshot(state, repeating: true)])
+            defer { fixture.remove() }
+            do {
+                let answer = try await adapter(fixture).recoverGrokReply(receipt)
+                XCTAssertNil(answer, "A foreign reply must never be attributed")
+            } catch { /* Refusing the changed conversation is also correct. */ }
+            let calls = try await finishedCalls(fixture)
+            assertNoInput(calls)
+        }
+    }
+
+    func testGrokRecoveryRevealsLatestReplyWithoutResendingOrChangingBots() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        var stale = grok(reply: "", token: "s00000004")
+        var elements = try XCTUnwrap(stale["elements"] as? [[String: Any]])
+        let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+        elements.insert(element("AXButton", "1 new message", token: "s00000004:latest"), at: composer)
+        stale["elements"] = elements; stale["returned_element_count"] = elements.count; stale["total_element_count"] = elements.count
+        let reveal = step("click", [:], arguments: ["element_token": "s00000004:latest"])
+        let fixture = try driver([apps(), windows(), snapshot(stale), reveal, snapshot(grok(reply: "Late answer"), repeating: true)])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture).recoverGrokReply(receipt)
+        XCTAssertEqual(answer, "Late answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "launch_app", "bring_to_front"].contains($0.tool) })
+        XCTAssertEqual(calls.first { $0.tool == "click" }?.arguments["element_token"] as? String, "s00000004:latest")
+    }
+
+    func testGrokRecoveryDoesNotRevealMessagesForAnotherBotOrRequest() async throws {
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+        let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        for state in [grok(reply: "", name: "Other Bot"), grok(reply: "", outgoingPrompt: "Other request")] {
+            var stale = state
+            var elements = try XCTUnwrap(stale["elements"] as? [[String: Any]])
+            let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+            elements.insert(element("AXButton", "1 new message", token: "s00000001:latest"), at: composer)
+            stale["elements"] = elements; stale["returned_element_count"] = elements.count; stale["total_element_count"] = elements.count
+            let fixture = try driver([apps(), windows(), snapshot(stale, repeating: true)])
+            defer { fixture.remove() }
+            do {
+                let result = try await adapter(fixture).recoverGrokReply(receipt)
+                XCTAssertNil(result)
+            } catch { }
+            assertNoInput(try await finishedCalls(fixture))
+        }
+    }
+
+    func testStoppingGrokRecoveryKeepsTheSentMessageAndPreventsLaterAttribution() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let comparison = UUID()
+        let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier", "Fixture Bot", "Earlier answer"], bot: "Fixture Bot")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep this draft"
+        workspace.desktopConversation = .init(name: "Fixture Bot")
+        var attempt = WebSendAttempt(text: prompt, status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString
+        attempt.grokReplyReceipt = .init(comparisonID: comparison, bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: prompt)]
+        let storage = fixture.directory.appendingPathComponent("stop-waiting.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture))
+        session.connect(automaticallyRefresh: false)
+        XCTAssertTrue(session.isAutomaticallyWaitingForNativeReply)
+        session.acknowledgeIncompleteRequest()
+        XCTAssertFalse(session.isAutomaticallyWaitingForNativeReply)
+        let remaining = await session.reconcileGrokReplyOnce()
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .dismissed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), [prompt])
+        XCTAssertEqual(saved.draft, "Keep this draft")
+        XCTAssertTrue(try fixture.calls().isEmpty)
+    }
+
+    func testGrokRecoveryReceiptComesFromActualTimedOutSubmission() async throws {
+        actor Receipts {
+            var anchor: DesktopAppSnapshot.GrokHistoryAnchor?
+            var submissions = 0
+            func save(_ value: DesktopAppSnapshot.GrokHistoryAnchor) { anchor = value }
+            func submitted() { submissions += 1 }
+        }
+        let receipts = Receipts(), comparison = UUID()
+        let fixture = try driver(sendSteps() + [snapshot(grok(reply: ""), repeating: true)])
+        defer { fixture.remove() }
+        let conversation = adapter(fixture, replyTimeout: .milliseconds(180))
+        do {
+            _ = try await conversation.reply(prompt, app: .grokBot, binding: binding,
+                                             onReceipt: { await receipts.save($0) },
+                                             onSubmitted: { await receipts.submitted() })
+            XCTFail("The first request should time out before the reply arrives")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("nothing will be resent automatically"), error.localizedDescription) }
+        let capturedAnchor = await receipts.anchor
+        let anchor = try XCTUnwrap(capturedAnchor)
+        let count = await receipts.submissions
+        XCTAssertEqual(count, 1)
+        let receipt = GrokReplyReceipt(comparisonID: comparison, bot: binding.name, prompt: prompt, anchor: anchor)
+        let persisted = try JSONDecoder().decode(GrokReplyReceipt.self, from: JSONEncoder().encode(receipt))
+        try fixture.replacePlan([apps(), windows(), snapshot(grok(reply: "Late answer"), repeating: true)])
+        let answer = try await conversation.recoverGrokReply(persisted)
+        XCTAssertEqual(answer, "Late answer")
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testGrokWorkingPastDeadlineDoesNotHoldTheBroadcastOpen() async throws {
+        actor Submission { var count = 0; func record() { count += 1 } }
+        let submission = Submission()
+        var working = grok(reply: "")
+        var elements = try XCTUnwrap(working["elements"] as? [[String: Any]])
+        elements.append(element("AXStaticText", "Fixture Bot is working"))
+        working["elements"] = elements
+        working["returned_element_count"] = elements.count; working["total_element_count"] = elements.count
+        let fixture = try driver(sendSteps() + [snapshot(working), snapshot(working), snapshot(working), snapshot(grok(reply: "Eventually finished"), repeating: true)])
+        defer { fixture.remove() }
+        let error = await failure {
+            try await self.adapter(fixture, replyTimeout: .milliseconds(15), replyClock: .init(AdvancingClock()))
+                .reply(self.prompt, app: .grokBot, binding: self.binding, onSubmitted: { await submission.record() })
+        }
+        XCTAssertTrue(error.contains("has not completed a verified reply"), error)
+        let submissions = await submission.count
+        XCTAssertEqual(submissions, 1, "The test must reach a confirmed outgoing message")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1, "Never resend while the bot is still working")
+        XCTAssertEqual(calls.filter { $0.tool == "get_window_state" }.count, 5, "Three deadline ticks should end the foreground wait")
+    }
+
+    func testWabiLateReplyIsRecoveredWithoutSendingAndSurvivesReload() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .milliseconds(1))) { _, _ in
+            .init(url: url, draft: "An unrelated native draft", links: [], messages: baseline + [
+                .init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) },
+                                                   open: { _ in XCTFail("Recovery must not open Wabi") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep my next draft"
+        try workspace.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = fixture.directory.appendingPathComponent("workspace.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let remaining = await session.reconcileWabiReplyOnce()
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Question", "Late answer"])
+        XCTAssertEqual(saved.draft, "Keep my next draft")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+    func testRecoveredNativeReplyClearsOnlyItsUnchangedSubmittedDraft() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for scenario in ["unchanged", "edited", "retyped", "legacy", "other comparison"] {
+            let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+            defer { fixture.remove() }
+            let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+                .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+            }
+            let revision = UUID(), other = UUID()
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = scenario == "other comparison" ? other : comparison
+            workspace.draft = scenario == "other comparison" ? "Other conversation draft" : "Question"
+            workspace.localDrafts[comparison.uuidString] = "Question"
+            workspace.localDraftRevisions[comparison.uuidString] = revision
+            if scenario == "other comparison" { workspace.localDrafts[other.uuidString] = workspace.draft }
+            try workspace.recordWabiConversation(url, for: comparison)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+            attempt.nativeDraftRevision = scenario == "legacy" ? nil : revision
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            let storage = fixture.directory.appendingPathComponent("workspace.json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            if scenario == "edited" || scenario == "retyped" { session.updateState { $0.draft = "Next draft" } }
+            if scenario == "retyped" { session.updateState { $0.draft = "Question" } }
+            _ = await session.reconcileWabiReplyOnce()
+            session.beginShutdown()
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            XCTAssertEqual(saved.attempts.first?.status, .observed, scenario)
+            XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Question", "Late answer"], scenario)
+            let expected = scenario == "unchanged" ? "" : scenario == "edited" ? "Next draft" : scenario == "other comparison" ? "Other conversation draft" : "Question"
+            XCTAssertEqual(saved.draft, expected, scenario)
+            XCTAssertEqual(saved.localDrafts[comparison.uuidString], scenario == "other comparison" ? "" : expected, scenario)
+            let calls = try await finishedCalls(fixture)
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) }, scenario)
+        }
+    }
+
+    func testWabiUnconfirmedSendRecoversOnlyAfterTheExactOutgoingAndReplyAppear() async throws {
+        let comparison = UUID(), url = wabiURL
+        let earlier: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier reply")]
+        let baseline = [WabiAppMessage(role: .assistant, text: "What can I do for you?")] + earlier
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for exact in [true, false] {
+            let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+            defer { fixture.remove() }
+            let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+                .init(url: url, draft: "", links: [], messages: earlier + [
+                    .init(role: .user, text: exact ? "Question" : "Another question"), .init(role: .assistant, text: "Answer")])
+            }
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            try workspace.recordWabiConversation(url, for: comparison)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = nil; attempt.wabiReplyReceipt = receipt
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(role: "user", text: "Earlier question"), .init(role: "assistant", text: "Earlier reply")]
+            let storage = fixture.directory.appendingPathComponent("workspace.json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            _ = await session.reconcileWabiReplyOnce()
+            session.beginShutdown()
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            if exact {
+                XCTAssertEqual(saved.attempts.first?.status, .observed)
+                XCTAssertEqual(saved.attempts.first?.messageID, attempt.id.uuidString)
+                XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Earlier question", "Earlier reply", "Question", "Answer"])
+            } else {
+                XCTAssertEqual(saved.attempts.first?.status, .uncertain)
+                XCTAssertNil(saved.attempts.first?.messageID)
+                XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Earlier question", "Earlier reply"])
+            }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+        }
+    }
+
+    func testWabiRecoversLegacyReceiptAfterAnOldRowDisappearsWithoutResending() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "What can I do for you?"),
+            .init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "A \n\n garden.\n\nA \n\n pond.")]
+        let created = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Next question", baseline: baseline)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(created)) as? [String: Any])
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { json.removeValue(forKey: key) }
+        let receipt = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let visible: [WabiAppMessage] = [baseline[0], .init(role: .assistant, text: "A\n\ngarden.\n\nA\n\npond."),
+                                         .init(role: .user, text: "Next question"), .init(role: .assistant, text: "New answer")]
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            .init(url: url, draft: "", links: [], messages: visible)
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) },
+                                                   open: { _ in XCTFail("Recovery must not launch Wabi") })
+        var state = WebWorkspaceState()
+        state.enabled = true; state.comparisonID = comparison
+        try state.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Next question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.wabiReplyReceipt = receipt
+        state.attempts = [attempt]
+        state.localConversations[comparison.uuidString] = Array(baseline.dropFirst()).map { .init(role: $0.role.rawValue, text: $0.text) }
+        let storage = fixture.directory.appendingPathComponent("legacy-window.json")
+        try JSONEncoder().encode(state).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        _ = await session.reconcileWabiReplyOnce()
+        session.beginShutdown()
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Earlier question", baseline[2].text, "Next question", "New answer"])
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+    func testUnsentLaterRequestDoesNotBlockEarlierWabiRecovery() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for laterStatus in [WebSendStatus.preparing, .notSent, .observed, .dismissed] {
+            let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+            defer { fixture.remove() }
+            let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+                .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+            }
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            try workspace.recordWabiConversation(url, for: comparison)
+            var earlier = WebSendAttempt(text: "Question", status: .uncertain)
+            earlier.comparisonID = comparison; earlier.wabiReplyReceipt = receipt
+            var later = WebSendAttempt(text: "Later question", status: laterStatus)
+            later.comparisonID = comparison
+            workspace.attempts = [later, earlier]
+            let storage = fixture.directory.appendingPathComponent("\(laterStatus.rawValue).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            _ = await session.reconcileWabiReplyOnce()
+            session.beginShutdown()
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            let safeToRecover = laterStatus == .preparing || laterStatus == .notSent
+            XCTAssertEqual(saved.attempts.first(where: { $0.id == earlier.id })?.status, safeToRecover ? .observed : .uncertain)
+            XCTAssertEqual(saved.attempts.first(where: { $0.id == later.id })?.status, laterStatus == .preparing ? .notSent : laterStatus)
+            XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text) ?? [], safeToRecover ? ["Question", "Late answer"] : [])
+            let calls = safeToRecover ? try await finishedCalls(fixture) : try fixture.calls()
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+        }
+    }
+
+    func testLegacyWabiRecoveryHandlesADeletedMiddleRowWithoutResending() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline = (0..<13).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .assistant : .user, text: "Earlier \($0)") }
+        let generated = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(generated)) as? [String: Any])
+        json.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { json.removeValue(forKey: key) }
+        let receipt = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            .init(url: url, draft: "", links: [], messages: Array(baseline.prefix(2)) + Array(baseline.dropFirst(3)) + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Answer")])
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep next draft"
+        try workspace.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.wabiReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [WebPageMessage(role: "user", text: "Older local message")] + baseline.map { WebPageMessage(role: $0.role.rawValue, text: $0.text) }
+        let storage = fixture.directory.appendingPathComponent("legacy-middle.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let remaining = await session.reconcileWabiReplyOnce()
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .observed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.suffix(2).map(\.text), ["Question", "Answer"])
+        XCTAssertEqual(saved.draft, "Keep next draft")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+    func testLegacyWabiRecoveryVerifiesSavedLocalHistoryBeforeUsingIt() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline = (0..<6).map { WabiAppMessage(role: $0.isMultiple(of: 2) ? .user : .assistant, text: "Earlier message \($0)") }
+        let generated = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(generated)) as? [String: Any])
+        json.removeValue(forKey: "overlapDigests")
+        json.removeValue(forKey: "messageDigests")
+        for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { json.removeValue(forKey: key) }
+        let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for historyMatches in [true, false] {
+            let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+            defer { fixture.remove() }
+            let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+                .init(url: url, draft: "", links: [], messages: Array(baseline.dropFirst()) + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Answer")])
+            }
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            try workspace.recordWabiConversation(url, for: comparison)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.wabiReplyReceipt = legacy
+            workspace.attempts = [attempt]
+            var local = baseline.map { WebPageMessage(role: $0.role.rawValue, text: $0.text) }
+            if !historyMatches { local[0] = .init(role: "user", text: "Different message") }
+            workspace.localConversations[comparison.uuidString] = local
+            let storage = fixture.directory.appendingPathComponent("legacy.json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+            session.connect(automaticallyRefresh: false)
+            _ = await session.reconcileWabiReplyOnce()
+            session.beginShutdown()
+            let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+            XCTAssertEqual(saved.attempts.first?.status, historyMatches ? .observed : .uncertain)
+            XCTAssertEqual(saved.localConversations[comparison.uuidString]?.count, historyMatches ? 8 : 6)
+            let calls = try await finishedCalls(fixture)
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+        }
+    }
+
+    func testWabiRecoveryRejectsCancelledAndAmbiguousRequests() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let comparison = UUID(), url = wabiURL
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: [.init(role: .assistant, text: "Welcome")])
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        for scenario in ["cancelled", "wrong binding", "multiple requests", "missing outgoing", "interleaved", "wrong comparison", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = comparison
+            try workspace.recordWabiConversation(scenario == "wrong binding" ? otherWabiURL : url, for: comparison)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+            if scenario == "cancelled" { attempt.wabiReplyReceipt?.automaticRecovery = false }
+            if scenario == "wrong comparison" { attempt.wabiReplyReceipt = try .init(comparisonID: UUID(), url: url, prompt: "Question", baseline: []) }
+            if scenario == "unsupported version" { attempt.wabiReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[comparison.uuidString] = [] }
+            if scenario == "interleaved" { workspace.localConversations[comparison.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "multiple requests" {
+                var second = WebSendAttempt(text: "Another request", status: .uncertain)
+                second.comparisonID = comparison; workspace.attempts.append(second)
+            }
+            let storage = fixture.directory.appendingPathComponent("wabi-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client)
+            session.connect(automaticallyRefresh: false)
+            let remaining = await session.reconcileWabiReplyOnce()
+            XCTAssertFalse(remaining, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(try fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
+    }
+
+    func testWabiRecoveryDoesNotAttributeReplyFromAnotherOpenThread() async throws {
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi())])
+        defer { fixture.remove() }
+        let receipt = try WabiReplyReceipt(comparisonID: UUID(), url: wabiURL, prompt: "Question", baseline: [])
+        let wrongURL = otherWabiURL
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            .init(url: wrongURL, draft: "", links: [], messages: [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Wrong chat")])
+        }
+        do {
+            _ = try await adapter.recoverReply(receipt)
+            XCTFail("A reply from a different thread must not be attributed")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("selected chat changed")) }
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+    func testWabiRecoveryRechecksRequestAfterAnInFlightRead() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let started = expectation(description: "Native read started")
+        let resume = DispatchSemaphore(value: 0)
+        let marker = fixture.directory.appendingPathComponent("read-started")
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker)
+                started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison
+        try workspace.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.messageID = attempt.id.uuidString; attempt.wabiReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = fixture.directory.appendingPathComponent("in-flight.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileWabiReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.attempts[0].status = .dismissed }
+        resume.signal()
+        let remaining = await recovery.value
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .dismissed)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Question"])
+        XCTAssertFalse(try fixture.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+    func testWabiUnconfirmedRecoveryDoesNotOverwriteHistoryChangedDuringRead() async throws {
+        let comparison = UUID(), url = wabiURL
+        let baseline: [WabiAppMessage] = [.init(role: .user, text: "Earlier"), .init(role: .assistant, text: "Earlier reply")]
+        let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
+        let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
+        defer { fixture.remove() }
+        let started = expectation(description: "Native read started")
+        let resume = DispatchSemaphore(value: 0)
+        let marker = fixture.directory.appendingPathComponent("read-started")
+        let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker); started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Answer")])
+        }
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = comparison
+        try workspace.recordWabiConversation(url, for: comparison)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = comparison; attempt.wabiReplyReceipt = receipt
+        workspace.attempts = [attempt]
+        workspace.localConversations[comparison.uuidString] = [.init(role: "user", text: "Earlier"), .init(role: "assistant", text: "Earlier reply")]
+        let storage = fixture.directory.appendingPathComponent("in-flight-unconfirmed.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let session = WebAgentSession(provider: .wabi, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, wabiApp: adapter)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileWabiReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.localConversations[comparison.uuidString]?.append(.init(role: "user", text: "Newer local message")) }
+        resume.signal()
+        _ = await recovery.value
+        session.beginShutdown()
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .uncertain)
+        XCTAssertNil(saved.attempts.first?.messageID)
+        XCTAssertEqual(saved.localConversations[comparison.uuidString]?.map(\.text), ["Earlier", "Earlier reply", "Newer local message"])
+        XCTAssertFalse(try fixture.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
+
     private let prompt = "Fixture prompt"
     private let binding = DesktopConversationBinding(name: "Fixture Bot")
 
@@ -794,6 +1661,29 @@ final class DesktopAppDriverTests: XCTestCase {
     private func focusSteps(_ app: DesktopAppProvider = .grokBot) -> [[String: Any]] {
         [apps(app), windows(), activation()]
     }
+    func testClaudePreparationOwnsFocusAndRestoresHostOnSuccessAndFailure() async throws {
+        for shouldFail in [false, true] {
+            let fixture = try driver(focusSteps(.claude) + [activation(fixtureHost)])
+            defer { fixture.remove() }
+            let host = fixtureHost
+            let control = DesktopAppConversation(executable: fixture.executable, delivery: .foreground, captureHostWindow: { host })
+            do {
+                let result = try await DesktopAppWorkflow.preparation(.claude, driver: control) {
+                    let focus = try fixture.calls().filter { $0.tool == "bring_to_front" }
+                    XCTAssertEqual(focus.compactMap { $0.arguments["window_id"] as? Int }, [101])
+                    if shouldFail { throw DesktopAppError.unavailable("Preparation failed") }
+                    return "prepared"
+                }
+                XCTAssertFalse(shouldFail)
+                XCTAssertEqual(result, "prepared")
+            } catch {
+                XCTAssertTrue(shouldFail, error.localizedDescription)
+            }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.compactMap { $0.arguments["window_id"] as? Int }, [101, 201])
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "click"].contains($0.tool) })
+        }
+    }
     func testReplyRefreshRestoresTheExactHostOnceWithoutInput() async throws {
         let fixture = try driver([activation(), activation(fixtureHost)])
         defer { fixture.remove() }
@@ -921,6 +1811,52 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" && $0.arguments["element_token"] as? String == "s00000004:latest" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "One submit and one read-only jump to the latest messages")
+    }
+    func testGrokScrollToBottomRevealsVirtualizedHistoryBeforeVerifyingSendOrRecovery() async throws {
+        var scrolled = grok(token: "s00000004")
+        var elements = scrolled["elements"] as! [[String: Any]]
+        elements.removeAll { $0["role"] as? String == "AXStaticText" }
+        let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+        elements.insert(contentsOf: [element("AXStaticText", "An older virtualized viewport"),
+            element("AXButton", "Scroll to bottom", token: "s00000004:latest")], at: composer)
+        scrolled["elements"] = elements
+        scrolled["returned_element_count"] = elements.count
+        scrolled["total_element_count"] = elements.count
+        let reveal = step("click", [:], arguments: ["element_token": "s00000004:latest", "delivery_mode": "background"])
+        for recovery in [false, true] {
+            let start = recovery ? [apps(), windows()] : sendSteps()
+            let fixture = try driver(start + [snapshot(scrolled), reveal, snapshot(grok(reply: "Visible current reply"), repeating: true)])
+            defer { fixture.remove() }
+            let conversation = adapter(fixture)
+            let answer: String?
+            if recovery {
+                let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+                let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+                answer = try await conversation.recoverGrokReply(receipt)
+            } else {
+                answer = try await conversation.reply(prompt, app: .grokBot, binding: binding)
+            }
+            XCTAssertEqual(answer, "Visible current reply")
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, recovery ? 0 : 1)
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.count, recovery ? 1 : 2, "Reveal once; never resubmit")
+            XCTAssertFalse(calls.contains { $0.tool == "bring_to_front" })
+        }
+        for foreignBot in [false, true] {
+            let revealed = grok(reply: "Unrelated reply", name: foreignBot ? "Other Bot" : "Fixture Bot", outgoingPrompt: "Someone else's prompt")
+            let fixture = try driver([apps(), windows(), snapshot(scrolled), reveal, snapshot(revealed, repeating: true)])
+            defer { fixture.remove() }
+            let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+            let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+            do {
+                let answer = try await adapter(fixture).recoverGrokReply(receipt)
+                XCTAssertNil(answer, "Scrolling cannot authorize another request's reply")
+                XCTAssertFalse(foreignBot, "A changed bot must be rejected")
+            } catch { XCTAssertTrue(foreignBot, error.localizedDescription) }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "bring_to_front"].contains($0.tool) })
+        }
     }
     func testGrokRevealsLaterReplyWhenNewMessageCountChangesWithoutResubmitting() async throws {
         func unread(_ label: String, token: String) throws -> [String: Any] {
@@ -1418,6 +2354,46 @@ final class DesktopAppDriverTests: XCTestCase {
         assertBackgroundTargets(calls)
     }
 
+    func testWabiRefreshesStaleEditorWithoutRetypingBeforeSubmit() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", ["effect": "unverifiable"], arguments: ["text": prompt])
+        typed["native"] = wabiNative()
+        var refresh = activation(); refresh["native"] = wabiNative(draft: prompt)
+        var sent = step("click", [:], arguments: ["element_token": "s00000002:send"])
+        sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Fresh Wabi answer")])
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi()), refresh,
+                                  snapshot(wabi(draft: prompt, token: "s00000002")), sent,
+                                  snapshot(wabi(reply: "Fresh Wabi answer"), repeating: true)])
+        defer { fixture.remove() }
+        let control = DesktopAppConversation(executable: fixture.executable)
+        let answer = try await wabiAdapter(fixture).reply(prompt, in: wabiURL, refreshInput: { target, session in
+            try await control.activate(target, session: session)
+        })
+        XCTAssertEqual(answer, "Fresh Wabi answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiDoesNotRefreshOrSubmitAnUnexpectedDraft() async throws {
+        var initial = windows(); initial["native"] = wabiNative()
+        var typed = step("type_text", ["effect": "unverifiable"], arguments: ["text": prompt])
+        typed["native"] = wabiNative(draft: "Someone else's draft")
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed,
+                                  snapshot(wabi(draft: "Someone else's draft"))])
+        defer { fixture.remove() }
+        let error = await failure {
+            try await self.wabiAdapter(fixture).reply(self.prompt, in: self.wabiURL, refreshInput: { _, _ in
+                XCTFail("Unexpected text must never trigger a focus refresh or submission")
+            })
+        }
+        XCTAssertTrue(error.contains("prepared draft"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertFalse(calls.contains { ["bring_to_front", "click"].contains($0.tool) })
+    }
+
     func testWabiMultilineUsesVerifiedChunksAndShiftReturnWithoutRefocusingText() async throws {
         try await runWabiMultiline(driverTrimsWhitespace: false)
     }
@@ -1520,11 +2496,30 @@ final class DesktopAppDriverTests: XCTestCase {
         var sent = step("click", [:]); sent["native"] = wabiNative(messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Completed after layout settled")])
         let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent, snapshot(wabi(reply: "Completed after layout settled"), repeating: true)])
         defer { fixture.remove() }
-        let result = try await wabiAdapter(fixture, transientAfterSend: true).reply(prompt, in: wabiURL)
+        let receiptSaved = expectation(description: "Baseline is saved before input")
+        let result = try await wabiAdapter(fixture, transientAfterSend: true).reply(prompt, in: wabiURL, onReceipt: { baseline in
+            XCTAssertTrue(baseline.isEmpty)
+            XCTAssertFalse(try fixture.calls().contains { ["type_text", "click"].contains($0.tool) })
+            receiptSaved.fulfill()
+        })
+        await fulfillment(of: [receiptSaved], timeout: 1)
         XCTAssertEqual(result, "Completed after layout settled")
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiDoesNotTypeIfRecoveryReceiptCannotBeSaved() async throws {
+        enum StorageFailure: Error { case denied }
+        var initial = windows(); initial["native"] = wabiNative()
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi())])
+        defer { fixture.remove() }
+        do {
+            _ = try await wabiAdapter(fixture).reply(prompt, in: wabiURL, onReceipt: { _ in throw StorageFailure.denied })
+            XCTFail("A failed recovery receipt must stop before typing")
+        } catch StorageFailure.denied { }
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key", "click"].contains($0.tool) })
     }
 
     func testWabiIncompleteLayoutDeadlineNeverResendsOrClaimsAReply() async throws {
@@ -1535,6 +2530,43 @@ final class DesktopAppDriverTests: XCTestCase {
         defer { fixture.remove() }
         let error = await failure { try await self.wabiAdapter(fixture, neverSettlesAfterSend: true).reply(self.prompt, in: self.wabiURL) }
         XCTAssertTrue(error.contains("nothing will be resent automatically"), error)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+    }
+
+    func testWabiConfirmsOutgoingWhileEmptyReplyFrameIsStillPending() async throws {
+        let welcome = WabiAppMessage(role: .assistant, text: "Welcome")
+        let outgoing = WabiAppMessage(role: .user, text: prompt)
+        var initial = windows(); initial["native"] = wabiNative(messages: [welcome])
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(draft: prompt, messages: [welcome])
+        var sent = step("click", [:]); sent["native"] = wabiNative(messages: [welcome, outgoing])
+        var waiting = snapshot(wabi()); waiting["native"] = wabiNative(messages: [welcome, outgoing])
+        var completed = snapshot(wabi(reply: "Finished answer"), repeating: true)
+        completed["native"] = wabiNative(messages: [welcome, outgoing, .init(role: .assistant, text: "Finished answer")])
+        completed["wait_for_release"] = true
+        let fixture = try driver([apps(.wabi), initial, capturedNavigation(wabi()), typed, snapshot(wabi(draft: prompt)), sent, waiting, completed])
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("native.json")
+        let adapter = WabiAppConversation(executable: fixture.executable,
+            timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(5), callTimeout: 3)) { _, purpose in
+            let observation = try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
+            guard purpose == .sentWaiting, observation.messages.count == 2 else { return observation }
+            func frame(_ sender: String, _ text: String) -> WabiAXNode {
+                .init(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", sender], children: [
+                    .init(role: "AXStaticText", value: text), .init(role: "AXPopUpButton", label: "Add reaction"), .init(role: "AXStaticText", value: "5:13 PM")])
+            }
+            let pending = WabiAXNode(role: "AXGroup", classes: ["x1n2onr6", "x193iq5w", "x67m8t7", "xc90arz", "xza2g2e", "xqcrz7y"])
+            let messages = try WabiNativeMessages.read(.init(role: "AXWebArea", children: [frame("xqcrz7y", "Welcome"), frame("xpvyfi4", outgoing.text), pending]), purpose: .sentWaiting)
+            return WabiAppObservation(url: observation.url, draft: observation.draft, links: observation.links,
+                                      messages: messages, composerFocused: observation.composerFocused)
+        }
+        let submitted = expectation(description: "Outgoing confirmed before the reply is available")
+        let task = Task { try await adapter.reply(prompt, in: wabiURL, onSubmitted: { submitted.fulfill() }) }
+        await fulfillment(of: [submitted], timeout: 4)
+        try Data().write(to: fixture.directory.appendingPathComponent("release"))
+        let answer = try await task.value
+        XCTAssertEqual(answer, "Finished answer")
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
@@ -1654,6 +2686,47 @@ final class DesktopAppDriverTests: XCTestCase {
         let calls = try await finishedCalls(fixture)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.compactMap { $0.arguments["element_token"] as? String }, ["s00000002:new"])
         XCTAssertFalse(calls.contains { $0.tool == "type_text" })
+    }
+
+    func testWabiReadinessAcceptsAnExistingEmptyAIChooser() async throws {
+        let creation = wabiCreationSteps()
+        var initial = windows(); initial["native"] = wabiNative(draft: nil)
+        let fixture = try driver([apps(.wabi), initial, creation[4]])
+        defer { fixture.remove() }
+        try await wabiAdapter(fixture).checkAvailable()
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
+    func testWabiReadinessDoesNotIgnoreADraftBehindTheChooser() async throws {
+        let creation = wabiCreationSteps()
+        var initial = windows(); initial["native"] = wabiNative(draft: "Keep this draft")
+        let fixture = try driver([apps(.wabi), initial, creation[4]])
+        defer { fixture.remove() }
+        let error = await failure { try await self.wabiAdapter(fixture).checkAvailable() }
+        XCTAssertTrue(error.contains("draft"), error)
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
+    func testWabiRefreshesStaleNavigationWithoutRepeatingEitherClick() async throws {
+        let creation = wabiCreationSteps()
+        var open = creation[3]; open["native"] = wabiNative()
+        var firstRefresh = activation(); firstRefresh["native"] = wabiNative(draft: nil)
+        var create = creation[5]; create["native"] = wabiNative(draft: nil)
+        var secondRefresh = activation()
+        secondRefresh["native"] = wabiNative(url: otherWabiURL, messages: [.init(role: .assistant, text: "What can I do for you?")])
+        let oldChat = snapshot(wabiWith([element("AXButton", "New chat", token: "s00000001:new")]))
+        let fixture = try driver(Array(creation.prefix(3)) + [open, oldChat, firstRefresh, creation[4],
+                                                               create, creation[4], secondRefresh, creation[6]])
+        defer { fixture.remove() }
+        let control = DesktopAppConversation(executable: fixture.executable)
+        let created = try await wabiAdapter(fixture).prepare(savedURL: nil, refreshNavigation: { target, session in
+            try await control.activate(target, session: session)
+        })
+        XCTAssertEqual(created, otherWabiURL)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.compactMap { $0.arguments["element_token"] as? String }, ["s00000001:new", "s00000002:new"])
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 2)
+        XCTAssertFalse(calls.contains { ["type_text", "press_key"].contains($0.tool) })
     }
 
     func testWabiChooserTargetsAIOptionWhenToolbarRemainsAccessible() async throws {
@@ -1890,6 +2963,45 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertFalse(calls.contains { $0.arguments["element_token"] as? String == "s00000001:send" })
     }
 
+    func testWabiReplyStaysInItsOriginalComparisonAfterBrowsingAway() async throws {
+        let owner = UUID(), other = UUID()
+        let welcome = WabiAppMessage(role: .assistant, text: "What can I do for you?")
+        var ready = windows(); ready["native"] = wabiNative(url: otherWabiURL, messages: [welcome])
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(url: otherWabiURL, draft: prompt, messages: [welcome])
+        var sent = step("click", [:]); sent["native"] = wabiNative(url: otherWabiURL, messages: [welcome, .init(role: .user, text: prompt)])
+        var late = snapshot(wabi(reply: "Late answer"), repeating: true)
+        late["native"] = wabiNative(url: otherWabiURL, messages: [welcome, .init(role: .user, text: prompt), .init(role: .assistant, text: "Late answer")])
+        late["wait_for_release"] = true
+        let fixture = try driver(wabiCreationSteps() + [apps(.wabi), ready, capturedNavigation(wabi()), typed,
+            snapshot(wabi(draft: prompt)), sent, snapshot(wabi()), late])
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("state.json")
+        let session = WebAgentSession(provider: .wabi, storageURL: file, fixture: false, museApp: .shared, desktopApps: .demo,
+                                      wabiApp: wabiAdapter(fixture), desktopDriver: try readinessDriver(fixture, app: .wabi))
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi") }
+        let confirmed = expectation(description: "The outgoing message was observed")
+        let sending = Task { await session.send(prompt, comparisonID: owner, onConfirmedSubmission: { confirmed.fulfill() }) }
+        await fulfillment(of: [confirmed], timeout: 5)
+        XCTAssertTrue(session.isSending)
+        session.updateState { $0.comparisonID = other }
+        session.updateState { $0.draft = "Different comparison draft" }
+        try Data().write(to: fixture.directory.appendingPathComponent("release"))
+        let attempt = await sending.value
+        XCTAssertEqual(attempt?.status, .observed)
+        XCTAssertEqual(session.state.comparisonID, other)
+        XCTAssertEqual(session.state.draft, "Different comparison draft")
+        XCTAssertEqual(session.state.localConversations[owner.uuidString]?.map(\.text), [prompt, "Late answer"])
+        XCTAssertNil(session.state.localConversations[other.uuidString])
+        let persisted = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: file))
+        XCTAssertEqual(persisted.localConversations[owner.uuidString]?.map(\.text), [prompt, "Late answer"])
+        XCTAssertEqual(persisted.localDrafts[other.uuidString], "Different comparison draft")
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.arguments["element_token"] as? String == "s00000001:send" }.count, 1)
+        session.beginShutdown()
+    }
+
     private func wabiCreationSteps() -> [[String: Any]] {
         var initial = windows(); initial["native"] = wabiNative()
         let navigation = [element("AXButton", "New chat", token: "s00000001:new")]
@@ -1927,10 +3039,10 @@ final class DesktopAppDriverTests: XCTestCase {
         return WabiAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: .seconds(2), callTimeout: 3)) { target, purpose in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             let observation = try JSONDecoder().decode(WabiAppObservation.self, from: Data(contentsOf: file))
-            if unreadableHistory, purpose == .conversation, observation.url == URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa") {
+            if unreadableHistory, purpose != .readiness, observation.url == URL(string: "wabi://app/threads/aaaaaaaaaaaaaaaaaaaaaaaa") {
                 throw WabiObservationError.transient("Historical layout unavailable")
             }
-            if purpose == .conversation, observation.messages.contains(where: { $0.role == .user }), neverSettlesAfterSend || (transientAfterSend && fault.shouldFail()) {
+            if purpose != .readiness, observation.messages.contains(where: { $0.role == .user }), neverSettlesAfterSend || (transientAfterSend && fault.shouldFail()) {
                 throw WabiObservationError.transient("Wabi's messages are still updating. No sender or reply was inferred.")
             }
             return WabiAppObservation(url: observation.url, draft: observation.draft, links: observation.links,
@@ -2036,6 +3148,22 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(clicks.count, 1, "Submit the verified draft once")
         XCTAssertEqual(clicks.first?.arguments["element_token"] as? String, "s00000002:send")
         assertBackgroundTargets(calls)
+    }
+
+    func testGrokRefreshesStaleEditorWithoutRetypingBeforeSubmit() async throws {
+        let fixture = try driver([
+            apps(), windows(), snapshot(grok()), step("type_text", [:], arguments: ["text": prompt]),
+            snapshot(grok()), activation(),
+            snapshot(grok(draft: prompt, token: "s00000002")), step("click", [:]),
+            snapshot(grok(reply: "Fresh answer", token: "s00000003"), repeating: true)
+        ])
+        defer { fixture.remove() }
+        let answer = try await adapter(fixture, delivery: .foreground).reply(prompt, app: .grokBot, binding: binding)
+        XCTAssertEqual(answer, "Fresh answer")
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
     }
 
     func testNativeEditorFocusAllowsBackgroundWrapperButRefusesConflictingOrLostFocus() async throws {
@@ -2585,6 +3713,19 @@ final class DesktopAppDriverTests: XCTestCase {
         assertMuseBackground(calls)
     }
 
+    func testMuseDoesNotTypeIfRecoveryReceiptCannotBeSaved() async throws {
+        enum StorageFailure: Error { case denied }
+        let owner = UUID(), thread = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        let fixture = try driver([apps(.muse), initial])
+        defer { fixture.remove() }
+        do {
+            _ = try await museAdapter(fixture).reply(prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Side chat"), onReceipt: { _, _ in throw StorageFailure.denied }, onBinding: { _ in })
+            XCTFail("A failed recovery receipt must stop before typing")
+        } catch StorageFailure.denied { }
+        assertNoInput(try await finishedCalls(fixture))
+    }
+
     func testMusePartialDraftFocusLossAndChatSwitchPreventReturnWithoutReplay() async throws {
         let owner = UUID(), thread = UUID()
         for fault in ["unchanged", "partial", "focus", "chat", "history", "generating"] {
@@ -2646,6 +3787,171 @@ final class DesktopAppDriverTests: XCTestCase {
         reopened.beginShutdown()
     }
 
+    func testMuseLateReplyRecoversAfterRealSessionTimeoutAndReloadWithoutResending() async throws {
+        let owner = UUID(), thread = UUID()
+        let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
+        defer { fixture.remove() }
+        let storage = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
+        try JSONEncoder().encode(saved).write(to: storage)
+        let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        let sent = await session.send(prompt, comparisonID: owner)
+        let result = try XCTUnwrap(sent)
+        XCTAssertEqual(result.status, .uncertain)
+        XCTAssertEqual(result.messageID, result.id.uuidString)
+        let receipt = try XCTUnwrap(result.museReplyReceipt)
+        XCTAssertNil(receipt.initialThreadID)
+        XCTAssertEqual(receipt.requestID, result.id)
+        XCTAssertEqual(result.conversationURL, MuseSideChatBinding(comparisonID: owner, threadID: thread, title: "").url)
+        session.beginShutdown()
+        let wire = MuseAppConversation.firstPrompt(prompt, requestID: result.id)
+        try setNative(museObservation(thread: thread, messages: [.init(role: .user, text: wire), .init(role: .assistant, text: "A late answer")]), in: fixture)
+        try fixture.replacePlan([apps(.muse), windows()])
+        let reopened = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: museAdapter(fixture), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        reopened.connect(automaticallyRefresh: false)
+        let remaining = await reopened.reconcileMuseReplyOnce()
+        reopened.beginShutdown()
+        XCTAssertFalse(remaining)
+        let recovered = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(recovered.attempts.first?.status, .observed)
+        XCTAssertEqual(recovered.localConversations[owner.uuidString]?.map(\.text), [prompt, "A late answer"])
+        XCTAssertEqual(recovered.draft, "", "The recovered reply clears the unchanged submitted draft")
+        XCTAssertEqual(recovered.localDrafts[owner.uuidString], "")
+        let calls = try await finishedCalls(fixture, cleanupCount: 3)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 2)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+    }
+
+    func testMuseWorkingPastDeadlineDoesNotHoldTheBroadcastOpen() async throws {
+        final class Reads: @unchecked Sendable {
+            private let lock = NSLock()
+            private var reads = 0
+            var count: Int { lock.withLock { reads } }
+            func next(_ value: MuseAppObservation) -> MuseAppObservation {
+                guard !value.messages.isEmpty else { return value }
+                return lock.withLock {
+                    reads += 1
+                    var result = value
+                    result.generating = reads <= 3
+                    if reads > 3 { result.messages.append(.init(role: .assistant, text: "Eventually finished")) }
+                    return result
+                }
+            }
+        }
+        let owner = UUID(), thread = UUID(), reads = Reads()
+        let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
+        defer { fixture.remove() }
+        let storage = fixture.directory.appendingPathComponent("state.json")
+        var saved = WebWorkspaceState()
+        saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner; saved.draft = prompt
+        try JSONEncoder().encode(saved).write(to: storage)
+        let muse = museAdapter(fixture, timeout: .milliseconds(15), replyClock: .init(AdvancingClock()), transformNative: { reads.next($0) })
+        let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: muse, desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
+        let sent = await session.send(prompt, comparisonID: owner)
+        session.beginShutdown()
+        let attempt = try XCTUnwrap(sent)
+        XCTAssertEqual(attempt.status, .uncertain)
+        XCTAssertEqual(attempt.messageID, attempt.id.uuidString, "The outgoing message must be confirmed")
+        XCTAssertNotNil(attempt.museReplyReceipt)
+        XCTAssertEqual(reads.count, 3, "The foreground wait should stop after three deadline ticks")
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "press_key" && $0.arguments["modifiers"] == nil }.count, 1)
+    }
+
+    func testMuseRecoveryRejectsUnconfirmedCancelledAndWrongOwnership() async throws {
+        let fixture = try driver([])
+        defer { fixture.remove() }
+        let owner = UUID(), thread = UUID(), other = UUID()
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Muse") })
+        for scenario in ["unconfirmed", "cancelled", "wrong thread", "wrong comparison", "wrong request", "missing outgoing", "interleaved", "multiple requests", "unsupported version"] {
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = owner
+            let binding = MuseSideChatBinding(comparisonID: owner, threadID: scenario == "wrong thread" ? other : thread, title: "Side chat")
+            try workspace.recordMuseAppBinding(binding)
+            var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+            attempt.comparisonID = owner; attempt.messageID = attempt.id.uuidString
+            attempt.conversationURL = MuseSideChatBinding(comparisonID: owner, threadID: thread, title: "Side chat").url
+            attempt.museReplyReceipt = try .init(comparisonID: scenario == "wrong comparison" ? UUID() : owner,
+                                                  requestID: scenario == "wrong request" ? UUID() : attempt.id,
+                                                  initialThreadID: thread, prompt: "Question", baseline: [])
+            if scenario == "unconfirmed" { attempt.messageID = nil }
+            if scenario == "cancelled" { attempt.museReplyReceipt?.automaticRecovery = false }
+            if scenario == "unsupported version" { attempt.museReplyReceipt?.version = 2 }
+            workspace.attempts = [attempt]
+            workspace.localConversations[owner.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+            if scenario == "missing outgoing" { workspace.localConversations[owner.uuidString] = [] }
+            if scenario == "interleaved" { workspace.localConversations[owner.uuidString]?.append(.init(role: "user", text: "Another request")) }
+            if scenario == "multiple requests" { workspace.attempts.append(WebSendAttempt(text: "Another request", status: .uncertain)) }
+            let storage = fixture.directory.appendingPathComponent("muse-\(scenario).json")
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client)
+            session.connect(automaticallyRefresh: false)
+            let remaining = await session.reconcileMuseReplyOnce()
+            XCTAssertFalse(remaining, scenario)
+            XCTAssertEqual(session.state.attempts.first?.status, .uncertain, scenario)
+            session.beginShutdown()
+        }
+        XCTAssertTrue(try fixture.calls().isEmpty, "Unsafe recovery must not inspect or interact with any app")
+    }
+
+    func testMuseRecoveryNeverAttributesAnotherOpenSideChat() async throws {
+        let owner = UUID(), thread = UUID(), other = UUID()
+        let fixture = try driver([apps(.muse), windows()])
+        defer { fixture.remove() }
+        let receipt = try MuseReplyReceipt(comparisonID: owner, requestID: UUID(), initialThreadID: thread, prompt: "Question", baseline: [])
+        let observation = museObservation(thread: other, messages: [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Wrong chat")])
+        let adapter = MuseAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _ in observation }
+        do {
+            _ = try await adapter.recoverReply(receipt, binding: .init(comparisonID: owner, threadID: thread, title: "Side chat"))
+            XCTFail("A reply from a different side chat must not be attributed")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("side chat changed")) }
+        let calls = try await finishedCalls(fixture)
+        assertNoInput(calls)
+    }
+
+    func testMuseRecoveryRechecksTheRequestAfterAnInFlightRead() async throws {
+        let owner = UUID(), thread = UUID()
+        let fixture = try driver([apps(.muse), windows()])
+        defer { fixture.remove() }
+        let started = expectation(description: "Muse read started")
+        let resume = DispatchSemaphore(value: 0)
+        let marker = fixture.directory.appendingPathComponent("muse-read-started")
+        let observation = museObservation(thread: thread, messages: [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
+        let adapter = MuseAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _ in
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                try Data().write(to: marker); started.fulfill()
+                guard resume.wait(timeout: .now() + 5) == .success else { throw CocoaError(.userCancelled) }
+            }
+            return observation
+        }
+        let binding = MuseSideChatBinding(comparisonID: owner, threadID: thread, title: "Side chat")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = owner
+        try workspace.recordMuseAppBinding(binding)
+        var attempt = WebSendAttempt(text: "Question", status: .uncertain)
+        attempt.comparisonID = owner; attempt.messageID = attempt.id.uuidString; attempt.conversationURL = binding.url
+        attempt.museReplyReceipt = try .init(comparisonID: owner, requestID: attempt.id, initialThreadID: thread, prompt: "Question", baseline: [])
+        workspace.attempts = [attempt]
+        workspace.localConversations[owner.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
+        let storage = fixture.directory.appendingPathComponent("muse-in-flight.json")
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Muse") })
+        let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: adapter, desktopApps: client)
+        session.connect(automaticallyRefresh: false)
+        let recovery = Task { await session.reconcileMuseReplyOnce() }
+        await fulfillment(of: [started], timeout: 3)
+        session.updateState { $0.attempts[0].status = .dismissed }
+        resume.signal()
+        let remaining = await recovery.value
+        session.beginShutdown()
+        XCTAssertFalse(remaining)
+        let saved = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: storage))
+        XCTAssertEqual(saved.attempts.first?.status, .dismissed)
+        XCTAssertEqual(saved.localConversations[owner.uuidString]?.map(\.text), ["Question"])
+        XCTAssertFalse(try fixture.calls().contains { ["type_text", "press_key", "click", "launch_app"].contains($0.tool) })
+    }
+
     func testMuseConfirmedPromptSurvivesMissingReplyAcknowledgementAndRestart() async throws {
         let owner = UUID(), thread = UUID()
         let fixture = try driver(try museCreationSteps(owner: owner, thread: thread, answer: nil))
@@ -2655,7 +3961,14 @@ final class DesktopAppDriverTests: XCTestCase {
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
         let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
-        let sent = await session.send(prompt, comparisonID: owner)
+        var confirmations = 0
+        let sent = await session.send(prompt, comparisonID: owner, onConfirmedSubmission: {
+            confirmations += 1
+            let persisted = try? JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: file))
+            XCTAssertEqual(persisted?.attempts.first?.status, .waiting, "Notify only after the outgoing receipt is durable")
+            XCTAssertEqual(persisted?.localConversations[owner.uuidString]?.map(\.text), [self.prompt])
+        })
+        XCTAssertEqual(confirmations, 1)
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)
         XCTAssertEqual(result.messageID, result.id.uuidString)
@@ -2683,7 +3996,9 @@ final class DesktopAppDriverTests: XCTestCase {
         saved.enabled = true; saved.desktopConversation = .init(name: "Muse"); saved.comparisonID = owner
         try JSONEncoder().encode(saved).write(to: file)
         let session = WebAgentSession(provider: .museApp, storageURL: file, fixture: false, museApp: museAdapter(fixture, timeout: .milliseconds(150)), desktopApps: .demo, desktopDriver: try readinessDriver(fixture, app: .muse))
-        let sent = await session.send(prompt, comparisonID: owner)
+        var confirmations = 0
+        let sent = await session.send(prompt, comparisonID: owner, onConfirmedSubmission: { confirmations += 1 })
+        XCTAssertEqual(confirmations, 0, "An unconfirmed outgoing message must not clear the shared draft early")
         let result = try XCTUnwrap(sent)
         XCTAssertEqual(result.status, .uncertain)
         let candidate = URL(string: "https://muse.ai/thread/\(thread.uuidString)")!
@@ -2903,6 +4218,39 @@ final class DesktopAppDriverTests: XCTestCase {
         assertMuseBackground(calls)
     }
 
+    func testMuseOwnedFocusRefreshPublishesQueuedInputWithoutTypingAgain() async throws {
+        let owner = UUID(), thread = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        var queued = museObservation(thread: thread); queued.composerFocused = false
+        for changedChat in [false, true] {
+            var refreshed = activation(.init(pid: 4242, window: 101))
+            refreshed["native"] = try object(museObservation(thread: changedChat ? UUID() : thread, draft: prompt))
+            var plan = [apps(.muse), initial, museComposerCapture(), try museStep("type_text", observation: queued), refreshed]
+            if !changedChat {
+                plan.append(try museStep("press_key", observation: museObservation(thread: thread,
+                    messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Queued text published")])) )
+            }
+            let fixture = try driver(plan)
+            defer { fixture.remove() }
+            let focusDriver = adapter(fixture, delivery: .foreground)
+            let run = {
+                try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Saved"),
+                    refreshInput: { target, session in try await focusDriver.activate(target, session: session) }, onBinding: { _ in })
+            }
+            if changedChat {
+                let error = await failure(run)
+                XCTAssertTrue(error.contains("side chat changed"), error)
+            } else {
+                let answer = try await run()
+                XCTAssertEqual(answer, "Queued text published")
+            }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 1)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1, "Refresh the owned window; never replay queued input")
+            XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, changedChat ? 0 : 1)
+        }
+    }
+
     func testMuseInputCaptureRejectsMissingImageMovedWindowAndChangedChatBeforeTyping() async throws {
         for fault in ["missing_image", "window_moved", "chat_changed"] {
             let thread = UUID()
@@ -2967,6 +4315,48 @@ final class DesktopAppDriverTests: XCTestCase {
             let path = try XCTUnwrap(calls.last { $0.tool == "get_window_state" }?.arguments["screenshot_out_file"] as? String)
             XCTAssertFalse(FileManager.default.fileExists(atPath: path))
         }
+    }
+
+    func testMuseSideChatMenuUsesCapturedClickWhenAccessibilityPressOnlyFocusesHeader() async throws {
+        var initial = windows()
+        var main = museObservation(); main.url = URL(string: "https://muse.ai/")!
+        initial["native"] = try object(main)
+        let header = element("AXButton", "Saved chat Open chat and side chats", token: "s00000001:header")
+        let closed: [String: Any] = ["elements": [header]]
+        var listed = main; listed.sidebarOpen = true
+        let fixture = try driver([apps(.muse), initial, snapshot(closed),
+            try museStep("click", observation: main, token: "s00000001:header"), snapshot(closed),
+            capturedNavigation(closed), try museStep("click", observation: listed),
+            snapshot(["elements": [element("AXButton", "New side chat", token: "s00000002:new")]]),
+            try museStep("click", observation: museObservation(), token: "s00000002:new")])
+        defer { fixture.remove() }
+        let prepared = try await museAdapter(fixture).prepare(comparisonID: UUID(), binding: nil)
+        XCTAssertNil(prepared.threadID)
+        let calls = try await finishedCalls(fixture)
+        let clicks = calls.filter { $0.tool == "click" }
+        XCTAssertEqual(clicks.count, 3, "Open the list once through the capture after the semantic action has no effect, then create one chat")
+        XCTAssertEqual(clicks[1].arguments["capture_id"] as? String, "muse-resized-capture")
+        XCTAssertFalse(calls.contains { $0.tool == "type_text" || $0.tool == "press_key" })
+        assertMuseBackground(calls)
+    }
+
+    func testMuseDoesNotToggleChatListClosedWhenSemanticNavigationFinishesAfterCapture() async throws {
+        var initial = windows()
+        var main = museObservation(); main.url = URL(string: "https://muse.ai/")!
+        initial["native"] = try object(main)
+        let closed: [String: Any] = ["elements": [element("AXButton", "Saved chat Open chat and side chats", token: "s00000001:header")]]
+        var listed = main; listed.sidebarOpen = true
+        var lateCapture = capturedNavigation(closed)
+        lateCapture["native"] = try object(listed)
+        let fixture = try driver([apps(.muse), initial, snapshot(closed),
+            try museStep("click", observation: main, token: "s00000001:header"), snapshot(closed), lateCapture,
+            snapshot(["elements": [element("AXButton", "New side chat", token: "s00000002:new")]]),
+            try museStep("click", observation: museObservation(), token: "s00000002:new")])
+        defer { fixture.remove() }
+        _ = try await museAdapter(fixture).prepare(comparisonID: UUID(), binding: nil)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "An already-open sidebar must not receive a second toggle")
+        XCTAssertFalse(calls.contains { $0.arguments["capture_id"] != nil })
     }
 
     func testMuseNewSideChatCanPrepareBeforeWebKitReportsEditorFocus() async throws {
@@ -3058,10 +4448,11 @@ final class DesktopAppDriverTests: XCTestCase {
         init(failures: Int = 1) { remaining = failures }
         func shouldFail() -> Bool { lock.withLock { guard remaining > 0 else { return false }; remaining -= 1; return true } }
     }
-    private func museAdapter(_ fixture: DriverFixture, timeout: Duration = .seconds(3), transientWindowFailure: Bool = false, transientReadFailures: Int = 0, requiresDriverSnapshot: Bool = false) -> MuseAppConversation {
+    private func museAdapter(_ fixture: DriverFixture, timeout: Duration = .seconds(3), transientWindowFailure: Bool = false, transientReadFailures: Int = 0, requiresDriverSnapshot: Bool = false,
+                             replyClock: DesktopAppWorkflow.ReplyClock = .init(ContinuousClock()), transformNative: @escaping @Sendable (MuseAppObservation) -> MuseAppObservation = { $0 }) -> MuseAppConversation {
         let fault = MuseReadFault(failures: transientWindowFailure ? 1 : transientReadFailures)
         let url = fixture.directory.appendingPathComponent("native.json")
-        return MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: timeout, callTimeout: 3)) { target in
+        return MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .milliseconds(60), replyTimeout: timeout, callTimeout: 3, replyClock: replyClock)) { target in
             guard target.pid == 4242, target.window == 101 else { throw CocoaError(.fileReadUnknown) }
             if requiresDriverSnapshot, !(try fixture.calls()).contains(where: { $0.tool == "get_window_state" }) {
                 throw DesktopAppError.unavailable("Muse's accessibility window has not been initialized")
@@ -3070,7 +4461,7 @@ final class DesktopAppDriverTests: XCTestCase {
             if observation.url == MuseSideChatBinding.newURL, fault.shouldFail() {
                 throw DesktopAppError.unavailable("Muse's empty composer could not be confirmed.")
             }
-            return observation
+            return transformNative(observation)
         }
     }
     private func assertMuseBackground(_ calls: [DriverCall], file: StaticString = #filePath, line: UInt = #line) {

@@ -44,6 +44,12 @@ survives a reply-read failure. A completed reply replaces the pending presentati
 using the same message identity, without duplicating the outgoing prompt or
 retaining the Sending status.
 
+Busy agents remain visible and unavailable for selection. A broadcast uses only
+available recipients without clearing a busy agent's saved selection or changing
+its pending request. Completing the reply restores availability. A saved choice
+does not add an agent to a comparison that started without it: its pane and
+follow-ups stay limited to that comparison's members until the user adds it.
+
 Muse, Grok Bot, Wabi, ChatGPT, and Dots use foreground input. An explicit send
 acquires one shared desktop transaction, brings the
 exact app window forward, and holds it through navigation, text entry, and
@@ -82,8 +88,8 @@ Device Control and Data Access (Accessibility on older macOS), and Screen
 Recording. App control has one permission owner: msgblast. The embedded helper
 inherits the host's permission identity; users do not approve a separate
 CuaDriver app. Full Disk Access does not grant app control. The page has no
-manual check button or scrolling. Continue requires complete Messaging access
-or complete app access. Permissions refresh automatically when returning from
+manual check button or scrolling. Continue requires all five permissions; users
+can choose **Skip for now** instead. Permissions refresh automatically when returning from
 macOS settings; saved progress never substitutes for a current grant.
 
 With complete Messaging access, existing routable agents are added automatically
@@ -118,7 +124,9 @@ sharing choices intact.
 4. Select the agent and use the private or shared msgblast message box.
    Starting a conversation opens its installed app automatically if it is closed,
    waits for one main window, then performs the existing connection and chat checks.
-   Direct first prompts use the same launch step. Running apps with a usable main
+   Direct first prompts use the same launch step. An enabled app with a known
+   destination can prepare on its first prompt without a separate Connect click;
+   Grok Bot still needs a chosen bot. Running apps with a usable main
    window are reused; an explicit start reopens an unavailable window. Background checks never launch apps. The explicit Connect action in onboarding opens a closed app before checking it; it does not create a conversation or send a prompt.
    A failed launch leaves the prompt intact and creates no send attempt; sign-in,
    permissions, an existing draft, or an unavailable window still need attention.

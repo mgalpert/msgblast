@@ -16,7 +16,7 @@ public enum WebSendStatus: String, Codable, Sendable {
         case .attempting: "Submitting to \(provider.name)…"
         case .waiting: "Waiting for \(provider.name)’s reply…"
         case .observed: provider.usesNativeConversation ? "\(provider.name) replied" : "Appeared in \(provider.name)"
-        case .notSent: provider.usesNativeConversation ? "No completed reply from \(provider.name)" : "Not sent to \(provider.name)"
+        case .notSent: "Not sent to \(provider.name)"
         case .uncertain: "\(provider.name) submission unconfirmed"
         case .dismissed: "Incomplete request acknowledged"
         }
@@ -33,12 +33,21 @@ public struct WebSendAttempt: Codable, Equatable, Identifiable, Sendable {
     public var comparisonID: UUID?
     public var conversationURL: URL?
     public var callbackHash: Data?
+    // Identifies the private draft at submission time; older attempts omit it.
+    var nativeDraftRevision: UUID?
     // A safely observed chat identity survives invalidation of automatic receipt attribution.
     var recoveryConversationURL: URL?
     var receiptContext: WebReceiptContext?
     // Preparation can succeed before automatic Send is rejected. A later page
     // submission is observed separately; it is never an automatic-send receipt.
     var manualContext: WebReceiptContext?
+    // A versioned, read-only native receipt. Older workspaces decode without it.
+    var dotsReplyReceipt: DotsReplyReceipt?
+    var wabiReplyReceipt: WabiReplyReceipt?
+    var museReplyReceipt: MuseReplyReceipt?
+    var claudeReplyReceipt: ClaudeReplyReceipt?
+    var grokReplyReceipt: GrokReplyReceipt?
+    var chatgptReplyReceipt: ChatGPTReplyReceipt?
     var pinnedConversationURL: URL? { recoveryConversationURL ?? receiptContext?.candidateURL }
     public init(text: String, status: WebSendStatus = .preparing) {
         self.text = text; self.status = status
@@ -84,8 +93,9 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localConfiguredSessionIDs: [String: String] = [:]
     public var localPreviousSessionIDs: [String: [String]] = [:]
     public var localDrafts: [String: String] = [:]
+    public var localDraftRevisions: [String: UUID] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, websiteEnabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, websiteEnabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localDraftRevisions, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
@@ -101,7 +111,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         dotsURL = try c.decodeIfPresent(URL.self, forKey: .dotsURL)
         savedAvatar = try c.decodeIfPresent(Data.self, forKey: .savedAvatar)
         grokBotRememberedConnection = try c.decodeIfPresent(Bool.self, forKey: .grokBotRememberedConnection)
-        legacyLocalStatePresent = c.contains(.localConversations) || c.contains(.localSessionIDs) || c.contains(.localDrafts)
+        legacyLocalStatePresent = c.contains(.localConversations) || c.contains(.localSessionIDs) || c.contains(.localDrafts) || c.contains(.localDraftRevisions)
         sessionID = try c.decode(UUID.self, forKey: .sessionID)
         displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
         draft = try c.decodeIfPresent(String.self, forKey: .draft) ?? ""
@@ -117,6 +127,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         localConfiguredSessionIDs = try c.decodeIfPresent([String: String].self, forKey: .localConfiguredSessionIDs) ?? [:]
         localPreviousSessionIDs = try c.decodeIfPresent([String: [String]].self, forKey: .localPreviousSessionIDs) ?? [:]
         localDrafts = try c.decodeIfPresent([String: String].self, forKey: .localDrafts) ?? [:]
+        localDraftRevisions = try c.decodeIfPresent([String: UUID].self, forKey: .localDraftRevisions) ?? [:]
         attempts = try c.decodeIfPresent([WebSendAttempt].self, forKey: .attempts) ?? []
     }
     public func encode(to encoder: Encoder) throws {
@@ -146,6 +157,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(localConversations, forKey: .localConversations)
         try c.encode(localSessionIDs, forKey: .localSessionIDs)
         try c.encode(localDrafts, forKey: .localDrafts)
+        try c.encode(localDraftRevisions, forKey: .localDraftRevisions)
         try c.encode(localSessionPolicyVersions, forKey: .localSessionPolicyVersions)
         try c.encode(localConfiguredSessionIDs, forKey: .localConfiguredSessionIDs)
         try c.encode(localPreviousSessionIDs, forKey: .localPreviousSessionIDs)
@@ -316,23 +328,146 @@ public struct AgentBroadcastResult: Sendable {
     public let comparisonID: UUID?
 }
 
+/// A shared send can allow independent private replies once both the native
+/// input handoff and the Messages submission have finished. Replies may still
+/// be arriving; this barrier does not mark the broadcast complete.
+@MainActor
+public final class BroadcastSubmissionBarrier {
+    private var nativeInputsFinished = false
+    private var messagesFinished = false
+    private var notified = false
+    private let onReady: @MainActor @Sendable () -> Void
+    public init(onReady: @escaping @MainActor @Sendable () -> Void) { self.onReady = onReady }
+    public func finishNativeInputs() { nativeInputsFinished = true; notifyIfReady() }
+    public func finishMessages() { messagesFinished = true; notifyIfReady() }
+    private func notifyIfReady() {
+        guard nativeInputsFinished, messagesFinished, !notified else { return }
+        notified = true; onReady()
+    }
+}
+
+/// Keep the workspace owned until both the shared broadcast and any private
+/// reply started during it have completed.
+public struct BroadcastReplyGate: Sendable {
+    private struct Broadcast: Sendable {
+        let nativeOnly: Bool
+        var comparisonID: UUID?
+        var inputsFinished = false
+        var confirmedSubmission = false
+    }
+    private var broadcasts: [UUID: Broadcast] = [:]
+    public var broadcastActive: Bool { !broadcasts.isEmpty }
+    public var inputsFinished: Bool { broadcastActive && broadcasts.values.allSatisfy(\.inputsFinished) }
+    public private(set) var independentReplies = 0
+    public var busy: Bool { broadcastActive || independentReplies > 0 }
+    public var canBrowseWhileWaiting: Bool {
+        broadcastActive && independentReplies == 0 && broadcasts.values.allSatisfy {
+            $0.nativeOnly && $0.inputsFinished && $0.confirmedSubmission
+        }
+    }
+    public init() {}
+    public func canBeginBroadcast(in comparisonID: UUID?) -> Bool {
+        !busy || (canBrowseWhileWaiting && !broadcasts.values.contains { $0.comparisonID == comparisonID })
+    }
+    public mutating func beginBroadcast(nativeOnly: Bool = false, comparisonID: UUID? = nil) -> UUID? {
+        guard canBeginBroadcast(in: comparisonID) else { return nil }
+        let id = UUID()
+        broadcasts[id] = Broadcast(nativeOnly: nativeOnly, comparisonID: comparisonID)
+        return id
+    }
+    public mutating func bindComparison(_ comparisonID: UUID, to id: UUID) -> Bool {
+        guard let current = broadcasts[id], current.comparisonID == nil || current.comparisonID == comparisonID,
+              !broadcasts.contains(where: { $0.key != id && $0.value.comparisonID == comparisonID }) else { return false }
+        broadcasts[id]?.comparisonID = comparisonID
+        return true
+    }
+    public mutating func confirmSubmission(_ id: UUID) {
+        broadcasts[id]?.confirmedSubmission = true
+    }
+    public mutating func finishInputs(_ id: UUID) {
+        broadcasts[id]?.inputsFinished = true
+    }
+    public mutating func beginIndependentReply() -> Bool {
+        guard broadcastActive, inputsFinished, independentReplies == 0 else { return false }
+        independentReplies += 1
+        return true
+    }
+    public mutating func finishIndependentReply() {
+        if independentReplies > 0 { independentReplies -= 1 }
+    }
+    public mutating func finishBroadcast(_ id: UUID) {
+        broadcasts.removeValue(forKey: id)
+    }
+}
+
+/// Tracks edits and workspace changes while a shared send is in flight.
+public struct SharedDraftRevision: Sendable {
+    public private(set) var value = UUID()
+    public init() {}
+    public mutating func edited(from old: String, to new: String) {
+        if old != new { value = UUID() }
+    }
+    public mutating func switchedWorkspace(promotingDraft: Bool) {
+        if !promotingDraft { value = UUID() }
+    }
+}
+
 @MainActor
 public enum AgentBroadcast {
+    /// A comparison identifier alone does not prove any Messages send occurred.
+    public static func messagesResult(states: [Submission], comparisonID: UUID, onConfirmed: @MainActor () -> Void) -> UUID? {
+        if states.contains(.submitted) { onConfirmed() }
+        return states.contains(where: \.mayHaveBeenSent) ? comparisonID : nil
+    }
+
     public static func send(
         draft: String,
-        currentDraft: @MainActor () -> String,
-        clearDraft: @MainActor () -> Void,
+        currentDraft: @escaping @MainActor () -> String,
+        shouldClearDraft: @escaping @MainActor () -> Bool = { true },
+        clearDraft: @escaping @MainActor () -> Void,
         web: @MainActor @Sendable (String) async -> [WebAgentID: WebSendAttempt],
         messages: @MainActor @Sendable (String) async -> UUID?
     ) async -> AgentBroadcastResult {
+        await send(draft: draft, currentDraft: currentDraft, shouldClearDraft: shouldClearDraft, clearDraft: clearDraft,
+                   web: { text, _ in await web(text) }, messages: { text, _ in await messages(text) })
+    }
+
+    /// A recipient may report a durable submission before its reply arrives.
+    /// Uncertain results still use the final result path and are never resent.
+    public static func send(
+        draft: String,
+        currentDraft: @escaping @MainActor () -> String,
+        shouldClearDraft: @escaping @MainActor () -> Bool = { true },
+        clearDraft: @escaping @MainActor () -> Void,
+        web: @MainActor @Sendable (String, @escaping @MainActor @Sendable () -> Void) async -> [WebAgentID: WebSendAttempt],
+        messages: @MainActor @Sendable (String, @escaping @MainActor @Sendable () -> Void) async -> UUID?
+    ) async -> AgentBroadcastResult {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        async let webAttempts = web(text)
-        async let comparisonID = messages(text)
+        let consumption = BroadcastDraftConsumption(draft: draft, currentDraft: currentDraft, shouldClearDraft: shouldClearDraft, clearDraft: clearDraft)
+        let confirmed: @MainActor @Sendable () -> Void = { consumption.consumeIfOwned() }
+        async let webAttempts = web(text, confirmed)
+        async let comparisonID = messages(text, confirmed)
         let result = await AgentBroadcastResult(web: webAttempts, comparisonID: comparisonID)
         let mayHaveSent = result.comparisonID != nil || result.web.values.contains { [.observed, .waiting, .uncertain].contains($0.status) }
-        // Keep edits to the next message; a wholly rejected broadcast remains ready to correct.
-        if mayHaveSent && currentDraft() == draft { clearDraft() }
+        if mayHaveSent { consumption.consumeIfOwned() }
         return result
+    }
+}
+
+@MainActor
+private final class BroadcastDraftConsumption {
+    private let draft: String
+    private let currentDraft: @MainActor () -> String
+    private let shouldClearDraft: @MainActor () -> Bool
+    private let clearDraft: @MainActor () -> Void
+    private var consumed = false
+    init(draft: String, currentDraft: @escaping @MainActor () -> String, shouldClearDraft: @escaping @MainActor () -> Bool, clearDraft: @escaping @MainActor () -> Void) {
+        self.draft = draft; self.currentDraft = currentDraft; self.shouldClearDraft = shouldClearDraft; self.clearDraft = clearDraft
+    }
+    func consumeIfOwned() {
+        guard !consumed, shouldClearDraft(), currentDraft() == draft else { return }
+        consumed = true
+        clearDraft()
     }
 }
 
@@ -356,7 +491,7 @@ public enum WebProviderStateMigration {
         // Empty local keys were written even for web history. Without positive
         // provenance, retain the original receipt and its resend guard in both stores.
         let ambiguousAttempts = Set(nativeAttempts.filter { $0.status != .observed || !hasNativeHistory($0) }.map(\.id))
-        let hasNativeState = browser.legacyLocalStatePresent && (!browser.localConversations.isEmpty || !browser.localSessionIDs.isEmpty || browser.localDrafts.values.contains { !$0.isEmpty } || !nativeAttempts.isEmpty || !browser.draft.isEmpty)
+        let hasNativeState = browser.legacyLocalStatePresent && (!browser.localConversations.isEmpty || !browser.localSessionIDs.isEmpty || browser.localDrafts.values.contains { !$0.isEmpty } || !browser.localDraftRevisions.isEmpty || !nativeAttempts.isEmpty || !browser.draft.isEmpty)
         if hasNativeState {
             var local = WebWorkspaceState()
             local.selected = false
@@ -372,6 +507,7 @@ public enum WebProviderStateMigration {
             local.localConfiguredSessionIDs = try merge(local.localConfiguredSessionIDs, browser.localConfiguredSessionIDs)
             local.localPreviousSessionIDs = try merge(local.localPreviousSessionIDs, browser.localPreviousSessionIDs)
             local.localDrafts = try merge(local.localDrafts, browser.localDrafts)
+            local.localDraftRevisions = try merge(local.localDraftRevisions, browser.localDraftRevisions)
             for attempt in nativeAttempts {
                 if let existing = local.attempts.first(where: { $0.id == attempt.id }) {
                     guard existing == attempt else { throw CocoaError(.fileWriteFileExists) }
@@ -390,6 +526,7 @@ public enum WebProviderStateMigration {
         browser.localConversations = [:]
         browser.localSessionIDs = [:]
         browser.localDrafts = [:]
+        browser.localDraftRevisions = [:]
         browser.localConfiguredSessionIDs = [:]
         browser.localSessionPolicyVersions = [:]
         browser.localPreviousSessionIDs = [:]

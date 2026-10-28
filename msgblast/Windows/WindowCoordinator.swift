@@ -104,7 +104,9 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
         model.state.selection = recipients
         if wasSelected {
             for agent in model.comparison(id)?.resolvedWebAgentIDs ?? [] {
-                model.webAgents.session(for: agent)?.updateState { $0.selected = webRecipients.contains(agent) }
+                if let session = model.webAgents.session(for: agent) {
+                    model.webAgents.select(session, selected: webRecipients.contains(agent))
+                }
             }
         }
         if let window = dedicated {

@@ -7,7 +7,7 @@ public final class WebAgents: ObservableObject {
     private let workspaceSession: WebAgentSession
     private let directory: URL
     private var configurations: [WebAgentConfiguration] = []
-    private var preparation: Task<Bool, Never>?
+    private var preparation: Task<[WebAgentID: Bool]?, Never>?
     private(set) var preparationID: UUID?
     private var shuttingDown = false
     @Published public private(set) var configurationError: String?
@@ -17,8 +17,18 @@ public final class WebAgents: ObservableObject {
     @Published private var archivedAgents: Set<WebAgentID> = []
     public var availableSessions: [WebAgentSession] { sessions.filter { $0.isEnabled } }
     public var selected: [WebAgentSession] { availableSessions.filter { $0.state.selected && $0.provider.supportsSharedSubmissions } }
+    public var broadcastSelection: [WebAgentSession] { selected.filter { !isBusyForSelection($0) } }
+
+    public func isBusyForSelection(_ session: WebAgentSession) -> Bool {
+        if session.isSending { return true }
+        guard let app = session.provider.desktopApp else { return false }
+        return sessions.contains { $0.provider.desktopApp?.bundleID == app.bundleID &&
+            ($0.isSending || $0.incompleteDesktopAttempt != nil) }
+    }
     public var displayed: [WebAgentSession] {
-        sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) }
+        let hasBothSavedChats = Self.hasConflictingNativeRecipients(archivedAgents.map(\.provider))
+        return sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) ||
+            (hasBothSavedChats && archivedAgents.contains($0.id) && [.chatgptApp, .dotsApp].contains($0.provider)) }
     }
     public var comparisonID: UUID? { workspaceSession.state.comparisonID }
     public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false) {
@@ -65,6 +75,12 @@ public final class WebAgents: ObservableObject {
         }
         for session in sessions { observe(session) }
         setComparison(workspaceSession.state.comparisonID)
+        // Older saved selections may contain both recipients. Keep ChatGPT
+        // selected on startup; the user can switch to Dots at any time.
+        if sessions.contains(where: { $0.provider == .chatgptApp && $0.isEnabled && $0.state.selected }),
+           let dots = sessions.first(where: { $0.provider == .dotsApp && $0.isEnabled && $0.state.selected }) {
+            dots.updateState { $0.selected = false }
+        }
     }
     private func observe(_ session: WebAgentSession) {
         session.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
@@ -123,14 +139,29 @@ public final class WebAgents: ObservableObject {
     }
     public func restoreSelection(forAgentIDs agents: [WebAgentID]) {
         archivedAgents = Set(agents)
+        let firstSharedApp = agents.first { [.chatgptApp, .dotsApp].contains($0.provider) && session(for: $0)?.isEnabled == true }
         for session in sessions {
-            let selected = session.isEnabled && archivedAgents.contains(session.id)
+            let selected = session.isEnabled && archivedAgents.contains(session.id) &&
+                (![.chatgptApp, .dotsApp].contains(session.provider) || session.id == firstSharedApp)
             session.updateState { $0.selected = selected }
         }
     }
+    /// ChatGPT and Dots use the same native app and cannot be recipients together.
+    public static func hasConflictingNativeRecipients(_ providers: [WebProvider]) -> Bool {
+        providers.contains(.chatgptApp) && providers.contains(.dotsApp)
+    }
+    public func select(_ session: WebAgentSession, selected: Bool) {
+        guard !selected || (session.isEnabled && !isBusyForSelection(session)) else { return }
+        if selected, [.chatgptApp, .dotsApp].contains(session.provider) {
+            for other in sessions where other !== session && [.chatgptApp, .dotsApp].contains(other.provider) && other.provider != session.provider && other.state.selected {
+                other.updateState { $0.selected = false }
+            }
+        }
+        session.updateState { $0.selected = selected }
+    }
     public func toggle(_ session: WebAgentSession) {
-        guard session.isEnabled else { return }
-        session.updateState { $0.selected.toggle() }
+        guard session.isEnabled, !isBusyForSelection(session) else { return }
+        select(session, selected: !session.state.selected)
         if session.state.selected {
             let id = comparisonID
             session.connect(automaticallyRefresh: !session.provider.usesNativeConversation)
@@ -142,7 +173,9 @@ public final class WebAgents: ObservableObject {
             }
         }
     }
-    public func connectSelected() { availableSessions.filter { $0.state.selected }.forEach { $0.connect() } }
+    public func connectSelected() {
+        availableSessions.filter { $0.state.selected || $0.incompleteDesktopAttempt != nil }.forEach { $0.connect() }
+    }
     public func signInRequired(for sessions: [WebAgentSession]) async -> [WebAgentID] {
         let tasks = sessions.filter { !$0.provider.usesNativeConversation }.map { session in
             Task { @MainActor in (session.id, await session.checkSignIn()) }
@@ -157,6 +190,17 @@ public final class WebAgents: ObservableObject {
     public var hasConnectedWebSessions: Bool { sessions.contains { !$0.provider.usesNativeConversation && $0.connected } }
     public func saveBrowserDrafts() async throws { for session in sessions { try await session.saveBrowserDrafts() } }
     public var hasNativeRequests: Bool { sessions.contains { $0.provider.usesNativeConversation && $0.isSending } }
+    /// A private reply may proceed after a broadcast's inputs have finished,
+    /// provided no other request owns the same native app surface.
+    public func canSendIndependentNativeReply(to session: WebAgentSession, comparisonID: UUID?) -> Bool {
+        canUseNativeSurface(to: session, comparisonID: comparisonID) && session.canSubmitNativePrompt
+    }
+    /// Preparation may still be needed, but another request must not own this app.
+    public func canUseNativeSurface(to session: WebAgentSession, comparisonID: UUID?) -> Bool {
+        guard sessions.contains(where: { $0 === session }), session.provider.desktopApp != nil,
+              session.state.comparisonID == comparisonID else { return false }
+        return !isBusyForSelection(session)
+    }
     public func beginShutdown() {
         shuttingDown = true
         preparation?.cancel()
@@ -177,45 +221,110 @@ public final class WebAgents: ObservableObject {
         }
         return groups
     }
-    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false) async -> Bool {
-        guard !shuttingDown else { return false }
+    public func prepareComparison(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false, foregroundPreparation: Bool = false) async -> Bool {
+        guard let results = await prepareComparisonRecipients(id, for: sessions, startNativeApps: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft, foregroundPreparation: foregroundPreparation) else { return false }
+        return sessions.allSatisfy { results[$0.id] == true }
+    }
+
+    /// A nil result means preparation was cancelled or its workspace changed;
+    /// individual false values represent recipients that were not ready.
+    public func prepareComparisonRecipients(_ id: UUID?, for sessions: [WebAgentSession], startNativeApps: Bool = false, allowSavedPrivateDraft: Bool = false, foregroundPreparation: Bool = false) async -> [WebAgentID: Bool]? {
+        guard !shuttingDown else { return nil }
         // Muse stores the workspace identity even when it is deselected.
         setComparison(id)
         let previous = preparation
         let token = UUID()
-        let task = Task { @MainActor in
+        let task = Task { @MainActor () -> [WebAgentID: Bool]? in
             _ = await previous?.value
-            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return false }
-            let tasks = Self.executionGroups(sessions).map { group in Task { @MainActor in
-                var ready = true
+            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
+            let tasks = Self.executionGroups(sessions).map { group in Task { @MainActor () -> [WebAgentID: Bool]? in
+                var results: [WebAgentID: Bool] = [:]
                 for session in group {
-                    guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return false }
-                    if !(await session.openComparison(id, startNativeApp: startNativeApps)) { ready = false }
+                    guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
+                    results[session.id] = await session.openComparison(id, startNativeApp: startNativeApps, allowSavedPrivateDraft: allowSavedPrivateDraft, foregroundPreparation: foregroundPreparation)
                 }
-                return ready
+                return results
             } }
-            var ready = true
-            for task in tasks { if !(await task.value) { ready = false } }
-            return ready
+            var results: [WebAgentID: Bool] = [:]
+            for task in tasks {
+                guard let group = await task.value else { return nil }
+                results.merge(group) { _, latest in latest }
+            }
+            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == id else { return nil }
+            return results
         }
         preparation = task
         preparationID = token
-        let ready = await task.value
+        let results = await task.value
         if preparationID == token { preparation = nil; preparationID = nil }
-        return ready
+        return results
     }
 
-    public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil) async -> [WebAgentID: WebSendAttempt] {
-        await send(to: sessions) { session, handoff in
-            await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff)
+    /// Prepare each native app immediately before handing it the already-saved prompt.
+    /// Other transports can submit concurrently without racing native window focus.
+    public func prepareAndSendPlanned(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID,
+                                      plannedAttempts: [WebAgentID: UUID],
+                                      onInputsFinished: @escaping @MainActor @Sendable () -> Void = {},
+                                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
+        guard sessions.allSatisfy({ $0.provider.desktopApp != nil }),
+              !Self.hasConflictingNativeRecipients(sessions.map(\.provider)) else {
+            var rejected: [WebAgentID: WebSendAttempt] = [:]
+            for session in sessions {
+                if let id = plannedAttempts[session.id], let attempt = session.failNativePreparation(id, reason: "Choose compatible app agents before sending.") { rejected[session.id] = attempt }
+            }
+            onInputsFinished()
+            return rejected
+        }
+        var results = await Self.send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
+            guard let attemptID = plannedAttempts[session.id] else { return nil }
+            guard !Task.isCancelled, !self.shuttingDown, self.comparisonID == comparisonID,
+                  let ready = await self.prepareComparisonRecipients(comparisonID, for: [session], startNativeApps: true, allowSavedPrivateDraft: true, foregroundPreparation: true),
+                  ready[session.id] == true, !Task.isCancelled, !self.shuttingDown, self.comparisonID == comparisonID else {
+                let reason = Task.isCancelled || self.shuttingDown ? "Stopped before sending." : session.error ?? session.snapshot.reason
+                return session.failNativePreparation(attemptID, reason: reason)
+            }
+            let attempt = await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff,
+                                             onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: attemptID, consumePrivateDraft: false)
+            if attempt?.status.confirmsSubmission == true { onConfirmedSubmission() }
+            return attempt ?? session.failNativePreparation(attemptID, reason: session.error ?? session.snapshot.reason)
+        }
+        // Cancellation may stop the scheduler before it reaches later apps.
+        for session in sessions where results[session.id] == nil {
+            if let id = plannedAttempts[session.id], let attempt = session.failNativePreparation(id, reason: "Stopped before sending.") {
+                results[session.id] = attempt
+            }
+        }
+        return results
+    }
+
+    public static func send(_ text: String, to sessions: [WebAgentSession], comparisonID: UUID? = nil,
+                            onInputsFinished: @escaping @MainActor @Sendable () -> Void = {},
+                            onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
+        guard !hasConflictingNativeRecipients(sessions.map(\.provider)) else {
+            var rejected: [WebAgentID: WebSendAttempt] = [:]
+            for session in sessions {
+                var attempt = WebSendAttempt(text: text, status: .notSent)
+                attempt.comparisonID = comparisonID
+                attempt.detail = "Choose ChatGPT or Dots before sending."
+                rejected[session.id] = attempt
+            }
+            return rejected
+        }
+        return await send(to: sessions, onInputsFinished: onInputsFinished) { session, handoff in
+            let attempt = await session.send(text, comparisonID: comparisonID, onSubmissionFinished: handoff, onConfirmedSubmission: onConfirmedSubmission, consumePrivateDraft: false)
+            if attempt?.status.confirmsSubmission == true { onConfirmedSubmission() }
+            return attempt
         }
     }
 
-    static func send(to sessions: [WebAgentSession], perform: @escaping @MainActor @Sendable (WebAgentSession, @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt?) async -> [WebAgentID: WebSendAttempt] {
+    static func send(to sessions: [WebAgentSession], onInputsFinished: @escaping @MainActor @Sendable () -> Void = {}, perform: @escaping @MainActor @Sendable (WebAgentSession, @escaping @MainActor @Sendable () -> Void) async -> WebSendAttempt?) async -> [WebAgentID: WebSendAttempt] {
         let operation = WebBroadcastOperation(perform)
         return await withTaskGroup(of: (WebAgentID, WebSendAttempt?).self) { group in
+            var otherInputs: [DesktopBroadcastHandoff] = []
             for session in sessions where session.provider.desktopApp == nil {
-                group.addTask { await operation.send(session) }
+                let input = DesktopBroadcastHandoff()
+                otherInputs.append(input)
+                group.addTask { await operation.send(session, input: input) }
             }
             var replies: [String: DesktopBroadcastHandoff] = [:]
             for session in sessions where session.provider.desktopApp != nil {
@@ -229,6 +338,11 @@ public final class WebAgents: ObservableObject {
                 group.addTask { await operation.send(session, input: input, reply: reply) }
                 await input.wait()
             }
+            for input in otherInputs {
+                guard !group.isCancelled else { break }
+                await input.wait()
+            }
+            if !group.isCancelled { await onInputsFinished() }
             var results: [WebAgentID: WebSendAttempt] = [:]
             for await (id, attempt) in group { results[id] = attempt }
             return results
