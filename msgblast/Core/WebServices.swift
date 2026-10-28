@@ -352,12 +352,21 @@ public struct BroadcastReplyGate: Sendable {
     public private(set) var broadcastActive = false
     public private(set) var inputsFinished = false
     public private(set) var independentReplies = 0
+    private var nativeOnly = false
+    private var confirmedSubmission = false
     public var busy: Bool { broadcastActive || independentReplies > 0 }
+    public var canBrowseWhileWaiting: Bool {
+        broadcastActive && nativeOnly && inputsFinished && confirmedSubmission && independentReplies == 0
+    }
     public init() {}
-    public mutating func beginBroadcast() -> Bool {
+    public mutating func beginBroadcast(nativeOnly: Bool = false) -> Bool {
         guard !busy else { return false }
         broadcastActive = true; inputsFinished = false
+        self.nativeOnly = nativeOnly; confirmedSubmission = false
         return true
+    }
+    public mutating func confirmSubmission() {
+        if broadcastActive { confirmedSubmission = true }
     }
     public mutating func finishInputs() {
         if broadcastActive { inputsFinished = true }
@@ -371,7 +380,7 @@ public struct BroadcastReplyGate: Sendable {
         if independentReplies > 0 { independentReplies -= 1 }
     }
     public mutating func finishBroadcast() {
-        broadcastActive = false; inputsFinished = false
+        broadcastActive = false; inputsFinished = false; nativeOnly = false; confirmedSubmission = false
     }
 }
 

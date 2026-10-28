@@ -83,7 +83,7 @@ struct AgentsWorkspaceView: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .overlay { if showingConnectionIntro { connectionIntro } }
-        .task { web.connectSelected() }
+        .task { if !model.webBroadcastBusy { web.connectSelected() } }
         .onChange(of: web.comparisonID) { _, _ in
             if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = [] }
         }
@@ -114,7 +114,7 @@ struct AgentsWorkspaceView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                 }
-                .accessibilityLabel("New Blast").disabled(busy)
+                .accessibilityLabel("New Blast").disabled(!model.canStartNewBlast)
             } }
         }
     }
@@ -331,7 +331,8 @@ struct AgentsWorkspaceView: View {
         let sentAttachments = attachments
         let broadcastCreated = Date()
         let existingID = showingComparison ? nativeComparison?.id : nil
-        guard model.beginSharedWebBroadcast() else { return }
+        let nativeOnly = !sessions.isEmpty && sessions.allSatisfy { $0.provider.desktopApp != nil }
+        guard model.beginSharedWebBroadcast(nativeOnly: nativeOnly) else { return }
         showingComparison = true
         Task { @MainActor in
             defer { model.finishSharedWebBroadcast() }
@@ -343,7 +344,7 @@ struct AgentsWorkspaceView: View {
             }
             // New comparisons and already-joined native apps can prepare one
             // recipient at a time while Messages submits independently.
-            let progressiveNative = !sessions.isEmpty && sessions.allSatisfy { $0.provider.desktopApp != nil } &&
+            let progressiveNative = nativeOnly &&
                 (existingID.map { id in sessions.allSatisfy { model.comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } } ?? true)
             let comparisonID: UUID
             var readySessions: [WebAgentSession] = []
@@ -416,13 +417,17 @@ struct AgentsWorkspaceView: View {
             }, clearDraft: {
                 model.setSharedDraft("")
             }, web: { text, confirmed in
+                let didConfirm: @MainActor @Sendable () -> Void = {
+                    confirmed()
+                    model.confirmSharedWebSubmission()
+                }
                 let submitted: [WebAgentID: WebSendAttempt]
                 if progressiveNative {
                     submitted = await web.prepareAndSendPlanned(text, to: sessions, comparisonID: comparisonID, plannedAttempts: plannedAttempts,
-                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: confirmed)
+                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: didConfirm)
                 } else {
                     submitted = await WebAgents.send(text, to: preparedSessions, comparisonID: comparisonID,
-                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: confirmed)
+                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: didConfirm)
                 }
                 return unsentAttempts.merging(submitted) { _, latest in latest }
             }, messages: { text, confirmed in
@@ -438,7 +443,10 @@ struct AgentsWorkspaceView: View {
                     await model.submit(comparisonID, retry: false)
                     states = model.comparison(comparisonID)?.members.filter { recipients.contains($0.id) }.map(\.submission) ?? []
                 }
-                return AgentBroadcast.messagesResult(states: states, comparisonID: comparisonID, onConfirmed: confirmed)
+                return AgentBroadcast.messagesResult(states: states, comparisonID: comparisonID, onConfirmed: {
+                    confirmed()
+                    model.confirmSharedWebSubmission()
+                })
             })
             let webSubmitted = result.web.values.filter { $0.status.confirmsSubmission }.count
             let messagesSubmitted = model.comparison(comparisonID).map { comparison in
@@ -458,7 +466,6 @@ struct AgentsWorkspaceView: View {
                 }
                 model.persist()
             }
-            web.setComparison(comparisonID)
         }
     }
 

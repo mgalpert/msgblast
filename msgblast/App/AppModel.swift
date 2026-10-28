@@ -14,11 +14,12 @@ final class AppModel: ObservableObject {
     @Published var webBroadcastBusy = false
     private(set) var sharedDraftRevision = SharedDraftRevision()
     @Published private(set) var webBroadcastReplyGate = BroadcastReplyGate()
+    private var deferredWorkspacePreparation: UUID?
     var webBroadcastInputsFinished: Bool { webBroadcastReplyGate.inputsFinished }
     var independentNativeReplies: Int { webBroadcastReplyGate.independentReplies }
 
-    func beginSharedWebBroadcast() -> Bool {
-        guard !webBroadcastBusy, webBroadcastReplyGate.beginBroadcast() else { return false }
+    func beginSharedWebBroadcast(nativeOnly: Bool = false) -> Bool {
+        guard !webBroadcastBusy, webBroadcastReplyGate.beginBroadcast(nativeOnly: nativeOnly) else { return false }
         webBroadcastBusy = true
         return true
     }
@@ -26,9 +27,13 @@ final class AppModel: ObservableObject {
         guard webBroadcastBusy else { return }
         webBroadcastReplyGate.finishInputs()
     }
+    func confirmSharedWebSubmission() {
+        guard webBroadcastBusy else { return }
+        webBroadcastReplyGate.confirmSubmission()
+    }
     func finishSharedWebBroadcast() {
         webBroadcastReplyGate.finishBroadcast()
-        if !webBroadcastReplyGate.busy { webBroadcastBusy = false }
+        if !webBroadcastReplyGate.busy { finishWebBroadcastOwnership() }
     }
     func beginIndependentNativeReply() -> Bool {
         guard webBroadcastBusy else { return false }
@@ -37,7 +42,19 @@ final class AppModel: ObservableObject {
     func finishIndependentNativeReply() {
         guard independentNativeReplies > 0 else { return }
         webBroadcastReplyGate.finishIndependentReply()
-        if !webBroadcastReplyGate.busy { webBroadcastBusy = false }
+        if !webBroadcastReplyGate.busy { finishWebBroadcastOwnership() }
+    }
+    private func finishWebBroadcastOwnership() {
+        webBroadcastBusy = false
+        guard let id = deferredWorkspacePreparation else {
+            webAgents.connectSelected()
+            return
+        }
+        deferredWorkspacePreparation = nil
+        Task { @MainActor in
+            guard !webBroadcastBusy, webAgents.comparisonID == id else { return }
+            _ = await webAgents.prepareComparison(id, for: webAgents.selected)
+        }
     }
     @Published var webComparisonRequest = UUID()
     @Published var newBlastRequest = UUID()
@@ -467,12 +484,14 @@ final class AppModel: ObservableObject {
         persist()
     }
     var canStartNewBlast: Bool {
-        !needsOnboarding && !needsSharingChoice && error == nil && !busy && !webBroadcastBusy && !webAgents.sessions.contains { $0.isSending }
+        !needsOnboarding && !needsSharingChoice && error == nil && !busy &&
+            (webBroadcastReplyGate.canBrowseWhileWaiting || (!webBroadcastBusy && !webAgents.sessions.contains { $0.isSending }))
     }
     @discardableResult
     func requestNewBlast(agent: AgentGridID? = nil) -> Bool {
         guard canStartNewBlast else { return false }
         if let agent {
+            guard !webBroadcastBusy else { return false }
             guard quickChatAgents.contains(where: { $0.id == agent }) else { return false }
         }
         selectWorkspace(nil)
@@ -505,6 +524,7 @@ final class AppModel: ObservableObject {
         }
     }
     func selectWorkspace(_ id: UUID?, promotingDraft: Bool = false) {
+        deferredWorkspacePreparation = nil
         if id == nil { deselectHiddenGridRecipients(); persist() }
         let previous = webAgents.comparisonID
         guard previous != id else { return }
@@ -587,11 +607,14 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func openWebComparison(_ id: UUID, present: Bool = true) {
-        guard !busy, !webBroadcastBusy, let comparison = comparison(id) else { return }
+        guard !busy, (!webBroadcastBusy || webBroadcastReplyGate.canBrowseWhileWaiting), let comparison = comparison(id) else { return }
         selectWorkspace(id)
         state.selection = Set(comparison.members.map(\.id))
         webAgents.restoreSelection(forAgentIDs: comparison.resolvedWebAgentIDs)
         if present { webComparisonRequest = UUID() }
+        // The previous broadcast still owns its native app surfaces. Browsing
+        // history must not navigate an app away from an in-flight reply.
+        guard !webBroadcastBusy else { deferredWorkspacePreparation = id; return }
         let sessions = webAgents.selected
         Task {
             guard webAgents.comparisonID == id else { return }

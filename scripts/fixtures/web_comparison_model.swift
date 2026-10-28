@@ -597,6 +597,31 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         quickModel.timer?.invalidate()
         await quickModel.webAgents.cancelAndWait()
         print("PASS: quick access excludes hidden agents and selects grid Messages, a named website copy, and CLI exclusively; preserves drafts/selections and blocks during sends without submitting.")
+        let browseModel = AppModel()
+        let browseA = await browseModel.prepareWebComparison("First chat", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        browseModel.setSharedDraft("First chat draft")
+        let browseB = await browseModel.prepareWebComparison("Second chat", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        browseModel.setSharedDraft("Second chat draft")
+        precondition(browseModel.beginSharedWebBroadcast(nativeOnly: true))
+        browseModel.openWebComparison(browseA, present: false)
+        precondition(browseModel.webAgents.comparisonID == browseB, "Input handoff must finish before switching")
+        browseModel.finishSharedWebInputs()
+        precondition(!browseModel.requestNewBlast(), "An unconfirmed submission still owns its draft")
+        browseModel.confirmSharedWebSubmission()
+        browseModel.openWebComparison(browseA, present: false)
+        precondition(browseModel.webAgents.comparisonID == browseA && browseModel.state.draft == "First chat draft")
+        precondition(!browseModel.requestNewBlast(agent: .web(.wabi)), "Quick chat cannot navigate a busy app")
+        precondition(browseModel.requestNewBlast())
+        browseModel.setSharedDraft("New chat draft")
+        browseModel.finishSharedWebBroadcast()
+        precondition(browseModel.webAgents.comparisonID == nil && browseModel.state.draft == "New chat draft")
+        browseModel.openWebComparison(browseB, present: false)
+        precondition(browseModel.state.draft == "Second chat draft")
+        let browseSaved = try browseModel.local.load()
+        precondition(browseSaved.workspaceDrafts?[browseA.uuidString] == "First chat draft")
+        browseModel.timer?.invalidate()
+        await browseModel.webAgents.cancelAndWait()
+        print("PASS: actual AppModel permits browsing only after native input and confirmation, retains each draft, and does not reopen a departed workspace when the reply finishes.")
         let model = AppModel()
         precondition(model.demo && model.local.url.path.contains("UIFixture"))
         model.coordinator = WindowCoordinator(model: model)
@@ -836,25 +861,28 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
             session.setEnabled(true)
             await session.connectDesktopConversation()
         }
-        let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: nativeSessions.map(\.id))!
-        let nativeReplies = await WebAgents.send("Native comparison fixture", to: nativeSessions, comparisonID: nativeID)
-        precondition(nativeReplies.count == 3 && nativeReplies.values.allSatisfy { $0.status == .observed })
-        let savedBindings = nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] }
-        let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
-        nativeModel.webAgents.setComparison(nil)
-        nativeModel.openWebComparison(nativeID)
-        for _ in 0..<100 where !nativeSessions.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
-            try await Task.sleep(for: .milliseconds(10))
+        for sharedApp in nativeSessions.prefix(2) {
+            let pair = [sharedApp, nativeSessions[2]]
+            let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: pair.map(\.id))!
+            let nativeReplies = await WebAgents.send("Native comparison fixture", to: pair, comparisonID: nativeID)
+            precondition(nativeReplies.count == 2 && nativeReplies.values.allSatisfy { $0.status == .observed })
+            let savedBinding = sharedApp.state.chatgptConversations[nativeID.uuidString]
+            let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
+            nativeModel.webAgents.setComparison(nil)
+            nativeModel.openWebComparison(nativeID)
+            for _ in 0..<100 where !pair.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            precondition(pair.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
+            precondition(sharedApp.state.chatgptConversations[nativeID.uuidString] == savedBinding)
+            precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
+            precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(pair.map(\.id)))
+            let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
+            precondition(savedNativeComparison.resolvedWebAgentIDs == pair.map(\.id))
         }
-        precondition(nativeSessions.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
-        precondition(nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] } == savedBindings)
-        precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
-        precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(nativeSessions.map(\.id)))
-        let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
-        precondition(savedNativeComparison.resolvedWebAgentIDs == nativeSessions.map(\.id))
         nativeModel.webAgents.beginShutdown()
         await nativeModel.webAgents.cancelAndWait()
-        print("PASS: actual AppModel + LocalStore reopen the three native providers with the same owned bindings and exact membership. Demo simulation; no live apps or sends.")
+        print("PASS: actual AppModel + LocalStore reopen ChatGPT and Dots separately with Claude, retaining owned bindings and exact membership. Demo simulation; no live apps or sends.")
         let choiceModel = AppModel()
         let businessAddress = "urn:biz:00000000-0000-0000-0000-000000000001"
         let businessChat = Chat(id: "iMessage;-;" + businessAddress, handle: businessAddress, lastActivity: 0, displayName: "Fixture Poke", businessConversation: true)

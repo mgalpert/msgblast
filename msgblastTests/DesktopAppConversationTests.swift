@@ -2721,6 +2721,45 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertFalse(calls.contains { $0.arguments["element_token"] as? String == "s00000001:send" })
     }
 
+    func testWabiReplyStaysInItsOriginalComparisonAfterBrowsingAway() async throws {
+        let owner = UUID(), other = UUID()
+        let welcome = WabiAppMessage(role: .assistant, text: "What can I do for you?")
+        var ready = windows(); ready["native"] = wabiNative(url: otherWabiURL, messages: [welcome])
+        var typed = step("type_text", [:]); typed["native"] = wabiNative(url: otherWabiURL, draft: prompt, messages: [welcome])
+        var sent = step("click", [:]); sent["native"] = wabiNative(url: otherWabiURL, messages: [welcome, .init(role: .user, text: prompt)])
+        var late = snapshot(wabi(reply: "Late answer"), repeating: true)
+        late["native"] = wabiNative(url: otherWabiURL, messages: [welcome, .init(role: .user, text: prompt), .init(role: .assistant, text: "Late answer")])
+        late["wait_for_release"] = true
+        let fixture = try driver(wabiCreationSteps() + [apps(.wabi), ready, capturedNavigation(wabi()), typed,
+            snapshot(wabi(draft: prompt)), sent, snapshot(wabi()), late])
+        defer { fixture.remove() }
+        let file = fixture.directory.appendingPathComponent("state.json")
+        let session = WebAgentSession(provider: .wabi, storageURL: file, fixture: false, museApp: .shared, desktopApps: .demo,
+                                      wabiApp: wabiAdapter(fixture), desktopDriver: try readinessDriver(fixture, app: .wabi))
+        session.setEnabled(true)
+        session.updateState { $0.desktopConversation = .init(name: "Wabi") }
+        let confirmed = expectation(description: "The outgoing message was observed")
+        let sending = Task { await session.send(prompt, comparisonID: owner, onConfirmedSubmission: { confirmed.fulfill() }) }
+        await fulfillment(of: [confirmed], timeout: 5)
+        XCTAssertTrue(session.isSending)
+        session.updateState { $0.comparisonID = other }
+        session.updateState { $0.draft = "Different comparison draft" }
+        try Data().write(to: fixture.directory.appendingPathComponent("release"))
+        let attempt = await sending.value
+        XCTAssertEqual(attempt?.status, .observed)
+        XCTAssertEqual(session.state.comparisonID, other)
+        XCTAssertEqual(session.state.draft, "Different comparison draft")
+        XCTAssertEqual(session.state.localConversations[owner.uuidString]?.map(\.text), [prompt, "Late answer"])
+        XCTAssertNil(session.state.localConversations[other.uuidString])
+        let persisted = try JSONDecoder().decode(WebWorkspaceState.self, from: Data(contentsOf: file))
+        XCTAssertEqual(persisted.localConversations[owner.uuidString]?.map(\.text), [prompt, "Late answer"])
+        XCTAssertEqual(persisted.localDrafts[other.uuidString], "Different comparison draft")
+        let calls = try await finishedCalls(fixture, cleanupCount: 2)
+        XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1)
+        XCTAssertEqual(calls.filter { $0.arguments["element_token"] as? String == "s00000001:send" }.count, 1)
+        session.beginShutdown()
+    }
+
     private func wabiCreationSteps() -> [[String: Any]] {
         var initial = windows(); initial["native"] = wabiNative()
         let navigation = [element("AXButton", "New chat", token: "s00000001:new")]

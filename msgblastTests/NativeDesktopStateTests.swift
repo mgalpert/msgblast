@@ -67,6 +67,30 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertTrue(gate.beginBroadcast())
     }
 
+    func testNativeBroadcastAllowsBrowsingOnlyAfterInputAndAConfirmedSubmission() {
+        var gate = BroadcastReplyGate()
+        XCTAssertTrue(gate.beginBroadcast(nativeOnly: true))
+        XCTAssertFalse(gate.canBrowseWhileWaiting)
+        gate.confirmSubmission()
+        XCTAssertFalse(gate.canBrowseWhileWaiting, "The other app inputs still own their destinations")
+        gate.finishInputs()
+        XCTAssertTrue(gate.canBrowseWhileWaiting)
+        XCTAssertTrue(gate.beginIndependentReply())
+        XCTAssertFalse(gate.canBrowseWhileWaiting, "A private send also owns the workspace")
+        gate.finishIndependentReply()
+        XCTAssertTrue(gate.canBrowseWhileWaiting)
+        gate.finishBroadcast()
+        XCTAssertFalse(gate.canBrowseWhileWaiting)
+
+        XCTAssertTrue(gate.beginBroadcast(nativeOnly: true))
+        gate.finishInputs()
+        XCTAssertFalse(gate.canBrowseWhileWaiting, "An unconfirmed send must retain its draft ownership")
+        gate.finishBroadcast()
+        XCTAssertTrue(gate.beginBroadcast())
+        gate.finishInputs(); gate.confirmSubmission()
+        XCTAssertFalse(gate.canBrowseWhileWaiting, "Website sessions cannot safely switch during a send")
+    }
+
     func testIndependentReplyDoesNotTakeAWaitingAgentsSharedAppSurface() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
