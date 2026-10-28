@@ -270,7 +270,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     func grokLatestMessagesButton() throws -> Element? {
         let buttons = try transcript(app: .grokBot).filter {
             $0.role == "AXButton" && $0.enabled != false && $0.element_token != nil &&
-            ($0.label ?? "").range(of: #"^\d+ new messages?$"#, options: .regularExpression) != nil
+            ($0.label == "Scroll to bottom" || ($0.label ?? "").range(of: #"^\d+ new messages?$"#, options: .regularExpression) != nil)
         }
         guard buttons.count <= 1 else { throw DesktopAppError.incompleteSnapshot }
         return buttons.first
@@ -762,6 +762,15 @@ actor DesktopAppConversation {
         for read in 0..<2 {
             var state = try await snapshot(target, session: session)
             try validate(state, app: .grokBot, binding: binding)
+            // A scrolled virtualized viewport can omit both the saved anchor
+            // and our outgoing message. Reveal the current transcript first;
+            // attribution still requires both after revalidating the bot.
+            if let latest = try state.grokLatestMessagesButton(), latest.label == "Scroll to bottom", latest.label != revealedLatest {
+                revealedLatest = latest.label
+                _ = try await call("click", ["session": session, "element_token": latest.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+                state = try await snapshot(target, session: session)
+                try validate(state, app: .grokBot, binding: binding)
+            }
             guard try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
             if let latest = try state.grokLatestMessagesButton(), latest.label != revealedLatest {
                 revealedLatest = latest.label

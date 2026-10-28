@@ -1811,6 +1811,52 @@ final class DesktopAppDriverTests: XCTestCase {
         XCTAssertEqual(calls.filter { $0.tool == "click" && $0.arguments["element_token"] as? String == "s00000004:latest" }.count, 1)
         XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 2, "One submit and one read-only jump to the latest messages")
     }
+    func testGrokScrollToBottomRevealsVirtualizedHistoryBeforeVerifyingSendOrRecovery() async throws {
+        var scrolled = grok(token: "s00000004")
+        var elements = scrolled["elements"] as! [[String: Any]]
+        elements.removeAll { $0["role"] as? String == "AXStaticText" }
+        let composer = try XCTUnwrap(elements.firstIndex { $0["role"] as? String == "AXTextArea" })
+        elements.insert(contentsOf: [element("AXStaticText", "An older virtualized viewport"),
+            element("AXButton", "Scroll to bottom", token: "s00000004:latest")], at: composer)
+        scrolled["elements"] = elements
+        scrolled["returned_element_count"] = elements.count
+        scrolled["total_element_count"] = elements.count
+        let reveal = step("click", [:], arguments: ["element_token": "s00000004:latest", "delivery_mode": "background"])
+        for recovery in [false, true] {
+            let start = recovery ? [apps(), windows()] : sendSteps()
+            let fixture = try driver(start + [snapshot(scrolled), reveal, snapshot(grok(reply: "Visible current reply"), repeating: true)])
+            defer { fixture.remove() }
+            let conversation = adapter(fixture)
+            let answer: String?
+            if recovery {
+                let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+                let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+                answer = try await conversation.recoverGrokReply(receipt)
+            } else {
+                answer = try await conversation.reply(prompt, app: .grokBot, binding: binding)
+            }
+            XCTAssertEqual(answer, "Visible current reply")
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, recovery ? 0 : 1)
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.count, recovery ? 1 : 2, "Reveal once; never resubmit")
+            XCTAssertFalse(calls.contains { $0.tool == "bring_to_front" })
+        }
+        for foreignBot in [false, true] {
+            let revealed = grok(reply: "Unrelated reply", name: foreignBot ? "Other Bot" : "Fixture Bot", outgoingPrompt: "Someone else's prompt")
+            let fixture = try driver([apps(), windows(), snapshot(scrolled), reveal, snapshot(revealed, repeating: true)])
+            defer { fixture.remove() }
+            let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier unrelated question", "Fixture Bot", "Earlier unrelated answer"], bot: "Fixture Bot")
+            let receipt = GrokReplyReceipt(comparisonID: UUID(), bot: "Fixture Bot", prompt: prompt, anchor: anchor)
+            do {
+                let answer = try await adapter(fixture).recoverGrokReply(receipt)
+                XCTAssertNil(answer, "Scrolling cannot authorize another request's reply")
+                XCTAssertFalse(foreignBot, "A changed bot must be rejected")
+            } catch { XCTAssertTrue(foreignBot, error.localizedDescription) }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "click" }.count, 1)
+            XCTAssertFalse(calls.contains { ["type_text", "press_key", "bring_to_front"].contains($0.tool) })
+        }
+    }
     func testGrokRevealsLaterReplyWhenNewMessageCountChangesWithoutResubmitting() async throws {
         func unread(_ label: String, token: String) throws -> [String: Any] {
             var value = grok(reply: "", token: token)
