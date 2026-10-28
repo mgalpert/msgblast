@@ -29,6 +29,9 @@ results and the original lock-screen questions are in
 - The Mac with Xcode 27, Tailscale running and signed in.
 - An iPhone on iOS 26 or later with Tailscale installed and signed in to the same
   tailnet, Developer Mode on (Settings → Privacy & Security → Developer Mode).
+- Before pairing on cellular, Tailscale must be connected on the phone (the VPN
+  badge shows in the status bar). Without it the phone cannot reach the Mac, and
+  pairing stops after about 15 seconds with "Your Mac could not be reached".
 - This branch checked out, and the **msgblast Dev Remote** preview built from it
   (rebuild if the branch moved):
   ```sh
