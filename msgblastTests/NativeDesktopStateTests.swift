@@ -331,6 +331,28 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertTrue(dots.state.selected)
     }
 
+    func testStartupNormalizesBusyChatGPTAndDotsWithoutChangingThePendingRequest() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var pending = WebSendAttempt(text: "Keep waiting for this answer", status: .waiting)
+        pending.comparisonID = UUID(); pending.messageID = pending.id.uuidString
+        for provider in [WebProvider.chatgptApp, .dotsApp] {
+            let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true)
+            session.setEnabled(true)
+            session.updateState { $0.selected = true; if provider == .chatgptApp { $0.attempts = [pending] } }
+            session.beginShutdown()
+        }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let chatgpt = try XCTUnwrap(agents.session(for: .init(provider: .chatgptApp)))
+        let dots = try XCTUnwrap(agents.session(for: .init(provider: .dotsApp)))
+        XCTAssertTrue(chatgpt.state.selected)
+        XCTAssertFalse(dots.state.selected, "Startup repair must still run while the shared app is busy")
+        XCTAssertEqual(chatgpt.state.attempts, [pending])
+        chatgpt.updateState { $0.attempts[0].status = .observed }
+        XCTAssertEqual(agents.broadcastSelection.map(\.id), [chatgpt.id])
+    }
+
     func testConflictingNativeRecipientsNeverSubmitEvenIfSelectionWasBypassed() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

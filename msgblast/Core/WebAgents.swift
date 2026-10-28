@@ -77,9 +77,9 @@ public final class WebAgents: ObservableObject {
         setComparison(workspaceSession.state.comparisonID)
         // Older saved selections may contain both recipients. Keep ChatGPT
         // selected on startup; the user can switch to Dots at any time.
-        if let chatgpt = sessions.first(where: { $0.provider == .chatgptApp && $0.isEnabled && $0.state.selected }),
-           sessions.contains(where: { $0.provider == .dotsApp && $0.isEnabled && $0.state.selected }) {
-            select(chatgpt, selected: true)
+        if sessions.contains(where: { $0.provider == .chatgptApp && $0.isEnabled && $0.state.selected }),
+           let dots = sessions.first(where: { $0.provider == .dotsApp && $0.isEnabled && $0.state.selected }) {
+            dots.updateState { $0.selected = false }
         }
     }
     private func observe(_ session: WebAgentSession) {
