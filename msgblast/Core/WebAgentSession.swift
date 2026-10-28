@@ -1819,6 +1819,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     }
                     return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
                 }
+                let refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)?
+                if sendFocus != nil {
+                    refreshInput = { target, session in try await desktopDriver.activate(target, session: session) }
+                } else { refreshInput = nil }
                 if provider == .museApp {
                     guard let museBinding else { throw WebSessionFailure.notSent("Prepare this comparison's Muse side chat first.") }
                     let attemptID = attempt.id
@@ -1830,7 +1834,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         let receipt = try MuseReplyReceipt(comparisonID: id, requestID: attemptID, initialThreadID: museBinding.threadID,
                                                            prompt: wirePrompt, baseline: baseline)
                         try await self.recordMuseReceipt(receipt, attemptID: attemptID)
-                    }, releaseFocus: { _ = try? await sendFocus?.restore() }, onBinding: { [weak self] discovered in
+                    }, refreshInput: refreshInput, releaseFocus: { _ = try? await sendFocus?.restore() }, onBinding: { [weak self] discovered in
                         guard let self else { throw CancellationError() }
                         try await self.recordMuseAppSubmission(discovered, attemptID: attemptID)
                     })
@@ -1838,10 +1842,6 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 }
                 if provider == .wabi {
                     guard let wabiURL else { throw WebSessionFailure.notSent("Prepare this comparison's dedicated Wabi chat first.") }
-                    let refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)?
-                    if sendFocus != nil {
-                        refreshInput = { target, session in try await desktopDriver.activate(target, session: session) }
-                    } else { refreshInput = nil }
                     return PersonalAgentReply(text: try await wabiApp.reply(text, in: wabiURL, onSubmitAction: submitAction, onSubmitted: submitted, onReceipt: { [weak self] baseline in
                         guard let self else { throw CancellationError() }
                         let receipt = try WabiReplyReceipt(comparisonID: id, url: wabiURL, prompt: text, baseline: baseline)

@@ -236,6 +236,7 @@ actor MuseAppConversation {
                onSubmitAction: @Sendable () async -> Void = {},
                onSubmitted: @Sendable () async throws -> Void = {},
                onReceipt: @Sendable ([MuseAppMessage], String) async throws -> Void = { _, _ in },
+               refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)? = nil,
                releaseFocus: @Sendable () async throws -> Void = {},
                onBinding: @Sendable (MuseSideChatBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Muse is already handling a request.") }
@@ -314,17 +315,31 @@ actor MuseAppConversation {
 
             }
         }, after: { step in
+            var refreshRequested = false
+            var refreshed = false
             _ = try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: self.timing.pollInterval,
                 failure: "Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.",
-                read: { try await self.observe(target) }, ready: { typed in
+                read: {
+                    if refreshRequested && !refreshed, let refreshInput {
+                        refreshed = true
+                        try await refreshInput(target, session)
+                    }
+                    return try await self.observe(target)
+                }, ready: { typed in
                     try sameChat(typed, id: binding.threadID)
                     // CGEvent completion can precede WebKit's text-range update.
                     let ready = matchesPreparedDraft(typed.draft, prefix: step.after)
                     guard ready || matchesPreparedDraft(typed.draft, prefix: step.before),
-                          typed.composerFocused, !typed.generating, typed.messages == before.messages else {
+                          !typed.generating, typed.messages == before.messages else {
                         throw DesktopAppError.unavailable("Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.")
                     }
-                    return ready
+                    if !ready || !typed.composerFocused {
+                        guard typed.composerFocused || refreshInput != nil else {
+                            throw DesktopAppError.unavailable("Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.")
+                        }
+                        refreshRequested = true
+                    }
+                    return ready && typed.composerFocused
                 })
         })
         let ready = try await observe(target)

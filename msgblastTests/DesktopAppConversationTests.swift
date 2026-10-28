@@ -4217,6 +4217,39 @@ final class DesktopAppDriverTests: XCTestCase {
         assertMuseBackground(calls)
     }
 
+    func testMuseOwnedFocusRefreshPublishesQueuedInputWithoutTypingAgain() async throws {
+        let owner = UUID(), thread = UUID()
+        var initial = windows(); initial["native"] = try object(museObservation(thread: thread))
+        var queued = museObservation(thread: thread); queued.composerFocused = false
+        for changedChat in [false, true] {
+            var refreshed = activation(.init(pid: 4242, window: 101))
+            refreshed["native"] = try object(museObservation(thread: changedChat ? UUID() : thread, draft: prompt))
+            var plan = [apps(.muse), initial, museComposerCapture(), try museStep("type_text", observation: queued), refreshed]
+            if !changedChat {
+                plan.append(try museStep("press_key", observation: museObservation(thread: thread,
+                    messages: [.init(role: .user, text: prompt), .init(role: .assistant, text: "Queued text published")])) )
+            }
+            let fixture = try driver(plan)
+            defer { fixture.remove() }
+            let focusDriver = adapter(fixture, delivery: .foreground)
+            let run = {
+                try await self.museAdapter(fixture).reply(self.prompt, binding: .init(comparisonID: owner, threadID: thread, title: "Saved"),
+                    refreshInput: { target, session in try await focusDriver.activate(target, session: session) }, onBinding: { _ in })
+            }
+            if changedChat {
+                let error = await failure(run)
+                XCTAssertTrue(error.contains("side chat changed"), error)
+            } else {
+                let answer = try await run()
+                XCTAssertEqual(answer, "Queued text published")
+            }
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.filter { $0.tool == "bring_to_front" }.count, 1)
+            XCTAssertEqual(calls.filter { $0.tool == "type_text" }.count, 1, "Refresh the owned window; never replay queued input")
+            XCTAssertEqual(calls.filter { $0.tool == "press_key" }.count, changedChat ? 0 : 1)
+        }
+    }
+
     func testMuseInputCaptureRejectsMissingImageMovedWindowAndChangedChatBeforeTyping() async throws {
         for fault in ["missing_image", "window_moved", "chat_changed"] {
             let thread = UUID()
