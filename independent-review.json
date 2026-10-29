@@ -96,12 +96,12 @@
     }
   ],
   "limitations": [
-    "No Studio VM, native app UI, full Xcode build, or live-account validation performed by this reviewer. These revisions do not change app runtime code.",
+    "No dedicated test guest VM, native app UI, full Xcode build, or live-account validation performed by this reviewer. These revisions do not change app runtime code.",
     "Fixture isolation uses temporary directories and synthetic data on the host; it does not provide an OS sandbox.",
     "Did not independently repeat the author-reported full 137-test tooling suite or inspect its optional-dependency skip.",
     "No live GitHub workflow execution, current ruleset audit, remote evidence inspection, or GitHub permission API integration test in this review. Workflow bootstrap requires the trusted base to contain the newly introduced checker.",
     "GitHub external Independent model review status does not cryptographically attest model identity; this limitation is documented in the reviewed source.",
-    "No screenshot/video evidence produced by this read-only reviewer; review completion is not a claim that publication/evidence or Studio validation is complete.",
+    "No screenshot/video evidence produced by this read-only reviewer; review completion is not a claim that publication/evidence or dedicated test guest validation is complete.",
     "Initial workflow bootstrap is not validated through GitHub Actions: base must contain the workflow/checker before normal target-event CI can run it. Local review/test results require transparent local status publication during bootstrap; no claim that hosted CI ran."
   ],
   "updated_at": "2026-10-29T03:57:03.633440+00:00",
