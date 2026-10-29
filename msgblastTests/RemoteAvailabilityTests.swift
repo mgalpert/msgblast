@@ -48,6 +48,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         if case .busy = evaluate(signals(.claude) { $0.isSending = true }).readiness {} else { XCTFail("Sending is busy") }
         let dialog = evaluate(signals(.claude) { $0.snapshotReady = false; $0.snapshotReason = "Finish the open dialog in Claude first." })
         XCTAssertEqual(dialog.readiness, .blocked); XCTAssertEqual(codes(dialog), [.dialogOpen])
+        XCTAssertEqual(dialog.reasons.first?.userText, "Finish the open dialog in Claude on your Mac first.", "Mac reasons are worded for the phone")
         if case .busy = evaluate(signals(.grok) { $0.snapshotReady = false; $0.snapshotReason = "Wait for Grok to finish its current reply." }).readiness {} else { XCTFail("Generating is busy") }
         let hark = evaluate(signals(.hark))
         XCTAssertEqual(hark.readiness, .unavailable); XCTAssertEqual(codes(hark), [.noSharedSends]); XCTAssertFalse(hark.capabilities.sharedSend)

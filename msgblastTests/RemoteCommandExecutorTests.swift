@@ -35,10 +35,12 @@ final class FakeRemoteHost: RemoteCommandHost {
     func hasStagedAttachment(_ id: String) -> Bool { staged[id] != nil }
     func requestReport(_ id: UUID) async -> RemoteHostResult { .applied(conversationID: id) }
     var prepared: [[String]] = []
+    /// The reason the Mac's session reports for an agent that is not ready.
+    var notReadyReason = "Sign in"
     func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult {
         prepared.append(agentIDs)
         let waiting = agentIDs.filter { agents[$0]?.readiness.acceptsSend == false }
-        return waiting.isEmpty ? .applied(conversationID: id) : .rejected(.notReady, "Not ready", reasons: Dictionary(uniqueKeysWithValues: waiting.map { ($0, "Sign in") }))
+        return waiting.isEmpty ? .applied(conversationID: id) : .rejected(.notReady, "Not ready", reasons: Dictionary(uniqueKeysWithValues: waiting.map { ($0, notReadyReason) }))
     }
 
     static func agent(_ id: String, form: AgentForm = .website, readiness: AgentReadiness = .ready, privateSend: Bool = true) -> AgentAvailability {
@@ -201,6 +203,34 @@ final class RemoteCommandExecutorTests: XCTestCase {
         let missing = await executor.execute(RemoteCommand(action: .queryCommand(clientCommandID: unknown)))
         XCTAssertEqual(missing.clientCommandID, unknown); XCTAssertEqual(missing.code, .unknownCommand)
         XCTAssertEqual(host.sends.count, 1)
+    }
+
+    func testASignedOutWebsiteAgentsReasonNamesTheMacNotThePane() async {
+        let host = host()
+        var os3 = FakeRemoteHost.agent("os3", readiness: .blocked)
+        os3.displayName = "rabbit OS3"
+        host.agents["os3"] = os3
+        // The exact text the Mac's web session gives when the comparison chat cannot open.
+        host.notReadyReason = "rabbit OS3’s comparison chat could not open. Open it in this pane and sign in if needed. Nothing was sent."
+        let executor = RemoteCommandExecutor(host: host)
+        let result = await executor.execute(RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["os3"])))
+        let reason = try? XCTUnwrap(result.agentReasons["os3"])
+        XCTAssertEqual(reason, "rabbit OS3’s comparison chat could not open. Open rabbit OS3 in msgblast on your Mac and sign in if needed. Nothing was sent.")
+        XCTAssertFalse(reason?.lowercased().contains("pane") ?? true)
+
+        // Other Mac reasons that point at the Mac's screen also name the Mac.
+        for (mac, phone) in [
+            ("Open this agent to sign in here.", "Open rabbit OS3 in msgblast on your Mac and sign in."),
+            ("rabbit OS3 already has a draft. Send or clear it in the page first.", "rabbit OS3 already has a draft. Send or clear it in msgblast on your Mac first."),
+            ("rabbit OS3’s page layout is not recognized yet. Reload the page and try again.", "rabbit OS3’s page layout is not recognized yet. Reload rabbit OS3 in msgblast on your Mac and try again."),
+            ("The page did not accept text. Use its composer directly.", "The page did not accept text. Use rabbit OS3 directly in msgblast on your Mac."),
+            ("Open the intended conversation in Claude, then connect it here.", "Open the intended conversation in Claude, then connect it in msgblast on your Mac."),
+            ("Finish the open dialog in rabbit OS3 first.", "Finish the open dialog in rabbit OS3 on your Mac first."),
+        ] {
+            XCTAssertEqual(RemotePhoneText.phrase(mac, agentName: "rabbit OS3"), phone)
+        }
+        XCTAssertEqual(RemotePhoneText.phrase("Sign in to rabbit OS3 in msgblast on your Mac.", agentName: "rabbit OS3"), "Sign in to rabbit OS3 in msgblast on your Mac.",
+                       "Reasons already written for the phone are unchanged")
     }
 
     func testNonSendCommandsReachTheHost() async {

@@ -131,7 +131,7 @@ public enum AvailabilityCalculator {
         var readiness: AgentReadiness = .ready
         var source: AvailabilitySource = .live
         func add(_ code: AvailabilityReasonCode, _ text: String, _ fix: FixLocation, permission: MacPermission? = nil, attempt: String? = nil, detail: String? = nil) {
-            reasons.append(AvailabilityReason(code: code, userText: text, fixOn: fix, permission: permission, attemptID: attempt, detail: detail))
+            reasons.append(AvailabilityReason(code: code, userText: RemotePhoneText.phrase(text, agentName: s.name), fixOn: fix, permission: permission, attemptID: attempt, detail: detail))
         }
         if !provider.isAvailableInBuild {
             readiness = .unavailable; add(.notOfferedInBuild, "\(s.name) is not offered in this version of msgblast.", .none)

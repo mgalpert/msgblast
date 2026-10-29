@@ -27,6 +27,32 @@ public struct RemoteHostResult: Sendable, Equatable {
     }
 }
 
+/// Rewrites Mac reasons that point at the Mac's own screen ("this pane", "here", "the page")
+/// so they make sense on the phone. Every reason and message the phone sees passes through it.
+public enum RemotePhoneText {
+    public static func phrase(_ text: String, agentName: String? = nil) -> String {
+        let name = agentName.flatMap { $0.isEmpty ? nil : $0 } ?? "it"
+        var text = text
+        let exact: [(String, String)] = [
+            ("Open it in this pane and sign in if needed.", "Open \(name) in msgblast on your Mac and sign in if needed."),
+            ("Open this agent to sign in here.", "Open \(name) in msgblast on your Mac and sign in."),
+            ("then connect it here.", "then connect it in msgblast on your Mac."),
+            ("Reload the page and try again.", "Reload \(name) in msgblast on your Mac and try again."),
+            ("Use its composer directly.", "Use \(name) directly in msgblast on your Mac."),
+            ("composer directly.", "composer directly in msgblast on your Mac."),
+            ("continue in the page", "continue in msgblast on your Mac"),
+            ("in the page first.", "in msgblast on your Mac first."),
+        ]
+        for (mac, phone) in exact { text = text.replacingOccurrences(of: mac, with: phone) }
+        if text.hasPrefix("Finish the open dialog in "), !text.contains("on your Mac"), text.hasSuffix(" first.") {
+            text = String(text.dropLast(" first.".count)) + " on your Mac first."
+        }
+        // Anything left that still names the Mac's screen.
+        for mac in ["in this pane", "in this window", "in the page"] { text = text.replacingOccurrences(of: mac, with: "in msgblast on your Mac") }
+        return text
+    }
+}
+
 public enum RemoteConversationState: Sendable, Equatable { case active(members: [String]), ended }
 
 /// The Mac side the executor drives. The app implements it over AppModel and the
@@ -219,8 +245,12 @@ public final class RemoteCommandExecutor {
     }
 
     private func outcome(_ command: RemoteCommand, _ result: RemoteHostResult, attachmentID: String? = nil) -> RemoteCommandResult {
-        RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: result.applied ? .applied : .rejected, code: result.code, message: result.message,
-                            conversationID: result.conversationID, attachmentID: attachmentID, agentStatuses: result.agentStatuses, agentReasons: result.agentReasons)
+        let reasons = Dictionary(uniqueKeysWithValues: result.agentReasons.map { id, reason in
+            (id, RemotePhoneText.phrase(reason, agentName: host?.availability(for: id)?.displayName))
+        })
+        return RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: result.applied ? .applied : .rejected, code: result.code,
+                                   message: result.message.map { RemotePhoneText.phrase($0) }, conversationID: result.conversationID,
+                                   attachmentID: attachmentID, agentStatuses: result.agentStatuses, agentReasons: reasons)
     }
 
     private func apply(_ command: RemoteCommand) async -> RemoteCommandResult {
