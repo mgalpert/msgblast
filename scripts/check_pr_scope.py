@@ -55,7 +55,6 @@ def main():
     body = pr.get('body') or ''
     patterns = re.findall(r'^Scope: (\S+)\s*$', body, re.MULTILINE)
     base = git('merge-base', args.base, args.head).strip()
-    # Count deletions too; renaming a large file requires review like any large move.
     records = git('diff', '--numstat', '-z', '--no-renames', base, args.head).split('\0')
     added = deleted = binary = new = changed_bytes = 0
     paths = []

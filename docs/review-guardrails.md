@@ -48,3 +48,24 @@ The workflow executes only the base branch's checker and fetches the PR as Git
 data. It needs no write token and never executes PR code. Bootstrap the workflow
 onto the default branch before requiring its status; a PR cannot run a newly
 introduced `pull_request_target` workflow before that workflow exists there.
+
+## Context and tool output
+
+The scope job also checks all tracked `AGENTS.md`, `CLAUDE.md`, and root
+`.cursor/rules/` files: 6 KiB per file, 24 KiB total, measured as UTF-8 bytes.
+Keep detailed references in linked docs and load only relevant sections.
+
+Use the bounded runner for commands with potentially large output:
+
+```sh
+python3 scripts/lean_run.py --log build/check-unique.log -- python3 -m unittest discover -s scripts/tests -v
+```
+
+It forwards at most 100 KiB plus a short truncation notice, drains both streams
+into a new local log, and preserves the command's exit status. Existing logs are
+never overwritten. Inspect relevant errors from the saved log when truncated.
+This opt-in wrapper does not control Codex connectors or third-party tools.
+The CI instruction cap is enforced independently of whether an agent uses it.
+App-control snapshots already request bounded element count, depth, and time;
+they are application data, not this repository's coding-agent context. No arbitrary
+100 KiB app-response cap is introduced without workflow-specific validation.
