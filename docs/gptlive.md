@@ -61,7 +61,9 @@ DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
 Open **GPT-Live** from the toolbar or the app menu (⌘⇧L). Expand **OpenAI API key**,
 enter your key, and use **Save key** to store it in macOS Keychain. The live and
 Demo variants have separate Keychain services; timestamped rebuilds reuse their
-variant’s service. Turn off **Remember in Keychain** for session-only use;
+variant’s service. macOS can deny an ad-hoc rebuild access to the previous
+credential; the panel stays usable and accepts a session-only key in that case.
+Turn off **Remember in Keychain** for session-only use without changing a saved key;
 **Forget key** removes the saved key.
 Keep the key out of source files, build arguments, screenshots, and logs. OpenAI
 usage is billed to the key's account independently of any ChatGPT subscription.
@@ -135,7 +137,7 @@ DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
 
 Verification on this Mac:
 
-- Native Xcode 27 build and 25 focused XCTest cases passed: Live protocol,
+- Native Xcode 27 build and 26 focused XCTest cases passed: Live protocol,
   tool continuations, redacted errors, audio framing, context limits, revision
   protection, debug retention/export/redaction and verified WebKit history.
 - The full Python 3.11 script suite passed: 126 tests, 1 skipped, including all
@@ -186,3 +188,10 @@ Audio taps and playback callbacks explicitly use `@Sendable` so Swift 6 does not
 incorrectly require Apple’s audio callback thread to be the main actor. The
 hardware check reproduced the initialization failure and subsequent callback
 assertion before these fixes, then passed capture, playback and restart afterward.
+
+The file-based Keychain uses a scoped, locked legacy interaction flag because
+`LAContext.interactionNotAllowed` alone does not suppress its ACL prompts. Reads,
+saves and deletion return an error when authorization would be required. This
+preserves the credential and keeps a rebuilt app from freezing before the panel
+appears. The original interaction flag is restored on success and failure; a
+regression test covers both paths.

@@ -103,7 +103,7 @@ final class GPTLiveController: ObservableObject {
     func saveKey() {
         do {
             if rememberKey { try GPTLiveCredentials.save(apiKey); keyStatus = "Key saved in macOS Keychain" }
-            else { try GPTLiveCredentials.delete(); keyStatus = "Key is available for this session only" }
+            else { keyStatus = "Key is available for this session only; any previously saved key is unchanged" }
             activity.record(category: "credentials", summary: rememberKey ? "Key saved in Keychain" : "Session-only key selected")
         } catch { self.error = "Could not update Keychain. Your key can still be used for this session." }
     }

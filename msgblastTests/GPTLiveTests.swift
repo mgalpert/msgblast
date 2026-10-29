@@ -1,4 +1,5 @@
 import XCTest
+import Security
 @testable import msgblastCore
 
 @MainActor
@@ -67,6 +68,23 @@ private final class GPTLiveFixtureTransport: GPTLiveTransport {
 
 @MainActor
 final class GPTLiveTests: XCTestCase {
+    func testFileKeychainInteractionIsDisabledAndRestoredOnSuccessAndFailure() throws {
+        var before = DarwinBoolean(false)
+        XCTAssertEqual(SecKeychainGetUserInteractionAllowed(&before), errSecSuccess)
+        let value = try GPTLiveCredentials.withoutKeychainInteraction {
+            var during = DarwinBoolean(true)
+            XCTAssertEqual(SecKeychainGetUserInteractionAllowed(&during), errSecSuccess)
+            XCTAssertFalse(during.boolValue)
+            return 42
+        }
+        XCTAssertEqual(value, 42)
+        enum FixtureFailure: Error { case expected }
+        XCTAssertThrowsError(try GPTLiveCredentials.withoutKeychainInteraction { throw FixtureFailure.expected })
+        var after = DarwinBoolean(false)
+        XCTAssertEqual(SecKeychainGetUserInteractionAllowed(&after), errSecSuccess)
+        XCTAssertEqual(after.boolValue, before.boolValue)
+    }
+
     private func eventually(_ condition: @MainActor () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         for _ in 0..<2_000 {
             if condition() { return }
