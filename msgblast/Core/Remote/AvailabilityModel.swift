@@ -68,6 +68,9 @@ public struct AgentSessionSignals: Sendable, Equatable {
     public var hasDesktopBinding = false
     public var desktopError: String?
     public var unresolvedAttemptIDs: [String] = []
+    /// Another agent that uses the same Mac app is sending or has an unfinished request.
+    /// The Mac composer then shows this agent as Busy and keeps it out of new sends.
+    public var sameAppBusyWith: String?
     public var accountStatus: PersonalAgentAccountStatus = .unknown
     public var grokBotConfigured = false
     public var grokBotActivity: String?
@@ -170,6 +173,11 @@ public enum AvailabilityCalculator {
                     add(.incompleteRequestBlocking, "An earlier request to \(s.name) did not complete. Review it before sending again; usage may have been consumed.", .phone, attempt: id)
                 }
                 guard readiness == .ready else { break }
+                if let other = s.sameAppBusyWith {
+                    readiness = .busy(detail: "\(other) is using the same app on your Mac.")
+                    add(.sendInFlight, "\(other) is using the same app on your Mac. \(s.name) is busy until it finishes.", .none)
+                    break
+                }
                 if s.isSending { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "\(s.name) is handling a request.", .none) }
                 else if s.loading { readiness = .busy(detail: "Checking \(s.name) on the Mac…"); add(.sendInFlight, "msgblast is checking \(s.name).", .none) }
                 else if !s.hasDesktopBinding && !s.desktopReady { readiness = .blocked; add(.notConnected, "Connect \(s.name) in msgblast on your Mac first.", .mac) }
@@ -284,7 +292,14 @@ public final class AvailabilityModel: ObservableObject {
     @discardableResult
     public func recompute() -> [AgentAvailability] {
         let inputs = inputs(), now = now()
-        let signals = sessions().map(AgentSessionSignals.init)
+        var signals = sessions().map(AgentSessionSignals.init)
+        for i in signals.indices {
+            guard let app = signals[i].provider.desktopApp else { continue }
+            signals[i].sameAppBusyWith = signals.first { other in
+                other.agentID != signals[i].agentID && other.provider.desktopApp?.bundleID == app.bundleID &&
+                    (other.isSending || !other.unresolvedAttemptIDs.isEmpty)
+            }?.name
+        }
         let sendingDesktop = Set(signals.filter { $0.provider.desktopApp != nil && $0.isSending }.map(\.agentID))
         var result = signals.map { s in
             AvailabilityCalculator.availability(s, inputs: inputs, otherDesktopSending: !sendingDesktop.subtracting([s.agentID]).isEmpty, now: now)

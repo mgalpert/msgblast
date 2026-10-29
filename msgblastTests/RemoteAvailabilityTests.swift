@@ -93,6 +93,10 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(updating.readiness, .blocked); XCTAssertEqual(codes(updating), [.controlsUpdating])
         XCTAssertTrue(updating.reasons.first?.userText.contains("on your Mac") == true)
         XCTAssertEqual(codes(evaluate(signals(.claudeApp) { $0.desktopReady = false; $0.desktopError = "Claude's controls are still updating." })), [.controlsUpdating])
+        // An agent that shares its Mac app with one that is sending is busy, as on the Mac.
+        let shared = evaluate(signals(.dotsApp) { $0.sameAppBusyWith = "ChatGPT" })
+        if case .busy = shared.readiness {} else { XCTFail("Shared app in use is busy: \(shared.readiness)") }
+        XCTAssertFalse(shared.readiness.acceptsSend); XCTAssertEqual(codes(shared), [.sendInFlight])
         // Once a check succeeds the failure is gone and the agent is ready again by itself.
         XCTAssertEqual(evaluate(signals(.museApp)).readiness, .ready)
         let queued = evaluate(signals(.claudeApp), otherDesktopSending: true)
