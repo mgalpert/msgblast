@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import CoreAudio
 import Foundation
 
 /// The GPT-Live WebSocket format is raw mono PCM16 little-endian at 24 kHz.
@@ -8,6 +9,8 @@ import Foundation
 final class GPTLiveAudio: ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var error: String?
+
+    var onDiagnostic: (@MainActor (String) -> Void)?
 
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
@@ -53,9 +56,12 @@ final class GPTLiveAudio: ObservableObject {
             let newEngine = AVAudioEngine()
             let newPlayer = AVAudioPlayerNode()
             let input = newEngine.inputNode
-            // Some devices do not support voice processing. Ordinary capture is
-            // still usable (headphones help prevent speaker echo in that case).
-            try? input.setVoiceProcessingEnabled(true)
+            // Voice processing can accept a virtual route, then fail at engine
+            // startup with -10875 and leave the process's audio route unusable.
+            // Keep virtual/aggregate routes on ordinary capture from the start.
+            if Self.canUseVoiceProcessing() {
+                try? input.setVoiceProcessingEnabled(true)
+            }
             let inputFormat = input.outputFormat(forBus: 0)
             guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
                 throw GPTLiveAudioError("No microphone is available. Connect an input device and start listening again.")
@@ -76,7 +82,7 @@ final class GPTLiveAudio: ObservableObject {
             }
             pipeline.setMuted(isMuted)
             try configurePlayback(newEngine, player: newPlayer)
-            input.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { buffer, _ in
+            input.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { @Sendable buffer, _ in
                 pipeline.consume(buffer)
             }
             engine = newEngine
@@ -89,6 +95,8 @@ final class GPTLiveAudio: ObservableObject {
             try Task.checkCancellation()
             isCapturing = true
             observeConfiguration(of: newEngine)
+            onDiagnostic?("Capture started: \(inputFormat.channelCount) channels at \(Int(inputFormat.sampleRate)) Hz → mono PCM16 at 24000 Hz. "
+                + (input.isVoiceProcessingEnabled ? "Apple voice processing enabled." : "Apple voice processing bypassed for this route; use headphones to prevent speaker echo."))
         } catch {
             // An old permission request must not stop a newer recording.
             if lifecycleID == requestID {
@@ -148,7 +156,7 @@ final class GPTLiveAudio: ObservableObject {
             }
             let scheduledID = playbackID
             queuedFrames += frameCount
-            player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { @Sendable [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, self.playbackID == scheduledID else { return }
                     self.queuedFrames = max(0, self.queuedFrames - frameCount)
@@ -172,6 +180,29 @@ final class GPTLiveAudio: ObservableObject {
 
     private static func playbackFormat() -> AVAudioFormat? {
         AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
+    }
+
+    private static func canUseVoiceProcessing() -> Bool {
+        for selector in [kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice] {
+            var address = AudioObjectPropertyAddress(mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            var device = AudioDeviceID(kAudioObjectUnknown)
+            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr,
+                  device != kAudioObjectUnknown else { return false }
+            address.mSelector = kAudioDevicePropertyTransportType
+            var transport: UInt32 = kAudioDeviceTransportTypeUnknown
+            size = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr else { return false }
+            switch transport {
+            case kAudioDeviceTransportTypeUnknown, kAudioDeviceTransportTypeVirtual, kAudioDeviceTransportTypeAggregate,
+                 kAudioDeviceTransportTypeRemoteScreen, kAudioDeviceTransportTypeRemoteStreaming:
+                return false
+            default:
+                continue
+            }
+        }
+        return true
     }
 
     private func configurePlayback(_ engine: AVAudioEngine, player: AVAudioPlayerNode) throws {

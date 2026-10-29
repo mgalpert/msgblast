@@ -44,6 +44,7 @@ final class GPTLiveController: ObservableObject {
         } catch { keyStatus = "Keychain unavailable. Enter a key for this session."; rememberKey = false }
         session.onToolCall = { [weak self] call in await self?.handle(call) ?? #"{"error":"The panel has closed."}"# }
         session.onActivity = { [weak self] category, summary in self?.activity.record(category: category, summary: summary) }
+        audio.onDiagnostic = { [weak self] detail in self?.activity.record(category: "audio", summary: "Microphone configuration", detail: detail) }
         session.onOutputAudio = { [weak self] pcm in
             guard let self, self.speaker, !self.closing else { return }
             self.audio.play(pcm)
@@ -147,6 +148,7 @@ final class GPTLiveController: ObservableObject {
     }
     func setMicrophone(_ enabled: Bool) async {
         guard connected, !simulate else { return }
+        error = nil
         let requestID = UUID(); microphoneRequestID = requestID
         if !enabled { microphone = false; audio.stop(); await session.setInputMuted(true); activity.record(category: "audio", summary: "Microphone muted"); return }
         do {
