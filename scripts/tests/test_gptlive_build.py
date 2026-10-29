@@ -1,4 +1,5 @@
 """Guard isolated packaging and preserve existing apps through replacement failures."""
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import plistlib
 import sys
@@ -11,6 +12,21 @@ import build_gptlive as build
 
 
 class GPTLiveBuildTests(unittest.TestCase):
+    def test_build_names_include_timestamp_without_changing_saved_data_identity(self):
+        first_time = datetime(2026, 10, 29, 10, 30, 1, tzinfo=timezone(timedelta(hours=-7), "PDT"))
+        for name, base in build.VARIANTS.items():
+            first = build.timestamped_variant(name, first_time)
+            second = build.timestamped_variant(name, first_time + timedelta(seconds=1))
+            self.assertIn("2026-10-29 10-30-01 PDT", first["app_name"])
+            self.assertNotEqual(first["app_name"], second["app_name"])
+            self.assertNotEqual(first["artifact_prefix"], second["artifact_prefix"])
+            self.assertEqual(first["bundle_id"], base["bundle_id"])
+            self.assertEqual(first["support_directory"], base["support_directory"])
+            info = build.preview.configure_info({}, first, "a" * 40)
+            self.assertEqual(info["CFBundleName"] + ".app", first["app_name"])
+            self.assertEqual(info["CFBundleDisplayName"] + ".app", first["app_name"])
+            self.assertNotEqual(first["app_name"], base["app_name"])
+
     def test_modes_have_distinct_identity_and_profile_with_updates_disabled(self):
         infos = [build.preview.configure_info({}, variant, "a" * 40)
                  for variant in build.VARIANTS.values()]

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build an isolated local GPTLive app, ZIP, and manifest; never publish or launch it."""
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,15 @@ VARIANTS = {
         "artifact_prefix": "gptlive-demo",
     },
 }
+
+
+def timestamped_variant(name, built_at):
+    """Name each build separately while preserving its account and Keychain identity."""
+    variant = dict(VARIANTS[name])
+    label = f"{variant['display_name']} - {built_at:%Y-%m-%d %H-%M-%S %Z}"
+    variant.update(app_name=label + ".app", bundle_name=label, display_name=label,
+                   artifact_prefix=f"{variant['artifact_prefix']}-{built_at:%Y%m%d-%H%M%S%z}")
+    return variant
 
 
 def running_app(app):
@@ -148,7 +158,8 @@ def main():
         parser.error("--output is a directory, not an .app bundle path")
     if output.is_relative_to(preview.ROOT) and not output.is_relative_to(preview.ROOT / "build"):
         parser.error("Outputs inside the checkout must be under build/ so they are not copied into staged source")
-    variant = VARIANTS[args.variant]
+    built_at = datetime.now().astimezone()
+    variant = timestamped_variant(args.variant, built_at)
     output.mkdir(parents=True, exist_ok=True)
     check_destination(output, variant, args.replace)
     preview.assert_committed_icons_unchanged()
@@ -163,6 +174,7 @@ def main():
         record["telemetry"] = "disabled"
         manifest_name = f"{variant['artifact_prefix']}-manifest.json"
         document = {
+            "built_at": built_at.isoformat(),
             "source_revision": revision,
             "source_note": "Built from a copy of the working tree, including uncommitted edits; revision is metadata.",
             "production_feed_used": False,

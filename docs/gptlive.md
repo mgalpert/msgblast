@@ -18,11 +18,12 @@ From the checkout, run:
 ```sh
 DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
   python3 scripts/build_gptlive.py --variant development --output ..
-open "../dev - gptlive.app"
+# Open the timestamped .app path printed by the command.
 ```
 
-The output is a runnable app, a ZIP, and `dev-gptlive-manifest.json`. The manifest
-records the checkout's HEAD as metadata; the build also includes current working
+The output is a runnable app, a ZIP, and a manifest, all named with the build’s
+local date, time, and time zone. App and menu names include that timestamp.
+The manifest records the checkout's HEAD as metadata; the build also includes current working
 tree edits. `--sha FULL_COMMIT_ID` can supply metadata for source ZIP checkouts.
 This is a local ad-hoc signed app, without notarization or publication.
 
@@ -31,12 +32,14 @@ artwork there, reuses the standard helper checksum verification and signing
 workflow, and verifies the packaged identity, compiled icon, helpers, and
 signature. Production artwork stays unchanged. Existing output is preserved
 unless `--replace` is passed, and the packager refuses to replace a running app.
-Quit the specific app, then repeat the command with `--replace` to rebuild it.
+Each normal invocation creates a new timestamped build; it does not overwrite
+an older build. The bundle identifier and support folder stay stable, so updates
+retain saved accounts, conversations, and the API key.
 
 | App | Mode and icon | Bundle identifier | Application Support folder |
 | --- | --- | --- | --- |
-| `dev - gptlive.app` | Live, blue-green | `com.msgblast.gptlive` | `msgblast-GPTLive` |
-| `gptlive Demo.app` | Simulated fixtures, blue | `com.msgblast.gptlive-demo` | `msgblast-GPTLive-Demo` |
+| `dev - gptlive - TIMESTAMP.app` | Live, blue-green | `com.msgblast.gptlive` | `msgblast-GPTLive` |
+| `gptlive Demo - TIMESTAMP.app` | Simulated fixtures, blue | `com.msgblast.gptlive-demo` | `msgblast-GPTLive-Demo` |
 
 Both apps disable production updates and telemetry uploads. Each has separate
 preferences and saved state under `~/Library/Application Support`. The live app
@@ -50,14 +53,15 @@ For fixture interaction and simulated-send checks:
 ```sh
 DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
   python3 scripts/build_gptlive.py --variant demo --output ..
-open "../gptlive Demo.app"
+# Open the timestamped Demo .app path printed by the command.
 ```
 
 ## Use GPTLive
 
 Open **GPT-Live** from the toolbar or the app menu (⌘⇧L). Expand **OpenAI API key**,
-enter your key, and use **Save key** to store it in macOS Keychain. Each build has
-its own Keychain service. Turn off **Remember in Keychain** for session-only use;
+enter your key, and use **Save key** to store it in macOS Keychain. The live and
+Demo variants have separate Keychain services; timestamped rebuilds reuse their
+variant’s service. Turn off **Remember in Keychain** for session-only use;
 **Forget key** removes the saved key.
 Keep the key out of source files, build arguments, screenshots, and logs. OpenAI
 usage is billed to the key's account independently of any ChatGPT subscription.
@@ -85,7 +89,9 @@ encoded size, with truncation reported. Attachment contents are excluded.
 
 Click **Debug activity** at the top of GPT-Live. Summaries show connection events,
 requests, tool calls, completion times, native actions and approvals, submission
-receipts, errors, cancellation and usage. Turn on **Debug mode** to capture future
+receipts, errors, cancellation and usage. Microphone configuration records the
+input format and whether Apple voice processing is enabled. Turn on **Debug mode**
+to capture future
 tool arguments and results as expandable details. Newest events appear first. Matching call IDs connect each request to its result. **Copy JSON**, **Export JSON…** and **Clear** act on the same
 redacted log shown in the panel.
 
@@ -133,11 +139,16 @@ Verification on this Mac:
   tool continuations, redacted errors, audio framing, context limits, revision
   protection, debug retention/export/redaction and verified WebKit history.
 - The full Python 3.11 script suite passed: 126 tests, 1 skipped, including all
-  5 new packaging regression tests. Use full Xcode via DEVELOPER_DIR for the
-  native architecture fixture.
+  original 5 packaging regression tests. The microphone fix also passed all
+  6 packaging checks, including timestamped names with stable data identity.
+  Use full Xcode via DEVELOPER_DIR for the native architecture fixture.
 - Production audio converter checks passed for stereo 48 kHz to mono PCM16
   24 kHz, byte order, mute, shutdown and bounded capture queue. No audio devices
-  are opened by that test.
+  are opened by the default test. `bash scripts/test_gptlive_audio.sh --hardware`
+  additionally exercised this Mac’s Jump Desktop virtual input/output, captured
+  57,472 converted PCM bytes, played silence, stopped cleanly and restarted.
+  It requires existing microphone authorization and saves/uploads no audio.
+  The observed input was silent; human speech recognition requires a spoken check.
 - The actual AppModel integration fixture passed app-wide tools, optimistic
   workspace/draft revisions, multi-recipient Messages and mixed browser/native
   simulated submissions, desktop-native planned broadcasts, receipts,
@@ -153,11 +164,25 @@ Verification on this Mac:
 
 Xcode's testmanager-based launcher stalled on this machine; the compiled XCTest
 bundle passed using Xcode's direct `xctest` runner. Native GUI checks use the running
-app through Cua. Hardware microphone capture and delivery to real recipients are
-not exercised by these checks. Account setup and macOS permissions belong to the
+app through Cua. Permission-dialog races, device changes, audible playback,
+and delivery to real recipients are not covered by the microphone fixture. Account setup and macOS permissions belong to the
 live app's separate identity.
 
 The API returned `expired` after approximately 30 seconds during the native
 checks. The app preserves prepared messages and exposes Connect again; it does
 not automatically reconnect or resubmit. The official [session lifecycle guide](https://developers.openai.com/api/docs/guides/live-conversations) identifies
 `expired` as a server session duration limit, without promising a fixed duration.
+
+## Virtual audio devices
+
+Apple voice processing failed to initialize with `com.apple.coreaudio.avfaudio
+-10875` on this Mac’s eight-channel Jump Desktop microphone/output. Enabling it
+succeeded, but starting the engine failed; rebuilding the graph in that process
+did not recover the route. Virtual, aggregate and remote routes now bypass voice
+processing before it is enabled. Ordinary capture still converts input to mono
+24 kHz PCM16. Use headphones to avoid speaker echo on these routes.
+
+Audio taps and playback callbacks explicitly use `@Sendable` so Swift 6 does not
+incorrectly require Apple’s audio callback thread to be the main actor. The
+hardware check reproduced the initialization failure and subsequent callback
+assertion before these fixes, then passed capture, playback and restart afterward.
