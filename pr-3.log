@@ -1,0 +1,15 @@
+Source revision: 725f9df17db499807337e19f248b776482fe274e
+$ python3 -m unittest discover -s scripts/tests -p test_swift_complexity.py -v
+test_actual_analyzer_rejects_growth_and_inline_disabling (test_swift_complexity.ComplexityRatchetTests.test_actual_analyzer_rejects_growth_and_inline_disabling) ... ok
+test_duplicate_declarations_keep_separate_budgets (test_swift_complexity.ComplexityRatchetTests.test_duplicate_declarations_keep_separate_budgets) ... ok
+test_new_or_worse_function_fails_without_count_tradeoffs (test_swift_complexity.ComplexityRatchetTests.test_new_or_worse_function_fails_without_count_tradeoffs) ... ok
+test_reports_use_declarations_not_line_numbers (test_swift_complexity.ComplexityRatchetTests.test_reports_use_declarations_not_line_numbers) ... ok
+test_unchanged_improved_removed_and_reordered_functions_pass (test_swift_complexity.ComplexityRatchetTests.test_unchanged_improved_removed_and_reordered_functions_pass) ... ok
+test_unknown_analyzer_output_fails_closed (test_swift_complexity.ComplexityRatchetTests.test_unknown_analyzer_output_fails_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 1.288s
+
+OK
+
+Exit status: 0

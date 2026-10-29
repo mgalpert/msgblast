@@ -1,0 +1,3 @@
+243 changed lines (243 added, 0 deleted); 3 files; 3 new; 0 binary; 10992 bytes in changed head files.
+PASS: size and declared paths accepted; semantic scope still needs human review.
+1 instruction files; 4172/24576 bytes; 0 failures.

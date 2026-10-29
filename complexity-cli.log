@@ -1,0 +1,7 @@
+Scenario: rename
+SwiftLint 0.65.1: 0 new/worsened metrics; 1 existing metrics.
+Exit: 0
+Scenario: growth
+FAIL Original.swift: cyclomatic_complexity 13 (base 12): func complex()
+SwiftLint 0.65.1: 1 new/worsened metrics; 1 existing metrics.
+Exit: 1

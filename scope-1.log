@@ -1,0 +1,4 @@
+480 changed lines (274 added, 206 deleted); 2 files; 1 new; 0 binary; 28857 bytes in changed head files.
+Advisory: exceeds 250 changed lines. Explain why this remains one reviewable change.
+PASS: size and declared paths accepted; semantic scope still needs human review.
+1 instruction files; 4172/24576 bytes; 0 failures.

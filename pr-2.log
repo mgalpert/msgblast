@@ -1,0 +1,15 @@
+Source revision: 2309a1da55c57e838bd2aa24cdd29c94a5a9b868
+$ python3 -m unittest discover -s scripts/tests -p test_pr_scope.py -v
+test_only_current_human_write_approval_can_waive_size (test_pr_scope.ApprovalTests.test_only_current_human_write_approval_can_waive_size) ... ok
+test_binary_reported (test_pr_scope.ScopeTests.test_binary_reported) ... ok
+test_deletions_count (test_pr_scope.ScopeTests.test_deletions_count) ... ok
+test_exception_only_waives_size (test_pr_scope.ScopeTests.test_exception_only_waives_size) ... ok
+test_missing_or_wrong_scope (test_pr_scope.ScopeTests.test_missing_or_wrong_scope) ... ok
+test_soft_and_hard_boundaries (test_pr_scope.ScopeTests.test_soft_and_hard_boundaries) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 9.110s
+
+OK
+
+Exit status: 0

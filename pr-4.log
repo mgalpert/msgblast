@@ -1,0 +1,13 @@
+Source revision: 378d301b18832002806718691a39e1912e370ab5
+$ python3 -m unittest discover -s scripts/tests -p test_context_budget.py -v
+test_aggregate_budget (test_context_budget.ContextTests.test_aggregate_budget) ... ok
+test_console_cap_retains_full_log_and_failure (test_context_budget.ContextTests.test_console_cap_retains_full_log_and_failure) ... ok
+test_instruction_limits_and_nested_files (test_context_budget.ContextTests.test_instruction_limits_and_nested_files) ... ok
+test_short_success_is_unchanged (test_context_budget.ContextTests.test_short_success_is_unchanged) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.529s
+
+OK
+
+Exit status: 0

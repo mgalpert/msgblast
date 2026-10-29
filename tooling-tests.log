@@ -1,0 +1,29 @@
+Published msgblast 0.1.1 (2)
+Published msgblast 0.1.1 (2)
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpxcmvr0ax/build/releases/0.1.1-2-456-1; no release artifacts published.
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpebrme8w2/build/releases/0.1.1-2-456-1; no release artifacts published.
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpfqx2wsvz/build/releases/0.1.1-2-456-1; no release artifacts published.
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpfqx2wsvz/build/releases/0.1.1-2-456-1; no release artifacts published.
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpfqx2wsvz/build/releases/0.1.1-2-456-1; no release artifacts published.
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpfqx2wsvz/build/releases/0.1.1-2-456-1; no release artifacts published.
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpfqx2wsvz/build/releases/0.1.1-2-456-1; no release artifacts published.
+Prepared msgblast 0.1.1 (2) at /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmpis2tgdt7/build/releases/0.1.1-2-456-1; no release artifacts published.
+Published msgblast 0.1.1 (2)
+Uploaded appcast.xml
+Uploaded downloads/msgblast-1-2.zip
+Bundled cua-driver 0.38.0 (arm64) → /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmp2r4525uc/msgblast.app/Contents/Helpers/cua-driver
+Bundled cua-driver 0.38.0 (arm64, x86_64) → /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmp4oixn9d3/app/Contents/Helpers/cua-driver
++ xcrun lipo -verify_arch arm64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/MacOS/msgblast
++ xcrun lipo -verify_arch x86_64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/MacOS/msgblast
++ xcrun lipo -verify_arch arm64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/Helpers/cua-driver
++ xcrun lipo -verify_arch x86_64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/Helpers/cua-driver
++ xcrun lipo -verify_arch arm64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/Helpers/cloudflared
++ xcrun lipo -verify_arch x86_64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/Helpers/cloudflared
++ xcrun lipo -verify_arch arm64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/MacOS/msgblast
++ xcrun lipo -verify_arch x86_64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/MacOS/msgblast
++ xcrun lipo -verify_arch arm64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/Helpers/cua-driver
++ xcrun lipo -verify_arch x86_64 /var/folders/y4/26hmq9ds25q21k_7rnkp4fgw0000gn/T/tmppqk7sz38/msgblast Dev.app/Contents/Helpers/cua-driver
+----------------------------------------------------------------------
+Ran 137 tests in 5.266s
+
+OK (skipped=1)

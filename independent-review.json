@@ -1,0 +1,133 @@
+{
+  "model": "gpt-6-astra",
+  "provider": "OpenAI",
+  "created_at": "2026-10-29T03:55:28.362015+00:00",
+  "review_context": "Separate model context; read-only source/index review. Temporary fixture files and this receipt were written. Not provider-independent and not an OS sandbox.",
+  "overall": "pass",
+  "blocking_findings": [],
+  "pairs": [
+    {
+      "base": "08e29ee679058b2513abe9ebad6288f2a7c301cb",
+      "head": "6c186c708ca9cd695106b50cd017a8fffe327159",
+      "result": "pass",
+      "findings": [],
+      "coverage": "Read AGENTS.md and full relocated runbook; mechanically confirmed detailed instructions preserved after relative-link normalization."
+    },
+    {
+      "base": "6c186c708ca9cd695106b50cd017a8fffe327159",
+      "head": "2309a1da55c57e838bd2aa24cdd29c94a5a9b868",
+      "result": "pass",
+      "findings": [],
+      "coverage": "Reviewed scope checker, workflow, review permission/identity/head checks, docs and tests. Ran six tests from exact head snapshot."
+    },
+    {
+      "base": "2309a1da55c57e838bd2aa24cdd29c94a5a9b868",
+      "head": "725f9df17db499807337e19f248b776482fe274e",
+      "result": "pass",
+      "findings": [],
+      "coverage": "Independently read revised workflow and diff. It now uses pull_request_target, base checkout, fetched-head SHA verification, a base-only checker, and base tests. Confirmed all other files byte-identical to prior reviewed tree; retained Python coverage and reran six exact-head Swift tests plus revised exact-pair ratchet."
+    },
+    {
+      "base": "725f9df17db499807337e19f248b776482fe274e",
+      "head": "378d301b18832002806718691a39e1912e370ab5",
+      "result": "pass",
+      "findings": [],
+      "coverage": "Reviewed revised exact pair; only inherited workflow differs from previous final tree. All context/output/scope implementation and tests byte-identical. Reran four exact-head context/output tests and final instruction-budget check."
+    }
+  ],
+  "tests_actually_run": [
+    {
+      "test": "Exact-head test_pr_scope.py",
+      "head": "2309a1da55c57e838bd2aa24cdd29c94a5a9b868",
+      "passed": 6,
+      "skipped": 0
+    },
+    {
+      "test": "Exact-head test_swift_complexity.py with SwiftLint 0.65.1",
+      "head": "1b76c8df8026d75cb1041a643495d36540363e4f",
+      "passed": 6,
+      "skipped": 0
+    },
+    {
+      "test": "Exact-head test_context_budget.py",
+      "head": "db8a18fe3f8111f9c799ec0a92e3da89f12076d9",
+      "passed": 4,
+      "skipped": 0
+    },
+    {
+      "test": "check_swift_complexity.py exact pair 3",
+      "result": "pass; zero new/worsened metrics; 106 existing metrics"
+    },
+    {
+      "test": "check_context_budget.py exact final head",
+      "result": "pass; one instruction file; 4172 bytes; zero failures"
+    },
+    {
+      "test": "Detailed runbook preservation and all four ancestry checks",
+      "result": "pass"
+    },
+    {
+      "test": "Same 16 focused tests initially run against combined final checkout",
+      "result": "all passed; subsequently repeated from exact committed snapshots"
+    },
+    {
+      "test": "Revised exact-head test_swift_complexity.py with SwiftLint 0.65.1",
+      "head": "725f9df17db499807337e19f248b776482fe274e",
+      "passed": 6,
+      "skipped": 0
+    },
+    {
+      "test": "Revised exact-head test_context_budget.py",
+      "head": "378d301b18832002806718691a39e1912e370ab5",
+      "passed": 4,
+      "skipped": 0
+    },
+    {
+      "test": "Revised exact pair 3 complexity ratchet",
+      "result": "pass; 0 new/worsened; 106 existing metrics"
+    },
+    {
+      "test": "Revised final-head context check",
+      "result": "pass; 1 file; 4172 bytes; 0 failures"
+    },
+    {
+      "test": "Revised ancestry and predecessor-tree comparison",
+      "result": "Both revised pairs have expected ancestry; only code-quality.yml differs from predecessor trees."
+    }
+  ],
+  "limitations": [
+    "No Studio VM, native app UI, full Xcode build, or live-account validation performed by this reviewer. These revisions do not change app runtime code.",
+    "Fixture isolation uses temporary directories and synthetic data on the host; it does not provide an OS sandbox.",
+    "Did not independently repeat the author-reported full 137-test tooling suite or inspect its optional-dependency skip.",
+    "No live GitHub workflow execution, current ruleset audit, remote evidence inspection, or GitHub permission API integration test in this review. Workflow bootstrap requires the trusted base to contain the newly introduced checker.",
+    "GitHub external Independent model review status does not cryptographically attest model identity; this limitation is documented in the reviewed source.",
+    "No screenshot/video evidence produced by this read-only reviewer; review completion is not a claim that publication/evidence or Studio validation is complete.",
+    "Initial workflow bootstrap is not validated through GitHub Actions: base must contain the workflow/checker before normal target-event CI can run it. Local review/test results require transparent local status publication during bootstrap; no claim that hosted CI ran."
+  ],
+  "updated_at": "2026-10-29T03:57:03.633440+00:00",
+  "superseded_pairs": [
+    {
+      "base": "2309a1da55c57e838bd2aa24cdd29c94a5a9b868",
+      "head": "1b76c8df8026d75cb1041a643495d36540363e4f",
+      "result": "pass",
+      "findings": [],
+      "coverage": "Reviewed pinned analyzer, trusted-base fallback, extracted-source analysis, function identities, renames, disabling defense, and tests. Ran six tests from exact head snapshot and full exact-pair ratchet."
+    },
+    {
+      "base": "1b76c8df8026d75cb1041a643495d36540363e4f",
+      "head": "db8a18fe3f8111f9c799ec0a92e3da89f12076d9",
+      "result": "pass",
+      "findings": [],
+      "coverage": "Reviewed instruction byte/mode checks, CI integration, bounded output draining, full log preservation, exit propagation, docs and tests. Ran four tests from exact head snapshot and exact-head context check."
+    }
+  ],
+  "resolved_peer_findings": [
+    {
+      "title": "PR-authored workflow could bypass its own complexity check",
+      "reported_by": "Grok peer review, relayed by parent",
+      "acknowledgment": "Valid finding missed by this reviewer in initial pass; earlier pair-3/pair-4 receipts are superseded.",
+      "resolution": "Verified revised workflow uses pull_request_target and trusted base code exclusively; PR head fetched and validated as data. No head-code bootstrap fallback.",
+      "fixed_head": "725f9df17db499807337e19f248b776482fe274e"
+    }
+  ]
+}
