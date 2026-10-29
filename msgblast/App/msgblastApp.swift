@@ -8,6 +8,7 @@ struct msgblastApp: App {
     private var model: AppModel? { startup.model }
     @StateObject private var updater = AppUpdater()
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     private static let menuBarIcon: NSImage = {
         let image = NSImage(contentsOf: Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png", subdirectory: "QuickAccess")!)!
         image.size = NSSize(width: 18, height: 18)
@@ -35,8 +36,11 @@ struct msgblastApp: App {
                         if model.needsSharingChoice { SharingChoiceView(model: model) }
                         else if model.needsOnboarding { OnboardingView(model: model) }
                         else { MainView(model: model, updater: updater) }
-                    }.onAppear {
+                    }.onChange(of: model.gptLiveNavigationRequest) { _, request in
+                        if request?.destination == .settings { openSettings() }
+                    }.onAppear { [model] in
                         lifecycle.configure(model: model); updater.configure(delegate: lifecycle)
+                        lifecycle.closeLiveSession = { await GPTLiveWindowController.shutdown() }
                         CrashReporting.shared.start(model: model)
                         lifecycle.reopenWorkspace = { [weak model] in model?.coordinator?.reopenWorkspace() ?? false }
                         startup.shortcut.onTrigger = startNewBlast
@@ -47,6 +51,8 @@ struct msgblastApp: App {
         .commands {
             BlastCommands()
             CommandGroup(after: .appInfo) {
+                Button("GPT-Live…") { if let model { GPTLiveWindowController.show(model: model) } }
+                    .keyboardShortcut("l", modifiers: [.command, .shift]).disabled(model == nil)
                 Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
                 Button("Review Crash Reports…") { CrashReporting.shared.show() }
                 Button("Build a New Feature…") { BuildFeatureWindowController.show() }

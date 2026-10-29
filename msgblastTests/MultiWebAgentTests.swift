@@ -4,6 +4,36 @@ import WebKit
 
 @MainActor
 final class MultiWebAgentTests: XCTestCase {
+    func testGPTLiveExportRejectsUnloadedAndMismatchedBrowserHistory() async throws {
+        let storage = temporaryDirectory().appendingPathComponent("state.json")
+        let session = WebAgentSession(provider: .chatgpt, storageURL: storage, fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let id = UUID()
+        _ = await session.send("Selected conversation", comparisonID: id)
+        try await waitFor { session.snapshot.messages.last?.role == "assistant" }
+        XCTAssertTrue(try session.messagesForExport(id).contains { $0.text.contains("Selected conversation") })
+        let reopened = WebAgentSession(provider: .chatgpt, storageURL: storage, fixture: true)
+        defer { reopened.beginShutdown() }
+        XCTAssertThrowsError(try reopened.messagesForExport(id), "Unloaded saved history must not look empty")
+        _ = try await session.webView.callAsyncJavaScript("history.replaceState({}, '', '/c/unrelated-chat')", arguments: [:], in: nil, contentWorld: .page)
+        XCTAssertThrowsError(try session.messagesForExport(id), "Reject even before the next snapshot refresh")
+        await session.refresh()
+        XCTAssertThrowsError(try session.messagesForExport(id), "A different chat must never be exported")
+    }
+
+    func testGPTLiveExportUsesOnlyComparisonKeyedNativeHistory() throws {
+        let session = WebAgentSession(provider: .codexCLI, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
+        defer { session.beginShutdown() }
+        let selected = UUID(), other = UUID()
+        session.updateState {
+            $0.comparisonID = other
+            $0.localConversations[selected.uuidString] = [.init(role: "assistant", text: "Selected answer")]
+            $0.localConversations[other.uuidString] = [.init(role: "assistant", text: "Unrelated private answer")]
+        }
+        XCTAssertEqual(try session.messagesForExport(selected).map(\.text), ["Selected answer"])
+    }
     func testMuseOnboardingAcceptsMainChatLoginWithoutAllowingComparisonSubmission() async throws {
         let session = WebAgentSession(provider: .muse, storageURL: temporaryDirectory().appendingPathComponent("state.json"), fixture: true)
         session.connect()

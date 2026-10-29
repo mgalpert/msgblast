@@ -284,10 +284,22 @@ struct MainView: View {
             canStartBlast: model.canStartNewBlast))
         .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat }
         .onChange(of: model.webComparisonRequest) { _, _ in selection = .agents; showingComparison = true }
+        .onChange(of: model.gptLiveNavigationRequest) { _, request in
+            switch request?.destination {
+            case .agents: showAgentGrid()
+            case .discover: selection = .discover
+            default: break
+            }
+        }
         .alert("msgblast", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { GPTLiveWindowController.show(model: model, comparisonID: selectedComparisonID) } label: {
+                    Label("GPT-Live", systemImage: "waveform")
+                }.help("Review and draft with GPT-Live").accessibilityIdentifier("Open GPTLive")
+            }
             if selection == .discover {
                 ToolbarItem(placement: .navigation) {
                     Button {

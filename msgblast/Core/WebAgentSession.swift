@@ -42,6 +42,30 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
     }
+    /// Export only history whose ownership is verified. A selected pane can have
+    /// navigated to another chat, and an unloaded saved chat is not empty history.
+    public func messagesForExport(_ id: UUID) throws -> [WebPageMessage] {
+        let key = id.uuidString
+        let submitted = state.attempts.contains { $0.comparisonID == id && $0.status.confirmsSubmission }
+        if provider.usesNativeConversation {
+            if let history = state.localConversations[key] { return history }
+            guard !submitted else { throw WebSessionFailure.notReady("Open this conversation and load its history before sharing it with GPT-Live.") }
+            return []
+        }
+        guard let saved = state.conversationURLs[key] else {
+            // Never infer ownership from whatever happens to be in the browser.
+            guard !submitted else { throw WebSessionFailure.notReady("This browser conversation has no verified saved address. Open it before sharing with GPT-Live.") }
+            return []
+        }
+        guard let page = pages[key], !page.loading,
+              let identity = provider.canonicalConversationURL(saved),
+              page.view.url.flatMap(provider.canonicalConversationURL) == identity,
+              URL(string: page.snapshot.url).flatMap(provider.canonicalConversationURL) == identity,
+              !page.snapshot.messages.isEmpty else {
+            throw WebSessionFailure.notReady("Open the selected \(provider.name) conversation and wait for its history to load before sharing it with GPT-Live.")
+        }
+        return page.snapshot.messages
+    }
     public func canArchiveComparison(_ id: UUID) -> Bool {
         let submitted = state.attempts.contains { $0.comparisonID == id && $0.status.confirmsSubmission }
         if provider.usesNativeConversation {

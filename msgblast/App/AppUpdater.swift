@@ -113,6 +113,7 @@ private final class SidebarUpdateUserDriver: SPUStandardUserDriver {
 /// Sparkle's Install and Relaunch follows the same safe-quit path as the app menu.
 @MainActor
 final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
+    var closeLiveSession: (() async -> Void)?
     private weak var model: AppModel?
     var reopenWorkspace: (() -> Bool)?
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -217,6 +218,7 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
                 return
             }
             model.personalAgent.beginShutdown()
+            await closeLiveSession?()
             model.webAgents.beginShutdown()
             await model.personalAgent.cancelAndWait()
             await model.webAgents.cancelAndWait()
