@@ -57,10 +57,15 @@ Sparkle package artifact. From the repository root:
 bash scripts/test_web_comparisons.sh build/contributor-tests
 bash scripts/test_configured_cli_conversations.sh build/contributor-tests
 bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
+bash scripts/test_crash_reporting.sh build/contributor-tests
 ```
 
 - Web fixtures compile actual app/controller code with local website/Messages
-  substitutes, checking comparison and broadcast lifecycle.
+  substitutes, checking comparison and broadcast lifecycle. They also verify
+  that feedback is sent only on explicit submission, unchanged retries reuse
+  their request ID, and failures retain the form and workspace draft. A matching
+  receipt closes feedback and restores the workspace. All feedback transport is
+  intercepted by a local URLProtocol fixture; no report is uploaded.
   Native CI also runs these fixtures, including same-store app restarts that
   check all five permissions, retain setup and drafts, remember Skip for now,
   and resume Allow access after a Settings handoff. Injected grants do not
@@ -70,6 +75,10 @@ bash scripts/test_personal_agent_shutdown.sh build/contributor-tests
   configuration transport, denied writes, restricted reports, and legacy history.
 - Report fixtures exercise the actual controller with lifecycle/storage
   substitutes, including delayed discovery, shutdown, and persistence.
+
+The crash fixture also needs Node.js 22. It runs the actual review session and
+intake handler over loopback with synthetic reports, including an uncertain
+acknowledgement after storage and an identical retry after reopening.
 
 No installed provider CLI, credential, paid request, real Messages send, or live
 connector is used. These do not prove current service authentication, provider
@@ -291,9 +300,9 @@ need that Linux installer command. See [Cloud agents](cloud-agent.md).
 
 `.github/workflows/validate.yml` runs on PRs, pushes to main, and manual dispatch:
 
-- **Linux:** installer/dependency setup, Python tooling tests, download Worker
+- **Linux:** installer/dependency setup, Python tooling tests, feedback/crash intake tests, download Worker
   tests, and Wrangler dry-run.
-- **Native (`xcode-27`):** core tests and isolated Sparkle update fixtures. It checks
+- **Native (`xcode-27`):** core tests, crash consent/retry controller fixtures, and isolated Sparkle update fixtures. It checks
   out the PR branch head and retains test logs/results for 14 days.
 - **Preview:** same-repository `cursor/*` PR branches or manual dispatch build
   signed Dev/Demo ZIPs and a manifest; artifacts last 14 days. Ordinary fork PRs

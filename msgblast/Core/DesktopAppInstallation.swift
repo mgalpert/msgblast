@@ -22,6 +22,7 @@ public struct DesktopAppInstallation: Equatable, Sendable {
 struct DesktopAppInstallationClient: Sendable {
     var inspect: @MainActor @Sendable (DesktopAppProvider) -> DesktopAppInstallation
     var open: @MainActor @Sendable (URL) async throws -> Void
+    var isHidden: @MainActor @Sendable (DesktopAppProvider) -> Bool = { _ in false }
 
     static var system: Self {
         .init(inspect: { app in
@@ -33,6 +34,9 @@ struct DesktopAppInstallationClient: Sendable {
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = true
             _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        }, isHidden: { app in
+            app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
+                .contains { !$0.isTerminated && $0.isHidden }
         })
     }
 

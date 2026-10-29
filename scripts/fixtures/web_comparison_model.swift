@@ -6,6 +6,44 @@ import msgblastCore
     var messagesFinished = false
 }
 
+private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
+    // Intercept every request: this fixture must never reach a live service.
+    private final class Requests: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Data] = []
+        func append(_ data: Data) -> Int { lock.withLock { values.append(data); return values.count } }
+        var all: [Data] { lock.withLock { values } }
+    }
+    private static let requests = Requests()
+    static var bodies: [Data] { requests.all }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        let payload = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let attempt = Self.requests.append(data)
+        let status = attempt == 1 ? 503 : 201
+        // A 201 for another request is not a successful submission.
+        let receiptID: Any = attempt == 2 ? UUID().uuidString : payload["id"]!
+        let body = try! JSONSerialization.data(withJSONObject: ["id": receiptID])
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 @main struct SideChatModelCheck {
     @MainActor static func waitUntil(file: StaticString = #fileID, line: UInt = #line, _ check: () -> Bool) async throws {
         for _ in 0..<100 { if check() { return }; try await Task.sleep(for: .milliseconds(100)) }
@@ -15,6 +53,9 @@ import msgblastCore
         if let editor = view as? AttachmentTextView { return editor }
         for child in view.subviews { if let editor = privateEditor(in: child) { return editor } }
         return nil
+    }
+    @MainActor static func editors(in view: NSView) -> [AttachmentTextView] {
+        (view as? AttachmentTextView).map { [$0] } ?? view.subviews.flatMap { editors(in: $0) }
     }
     @MainActor static func transcriptText(_ text: String, in view: NSView) -> NSTextView? {
         if let value = view as? NSTextView, !(value is AttachmentTextView), value.string == text { return value }
@@ -38,8 +79,86 @@ import msgblastCore
         }
         application.run()
     }
+    @MainActor static func runFeedbackWindowChecks() async throws {
+        let model = AppModel()
+        model.timer?.invalidate()
+        let priorID = await model.prepareWebComparison("Earlier simulated conversation", recipientIDs: [model.state.agents[0].id], agents: [])!
+        await model.submit(priorID, retry: false)
+        precondition(model.comparison(priorID)?.members.first?.submission == .submitted,
+                     "Receipt preservation must begin with an actual simulated submission")
+        model.coordinator = WindowCoordinator(model: model)
+        let workspace = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 800, height: 600), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        workspace.isReleasedWhenClosed = false
+        model.coordinator?.workspaceWindow = workspace
+        let configuration = FeedbackSubmission.sessionConfiguration()
+        configuration.protocolClasses = [FeedbackWindowProtocol.self]
+        let transport = URLSession(configuration: configuration)
+        defer { transport.invalidateAndCancel(); workspace.orderOut(nil) }
+        let controller = FeedbackWindowController(model: model, updater: AppUpdater(), transport: transport)
+        FeedbackWindowController.current = controller
+        let feedback = NSApp.windows.first { $0.title == "Send Feedback" }!
+        NSApp.activate()
+        feedback.makeKeyAndOrderFront(nil)
+        let originalDraft = "Unsent workspace draft stays private"
+        model.state.draft = originalDraft
+        let recipients = Set(model.state.agents.prefix(2).map(\.id))
+        model.state.selection = recipients
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let comparisons = try encoder.encode(model.state.comparisons)
+        controller.session.note = "Local feedback retry fixture"
+        controller.session.contact = "fixture@example.com"
+        controller.session.includeDiagnostics = false
+        _ = controller.session.diagnosticsPreview
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(FeedbackWindowProtocol.bodies.isEmpty, "Opening/editing/previewing feedback must not send it")
+        controller.session.contact = "invalid address"
+        controller.session.send()
+        precondition(FeedbackWindowProtocol.bodies.isEmpty, "Invalid feedback must not reach transport")
+        controller.session.contact = "fixture@example.com"
+        for attempt in 1...3 {
+            controller.session.send()
+            controller.session.send() // An in-flight click must not duplicate the request.
+            try await waitUntil { !controller.session.isSending }
+            precondition(FeedbackWindowProtocol.bodies.count == attempt, "Only explicit, valid sends may reach transport")
+            precondition(model.state.draft == originalDraft && model.state.selection == recipients,
+                         "Feedback must preserve the unsent workspace draft and recipients")
+            let currentComparisons = try encoder.encode(model.state.comparisons)
+            precondition(currentComparisons == comparisons, "Feedback must not change conversation receipts")
+            if attempt < 3 {
+                precondition(feedback.isVisible && FeedbackWindowController.current === controller,
+                             "HTTP failure or mismatched receipt must keep the form open")
+                precondition(controller.session.note == "Local feedback retry fixture" &&
+                             controller.session.contact == "fixture@example.com" &&
+                             !controller.session.includeDiagnostics && controller.session.canSend,
+                             "Failure must retain the complete editable form for retry")
+            }
+        }
+        let payloads = try FeedbackWindowProtocol.bodies.map { try JSONSerialization.jsonObject(with: $0) as! [String: Any] }
+        let requestID = payloads[0]["id"] as! String
+        precondition(UUID(uuidString: requestID) != nil)
+        for payload in payloads {
+            precondition(Set(payload.keys) == ["id", "kind", "note", "contact"],
+                         "Opted-out diagnostics and workspace data must never be uploaded")
+            precondition(payload["id"] as? String == requestID, "Unchanged retries must reuse the original request ID")
+            precondition(payload["kind"] as? String == "feedback" &&
+                         payload["note"] as? String == "Local feedback retry fixture" &&
+                         payload["contact"] as? String == "fixture@example.com")
+        }
+        precondition(!feedback.isVisible, "A confirmed feedback receipt must close its window")
+        try await waitUntil { FeedbackWindowController.current == nil && workspace.isKeyWindow }
+        precondition(workspace.isVisible && workspace.isKeyWindow, "Successful feedback must restore the main workspace")
+        controller.session.send()
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(FeedbackWindowProtocol.bodies.count == 3, "An already confirmed request must not be resent")
+        model.webAgents.beginShutdown()
+        await model.webAgents.cancelAndWait()
+        print("PASS: explicit feedback submission only; opt-out payload privacy; failure and mismatched receipt retain form/draft/recipients/receipts; unchanged retries reuse ID; confirmed receipt closes feedback and restores workspace. Local URLProtocol fixture; no feedback uploaded.")
+    }
+
     @MainActor static func runChecks() async throws {
         _ = NSApplication.shared
+        try await runFeedbackWindowChecks()
         let scrollModel = AppModel()
         let scrollAgent = scrollModel.state.agents[0]
         let scrollID = await scrollModel.prepareWebComparison("Scroll fixture original", recipientIDs: Set(scrollModel.state.agents.prefix(3).map(\.id)), agents: [])!
@@ -483,6 +602,122 @@ import msgblastCore
         quickModel.timer?.invalidate()
         await quickModel.webAgents.cancelAndWait()
         print("PASS: quick access excludes hidden agents and selects grid Messages, a named website copy, and CLI exclusively; preserves drafts/selections and blocks during sends without submitting.")
+        let browseModel = AppModel()
+        let browseA = await browseModel.prepareWebComparison("First chat", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        browseModel.setSharedDraft("First chat draft")
+        let browseB = await browseModel.prepareWebComparison("Second chat", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        browseModel.setSharedDraft("Second chat draft")
+        let browseBroadcast = browseModel.beginSharedWebBroadcast(nativeOnly: true, comparisonID: browseB)!
+        browseModel.openWebComparison(browseA, present: false)
+        precondition(browseModel.webAgents.comparisonID == browseB, "Input handoff must finish before switching")
+        browseModel.finishSharedWebInputs(browseBroadcast)
+        precondition(!browseModel.requestNewBlast(), "An unconfirmed submission still owns its draft")
+        browseModel.confirmSharedWebSubmission(browseBroadcast)
+        browseModel.openWebComparison(browseA, present: false)
+        precondition(browseModel.webAgents.comparisonID == browseA && browseModel.state.draft == "First chat draft")
+        precondition(!browseModel.requestNewBlast(agent: .web(.wabi)), "Quick chat cannot navigate a busy app")
+        precondition(browseModel.requestNewBlast())
+        browseModel.setSharedDraft("New chat draft")
+        let secondBroadcast = browseModel.beginSharedWebBroadcast(nativeOnly: true)!
+        let secondComparison = await browseModel.prepareWebComparison("New independent chat", recipientIDs: [], agents: [.init(provider: .claudeApp)])!
+        precondition(browseModel.bindSharedWebBroadcast(secondBroadcast, to: secondComparison))
+        precondition(!browseModel.requestNewBlast(), "The new broadcast owns input until it is handed off")
+        browseModel.finishSharedWebBroadcast(browseBroadcast)
+        precondition(browseModel.webBroadcastBusy && !browseModel.requestNewBlast(), "An older completion must not unlock the new broadcast")
+        browseModel.finishSharedWebInputs(browseBroadcast)
+        browseModel.confirmSharedWebSubmission(browseBroadcast)
+        precondition(!browseModel.requestNewBlast(), "Stale callbacks cannot release the new broadcast")
+        browseModel.finishSharedWebInputs(secondBroadcast)
+        browseModel.confirmSharedWebSubmission(secondBroadcast)
+        precondition(browseModel.webBroadcastReplyGate.canBrowseWhileWaiting)
+        browseModel.finishSharedWebBroadcast(secondBroadcast)
+        precondition(browseModel.webAgents.comparisonID == secondComparison && browseModel.state.draft == "New chat draft")
+        browseModel.openWebComparison(browseB, present: false)
+        precondition(browseModel.state.draft == "Second chat draft")
+        let browseSaved = try browseModel.local.load()
+        precondition(browseSaved.workspaceDrafts?[browseA.uuidString] == "First chat draft")
+        browseModel.timer?.invalidate()
+        await browseModel.webAgents.cancelAndWait()
+        print("PASS: actual AppModel permits independent broadcasts after native input and confirmation, isolates completion callbacks, and retains each workspace draft.")
+        let independentMessages = AppModel()
+        let oldAppComparison = await independentMessages.prepareWebComparison("Earlier app prompt", recipientIDs: [], agents: [.init(provider: .wabi)])!
+        let oldAppBroadcast = independentMessages.beginSharedWebBroadcast(nativeOnly: true, comparisonID: oldAppComparison)!
+        independentMessages.finishSharedWebInputs(oldAppBroadcast)
+        independentMessages.confirmSharedWebSubmission(oldAppBroadcast)
+        precondition(independentMessages.requestNewBlast())
+        let independentRecipient = independentMessages.state.agents[0]
+        independentMessages.setSharedDraft("A separate Messages prompt")
+        await independentMessages.start(recipientIDs: [independentRecipient.id])
+        let messagesComparison = independentMessages.state.comparisons[0]
+        precondition(messagesComparison.id != oldAppComparison && messagesComparison.members.count == 1)
+        precondition(messagesComparison.members[0].submission == .submitted && messagesComparison.members[0].anchor != nil)
+        precondition(independentMessages.webBroadcastBusy, "Messages must not finish the earlier app's broadcast")
+        independentMessages.finishSharedWebBroadcast(oldAppBroadcast)
+        precondition(independentMessages.comparison(oldAppComparison)?.prompt == "Earlier app prompt")
+        precondition(independentMessages.comparison(messagesComparison.id)?.prompt == "A separate Messages prompt")
+        independentMessages.timer?.invalidate()
+        await independentMessages.webAgents.cancelAndWait()
+        print("PASS: actual AppModel submits a separate simulated Messages conversation while the earlier native app reply remains owned.")
+        let busyGridModel = AppModel()
+        for session in busyGridModel.webAgents.sessions { session.setEnabled(false) }
+        let busyWabi = busyGridModel.webAgents.session(for: .init(provider: .wabi))!
+        let readyClaude = busyGridModel.webAgents.session(for: .init(provider: .claudeApp))!
+        for session in [busyWabi, readyClaude] {
+            session.setEnabled(true)
+            busyGridModel.webAgents.select(session, selected: true)
+        }
+        var earlierRequest = WebSendAttempt(text: "Earlier Wabi question", status: .waiting)
+        earlierRequest.comparisonID = UUID()
+        earlierRequest.messageID = earlierRequest.id.uuidString
+        busyWabi.updateState { $0.attempts = [earlierRequest] }
+        let gridContact = busyGridModel.state.agents[0]
+        busyGridModel.state.selection = [gridContact.id]
+        busyGridModel.state.agentGrid = .init(visibleIDs: [busyWabi.id.gridID, readyClaude.id.gridID, .messages(gridContact.id)])
+        busyGridModel.setSharedDraft("Send to available recipients while Wabi is busy")
+        let busyGridWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1200, height: 800), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        var gridShowsComparison = false
+        busyGridWindow.contentView = NSHostingView(rootView: AgentsWorkspaceView(model: busyGridModel, web: busyGridModel.webAgents,
+            showingComparison: Binding(get: { gridShowsComparison }, set: { gridShowsComparison = $0 })))
+        busyGridWindow.orderBack(nil)
+        try await waitUntil {
+            busyGridWindow.contentView.flatMap { privateEditor(in: $0) }?.string == busyGridModel.state.draft
+        }
+        let gridEditor = privateEditor(in: busyGridWindow.contentView!)!
+        precondition(gridEditor.sendMessage != nil)
+        gridEditor.sendMessage?()
+        try await waitUntil {
+            readyClaude.state.attempts.first?.status == .observed &&
+                busyGridModel.state.comparisons.first?.members.first?.submission == .submitted &&
+                !busyGridModel.webBroadcastBusy
+        }
+        let gridComparison = busyGridModel.state.comparisons[0]
+        precondition(gridComparison.resolvedWebAgentIDs == [readyClaude.id], "The busy app must not join or receive this broadcast")
+        precondition(gridComparison.members.map(\.id) == [gridContact.id])
+        precondition(busyWabi.state.selected, "Sending from the grid must preserve a busy agent's saved selection")
+        precondition(busyWabi.state.attempts == [earlierRequest], "The earlier request must not be dismissed, reassigned or resent")
+        try await waitUntil {
+            editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Claude" }
+        }
+        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "A busy nonmember must not appear as an empty pane in the new comparison")
+        busyWabi.updateState { $0.attempts[0].status = .observed }
+        precondition(busyGridModel.webAgents.broadcastSelection.contains { $0.id == busyWabi.id }, "Completing the reply restores availability without another selection click")
+        busyGridModel.setSharedDraft("Follow up only with the recipients of this comparison")
+        try await waitUntil {
+            editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Shared prompt" && $0.string == busyGridModel.state.draft }
+        }
+        let followupEditor = editors(in: busyGridWindow.contentView!).first { $0.accessibilityLabel() == "Shared prompt" }!
+        followupEditor.sendMessage?()
+        try await waitUntil {
+            readyClaude.state.attempts.count == 2 && readyClaude.state.attempts.first?.status == .observed &&
+                busyGridModel.state.comparisons.first?.followUps.count == 1 && !busyGridModel.webBroadcastBusy
+        }
+        precondition(busyWabi.state.attempts.count == 1)
+        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "Completing another conversation must not join this comparison")
+        busyGridWindow.orderOut(nil)
+        busyGridWindow.contentView = nil
+        busyGridModel.timer?.invalidate()
+        await busyGridModel.webAgents.cancelAndWait()
+        print("PASS: actual Agents grid composer broadcasts to ready App Agent and Messages recipients, preserves the busy app selection and request, and restores availability when its reply completes. Simulated providers and Messages; no live sends.")
         let model = AppModel()
         precondition(model.demo && model.local.url.path.contains("UIFixture"))
         model.coordinator = WindowCoordinator(model: model)
@@ -676,7 +911,7 @@ import msgblastCore
             return [.muse: receipt]
         }, messages: { text in
             model.state.comparisons[raceIndex].allDraft = text
-            await model.followUp(raceID, recipients: [recipient.id], newAttemptID: broadcastID)
+            await model.followUp(raceID, recipients: [recipient.id], newAttemptID: broadcastID, telemetryManagedExternally: true)
             gate.messagesFinished = true
             return raceID
         })
@@ -722,25 +957,28 @@ import msgblastCore
             session.setEnabled(true)
             await session.connectDesktopConversation()
         }
-        let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: nativeSessions.map(\.id))!
-        let nativeReplies = await WebAgents.send("Native comparison fixture", to: nativeSessions, comparisonID: nativeID)
-        precondition(nativeReplies.count == 3 && nativeReplies.values.allSatisfy { $0.status == .observed })
-        let savedBindings = nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] }
-        let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
-        nativeModel.webAgents.setComparison(nil)
-        nativeModel.openWebComparison(nativeID)
-        for _ in 0..<100 where !nativeSessions.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
-            try await Task.sleep(for: .milliseconds(10))
+        for sharedApp in nativeSessions.prefix(2) {
+            let pair = [sharedApp, nativeSessions[2]]
+            let nativeID = await nativeModel.prepareWebComparison("Native comparison fixture", recipientIDs: [], agents: pair.map(\.id))!
+            let nativeReplies = await WebAgents.send("Native comparison fixture", to: pair, comparisonID: nativeID)
+            precondition(nativeReplies.count == 2 && nativeReplies.values.allSatisfy { $0.status == .observed })
+            let savedBinding = sharedApp.state.chatgptConversations[nativeID.uuidString]
+            let savedClaude = nativeSessions[2].state.claudeConversations[nativeID.uuidString]
+            nativeModel.webAgents.setComparison(nil)
+            nativeModel.openWebComparison(nativeID)
+            for _ in 0..<100 where !pair.allSatisfy({ $0.snapshot.ready && $0.state.comparisonID == nativeID }) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            precondition(pair.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
+            precondition(sharedApp.state.chatgptConversations[nativeID.uuidString] == savedBinding)
+            precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
+            precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(pair.map(\.id)))
+            let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
+            precondition(savedNativeComparison.resolvedWebAgentIDs == pair.map(\.id))
         }
-        precondition(nativeSessions.allSatisfy { $0.snapshot.ready && $0.state.comparisonID == nativeID })
-        precondition(nativeSessions.map { $0.state.chatgptConversations[nativeID.uuidString] } == savedBindings)
-        precondition(nativeSessions[2].state.claudeConversations[nativeID.uuidString] == savedClaude)
-        precondition(Set(nativeModel.webAgents.selected.map(\.id)) == Set(nativeSessions.map(\.id)))
-        let savedNativeComparison = try nativeModel.local.load().comparisons.first { $0.id == nativeID }!
-        precondition(savedNativeComparison.resolvedWebAgentIDs == nativeSessions.map(\.id))
         nativeModel.webAgents.beginShutdown()
         await nativeModel.webAgents.cancelAndWait()
-        print("PASS: actual AppModel + LocalStore reopen the three native providers with the same owned bindings and exact membership. Demo simulation; no live apps or sends.")
+        print("PASS: actual AppModel + LocalStore reopen ChatGPT and Dots separately with Claude, retaining owned bindings and exact membership. Demo simulation; no live apps or sends.")
         let choiceModel = AppModel()
         let businessAddress = "urn:biz:00000000-0000-0000-0000-000000000001"
         let businessChat = Chat(id: "iMessage;-;" + businessAddress, handle: businessAddress, lastActivity: 0, displayName: "Fixture Poke", businessConversation: true)

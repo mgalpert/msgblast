@@ -320,6 +320,9 @@ final class OnboardingWorkflowTests: XCTestCase {
         prompt.click(); prompt.typeText("Clean native conversation fixture")
         app.buttons["Send & compare"].click()
         XCTAssertTrue(app.textViews["Message ChatGPT"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["ChatGPT fixture reply: Clean native conversation fixture"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Claude fixture reply: Clean native conversation fixture"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Sending…"].exists, "Completed replies must retire the outgoing sending status")
         XCTAssertFalse(app.staticTexts["desktop-app-installation"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["desktop-connection-confirmation"].exists)
         XCTAssertFalse(app.switches["Enable ChatGPT"].exists)
@@ -328,6 +331,20 @@ final class OnboardingWorkflowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["desktop-app-installation"].waitForExistence(timeout: 5))
         app.buttons["Done"].click()
         XCTAssertFalse(app.staticTexts["desktop-app-installation"].exists)
+
+        // The Agents grid is a new workspace, even when reached from a
+        // comparison instead of the New Blast button.
+        app.buttons["Agents"].click()
+        let gridDraft = app.textViews["Shared prompt"]
+        XCTAssertTrue(gridDraft.waitForExistence(timeout: 5))
+        gridDraft.click(); gridDraft.typeText("A draft for a different conversation")
+        let saved = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Clean native conversation fixture")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        saved.click()
+        XCTAssertTrue(app.textViews["Message ChatGPT"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textViews["Shared prompt"].value as? String, "", "The grid draft must not be saved in the previous conversation")
+        app.buttons["Agents"].click()
+        XCTAssertEqual(app.textViews["Shared prompt"].value as? String, "A draft for a different conversation")
     }
 
     @MainActor

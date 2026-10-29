@@ -1,3 +1,5 @@
+import AppKit
+import CryptoKit
 import Foundation
 import ImageIO
 
@@ -13,11 +15,22 @@ public enum DesktopAppProvider: String, Codable, Sendable {
         case .claude: ["com.anthropic.claudefordesktop"]
     } }
     var bundleID: String { bundleIDs[0] }
+    public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi, .chatgpt, .dots, .claude].contains(self) }
 }
 
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {
     public let name: String
     public init(name: String) { self.name = name }
+}
+
+// Keep only hashes of the prior native conversation in persistent state.
+struct GrokReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    let bot: String
+    let prompt: String
+    let anchor: DesktopAppSnapshot.GrokHistoryAnchor
+    var automaticRecovery = true
 }
 
 enum DesktopAppError: LocalizedError {
@@ -126,6 +139,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     func grokBots() throws -> [(name: String, element: Element)] {
         try checkReadable()
         guard let end = body.firstIndex(where: { $0.role == "AXSplitter" && $0.label == "Resize sidebar" }) else {
+            guard body.contains(where: { $0.role == "AXWebArea" }) else { throw DesktopAppError.incompleteSnapshot }
             throw DesktopAppError.unavailable("Grok Bot's bot list is unavailable. Open its sidebar and refresh the bots.")
         }
         let sidebar = body[..<end]
@@ -135,7 +149,9 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             guard button.role == "AXButton", let index = button.element_index,
                   button.enabled != false, button.element_token != nil, var name = button.label else { return nil }
             let listed = button.parent_index.map { listIndexes.contains($0) } == true
-            if name.hasSuffix(", Unread activity") { name.removeLast(", Unread activity".count) }
+            while let suffix = [", Unread activity", ", Working"].first(where: { name.hasSuffix($0) }) {
+                name.removeLast(suffix.count)
+            }
             // The unread badge replaces the main-bot image. Its pinned button
             // retains the accessible Main Bot suffix outside the regular list.
             let main = mainBotIndexes.contains(index) || (!listed && name.hasSuffix(", Main Bot"))
@@ -177,13 +193,6 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     func historyText(app: DesktopAppProvider) throws -> [String] {
         try transcript(app: app).filter { $0.role == "AXStaticText" }.map(\.text)
     }
-    var wabiIsBlankAIChat: Bool {
-        get throws {
-            let text = try transcript(app: .wabi).filter { $0.role == "AXStaticText" }.map(\.text)
-                .filter { $0 != "Today" && !Self.isTimestamp($0) }
-            return text == ["What can I do for you?"]
-        }
-    }
     private func outgoingEnds(_ prompt: String, app: DesktopAppProvider, transcript: [Element]) throws -> [Int] {
         guard app == .grokBot else {
             let text = app == .muse ? "User message: \(prompt)" : prompt
@@ -214,19 +223,20 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         }
         return ends
     }
-    struct GrokHistoryAnchor: Sendable {
-        let text: [String]
+    struct GrokHistoryAnchor: Codable, Equatable, Sendable {
+        let digests: [Data]
+        private static func digest(_ text: String) -> Data { Data(SHA256.hash(data: Data(text.utf8))) }
         init(history: [String], bot: String) {
             let speakers = history.indices.filter { history[$0] == "You" || history[$0] == bot }
             let start = speakers.dropLast().last ?? history.startIndex
-            text = Array(history.dropFirst(start))
+            digests = history.dropFirst(start).map(Self.digest)
         }
         func boundary(in history: [String]) -> Int? {
-            if text.isEmpty { return nil }
-            guard history.count >= text.count else { return nil }
-            let matches = (0...(history.count - text.count)).filter { history[$0..<($0 + text.count)].elementsEqual(text) }
+            guard !digests.isEmpty, digests.allSatisfy({ $0.count == 32 }), history.count >= digests.count else { return nil }
+            let historyDigests = history.map(Self.digest)
+            let matches = (0...(history.count - digests.count)).filter { historyDigests[$0..<($0 + digests.count)].elementsEqual(digests) }
             guard matches.count == 1 else { return nil }
-            return matches[0] + text.count
+            return matches[0] + digests.count
         }
         func matchesEnd(of history: [String]) -> Bool { boundary(in: history) == history.count }
     }
@@ -238,7 +248,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
         }
         return GrokHistoryAnchor(history: history, bot: bot)
     }
-    func grokReply(after prompt: String, anchor: GrokHistoryAnchor) throws -> String? {
+    private func grokAddedTranscript(anchor: GrokHistoryAnchor) throws -> [Element] {
         let transcript = try transcript(app: .grokBot)
         let textRows = transcript.indices.filter { transcript[$0].role == "AXStaticText" }
         guard let boundary = anchor.boundary(in: textRows.map { transcript[$0].text }) else {
@@ -252,7 +262,26 @@ struct DesktopAppSnapshot: Decodable, Sendable {
               messages.isEmpty || messages.first == "You" else {
             throw DesktopAppError.unavailable("Another message appeared in Grok Bot while waiting. No reply was attributed.")
         }
-        return try reply(after: prompt, app: .grokBot, outgoingOccurrence: 1, transcript: added)
+        return added
+    }
+    func grokSubmissionConfirmed(after prompt: String, anchor: GrokHistoryAnchor) throws -> Bool {
+        try outgoingEnds(prompt, app: .grokBot, transcript: grokAddedTranscript(anchor: anchor)).count == 1
+    }
+    func grokLatestMessagesButton() throws -> Element? {
+        let buttons = try transcript(app: .grokBot).filter {
+            $0.role == "AXButton" && $0.enabled != false && $0.element_token != nil &&
+            ($0.label == "Scroll to bottom" || ($0.label ?? "").range(of: #"^\d+ new messages?$"#, options: .regularExpression) != nil)
+        }
+        guard buttons.count <= 1 else { throw DesktopAppError.incompleteSnapshot }
+        return buttons.first
+    }
+    var grokIsWorking: Bool {
+        guard let name = try? conversation(app: .grokBot), let field = try? composer(app: .grokBot).element,
+              let index = body.firstIndex(where: { $0.element_token == field.element_token }) else { return false }
+        return body.suffix(from: index).dropFirst().contains { $0.role == "AXStaticText" && $0.text == "\(name) is working" }
+    }
+    func grokReply(after prompt: String, anchor: GrokHistoryAnchor) throws -> String? {
+        try reply(after: prompt, app: .grokBot, outgoingOccurrence: 1, transcript: grokAddedTranscript(anchor: anchor))
     }
     func outgoingCount(_ prompt: String, app: DesktopAppProvider) throws -> Int {
         try outgoingEnds(prompt, app: app, transcript: transcript(app: app)).count
@@ -304,28 +333,48 @@ struct DesktopAppSnapshot: Decodable, Sendable {
 }
 
 actor DesktopAppConversation {
-    static let shared = DesktopAppConversation()
+    enum Delivery: String, Sendable { case background, foreground }
+    static let shared = DesktopAppConversation(delivery: .foreground)
     private var occupied: Set<DesktopAppProvider> = []
     struct Timing: Sendable {
         var pollInterval: Duration = .seconds(1)
         var stableDuration: Duration = .seconds(3)
-        var replyTimeout: Duration = .seconds(180)
+        var replyTimeout: Duration = .seconds(360)
         var callTimeout: TimeInterval = 30
+        var replyClock = DesktopAppWorkflow.ReplyClock(ContinuousClock())
     }
+    typealias ProcessRunner = @Sendable (URL, [String], [String: String], TimeInterval, AgentCancellation) async throws -> AgentProcess.Result
     private let executable: URL?
     private let embedded: Bool
+    nonisolated let delivery: Delivery
     private let timing: Timing
     private let readGrok: @Sendable (Target) throws -> GrokBotNativeState
-    init(executable: URL? = nil, timing: Timing = Timing(), readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
+    private let runProcess: ProcessRunner
+    private let confirmHostFocus: @Sendable (Target) async -> Bool
+    private let captureHostWindow: @Sendable () async throws -> Target
+    init(executable: URL? = nil, timing: Timing = Timing(), delivery: Delivery = .background,
+         runProcess: @escaping ProcessRunner = DesktopAppConversation.execute,
+         confirmHostFocus: @escaping @Sendable (Target) async -> Bool = { await DesktopAppConversation.hostHasFocus($0) },
+         captureHostWindow: @escaping @Sendable () async throws -> Target = { try await DesktopAppConversation.hostWindow() },
+         readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
         self.executable = executable ?? Self.findDriver()
         self.embedded = executable == nil
+        self.delivery = delivery
         self.timing = timing
         self.readGrok = readGrok
+        self.runProcess = runProcess
+        self.confirmHostFocus = confirmHostFocus
+        self.captureHostWindow = captureHostWindow
+    }
+    nonisolated static func execute(_ executable: URL, _ arguments: [String], _ environment: [String: String], _ timeout: TimeInterval, _ cancellation: AgentCancellation) async throws -> AgentProcess.Result {
+        try await Task.detached {
+            try AgentProcess.run(executable: executable, arguments: arguments, input: "", environment: environment, timeout: timeout, cancellation: cancellation)
+        }.value
     }
     static func findDriver() -> URL? {
         EmbeddedCuaDriver.bundledExecutable()
     }
-    struct Target: Sendable, Equatable { let pid: Int; let window: Int }
+    struct Target: Sendable, Equatable { let pid: Int; let window: Int; var expectedSheet: Int? = nil }
     private struct AppList: Decodable, Sendable { struct App: Decodable, Sendable { let bundle_id: String; let pid: Int; let running: Bool }; let apps: [App] }
     private struct WindowList: Decodable, Sendable {
         struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; var space_ids: [UInt64]?; var layer: Int?; let bounds: Bounds }
@@ -346,10 +395,7 @@ actor DesktopAppConversation {
         let cancellation = AgentCancellation()
         let callTimeout = timing.callTimeout
         let result = try await withTaskCancellationHandler {
-            try await Task.detached {
-                try AgentProcess.run(executable: executable, arguments: callArguments, input: "",
-                                     environment: environment, timeout: callTimeout, cancellation: cancellation)
-            }.value
+            try await runProcess(executable, callArguments, environment, callTimeout, cancellation)
         } onCancel: { cancellation.cancel() }
         guard result.status == 0, let data = result.stdout.data(using: .utf8) else {
             DesktopAccessibilityDiagnostics.driverCallFailed(tool: tool, status: result.status, stderr: result.stderr)
@@ -357,11 +403,113 @@ actor DesktopAppConversation {
         }
         let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         if envelope?["refusal"] != nil || envelope?["status"] as? String == "refused" || envelope?["effect"] as? String == "refused" || envelope?["isError"] as? Bool == true || envelope?["error"] != nil {
-            throw DesktopAppError.unavailable("App control refused this request. Review the app and msgblast permissions; foreground control is never automatic.")
+            throw DesktopAppError.unavailable("App control refused this request. Review the app and msgblast permissions; nothing will be retried automatically.")
         }
         return try JSONDecoder().decode(type, from: data)
     }
     struct Action: Decodable, Sendable { var effect: String? }
+    struct FocusResult: Decodable, Sendable {
+        struct Exact: Decodable, Sendable { let verified: Bool }
+        let activated: Bool
+        let pid: Int
+        let window_id: Int
+        let exact_window_effect: Exact
+    }
+    func activate(_ target: Target, session: String) async throws {
+        let result = try await call("bring_to_front", ["session": session],
+                                    numbers: ["pid": target.pid, "window_id": target.window], as: FocusResult.self)
+        guard result.activated, result.pid == target.pid, result.window_id == target.window,
+              result.exact_window_effect.verified else {
+            throw DesktopAppError.unavailable("The requested app window could not be focused. Nothing will be retried automatically.")
+        }
+    }
+    @MainActor private static func hostWindow() throws -> Target {
+        let app = NSApplication.shared
+        let pid = Int(ProcessInfo.processInfo.processIdentifier)
+        func target(_ window: NSWindow?) -> Target? {
+            hostWindowNumber(window).map { Target(pid: pid, window: $0, expectedSheet: window?.attachedSheet?.windowNumber) }
+        }
+        return try hostWindow(key: target(app.keyWindow), main: target(app.mainWindow),
+                              visible: app.windows.compactMap(target))
+    }
+    static func hostWindow(key: Target?, main: Target?, visible: [Target]) throws -> Target {
+        if let preferred = key ?? main, visible.contains(preferred) { return preferred }
+        guard visible.count == 1, let only = visible.first else {
+            throw DesktopAppError.unavailable("Keep one msgblast conversation window open before sending to an App Agent.")
+        }
+        return only
+    }
+    @MainActor private static func hostWindowNumber(_ window: NSWindow?) -> Int? {
+        guard let window, window.isVisible, !window.isMiniaturized, window.canBecomeMain,
+              window.level == .normal else { return nil }
+        return window.windowNumber
+    }
+    @MainActor private static func hostHasFocus(_ target: Target) -> Bool {
+        let app = NSApplication.shared
+        let key = app.keyWindow
+        let attachedKey = key?.isSheet == true && key?.sheetParent?.windowNumber == target.window ? key?.windowNumber : nil
+        return hostHasFocus(target, processID: Int(ProcessInfo.processInfo.processIdentifier),
+                            keyWindow: hostWindowNumber(key) ?? attachedKey, active: app.isActive,
+                            blocked: (app.modalWindow != nil && app.modalWindow?.windowNumber != target.expectedSheet) || key?.attachedSheet != nil)
+    }
+    static func hostHasFocus(_ target: Target, processID: Int, keyWindow: Int?, active: Bool, blocked: Bool) -> Bool {
+        target.pid == processID && (target.expectedSheet ?? target.window) == keyWindow && active && !blocked
+    }
+    func beginForeground(_ app: DesktopAppProvider, session: String,
+                         host: Target? = nil, onRestored: @escaping @Sendable () async -> Void = {}) async throws -> DesktopForegroundLease? {
+        guard delivery == .foreground else { return nil }
+        let owner = try await DesktopForegroundOwner.shared.acquire()
+        let returnTo: Target
+        do { if let host { returnTo = host } else { returnTo = try await captureHostWindow() } }
+        catch { await DesktopForegroundOwner.shared.release(owner); throw error }
+        let lease = foregroundLease(owner: owner, host: returnTo, session: session, onRestored: onRestored)
+        do {
+            let destination = try await target(app)
+            try await activate(destination, session: session)
+            return lease
+        } catch {
+            // Even an unverified activation may have changed focus. Cleanup
+            // runs outside cancellation before another app can own the desktop.
+            try await lease.restore()
+            throw error
+        }
+    }
+    func beginReplyRefresh(_ destination: Target, session: String, host: Target? = nil,
+                           onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in },
+                           restoreDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
+                           hostIsActive: @Sendable (Target) async -> Bool = { host in await MainActor.run {
+                               NSApplication.shared.isActive && NSApplication.shared.keyWindow?.windowNumber == host.window
+                           } }) async throws -> DesktopForegroundLease? {
+        guard delivery == .foreground else { return nil }
+        let returnTo: Target
+        if let host { returnTo = host } else { returnTo = try await captureHostWindow() }
+        guard await hostIsActive(returnTo) else { return nil }
+        guard let owner = await DesktopForegroundOwner.shared.acquireIfAvailable() else { return nil }
+        guard await hostIsActive(returnTo) else { await DesktopForegroundOwner.shared.release(owner); return nil }
+        let lease = foregroundLease(owner: owner, host: returnTo, session: session, onRestoreFailure: onRestoreFailure)
+        do {
+            try Task.checkCancellation()
+            try await activate(destination, session: session)
+            await lease.restoreAfterSubmission(delay: restoreDelay)
+            return lease
+        } catch {
+            try await lease.restore()
+            throw error
+        }
+    }
+    private func foregroundLease(owner: UUID, host: Target, session: String,
+                                 onRestored: @escaping @Sendable () async -> Void = {},
+                                 onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in }) -> DesktopForegroundLease {
+        DesktopForegroundLease(owner: owner, host: host, onRestored: onRestored, onRestoreFailure: onRestoreFailure) {
+            do { try await self.activate(host, session: session) }
+            catch {
+                // Auxiliary host windows can confuse the driver's front-window
+                // check. The app can independently verify its own key window.
+                guard await self.confirmHostFocus(host) else { await self.endSession(session); throw error }
+            }
+            await self.endSession(session)
+        }
+    }
     private func grokState(_ state: DesktopAppSnapshot, target: Target) async throws -> GrokBotNativeState {
         try state.checkReadable()
         let read = readGrok
@@ -395,10 +543,13 @@ actor DesktopAppConversation {
     }
     private func checkedGrokBot(_ name: String, state: DesktopAppSnapshot, target: Target) async throws -> (native: GrokBotNativeState, element: DesktopAppSnapshot.Element) {
         let native = try await grokState(state, target: target)
-        guard native.draft.isEmpty, !state.isGenerating else { throw DesktopAppError.unavailable("Grok Bot has an unsent draft or active response. It was preserved.") }
+        guard !state.isGenerating, native.name != name || native.draft.isEmpty else { throw DesktopAppError.unavailable("Grok Bot has an unsent draft or active response. It was preserved.") }
+        return (native, try grokBot(named: name, state: state))
+    }
+    private func grokBot(named name: String, state: DesktopAppSnapshot) throws -> DesktopAppSnapshot.Element {
         let matches = try state.grokBots().filter { $0.name == name }
         guard matches.count == 1 else { throw DesktopAppError.unavailable("This bot is missing or has a duplicate name. Choose your bot again in msgblast.") }
-        return (native, matches[0].element)
+        return matches[0].element
     }
     func checkGrokBot(named name: String) async throws {
         guard occupied.insert(.grokBot).inserted else { throw DesktopAppError.unavailable("Grok Bot is already handling a request.") }
@@ -407,7 +558,7 @@ actor DesktopAppConversation {
         defer { Task { await endSession(session) } }
         let target = try await target(.grokBot)
         let state = try await snapshot(target, session: session)
-        _ = try await checkedGrokBot(name, state: state, target: target)
+        _ = try grokBot(named: name, state: state)
     }
     private func openGrokBot(_ name: String, state initial: DesktopAppSnapshot, target: Target, session: String, screenshotURL: URL? = nil) async throws -> DesktopAppSnapshot {
         var state = initial
@@ -427,13 +578,7 @@ actor DesktopAppConversation {
         }
     }
     func connectGrokBot(named name: String) async throws -> DesktopConversationBinding {
-        guard occupied.insert(.grokBot).inserted else { throw DesktopAppError.unavailable("Grok Bot is already handling a request.") }
-        defer { occupied.remove(.grokBot) }
-        let session = "msgblast-connect-bot-\(UUID())"
-        defer { Task { await endSession(session) } }
-        let target = try await target(.grokBot)
-        let state = try await snapshot(target, session: session)
-        _ = try await openGrokBot(name, state: state, target: target, session: session)
+        try await checkGrokBot(named: name)
         return .init(name: name)
     }
     func target(_ app: DesktopAppProvider) async throws -> Target {
@@ -510,9 +655,18 @@ actor DesktopAppConversation {
             }
             try await self.input(step.input, focus: step.before.isEmpty, point: point, target: target, session: session)
         }, after: { step in
+            var refreshRequested = false
+            var refreshed = false
             let verified = try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: self.timing.pollInterval,
                 failure: "Grok Bot did not confirm the prepared draft. Send was not clicked; review the preserved text.",
                 read: {
+                    // Electron can defer publishing typed text until its window
+                    // becomes active again. Refresh the already-owned window
+                    // once, without typing or submitting a second time.
+                    if refreshRequested && !refreshed && self.delivery == .foreground {
+                        refreshed = true
+                        try await self.activate(target, session: session)
+                    }
                     let candidate = try await self.snapshot(target, session: session)
                     return (candidate, try await self.grokState(candidate, target: target))
                 }, ready: { observation in
@@ -529,13 +683,18 @@ actor DesktopAppConversation {
                           try history.matchesEnd(of: candidate.historyText(app: .grokBot)), !candidate.isGenerating else {
                         throw DesktopAppError.unavailable("Grok Bot did not confirm the prepared draft, focus, or history. Send was not clicked; review the preserved text.")
                     }
+                    if !nativeReady || !driverReady { refreshRequested = true }
                     return nativeReady && driverReady
                 })
             state = verified.0
         })
         return state
     }
-    func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding) async throws -> String {
+    func reply(_ prompt: String, app: DesktopAppProvider, binding: DesktopConversationBinding,
+               onSubmitAction: @Sendable () async -> Void = {},
+               onReceipt: @Sendable (DesktopAppSnapshot.GrokHistoryAnchor) async throws -> Void = { _ in },
+               onSubmitted: @Sendable () async throws -> Void = {},
+               releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
         guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !prompt.unicodeScalars.contains(where: { ($0.value < 32 && $0.value != 10) || $0.value == 127 }) else {
@@ -557,17 +716,78 @@ actor DesktopAppConversation {
         let field = try state.composer(app: app)
         let draft = app == .grokBot ? try await grokState(state, target: target).draft : field.draft
         guard draft.isEmpty else { throw DesktopAppError.unavailable("\(app.name) has an unsent draft. It was preserved.") }
+        try await onReceipt(receipt)
         state = try await typeGrokDraft(prompt, initial: state, target: target, session: session, binding: binding, image: image)
         let button = try state.sendButton(app: app)
-        return try await DesktopAppWorkflow.reply(app: app.name, timing: timing, submit: {
+        var submissionObserved = false
+        var revealedLatestMessages: String?
+        return try await DesktopAppWorkflow.reply(app: app.name, timing: timing, clock: timing.replyClock, onSubmitAction: onSubmitAction, releaseFocus: releaseFocus,
+            submit: {
             _ = try await self.call("click", ["session": session, "element_token": button.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
         }, observe: {
             state = try await self.snapshot(target, session: session)
             try self.validate(state, app: app, binding: binding, verifyBotList: false)
             if app == .grokBot, (try? state.grokBots().filter { $0.name == binding.name }.count) != 1 { return nil }
-            let cleared = app == .grokBot ? try await self.grokState(state, target: target).draft.isEmpty : try state.composer(app: app).draft.isEmpty
-            return cleared && !state.isGenerating ? try state.grokReply(after: prompt, anchor: receipt) : nil
+            let latest = try state.grokLatestMessagesButton()
+            if let latest, latest.label != revealedLatestMessages {
+                revealedLatestMessages = latest.label
+                _ = try await self.call("click", ["session": session, "element_token": latest.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+                state = try await self.snapshot(target, session: session)
+                try self.validate(state, app: app, binding: binding, verifyBotList: false)
+                if try state.grokLatestMessagesButton() == nil { revealedLatestMessages = nil }
+            } else if latest == nil { revealedLatestMessages = nil }
+            let answer = try state.grokReply(after: prompt, anchor: receipt)
+            if !submissionObserved, try state.grokSubmissionConfirmed(after: prompt, anchor: receipt) {
+                submissionObserved = true
+                try await onSubmitted()
+                try await releaseFocus()
+            }
+            return !state.isGenerating ? answer : nil
         })
+    }
+
+    // Read the selected bot only. Recovery can reveal its latest messages,
+    // but never switches conversations, types, or sends.
+    func recoverGrokReply(_ receipt: GrokReplyReceipt) async throws -> String? {
+        guard receipt.version == 1, !receipt.bot.isEmpty, !receipt.prompt.isEmpty else {
+            throw DesktopAppError.unavailable("The saved Grok Bot request cannot be verified.")
+        }
+        guard occupied.insert(.grokBot).inserted else { return nil }
+        defer { occupied.remove(.grokBot) }
+        let session = "msgblast-grok-recovery-\(UUID())"
+        defer { Task { await endSession(session) } }
+        let target = try await target(.grokBot)
+        let binding = DesktopConversationBinding(name: receipt.bot)
+        var revealedLatest: String?
+        var candidate: String?
+        for read in 0..<2 {
+            var state = try await snapshot(target, session: session)
+            try validate(state, app: .grokBot, binding: binding)
+            // A scrolled virtualized viewport can omit both the saved anchor
+            // and our outgoing message. Reveal the current transcript first;
+            // attribution still requires both after revalidating the bot.
+            if let latest = try state.grokLatestMessagesButton(), latest.label == "Scroll to bottom", latest.label != revealedLatest {
+                revealedLatest = latest.label
+                _ = try await call("click", ["session": session, "element_token": latest.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+                state = try await snapshot(target, session: session)
+                try validate(state, app: .grokBot, binding: binding)
+            }
+            guard try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
+            if let latest = try state.grokLatestMessagesButton(), latest.label != revealedLatest {
+                revealedLatest = latest.label
+                _ = try await call("click", ["session": session, "element_token": latest.element_token!, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: Action.self)
+                state = try await snapshot(target, session: session)
+                try validate(state, app: .grokBot, binding: binding)
+            }
+            guard !state.isGenerating, !state.grokIsWorking,
+                  try state.grokSubmissionConfirmed(after: receipt.prompt, anchor: receipt.anchor) else { return nil }
+            guard let answer = try state.grokReply(after: receipt.prompt, anchor: receipt.anchor), !answer.isEmpty else { return nil }
+            if read == 0 {
+                candidate = answer
+                if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+            } else { return candidate == answer ? answer : nil }
+        }
+        return nil
     }
 
     func endSession(_ session: String) async {
@@ -582,5 +802,62 @@ actor DesktopAppConversation {
                 throw DesktopAppError.unavailable("The selected Grok Bot is missing or now has a duplicate name. Nothing was retried.")
             }
         }
+    }
+}
+
+actor DesktopForegroundOwner {
+    static let shared = DesktopForegroundOwner()
+    private var owner: UUID?
+    func acquire() throws -> UUID {
+        guard let id = acquireIfAvailable() else { throw DesktopAppError.unavailable("Another App Agent is sending. Wait for it to finish entering its prompt.") }
+        return id
+    }
+    func acquireIfAvailable() -> UUID? {
+        guard owner == nil else { return nil }
+        let id = UUID(); owner = id; return id
+    }
+    func release(_ id: UUID) { if owner == id { owner = nil } }
+}
+
+actor DesktopForegroundLease {
+    nonisolated let host: DesktopAppConversation.Target?
+    private let owner: UUID
+    private let returnFocus: @Sendable () async throws -> Void
+    private let onRestored: @Sendable () async -> Void
+    private let onRestoreFailure: @Sendable (String) async -> Void
+    private var restoration: Task<Void, Error>?
+    private var delayedRestoration: Task<Void, Never>?
+    init(owner: UUID, host: DesktopAppConversation.Target? = nil, onRestored: @escaping @Sendable () async -> Void = {}, onRestoreFailure: @escaping @Sendable (String) async -> Void = { _ in }, returnFocus: @escaping @Sendable () async throws -> Void) {
+        self.owner = owner; self.host = host; self.onRestored = onRestored; self.returnFocus = returnFocus
+        self.onRestoreFailure = onRestoreFailure
+    }
+    func restoreAfterSubmission(delay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(5)) }) {
+        guard restoration == nil, delayedRestoration == nil else { return }
+        delayedRestoration = Task { [weak self] in
+            do {
+                try await delay()
+                try Task.checkCancellation()
+                try await self?.restore()
+            } catch { }
+        }
+    }
+    func restore() async throws {
+        if restoration == nil {
+            delayedRestoration?.cancel(); delayedRestoration = nil
+            let returnFocus = returnFocus, onRestored = onRestored, onRestoreFailure = onRestoreFailure, owner = owner
+            restoration = Task.detached {
+                var failure: Error?
+                do {
+                    try await returnFocus()
+                } catch {
+                    failure = DesktopAppError.unavailable("msgblast could not regain focus. Open msgblast to continue; nothing will be resent automatically.")
+                }
+                await DesktopForegroundOwner.shared.release(owner)
+                if let failure { await onRestoreFailure(failure.localizedDescription) }
+                await onRestored()
+                if let failure { throw failure }
+            }
+        }
+        try await restoration!.value
     }
 }

@@ -306,6 +306,181 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(draft.text, "My next message")
     }
 
+    func testBroadcastPreservesAnEditedAndRetypedDraft() async {
+        let draft = BroadcastDraft("First message")
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let started = expectation(description: "The broadcast is waiting for its reply")
+        let revision = draft.revision.value
+        let send = Task { @MainActor in
+            await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, shouldClearDraft: { draft.revision.value == revision }, clearDraft: { draft.text = "" }, web: { text in
+                started.fulfill()
+                for await _ in gate { break }
+                return [.muse: WebSendAttempt(text: text, status: .observed)]
+            }, messages: { _ in nil })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        draft.text = "Next message"
+        draft.text = "First message"
+        release.yield(()); release.finish()
+        _ = await send.value
+        XCTAssertEqual(draft.text, "First message", "The retyped draft belongs to the next message")
+    }
+
+    func testBroadcastDraftOwnershipSurvivesPromotionButNotWorkspaceChanges() async {
+        for scenario in ["unchanged", "promotion", "switched", "returned", "rejected"] {
+            let draft = BroadcastDraft("First message")
+            let sentRevision = draft.revision.value
+            let comparison = UUID(), other = UUID()
+            var workspace: UUID? = comparison
+            let (gate, release) = AsyncStream<Void>.makeStream()
+            let started = expectation(description: "Broadcast started: \(scenario)")
+            let send = Task { @MainActor in
+                await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, shouldClearDraft: {
+                    draft.revision.value == sentRevision && workspace == comparison
+                }, clearDraft: { draft.text = "" }, web: { text in
+                    started.fulfill()
+                    for await _ in gate { break }
+                    return [.muse: WebSendAttempt(text: text, status: scenario == "rejected" ? .notSent : .observed)]
+                }, messages: { _ in nil })
+            }
+            await fulfillment(of: [started], timeout: 2)
+            if scenario == "promotion" { draft.revision.switchedWorkspace(promotingDraft: true) }
+            if scenario == "switched" || scenario == "returned" {
+                draft.revision.switchedWorkspace(promotingDraft: false)
+                workspace = other
+            }
+            if scenario == "returned" {
+                draft.revision.switchedWorkspace(promotingDraft: false)
+                workspace = comparison
+            }
+            release.yield(()); release.finish()
+            _ = await send.value
+            XCTAssertEqual(draft.text, ["unchanged", "promotion"].contains(scenario) ? "" : "First message", scenario)
+        }
+    }
+
+    func testConfirmedSubmissionClearsDraftBeforeReplyWithoutClearingTheNextDraft() async {
+        let draft = BroadcastDraft("First message")
+        let submitted = expectation(description: "A durable outgoing receipt was recorded")
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let send = Task { @MainActor in
+            await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, clearDraft: { draft.text = "" }, web: { text, confirmed in
+                confirmed()
+                submitted.fulfill()
+                for await _ in gate { break }
+                return [.muse: WebSendAttempt(text: text, status: .observed)]
+            }, messages: { _, _ in nil })
+        }
+        await fulfillment(of: [submitted], timeout: 2)
+        XCTAssertEqual(draft.text, "", "The user need not wait for the reply to start a new draft")
+        draft.text = "First message"
+        release.yield(()); release.finish()
+        _ = await send.value
+        XCTAssertEqual(draft.text, "First message", "Completing the reply must not clear a later draft")
+    }
+
+    func testConfirmationDoesNotClearAnEditedAndRetypedDraft() async {
+        let draft = BroadcastDraft("First message")
+        let revision = draft.revision.value
+        let started = expectation(description: "The recipient is preparing")
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let send = Task { @MainActor in
+            await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, shouldClearDraft: { draft.revision.value == revision }, clearDraft: { draft.text = "" }, web: { text, confirmed in
+                started.fulfill()
+                for await _ in gate { break }
+                confirmed()
+                return [.muse: WebSendAttempt(text: text, status: .waiting)]
+            }, messages: { _, _ in nil })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        draft.text = "Next message"
+        draft.text = "First message"
+        release.yield(()); release.finish()
+        _ = await send.value
+        XCTAssertEqual(draft.text, "First message")
+    }
+
+    func testMessagesReceiptClearsOnlyWhenARecipientMayHaveBeenSent() async {
+        for (states, clearsBeforeReply, clearsAtEnd) in [
+            ([Submission.failed, .ready], false, false),
+            ([.uncertain, .failed], false, true),
+            ([.submitted, .failed], true, true)
+        ] {
+            let draft = BroadcastDraft("First message")
+            let comparison = UUID()
+            let finishedMessages = expectation(description: "Messages processing finished")
+            let (gate, release) = AsyncStream<Void>.makeStream()
+            let send = Task { @MainActor in
+                await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, clearDraft: { draft.text = "" }, web: { text, _ in
+                    for await _ in gate { break }
+                    return [.muse: WebSendAttempt(text: text, status: .notSent)]
+                }, messages: { _, confirmed in
+                    let result = AgentBroadcast.messagesResult(states: states, comparisonID: comparison, onConfirmed: confirmed)
+                    finishedMessages.fulfill()
+                    return result
+                })
+            }
+            await fulfillment(of: [finishedMessages], timeout: 2)
+            XCTAssertEqual(draft.text.isEmpty, clearsBeforeReply)
+            release.yield(()); release.finish()
+            let result = await send.value
+            XCTAssertEqual(draft.text.isEmpty, clearsAtEnd)
+            XCTAssertEqual(result.comparisonID, clearsAtEnd ? comparison : nil)
+        }
+    }
+
+    func testNoConfirmedSubmissionKeepsDraftWhileRecipientsFail() async {
+        let draft = BroadcastDraft("First message")
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let started = expectation(description: "A recipient is still checking")
+        let send = Task { @MainActor in
+            await AgentBroadcast.send(draft: draft.text, currentDraft: { draft.text }, clearDraft: { draft.text = "" }, web: { text, _ in
+                started.fulfill()
+                for await _ in gate { break }
+                return [.muse: WebSendAttempt(text: text, status: .notSent)]
+            }, messages: { _, _ in nil })
+        }
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertEqual(draft.text, "First message")
+        release.yield(()); release.finish()
+        _ = await send.value
+        XCTAssertEqual(draft.text, "First message")
+    }
+
+    func testIndependentRepliesUnlockAfterBothSubmissionsWhileAnAgentStillWorks() async {
+        let nativeInputFinished = expectation(description: "Native input finished")
+        let ready = expectation(description: "Both submission paths finished")
+        let (replyGate, releaseReply) = AsyncStream<Void>.makeStream()
+        let (messagesGate, releaseMessages) = AsyncStream<Void>.makeStream()
+        defer { releaseReply.finish(); releaseMessages.finish() }
+        var readyCount = 0
+        let barrier = BroadcastSubmissionBarrier { readyCount += 1; ready.fulfill() }
+        var draft = "Shared question"
+        let broadcast = Task { @MainActor in
+            await AgentBroadcast.send(draft: draft, currentDraft: { draft }, clearDraft: { draft = "" }, web: { text in
+                barrier.finishNativeInputs()
+                nativeInputFinished.fulfill()
+                for await _ in replyGate { break }
+                return [.init(provider: .wabi): WebSendAttempt(text: text, status: .observed)]
+            }, messages: { _ in
+                for await _ in messagesGate { break }
+                barrier.finishMessages()
+                return UUID()
+            })
+        }
+        await fulfillment(of: [nativeInputFinished], timeout: 2)
+        XCTAssertEqual(readyCount, 0, "A pending Messages submission must still block private replies")
+        releaseMessages.yield(()); releaseMessages.finish()
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(readyCount, 1)
+        XCTAssertEqual(draft, "Shared question", "A reply in progress does not clear or replace the shared draft")
+        barrier.finishNativeInputs(); barrier.finishMessages()
+        XCTAssertEqual(readyCount, 1, "Repeated handoffs cannot unlock twice")
+        releaseReply.yield(()); releaseReply.finish()
+        _ = await broadcast.value
+        XCTAssertEqual(draft, "")
+    }
+
     func testPersonalAvatarFollowsTheMainChatMediaAndChanges() async throws {
         let session = try makeSession()
         let window = displayAvatarFixture(session)
@@ -463,7 +638,8 @@ final class WebServiceTests: XCTestCase {
 
 @MainActor
 private final class BroadcastDraft {
-    var text: String
+    var revision = SharedDraftRevision()
+    var text: String { didSet { revision.edited(from: oldValue, to: text) } }
     init(_ text: String) { self.text = text }
 }
 

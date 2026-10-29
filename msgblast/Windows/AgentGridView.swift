@@ -7,6 +7,7 @@ struct AgentGridView: View {
     @ObservedObject var web: WebAgents
     @Binding var editing: Bool
     let busy: Bool
+    let selectionBusy: Bool
     let toggleMessages: (UUID) -> Void
     let openChat: (WebAgentSession) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -92,7 +93,7 @@ struct AgentGridView: View {
                 var grid = model.agentGridLayout
                 grid.add(session.id.gridID)
                 guard model.setAgentGrid(grid) else { throw AppFailure.blocked(model.error ?? "Could not add the agent to your grid.") }
-                if session.provider == .grokbot { setup = session.id.gridID }
+                if session.provider == .grokbot || action.isAddingAccount { setup = session.id.gridID }
             }
         }
         .onChange(of: editing) { _, _ in
@@ -124,6 +125,8 @@ struct AgentGridView: View {
                             }.buttonStyle(.borderedProminent).disabled(busy)
                         }
                         GrokBotSetupView(session: session, busy: busy, selectAfterConnecting: false)
+                    } else if let session = session(for: id), session.provider.supportsCopies {
+                        WebAccountSignInView(session: session)
                     } else {
                         switch id {
                         case .web, .webInstance, .runtime:
@@ -156,12 +159,15 @@ struct AgentGridView: View {
     }
 
     private func tile(_ entry: AgentGridEntry, available: Bool, size: CGFloat, scroll: ScrollViewProxy) -> some View {
+        let agentBusy = session(for: entry.id).map { web.isBusyForSelection($0) } ?? false
+        let canSelect = !available && !editing && (session(for: entry.id)?.isEnabled == true ||
+            model.messageAgent(for: entry.id).map { model.route($0) != nil } == true)
         let tile = AgentGridTile(entry: entry, size: size, avatars: avatars, editing: editing,
             available: available, selected: selected(entry.id), arrived: arrived == entry.id || dragging == entry.id,
             subtitle: available || editing ? nil : subtitle(entry.id),
             action: { if available { add(entry.id, scroll: scroll) } else if !editing { activate(entry.id) } },
             hide: { hide(entry.id) })
-            .disabled(busy)
+            .disabled(selectionBusy || (busy && !canSelect) || (!editing && !available && agentBusy))
             .id(entry.id.id)
         return Group {
             if editing && !available {
@@ -199,6 +205,11 @@ struct AgentGridView: View {
                 if !available {
                     Button("Open chat") { openChat(session) }.disabled(busy || !session.isEnabled || !session.state.selected)
                 }
+                if let provider = session.provider.accountWebsiteProvider {
+                    Button(session.provider.usesNativeConversation ? "Add website account…" : "Add another account…") {
+                        configuration = .addAccount(WebAgentID(provider: provider))
+                    }.disabled(busy)
+                }
                 if session.provider.supportsCopies {
                     Button("Duplicate agent…") { configuration = .duplicate(session.id) }.disabled(busy)
                 }
@@ -217,12 +228,13 @@ struct AgentGridView: View {
     }
 
     private func selected(_ id: AgentGridID) -> Bool {
-        if let session = session(for: id) { return session.isEnabled && session.state.selected }
+        if let session = session(for: id) { return session.isEnabled && session.state.selected && !web.isBusyForSelection(session) }
         if let agent = model.messageAgent(for: id) { return model.state.selection.contains(agent.id) }
         return false
     }
 
     private func subtitle(_ id: AgentGridID) -> String? {
+        if let session = session(for: id), web.isBusyForSelection(session) { return "Busy" }
         if let agent = model.messageAgent(for: id), model.route(agent) == nil { return model.messageConnectionStatus(agent) }
         if case .runtime = id { return "Local setup" }
         if let session = session(for: id), !session.provider.supportsSharedSubmissions { return "Manual chat" }
@@ -445,10 +457,12 @@ struct FeaturedMessagesGridSetup: View {
 }
 
 enum AgentConfigurationAction: Identifiable {
-    case duplicate(WebAgentID), rename(WebAgentID), addBot
+    case duplicate(WebAgentID), addAccount(WebAgentID), rename(WebAgentID), addBot
+    var isAddingAccount: Bool { if case .addAccount = self { true } else { false } }
     var id: String {
         switch self {
         case .duplicate(let id): "duplicate:" + id.id
+        case .addAccount(let id): "account:" + id.id
         case .rename(let id): "rename:" + id.id
         case .addBot: "add-bot"
         }
@@ -467,13 +481,14 @@ struct AgentConfigurationSheet: View {
 
     private var source: WebAgentSession? {
         switch action {
-        case .duplicate(let id), .rename(let id): web.session(for: id)
+        case .duplicate(let id), .addAccount(let id), .rename(let id): web.session(for: id)
         case .addBot: nil
         }
     }
     private var title: String {
         switch action {
         case .duplicate: "Duplicate \(source?.name ?? "agent")"
+        case .addAccount: "Add \(source?.provider.name ?? "website") account"
         case .rename: "Rename agent"
         case .addBot: "Add Grok Bot"
         }
@@ -489,6 +504,11 @@ struct AgentConfigurationSheet: View {
                     .font(.callout).foregroundStyle(.secondary)
                 Text("The copy starts a fresh conversation. Choose its model and reasoning level in the website’s controls; the name is your label, not a verified setting.")
                     .font(.callout).foregroundStyle(.secondary)
+            case .addAccount:
+                Text("Name this account, for example ChatGPT Work or Claude Personal. Then sign in to the website with that account.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("This account gets a separate website sign-in and conversation history. It does not change the account in the provider’s Mac app. Your label does not verify which account is signed in; check the website’s account menu before sending.")
+                    .font(.callout).foregroundStyle(.secondary)
             case .addBot:
                 Text("Connect this bot’s own routine after adding it. Its key and conversation history are kept separately from your other bots.")
                     .font(.callout).foregroundStyle(.secondary)
@@ -498,8 +518,8 @@ struct AgentConfigurationSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-                    .accessibilityLabel("Save agent")
+                Button(action.isAddingAccount ? "Add account" : "Save") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .accessibilityLabel(action.isAddingAccount ? "Add account" : "Save agent")
                     .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80)
             }
         }.padding(24).frame(width: 440)
@@ -507,6 +527,11 @@ struct AgentConfigurationSheet: View {
             switch action {
             case .duplicate:
                 let base = (source?.name ?? "Agent") + " copy"
+                name = base
+                var suffix = 2
+                while web.sessions.contains(where: { $0.name == name }) { name = "\(base) \(suffix)"; suffix += 1 }
+            case .addAccount:
+                let base = (source?.provider.name ?? "Website") + " account"
                 name = base
                 var suffix = 2
                 while web.sessions.contains(where: { $0.name == name }) { name = "\(base) \(suffix)"; suffix += 1 }
@@ -521,6 +546,9 @@ struct AgentConfigurationSheet: View {
             case .duplicate:
                 guard let source else { throw WebAgentConfigurationError.unavailable }
                 try onCreated(web.duplicate(source, name: name, separateAccount: separateAccount))
+            case .addAccount:
+                guard let source else { throw WebAgentConfigurationError.unavailable }
+                try onCreated(web.duplicate(source, name: name, separateAccount: true))
             case .rename:
                 guard let source else { throw WebAgentConfigurationError.unavailable }
                 try source.rename(name)
@@ -544,5 +572,21 @@ struct MessagesConversationMenu: View {
                 }
             }
         }.disabled(model.busy || !model.databaseAvailable)
+    }
+}
+
+struct WebAccountSignInView: View {
+    @ObservedObject var session: WebAgentSession
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sign in to \(session.name)").font(.headline)
+            Text("Check the account shown by the website before sending. Signing out here only affects agents that share this website profile.")
+                .font(.caption).foregroundStyle(.secondary)
+            if session.fixture {
+                Text("Demo website · sign-in is simulated; no provider account is contacted.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ServiceLoginPage(session: session).frame(minHeight: 340)
+        }.onAppear { session.connect() }
     }
 }

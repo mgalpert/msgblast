@@ -184,11 +184,18 @@ enum DesktopAccessibility {
     }
 
 
+    static func museComposerAction(_ label: String) -> String? {
+        let words = label.split(whereSeparator: \.isWhitespace)
+        guard words.dropLast() == ["Message", "Attach", "file", "Dictate", "a", "message"],
+              let action = words.last, action == "Send" || action == "Stop" else { return nil }
+        return String(action)
+    }
+
     static func isComposer(_ node: DesktopAccessibilityNode, app: DesktopAppProvider) -> Bool {
         switch app {
         case .muse:
             return (["AXTextArea", "AXTextField"].contains(node.role) && node.label == "Message") ||
-                (node.role == "AXButton" && ["Message Attach file Dictate a message Send", "Message Attach file Dictate a message Stop"].contains(node.label))
+                (node.role == "AXButton" && museComposerAction(node.label) != nil)
         case .wabi: return ["AXTextArea", "AXTextField"].contains(node.role) && node.label == "Message"
         case .grokBot: return node.role == "AXTextArea" && node.label == "Prompt"
         case .chatgpt, .dots: return node.role == "AXTextArea" && ["Ask ChatGPT", "Message", "Work with ChatGPT"].contains(node.label)
@@ -196,18 +203,19 @@ enum DesktopAccessibility {
         }
     }
 
-    static func capture(_ target: DesktopAppConversation.Target, app: DesktopAppProvider) throws -> DesktopAccessibilityNode {
+    static func capture(_ target: DesktopAppConversation.Target, app: DesktopAppProvider, readComposer: Bool = true) throws -> DesktopAccessibilityNode {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Allow msgblast Device Control and Data Access to connect your apps.") }
         guard let window = DesktopNativeWindowLookup.resolve(target) else {
             throw DesktopAccessibilityDiagnostics.incomplete(app, "window \(target.window) of process \(target.pid) was not found through Accessibility")
         }
         let initial = try attributes(window)
         var addresses: [(AXUIElement, String?)] = []
-        let root = try DesktopAccessibilityTree.read(window, app: app, focus: { DesktopNativeFocus.capture(pid: target.pid, composer: $0) }) { element in
+        let focus: ((AXUIElement) -> Bool?)? = readComposer ? { DesktopNativeFocus.capture(pid: target.pid, composer: $0) } : nil
+        let root = try DesktopAccessibilityTree.read(window, app: app, focus: focus) { element in
             let values = try attributes(element)
             var node = try DesktopAccessibilityMetadata.node(values, identity: CFHash(element))
             if node.role == "AXWebArea" { addresses.append((element, try DesktopAccessibilityMetadata.address(values["AXURL"]))) }
-            if app == .muse, isComposer(node, app: app) { node.editorText = try museEditorText(element) }
+            if readComposer, app == .muse, isComposer(node, app: app) { node.editorText = try museEditorText(element) }
             return (node, values["AXChildren"] as? [AXUIElement] ?? [])
         }
         let final = try attributes(window)

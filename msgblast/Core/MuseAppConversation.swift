@@ -5,6 +5,7 @@ actor MuseAppConversation {
     typealias NativeRead = @Sendable (DesktopAppConversation.Target) throws -> MuseAppObservation
     private let driver: DesktopAppConversation
     private let readNative: NativeRead
+    private let readReplyNative: NativeRead
     private let timing: DesktopAppConversation.Timing
     private var occupied = false
     private struct NewChat: Sendable {
@@ -17,13 +18,14 @@ actor MuseAppConversation {
     }
     private var preparedNew: NewChat?
 
-    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: @escaping NativeRead = MuseAppProfile.capture) {
+    init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(), readNative: NativeRead? = nil) {
         driver = DesktopAppConversation(executable: executable, timing: timing)
-        self.timing = timing; self.readNative = readNative
+        self.timing = timing; self.readNative = readNative ?? MuseAppProfile.capture
+        self.readReplyNative = readNative ?? MuseAppProfile.captureReply
     }
-    private func observe(_ target: DesktopAppConversation.Target) async throws -> MuseAppObservation {
+    private func observe(_ target: DesktopAppConversation.Target, repliesOnly: Bool = false) async throws -> MuseAppObservation {
         try Task.checkCancellation()
-        let read = readNative
+        let read = repliesOnly ? readReplyNative : readNative
         // A cold WebKit window can exist before its text-marker and numeric
         // ranges agree. Wait only for a consistent read; a readable draft is
         // returned immediately so the caller can preserve it and stop.
@@ -47,7 +49,7 @@ actor MuseAppConversation {
         try state.checkReadable()
         return state
     }
-    private func pixelClick(_ target: DesktopAppConversation.Target, session: String, expectedURL: URL? = nil, focusOnly: Bool = false,
+    private func pixelClick(_ target: DesktopAppConversation.Target, session: String, expectedURL: URL? = nil, focusOnly: Bool = false, openingSidebar: Bool = false,
                             select: (DesktopAppSnapshot) throws -> DesktopAppSnapshot.Element?) async throws -> Bool {
         let before = try await observe(target)
         try empty(before)
@@ -65,6 +67,7 @@ actor MuseAppConversation {
         }
         let after = try await observe(target)
         try empty(after)
+        if openingSidebar && after.sidebarOpen { return false }
         guard after.url == before.url, after.windowBounds != nil, after.windowBounds == fresh.window_bounds else {
             throw DesktopAppError.unavailable("Muse's chat or window geometry changed while its screenshot was captured. Nothing was clicked.")
         }
@@ -84,7 +87,7 @@ actor MuseAppConversation {
         _ = try await pixelClick(target, session: session, expectedURL: url, focusOnly: true) { state in
             let matches = state.body.filter {
                 (["AXTextArea", "AXTextField"].contains($0.role) && $0.label == "Message") ||
-                ($0.role == "AXButton" && $0.label == "Message Attach file Dictate a message Send")
+                ($0.role == "AXButton" && DesktopAccessibility.museComposerAction($0.label ?? "") == "Send")
             }
             guard matches.count == 1 else { throw DesktopAppError.unavailable("Muse's composer geometry is ambiguous.") }
             return matches[0]
@@ -106,6 +109,17 @@ actor MuseAppConversation {
             try await click(headers[0], target: target, session: session)
         }
         state = try await snapshot(target, session: session)
+        if !state.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) {
+            _ = try await pixelClick(target, session: session, openingSidebar: true) { fresh in
+                if fresh.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) { return nil }
+                let headers = fresh.body.filter { $0.role == "AXButton" && ($0.label ?? "").contains("Open chat and side chats") }
+                guard headers.count == 1 else { throw DesktopAppError.unavailable("Muse's chat list could not be opened.") }
+                return headers[0]
+            }
+            state = try await DesktopAppWorkflow.wait(timeout: .seconds(5), interval: timing.pollInterval,
+                failure: "Muse did not open its side-chat list.", read: { try await self.snapshot(target, session: session) },
+                ready: { $0.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) })
+        }
         guard state.body.contains(where: { $0.role == "AXButton" && $0.label == "New side chat" }) else {
             throw DesktopAppError.unavailable("Muse did not open its side-chat list.")
         }
@@ -219,6 +233,11 @@ actor MuseAppConversation {
 
     func reply(_ prompt: String, binding: MuseSideChatBinding, requestID: UUID = UUID(),
                onCandidate: @Sendable (URL) async throws -> Void = { _ in },
+               onSubmitAction: @Sendable () async -> Void = {},
+               onSubmitted: @Sendable () async throws -> Void = {},
+               onReceipt: @Sendable ([MuseAppMessage], String) async throws -> Void = { _, _ in },
+               refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)? = nil,
+               releaseFocus: @Sendable () async throws -> Void = {},
                onBinding: @Sendable (MuseSideChatBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Muse is already handling a request.") }
         occupied = true
@@ -238,6 +257,7 @@ actor MuseAppConversation {
         }
         try sameChat(before, id: binding.threadID)
         let receipt = MuseAppReceipt(baseline: before.messages, prompt: wirePrompt)
+        try await onReceipt(before.messages, wirePrompt)
         func matchesPreparedDraft(_ draft: String, prefix: String) -> Bool {
             // WebKit exposes an extra terminal line break while a new empty
             // line is being edited. This tolerance is only for intermediate
@@ -265,7 +285,7 @@ actor MuseAppConversation {
                     try state.checkReadable()
                     let composers = state.body.filter {
                         (["AXTextArea", "AXTextField"].contains($0.role) && $0.label == "Message") ||
-                        ($0.role == "AXButton" && $0.label == "Message Attach file Dictate a message Send")
+                        ($0.role == "AXButton" && DesktopAccessibility.museComposerAction($0.label ?? "") == "Send")
                     }
                     guard composers.count == 1, composers[0].enabled != false else {
                         throw DesktopAppError.unavailable("Muse's current editor could not be targeted safely. Nothing was typed.")
@@ -295,17 +315,31 @@ actor MuseAppConversation {
 
             }
         }, after: { step in
+            var refreshRequested = false
+            var refreshed = false
             _ = try await DesktopAppWorkflow.wait(timeout: .seconds(3), interval: self.timing.pollInterval,
                 failure: "Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.",
-                read: { try await self.observe(target) }, ready: { typed in
+                read: {
+                    if refreshRequested && !refreshed, let refreshInput {
+                        refreshed = true
+                        try await refreshInput(target, session)
+                    }
+                    return try await self.observe(target)
+                }, ready: { typed in
                     try sameChat(typed, id: binding.threadID)
                     // CGEvent completion can precede WebKit's text-range update.
                     let ready = matchesPreparedDraft(typed.draft, prefix: step.after)
                     guard ready || matchesPreparedDraft(typed.draft, prefix: step.before),
-                          typed.composerFocused, !typed.generating, typed.messages == before.messages else {
+                          !typed.generating, typed.messages == before.messages else {
                         throw DesktopAppError.unavailable("Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.")
                     }
-                    return ready
+                    if !ready || !typed.composerFocused {
+                        guard typed.composerFocused || refreshInput != nil else {
+                            throw DesktopAppError.unavailable("Muse did not confirm the exact prepared draft. Send was not pressed; review the preserved text.")
+                        }
+                        refreshRequested = true
+                    }
+                    return ready && typed.composerFocused
                 })
         })
         let ready = try await observe(target)
@@ -314,10 +348,12 @@ actor MuseAppConversation {
         var knownID = binding.threadID
         var provisionalID: UUID?
         var savedTitle: String?
-        return try await DesktopAppWorkflow.reply(app: "Muse", timing: timing, submit: {
+        var submissionObserved = false
+        return try await DesktopAppWorkflow.reply(app: "Muse", timing: timing, clock: timing.replyClock, onSubmitAction: onSubmitAction, releaseFocus: releaseFocus,
+            submit: {
             _ = try await self.driver.call("press_key", ["key": "return", "delivery_mode": "background", "session": session], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
         }, observe: {
-            let state = try await self.observe(target)
+            let state = try await self.observe(target, repliesOnly: true)
             if let id = knownID {
                 guard MuseSideChatBinding.threadID(in: state.url) == id else { throw DesktopAppError.unavailable("Muse switched side chats while waiting. Review the saved chat; no automatic resend.") }
             } else if let id = MuseSideChatBinding.threadID(in: state.url) {
@@ -338,7 +374,37 @@ actor MuseAppConversation {
                 try await onBinding(MuseSideChatBinding(comparisonID: binding.comparisonID, threadID: id, title: state.title))
                 savedTitle = state.title
             }
-            return state.draft.isEmpty && knownID != nil && !state.generating ? observedReply : nil
+            if knownID != nil, outgoing, !submissionObserved {
+                submissionObserved = true
+                try await onSubmitted()
+                try await releaseFocus()
+            }
+            return knownID != nil && !state.generating ? observedReply : nil
         })
+    }
+
+    /// Only inspect the currently selected owned side chat; never navigate or resend.
+    func recoverReply(_ receipt: MuseReplyReceipt, binding: MuseSideChatBinding) async throws -> String? {
+        guard !occupied else { return nil }
+        guard receipt.version == 1, binding.comparisonID == receipt.comparisonID,
+              let threadID = binding.threadID,
+              receipt.initialThreadID == nil || receipt.initialThreadID == threadID else {
+            throw DesktopAppError.unavailable("Muse's saved side chat could not be verified.")
+        }
+        occupied = true; defer { occupied = false }
+        let session = "msgblast-muse-recovery-\(UUID())"
+        defer { Task { await driver.endSession(session) } }
+        let target = try await driver.target(.muse)
+        func answer() async throws -> String? {
+            let state = try await observe(target, repliesOnly: true)
+            guard MuseSideChatBinding.threadID(in: state.url) == threadID else {
+                throw DesktopAppError.unavailable("Muse's selected side chat changed. No reply was attributed.")
+            }
+            guard !state.generating else { return nil }
+            return try receipt.reply(in: state.messages)
+        }
+        guard let first = try await answer() else { return nil }
+        if timing.stableDuration > .zero { try await timing.replyClock.sleep(for: timing.stableDuration) }
+        return try await answer() == first ? first : nil
     }
 }

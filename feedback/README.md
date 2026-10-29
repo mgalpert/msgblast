@@ -11,6 +11,8 @@ The native app sends an explicit, user-approved report to `POST https://msgblast
 
 Send `Content-Type: application/json` with `{id, kind, note, contact?, diagnostics?}`. The ID is a UUID retained for retries of the same submission. `kind` is `feedback` or `bug`. The native app enforces 8,000 Swift characters for the note and preflights the endpoint limits: 16,000 UTF-16 code units and a 64 KiB JSON request body. Oversized submissions show a local error before network transmission. The optional contact is a blank string or email address of at most 120 characters. `diagnostics` is an optional JSON **string** from `DiagnosticReport.diagnosticsJSON`; it is absent when the checkbox is off. The server parses it and accepts only the known diagnostic keys, types and categories. Changes to DiagnosticPayload need coordinated updates to the server validator.
 
+After a confirmed receipt, the native feedback window closes and returns focus to the main workspace. Failed submissions keep the window and note available for correction or retry.
+
 A new report returns `201 {"id":"…"}` only after R2 confirms the write. An identical retry returns `200` with the same receipt. A reused ID with different content returns `409`. The server uses a canonical SHA-256 content hash in object metadata and an atomic conditional write. The app should retain an ID after an uncertain network result and reuse it only while the content is unchanged.
 
 Validation failures return `400`; wrong media types `415`; excessive raw bytes `413`; non-POST methods `405`. Rate limiting returns `429` with `Retry-After: 60`. Storage or limiter failure returns `503`, so a failed write never looks like success. No public read/list endpoint or wildcard CORS is provided; this is a native-app API.
@@ -48,3 +50,15 @@ API semantics: [R2 Workers bindings](https://developers.cloudflare.com/r2/api/wo
 ## Verified deployment — October 7, 2026
 
 The authoritative landing checkout at `/Users/contains/projects/msgblast/landing` deployed Worker version `f1f579d1-5824-46b1-9a9f-ea3f018732a3` on `msgblast.app`, with this handler copied byte-for-byte into `worker.mjs`. Its assets use `ASSETS` and `run_worker_first: ["/api/feedback"]`. The private bucket was created with Public Access disabled. Synthetic API checks confirmed new-report 201, identical-retry 200, and GET 405. An isolated native demo app submitted a synthetic note with diagnostic opt-in and displayed the matching receipt; the authenticated R2 object preview confirmed the note and allowed diagnostic fields. These checks used no real messages or contact address and did not release or replace the installed app.
+
+## Crash summary extension
+
+`kind: crash` requires a `crash` object; ordinary feedback/bug requests must omit
+it. This object is a bounded allowlist, not a raw crash-file upload. The native
+review workflow sends no general diagnostic inventory. The same receipt ID and
+frozen content are reused after uncertain outcomes, including relaunch. See
+[crash reporting](../docs/crash-reporting.md) for the schema fields, consent,
+incident/fingerprint semantics, source attribution, symbolication, retention,
+limitations, and deployment ordering. Deploy this updated validator in the
+existing authoritative landing Worker before releasing native crash reporting;
+changing this source alone does not update the live service.

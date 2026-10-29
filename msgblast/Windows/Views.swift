@@ -185,7 +185,7 @@ struct MainView: View {
     private enum DetailSelection { case agents, discover }
     @StateObject private var captureLayout = ChatCaptureLayout()
     @State private var selection = DetailSelection.agents
-    @State private var showingComparison = false
+    @State private var showingComparison: Bool
     private var sidebarSelectionColor: Color { Color.primary.opacity(controlActiveState == .inactive ? 0.06 : 0.10) }
     private var sidebarIconColor: Color { controlActiveState == .inactive ? .secondary : .accentColor }
     private var showingAgents: Bool { selection == .agents && !showingComparison }
@@ -195,13 +195,23 @@ struct MainView: View {
         self.model = model
         self.web = model.webAgents
         self.updater = updater
+        _showingComparison = State(initialValue: model.webAgents.comparisonID.flatMap { model.comparison($0) } != nil)
+    }
+
+    private func showAgentGrid() {
+        if !showingComparison && web.comparisonID == nil {
+            selection = .agents
+        } else if model.requestNewBlast() {
+            selection = .agents
+            showingComparison = false
+        }
     }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $captureLayout.sidebarVisibility) {
             List {
                 Section {
-                    Button { selection = .agents; showingComparison = false } label: {
+                    Button { showAgentGrid() } label: {
                         sidebarLabel("Agents", systemImage: "person.2.fill", selected: showingAgents)
                     }.buttonStyle(.plain).accessibilityLabel("Agents")
                         .accessibilityValue(showingAgents ? "Selected" : "Not selected")
@@ -236,6 +246,8 @@ struct MainView: View {
                         UpdateSidebar(updater: updater)
                         WhatsNewSidebar()
                     }.padding(12)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .overlay(alignment: .top) { Divider() }
                 }
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 330)
         } detail: {
@@ -267,7 +279,7 @@ struct MainView: View {
         .tint(.blue)
         .focusedSceneValue(\.mainWindowActions, model.error != nil ? nil : MainWindowActions(
             newBlast: { model.requestNewBlast() },
-            showAgents: { selection = .agents; showingComparison = false },
+            showAgents: { showAgentGrid() },
             showDiscover: { selection = .discover },
             canStartBlast: model.canStartNewBlast))
         .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat }
@@ -287,7 +299,7 @@ struct MainView: View {
                             .padding(.vertical, 2)
                     }
                     .help("New Blast").accessibilityLabel("New Blast")
-                    .disabled(model.busy || model.webBroadcastBusy || web.sessions.contains { $0.isSending })
+                    .disabled(!model.canStartNewBlast)
                 }
             }
         }
@@ -357,7 +369,7 @@ struct ConversationView: View {
                 } else {
                     TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
                 }
-                MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || model.webBroadcastBusy || member.anchor == nil) {
+                MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || (model.webBroadcastBusy && !model.webBroadcastInputsFinished) || member.anchor == nil) {
                     Task { await model.followUp(comparisonID, only: memberID) }
                 }.padding(12)
                 FollowUpStatus(model: model, comparison: comparison, only: memberID).disabled(comparison.endedAt != nil)
@@ -680,7 +692,7 @@ struct RecipientPills: View {
                         model.coordinator?.prepareJoiningWebAgent(comparison.id)
                         if joined { return }
                         model.webBroadcastBusy = true
-                        session.updateState { $0.selected = true }
+                        model.webAgents.select(session, selected: true)
                         session.connect()
                         Task { @MainActor in
                             _ = await model.joinWebAgent(session, comparisonID: comparison.id)
@@ -756,21 +768,60 @@ struct AppSettingsView: View {
 private struct WebAgentSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var web: WebAgents
+    @State private var configuration: AgentConfigurationAction?
+    @State private var signIn: WebAgentID?
+    private var busy: Bool { model.busy || model.webBroadcastBusy }
 
     var body: some View {
+        Text("Use separate website profiles for work and personal accounts. Mac app connections use the account selected in that app.")
+            .font(.caption).foregroundStyle(.secondary)
         ForEach(WebProvider.settingsOnlyWebProviders) { provider in
-            Toggle(provider.name, isOn: Binding(
-                get: { web.session(for: WebAgentID(provider: provider))?.isEnabled == true },
-                set: { enabled in
-                    web.setEnabled(enabled, for: provider)
-                    if enabled {
-                        var grid = model.agentGridLayout
-                        grid.add(WebAgentID(provider: provider).gridID)
-                        _ = model.setAgentGrid(grid)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(web.sessions.filter { $0.provider == provider }, id: \.id) { session in
+                    HStack {
+                        Toggle(session.name, isOn: Binding(
+                            get: { session.isEnabled },
+                            set: { enabled in
+                                session.setEnabled(enabled)
+                                if enabled {
+                                    var grid = model.agentGridLayout
+                                    grid.add(session.id.gridID)
+                                    _ = model.setAgentGrid(grid)
+                                }
+                            }
+                        )).toggleStyle(.switch)
+                            .accessibilityIdentifier(session.id.instance == nil ? "enable-web-\(provider.rawValue)" : "enable-web-\(session.id.id)")
+                        if provider.supportsCopies {
+                            Button("Sign in…") { signIn = session.id }
+                                .accessibilityLabel("Sign in to \(session.name)")
+                                .disabled(!session.isEnabled)
+                            if session.id.instance != nil {
+                                Button("Rename…") { configuration = .rename(session.id) }
+                                    .accessibilityLabel("Rename \(session.name)")
+                            }
+                        }
                     }
                 }
-            )).toggleStyle(.switch).accessibilityIdentifier("enable-web-\(provider.rawValue)")
-                .disabled(model.busy || model.webBroadcastBusy)
+                if provider.supportsCopies {
+                    Button("Add \(provider.name) account…") { configuration = .addAccount(WebAgentID(provider: provider)) }
+                        .accessibilityIdentifier("add-account-\(provider.rawValue)")
+                }
+            }.disabled(busy)
+        }
+        .sheet(item: $configuration) { action in
+            AgentConfigurationSheet(action: action, web: web, busy: busy) { session in
+                var grid = model.agentGridLayout
+                grid.add(session.id.gridID)
+                guard model.setAgentGrid(grid) else { throw AppFailure.blocked(model.error ?? "Could not add the account to your grid.") }
+            }
+        }
+        .sheet(item: $signIn) { id in
+            if let session = web.session(for: id) {
+                VStack(alignment: .trailing, spacing: 12) {
+                    Button("Done") { signIn = nil }.keyboardShortcut(.cancelAction)
+                    WebAccountSignInView(session: session)
+                }.padding(20).frame(width: 600, height: 550)
+            }
         }
     }
 }

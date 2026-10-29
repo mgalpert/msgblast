@@ -137,22 +137,25 @@ final class AppRemoteHost: RemoteCommandHost {
     /// submitted yet; wait (no new navigation) for the sessions to report ready, then make
     /// the single send. This is not a retry: the first pass submitted nothing.
     private func sharedSendWaitingForReadiness(_ request: SharedSendRequest, followUpsBefore: Int?) async -> RemoteHostResult {
-        model.webBroadcastBusy = true
-        let first = await model.sendShared(request)
+        guard let broadcast = model.beginSharedSend(request) else { return Self.macBusy }
+        let first = await model.sendShared(request, broadcast: broadcast)
         guard case .notPrepared = first else { return sharedOutcome(first, sessions: request.sessions, followUpsBefore: followUpsBefore) }
         // Keep the Mac's own composer blocked while waiting, as during any send.
-        model.webBroadcastBusy = true
+        guard let second = model.beginSharedSend(request) else { return Self.macBusy }
         let waiting = await notReadyReasons(request.sessions, timeout: Self.readinessWait)
         guard waiting.isEmpty else {
-            model.webBroadcastBusy = false
+            model.finishSharedWebBroadcast(second)
             return .rejected(.notReady, "Not every agent became ready on the Mac. Nothing was submitted.", reasons: waiting)
         }
-        let second = await model.sendShared(request)
-        if case .notPrepared = second {
+        let outcome = await model.sendShared(request, broadcast: second)
+        if case .notPrepared = outcome {
             return .rejected(.notReady, "Not every agent became ready on the Mac. Nothing was submitted.", reasons: currentReasons(request.sessions))
         }
-        return sharedOutcome(second, sessions: request.sessions, followUpsBefore: followUpsBefore)
+        return sharedOutcome(outcome, sessions: request.sessions, followUpsBefore: followUpsBefore)
     }
+
+    /// Another send started on the Mac between the executor's check and this one.
+    static let macBusy = RemoteHostResult.rejected(.macBusy, "msgblast on your Mac is sending another request. Nothing was sent.")
 
     private func isReady(_ session: WebAgentSession) -> Bool {
         if session.provider.usesNativeConversation { return availabilityModel.availability(for: session.id.id)?.readiness.acceptsSend == true }

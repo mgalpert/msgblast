@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public enum ChatGPTAppKind: String, Codable, Sendable { case chatgpt, dots }
 public struct ChatGPTConversationBinding: Codable, Equatable, Sendable {
@@ -29,14 +30,111 @@ struct ChatGPTAXNode: Sendable {
     var descendants: [Self] { [self] + children.flatMap(\.descendants) }
     var visible: Bool { frame.map { $0.w > 0 && $0.h > 0 } ?? false }
 }
-struct ChatGPTMessage: Equatable, Sendable {
-    enum Role: Sendable { case user, assistant }
+struct ChatGPTMessage: Codable, Equatable, Sendable {
+    enum Role: String, Codable, Sendable { case user, assistant }
     var role: Role
     var text: String
 }
+
+// Saved before submission so a later read can match the same outgoing message
+// without typing or submitting anything again.
+struct DotsReplyReceipt: Codable, Equatable, Sendable {
+    var version: Int = 1
+    let comparisonID: UUID
+    let title: String
+    let prompt: String
+    let baselineCount: Int
+    let baselineDigest: Data
+    let initialUnreadCount: Int?
+    var refreshedUnreadCount: Int?
+    var automaticRecovery = true
+
+    init(comparisonID: UUID, title: String, prompt: String, baseline: [ChatGPTMessage], initialUnreadCount: Int?) throws {
+        self.comparisonID = comparisonID; self.title = title; self.prompt = prompt
+        baselineCount = baseline.count; baselineDigest = try Self.digest(baseline)
+        self.initialUnreadCount = initialUnreadCount
+    }
+
+    static func digest(_ messages: [ChatGPTMessage]) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return Data(SHA256.hash(data: try encoder.encode(messages)))
+    }
+
+    func appendedMessages(in messages: [ChatGPTMessage]) throws -> [ChatGPTMessage] {
+        try Self.appendedMessages(in: messages, count: baselineCount, digest: baselineDigest)
+    }
+
+    static func appendedMessages(in messages: [ChatGPTMessage], count baselineCount: Int, digest baselineDigest: Data) throws -> [ChatGPTMessage] {
+        guard baselineCount >= 0, baselineDigest.count == 32, messages.count >= baselineCount else {
+            throw DesktopAppError.unavailable("The saved Dot history cannot be verified.")
+        }
+        let maximumOffset = baselineCount > 0 ? messages.count - baselineCount : 0
+        let firstOffset = max(0, messages.count - baselineCount - 2)
+        guard firstOffset <= maximumOffset else { throw DesktopAppError.unavailable("The Dot history changed. No reply was attributed.") }
+        var matching: [Int] = []
+        for offset in firstOffset...maximumOffset {
+            let end = offset + baselineCount
+            if try Self.digest(Array(messages[offset..<end])) == baselineDigest { matching.append(offset) }
+        }
+        guard matching.count == 1, let offset = matching.first else {
+            throw DesktopAppError.unavailable("The Dot history changed. No reply was attributed.")
+        }
+        return Array(messages.dropFirst(offset + baselineCount))
+    }
+}
+
+struct ChatGPTReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    // A first chat has no stable title yet; its UUID-bearing first prompt is
+    // the ownership proof until a title can be saved.
+    let initialTitle: String?
+    let firstPrompt: String
+    let prompt: String
+    let baselineCount: Int
+    let baselineDigest: Data
+    var automaticRecovery = true
+
+    init(comparisonID: UUID, initialTitle: String?, firstPrompt: String, prompt: String, baseline: [ChatGPTMessage]) throws {
+        self.comparisonID = comparisonID; self.initialTitle = initialTitle
+        self.firstPrompt = firstPrompt; self.prompt = prompt
+        baselineCount = baseline.count; baselineDigest = try DotsReplyReceipt.digest(baseline)
+    }
+    func appendedMessages(in messages: [ChatGPTMessage]) throws -> [ChatGPTMessage] {
+        try DotsReplyReceipt.appendedMessages(in: messages, count: baselineCount, digest: baselineDigest)
+    }
+}
 enum ChatGPTObservationError: LocalizedError, Sendable {
-    case transient
-    var errorDescription: String? { "ChatGPT’s native window is temporarily unavailable." }
+    case transient, composerUnavailable
+    var errorDescription: String? {
+        switch self {
+        case .transient: "ChatGPT’s native window is temporarily unavailable."
+        case .composerUnavailable: "ChatGPT’s message field is unavailable. Your draft was preserved."
+        }
+    }
+}
+struct ChatGPTAppNavigation: Sendable {
+    private let nodes: [ChatGPTAXNode]
+    init(validatedNodes: [ChatGPTAXNode]) { nodes = validatedNodes }
+    init(root: ChatGPTAXNode) throws {
+        guard root.role == "AXWindow" else { throw DesktopAppError.unavailable("Open ChatGPT’s main window.") }
+        let pages = root.descendants.filter { $0.role == "AXWebArea" && $0.url == "app://-/index.html" }
+        guard pages.count == 1 else { throw DesktopAppError.unavailable("This ChatGPT application version is not supported yet.") }
+        func safe(_ node: ChatGPTAXNode) -> [ChatGPTAXNode] {
+            [node] + node.children.filter { $0.role != "AXWebArea" }.flatMap(safe)
+        }
+        nodes = safe(pages[0])
+        guard !nodes.contains(where: { ["AXDialog", "AXSheet"].contains($0.role) }) else {
+            throw DesktopAppError.unavailable("Dismiss ChatGPT’s dialog before continuing.")
+        }
+    }
+    func dotButton() throws -> ChatGPTAXNode {
+        let headers = nodes.filter { $0.children.contains { $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") } }
+        guard headers.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s Dot navigation is unavailable.") }
+        let buttons = headers[0].children.filter { $0.role == "AXButton" && $0.classes.contains("sidebar-item") && $0.label != "New chat" && $0.visible && $0.enabled }
+        guard buttons.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s Dot navigation is unavailable or ambiguous.") }
+        return buttons[0]
+    }
 }
 struct ChatGPTAppObservation: Sendable {
     let nodes: [ChatGPTAXNode]
@@ -47,6 +145,13 @@ struct ChatGPTAppObservation: Sendable {
     let messages: [ChatGPTMessage]
     let composer: ChatGPTAXNode?
     let codexBootstrap: Bool
+    var unreadDotReplyCount: Int? {
+        guard kind == .dots, let button = try? ChatGPTAppNavigation(validatedNodes: nodes).dotButton(),
+              button.label.hasPrefix(title + " ") else { return nil }
+        let badge = String(button.label.dropFirst(title.count + 1))
+        guard badge.range(of: #"^[1-9][0-9]* unread messages?$"#, options: .regularExpression) != nil else { return nil }
+        return Int(badge.prefix(while: { $0.isNumber }))
+    }
     var dotSetup: Bool { composer == nil }
     var isNew: Bool { composer != nil && kind == .chatgpt && !codexBootstrap && messages.isEmpty }
     func requiredComposer() throws -> ChatGPTAXNode {
@@ -66,10 +171,20 @@ struct ChatGPTAppObservation: Sendable {
         }
         nodes = safe(web)
         guard !nodes.contains(where: { ["AXDialog", "AXSheet"].contains($0.role) }) else { throw DesktopAppError.unavailable("Dismiss ChatGPT’s dialog before continuing.") }
-        let codexFields = nodes.filter { $0.role == "AXTextArea" && $0.label == "Work with ChatGPT" }
-        if nodes.filter({ $0.role == "AXPopUpButton" && ["Switch mode, current mode: Codex", "Switch mode, current mode: ChatGPT"].contains($0.label) }).count == 1, codexFields.count == 1, let value = codexFields[0].value {
+        let codexFields = nodes.filter { $0.role == "AXTextArea" && ["Work with ChatGPT", "Work with Codex"].contains($0.label) }
+        if nodes.filter({ $0.role == "AXPopUpButton" && ["Switch mode, current mode: Codex", "Switch mode, current mode: ChatGPT"].contains($0.label) }).count == 1, !codexFields.isEmpty {
+            func workDraft(_ field: ChatGPTAXNode) throws -> String {
+                guard let value = field.value else { throw DesktopAppError.unavailable("ChatGPT’s work draft is unavailable. Nothing was changed.") }
+                return field.descendants.contains(where: { $0.classes.contains("placeholder") }) && [field.label, field.label + "\n", "\n"].contains(value) ? "" : value
+            }
+            let drafts = try codexFields.map(workDraft)
+            // Split Codex workspaces have several editors. Switching to ChatGPT
+            // is safe only when every one is empty; never choose a task to edit.
+            guard codexFields.count == 1 || drafts.allSatisfy(\.isEmpty) else {
+                throw DesktopAppError.unavailable("ChatGPT has an unsent work draft. It was preserved.")
+            }
             let composer = codexFields[0]; self.composer = composer; kind = .chatgpt; codexBootstrap = true
-            draft = composer.descendants.contains(where: { $0.classes.contains("placeholder") }) && ["Work with ChatGPT", "Work with ChatGPT\n", "\n"].contains(value) ? "" : value
+            draft = drafts[0]
             generating = false; messages = []; return
         }
         codexBootstrap = false
@@ -93,7 +208,9 @@ struct ChatGPTAppObservation: Sendable {
         guard panels.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s native conversation panel is unavailable.") }
         let panel = safe(panels[0])
         let fields = panel.filter { $0.role == "AXTextArea" && ["Ask ChatGPT", "Message"].contains($0.label) }
-        guard fields.count == 1, let value = fields[0].value else { throw DesktopAppError.unavailable("ChatGPT’s message field is unavailable. Your draft was preserved.") }
+        guard !fields.isEmpty else { throw ChatGPTObservationError.composerUnavailable }
+        guard fields.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s message field is ambiguous. Your draft was preserved.") }
+        guard let value = fields[0].value else { throw ChatGPTObservationError.composerUnavailable }
         let composer = fields[0]; self.composer = composer
         kind = composer.label == "Message" ? .dots : .chatgpt
         let placeholder = kind == .dots ? "Send a message" : "Ask ChatGPT"
@@ -181,16 +298,19 @@ struct ChatGPTAppObservation: Sendable {
     func sameContent(as other: Self) -> Bool { title == other.title && dotSetup == other.dotSetup && codexBootstrap == other.codexBootstrap && kind == other.kind && draft == other.draft && messages == other.messages }
 }
 enum ChatGPTAppProfile {
+    static func captureNavigation(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppNavigation {
+        try ChatGPTAppNavigation(root: convert(DesktopAccessibility.capture(target, app: .chatgpt, readComposer: false)))
+    }
     static func capture(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppObservation {
         do { return try parse(DesktopAccessibility.capture(target, app: .chatgpt)) }
         catch DesktopAccessibilityError.incomplete { throw ChatGPTObservationError.transient }
     }
     static func parse(_ root: DesktopAccessibilityNode) throws -> ChatGPTAppObservation {
-        func convert(_ node: DesktopAccessibilityNode) -> ChatGPTAXNode {
-            .init(role: node.role, label: node.label, value: node.value, id: node.domID, subrole: node.subrole,
-                  classes: node.classes, url: node.url?.absoluteString ?? "", selectedText: node.selectedText,
-                  enabled: node.enabled, focused: node.focused, frame: node.frame, children: node.children.map(convert))
-        }
         return try ChatGPTAppObservation(root: convert(root))
+    }
+    private static func convert(_ node: DesktopAccessibilityNode) -> ChatGPTAXNode {
+        .init(role: node.role, label: node.label, value: node.value, id: node.domID, subrole: node.subrole,
+              classes: node.classes, url: node.url?.absoluteString ?? "", selectedText: node.selectedText,
+              enabled: node.enabled, focused: node.focused, frame: node.frame, children: node.children.map(convert))
     }
 }

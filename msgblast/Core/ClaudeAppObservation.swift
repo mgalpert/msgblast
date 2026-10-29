@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum ClaudeChatURL {
     static func isChat(_ url: URL) -> Bool {
@@ -62,6 +63,7 @@ enum ClaudeNativeDraft {
 }
 
 struct ClaudeAppObservation: Sendable, Equatable {
+    enum ReadMode: Sendable { case conversation, navigation }
     struct Link: Sendable, Equatable { let label: String; let url: URL }
     let url: URL
     let draft: String
@@ -73,7 +75,7 @@ struct ClaudeAppObservation: Sendable, Equatable {
     let composerFrame: DesktopAppSnapshot.Element.Frame?
     let composerFocused: Bool
 
-    init(root: ClaudeAXNode) throws {
+    init(root: ClaudeAXNode, mode: ReadMode = .conversation) throws {
         windowBounds = root.frame.map { .init(x: $0.x, y: $0.y, width: $0.w, height: $0.h) }
         let nodes = root.descendants
         guard !nodes.contains(where: { ["AXSheet", "AXDialog"].contains($0.role) || $0.subrole == "AXDialog" }) else {
@@ -97,7 +99,7 @@ struct ClaudeAppObservation: Sendable, Equatable {
         draft = nativeDraft.actual
         let lists = controls.filter { $0.role == "AXGroup" && $0.label == "Chat messages" }
         guard lists.count <= 1 else { throw DesktopAppError.unavailable("Claude's transcript is ambiguous.") }
-        let articles = lists.first?.descendants.filter { $0.subrole == "AXDocumentArticle" } ?? []
+        let articles = mode == .navigation ? [] : lists.first?.descendants.filter { $0.subrole == "AXDocumentArticle" } ?? []
         messages = try articles.enumerated().map { index, article in
             guard article.label == "Message \(index + 1) of \(articles.count)" else { throw ClaudeObservationError.transient("Claude's message history is incomplete. No reply was attributed.") }
             let headings = article.descendants.filter { $0.role == "AXHeading" && ($0.label.hasPrefix("You said:") || $0.label.hasPrefix("Claude responded:")) }
@@ -105,19 +107,16 @@ struct ClaudeAppObservation: Sendable, Equatable {
                 throw ClaudeObservationError.transient("Claude's message sender has not finished rendering. No reply was attributed.")
             }
             guard headings.count == 1 else { throw DesktopAppError.unavailable("Claude's message sender is unavailable. No reply was attributed.") }
-            if headings[0].label.hasPrefix("Claude responded:") {
-                let body = String(headings[0].label.dropFirst("Claude responded:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !body.isEmpty else { throw ClaudeObservationError.transient("Claude exposed an incomplete assistant message.") }
-                return .init(role: .assistant, text: body)
-            }
+            let senderHeading = headings[0].label
+            let role: ClaudeAppMessage.Role = senderHeading.hasPrefix("Claude responded:") ? .assistant : .user
             func text(_ node: ClaudeAXNode) -> [String] {
-                guard node.role != "AXHeading", node.role != "AXToolbar", !node.classes.contains("sr-only") else { return [] }
+                guard !(node.role == "AXHeading" && node.label == senderHeading), node.role != "AXToolbar", !node.classes.contains("sr-only") else { return [] }
                 if node.role == "AXStaticText" { return node.value.map { [$0] } ?? [] }
                 return node.children.flatMap(text)
             }
             let body = text(article).joined(separator: "\n\n")
-            guard !body.isEmpty else { throw ClaudeObservationError.transient("Claude exposed an incomplete outgoing message.") }
-            return .init(role: .user, text: body)
+            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ClaudeObservationError.transient("Claude exposed an incomplete \(role == .assistant ? "assistant" : "outgoing") message.") }
+            return .init(role: role, text: body)
         }
         guard !ClaudeChatURL.isNew(url) || messages.isEmpty else { throw DesktopAppError.unavailable("Claude's New chat contains unexpected messages.") }
         self.url = url
@@ -135,12 +134,54 @@ struct ClaudeAppReceipt {
     func reply(in messages: [ClaudeAppMessage]) throws -> String? {
         if messages == baseline { return nil }
         guard messages.starts(with: baseline), messages.count <= baseline.count + 2,
-              messages.dropFirst(baseline.count).first == .init(role: .user, text: prompt) else {
+              let outgoing = messages.dropFirst(baseline.count).first, outgoing.role == .user else {
             throw DesktopAppError.unavailable("Claude's chat history changed or another outgoing message appeared. No reply was attributed.")
         }
+        if outgoing.text != prompt, !outgoing.text.isEmpty, prompt.hasPrefix(outgoing.text) { return nil }
+        guard outgoing.text == prompt else { throw DesktopAppError.unavailable("Claude's chat history changed or another outgoing message appeared. No reply was attributed.") }
         guard messages.count == baseline.count + 2 else { return nil }
         guard let answer = messages.last, answer.role == .assistant else { throw DesktopAppError.unavailable("Claude's new message has an unexpected sender.") }
         return answer.text
+    }
+}
+
+struct ClaudeReplyReceipt: Codable, Equatable, Sendable {
+    var version = 1
+    let comparisonID: UUID
+    let initialURL: URL?
+    let prompt: String
+    let baselineCount: Int
+    let baselineDigest: Data
+    var automaticRecovery = true
+
+    init(comparisonID: UUID, initialURL: URL?, prompt: String, baseline: [ClaudeAppMessage]) throws {
+        self.comparisonID = comparisonID; self.initialURL = initialURL; self.prompt = prompt
+        baselineCount = baseline.count; baselineDigest = try Self.digest(baseline)
+    }
+
+    private static func digest(_ messages: [ClaudeAppMessage]) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return Data(SHA256.hash(data: try encoder.encode(messages)))
+    }
+
+    func reply(in messages: [ClaudeAppMessage]) throws -> String? {
+        guard version == 1, !prompt.isEmpty, baselineCount >= 0, baselineDigest.count == 32,
+              messages.count >= baselineCount, messages.count <= baselineCount + 2,
+              try Self.digest(Array(messages.prefix(baselineCount))) == baselineDigest else {
+            throw DesktopAppError.unavailable("Claude's saved chat history changed. No reply was attributed.")
+        }
+        let added = messages.dropFirst(baselineCount)
+        guard !added.isEmpty else { return nil }
+        guard let outgoing = added.first, outgoing.role == .user else {
+            throw DesktopAppError.unavailable("Another request appeared in Claude. No reply was attributed.")
+        }
+        if outgoing.text != prompt, !outgoing.text.isEmpty, prompt.hasPrefix(outgoing.text) { return nil }
+        guard outgoing.text == prompt else { throw DesktopAppError.unavailable("Another request appeared in Claude. No reply was attributed.") }
+        guard added.count == 2 else { return nil }
+        guard let answer = added.last, answer.role == .assistant else {
+            throw DesktopAppError.unavailable("Claude's new message has an unexpected sender.")
+        }
+        return answer.text.isEmpty ? nil : answer.text
     }
 }
 
@@ -152,15 +193,15 @@ enum ClaudeObservationError: LocalizedError {
 // Claude's Electron wrapper and its conversation expose different AXWebAreas.
 // Use the exact native window and the inner canonical address, never its title.
 enum ClaudeAppProfile {
-    static func capture(_ target: DesktopAppConversation.Target) throws -> ClaudeAppObservation {
-        do { return try parse(DesktopAccessibility.capture(target, app: .claude)) }
+    static func capture(_ target: DesktopAppConversation.Target, mode: ClaudeAppObservation.ReadMode = .conversation) throws -> ClaudeAppObservation {
+        do { return try parse(DesktopAccessibility.capture(target, app: .claude), mode: mode) }
         catch DesktopAccessibilityError.incomplete { throw ClaudeObservationError.transient("Claude's controls are still updating.") }
     }
-    static func parse(_ root: DesktopAccessibilityNode) throws -> ClaudeAppObservation {
+    static func parse(_ root: DesktopAccessibilityNode, mode: ClaudeAppObservation.ReadMode = .conversation) throws -> ClaudeAppObservation {
         func convert(_ node: DesktopAccessibilityNode) -> ClaudeAXNode {
             .init(role: node.role, subrole: node.subrole, label: node.label, value: node.value, classes: node.classes,
                   url: node.url, frame: node.frame, focused: node.focused, children: node.children.map(convert))
         }
-        return try ClaudeAppObservation(root: convert(root))
+        return try ClaudeAppObservation(root: convert(root), mode: mode)
     }
 }

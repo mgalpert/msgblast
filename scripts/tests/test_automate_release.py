@@ -5,6 +5,7 @@ import contextlib
 import io
 import hashlib
 import json
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -300,7 +301,7 @@ class AutomatedReleaseTests(unittest.TestCase):
             publish = options.output / "publish"
             publish.mkdir(parents=True)
             (publish / "release.json").write_text(json.dumps({
-                "version": options.version, "build": options.build,
+                "version": options.version, "build": options.build, "signing_mode": options.signing_mode,
                 "previous_build": options.previous_build, "feed_url": options.feed_url,
                 "archive_url": options.download_url_prefix + auto.release.archive_name(options)}))
 
@@ -342,6 +343,126 @@ class AutomatedReleaseTests(unittest.TestCase):
         self.assertIn(revision, summary.read_text())
         self.assertIn("msgblast 0.1.0 (2) published", summary.read_text())
         self.assertIn(self.base + "downloads/msgblast-0.1.0-2.zip", summary.read_text())
+
+    @contextlib.contextmanager
+    def split_release(self):
+        self.key_file.write_text(base64.b64encode(b"0" * 32).decode())
+        self.snapshot()
+        self.environment = {
+            "MSGBLAST_PUBLIC_BASE_URL": self.base, "MSGBLAST_ED_KEY_FILE": str(self.key_file),
+            "MSGBLAST_SPARKLE_BIN": str(self.tools),
+            "MSGBLAST_PUBLIC_KEY": base64.b64encode(b"1" * 32).decode(),
+            "MSGBLAST_R2_ACCOUNT_ID": "a" * 32, "MSGBLAST_R2_BUCKET": "msgblast-releases",
+            "AWS_ACCESS_KEY_ID": "synthetic-access", "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+            "GITHUB_SHA": "f" * 40, "GITHUB_RUN_ID": "456", "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_OUTPUT": str(self.root / "step-output"),
+            "GITHUB_STEP_SUMMARY": str(self.root / "summary.md"),
+        }
+
+        def build(options):
+            publish = options.output / "publish"
+            publish.mkdir(parents=True)
+            archive = publish / auto.release.archive_name(options)
+            archive.write_bytes(b"synthetic built archive")
+            feed = publish / "appcast.xml"
+            feed.write_bytes(self.feed_bytes(options.build))
+            manifest = {"version": options.version, "build": options.build,
+                "previous_build": options.previous_build, "signing_mode": options.signing_mode,
+                "feed_url": options.feed_url, "archive_url": options.download_url_prefix + archive.name,
+                "archive_signature": "synthetic", "sha256": {
+                    path.name: auto.release.file_sha256(path) for path in (archive, feed)}}
+            (publish / "release.json").write_text(json.dumps(manifest))
+
+        def external(command, **kwargs):
+            if "build_installer.py" in str(command[1]):
+                Path(command[-1]).write_bytes(b"synthetic installer")
+            return "synthetic"
+
+        with patch.dict(auto.os.environ, self.environment, clear=True), \
+             patch.object(auto.release, "ROOT", self.root), \
+             patch.object(auto, "R2Store", return_value=self.store), \
+             patch.object(auto.release, "prepare", side_effect=build) as build_call, \
+             patch.object(auto.release, "run", side_effect=external), \
+             patch.object(auto, "verify_feed"), patch.object(auto, "verify_archive"), \
+             patch.object(auto, "verify_public", side_effect=self.verify_public), \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.build_call = build_call
+            yield
+
+    def prepare_split(self):
+        self.assertEqual(auto.main(["--version", "0.1.1", "--prepare-only"]), 0)
+        key, output = (self.root / "step-output").read_text().strip().split("=", 1)
+        self.assertEqual(key, "prepared-output")
+        return Path(output)
+
+    def test_prepare_only_reserves_and_builds_without_publication(self):
+        with self.split_release():
+            output = self.prepare_split()
+            self.assertTrue((output / "publish/release.json").is_file())
+            self.assertEqual(self.store.writes, [self.prefix + "release-counter.json"])
+            self.assertEqual(self.store.objects[self.prefix + "appcast.xml"], self.feed_bytes(1))
+            self.build_call.assert_called_once()
+            self.assertFalse((self.root / "summary.md").exists())
+
+    def test_publish_prepared_reuses_build_counter_and_records_manifest_summary(self):
+        with self.split_release():
+            output = self.prepare_split()
+            self.assertEqual(auto.main(["--version", "0.1.1", "--publish-prepared", str(output)]), 0)
+            self.build_call.assert_called_once()
+            self.assertEqual(self.store.writes.count(self.prefix + "release-counter.json"), 1)
+            stored = json.loads(self.store.objects[self.prefix + "releases/0.1.1-2.json"])
+            self.assertEqual((stored["source_revision"], stored["version"], stored["build"]), ("f" * 40, "0.1.1", 2))
+            self.assertEqual(self.store.writes[-1], self.prefix + "appcast.xml")
+            self.assertIn("msgblast 0.1.1 (2) published", (self.root / "summary.md").read_text())
+            self.assertIn("Ad-hoc app signing", (self.root / "summary.md").read_text())
+
+    def test_publish_prepared_rejects_changed_source_version_feed_and_artifact(self):
+        for change in ("source", "version", "feed", "artifact", "signing-history"):
+            with self.subTest(change=change), self.split_release():
+                # Each case owns fresh storage and files, as a separate release run would.
+                output = self.prepare_split()
+                args = ["--version", "0.1.1", "--publish-prepared", str(output)]
+                if change == "source":
+                    auto.os.environ["GITHUB_SHA"] = "e" * 40
+                elif change == "version":
+                    args[1] = "0.1.2"
+                elif change == "feed":
+                    self.store.objects[self.prefix + "appcast.xml"] = self.feed_bytes(1) + b" "
+                elif change == "signing-history":
+                    self.published_manifest(1, "developer-id")
+                else:
+                    (output / "publish/msgblast-0.1.1-2.zip").write_bytes(b"tampered")
+                writes = list(self.store.writes)
+                self.assertEqual(auto.main(args), 1)
+                self.assertEqual(self.store.writes, writes)
+                self.build_call.assert_called_once()
+            # Reset the synthetic run, never live state.
+            self.store = Store()
+            shutil.rmtree(self.root / "build")
+            (self.root / "step-output").unlink()
+
+    def test_split_modes_are_mutually_exclusive_and_still_require_version(self):
+        for args in (["--prepare-only"], ["--publish-prepared", "output"],
+                     ["--version", "0.1.1", "--prepare-only", "--publish-prepared", "output"]):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), \
+                 patch.object(auto, "R2Store") as storage:
+                with self.assertRaises(SystemExit) as error:
+                    auto.main(args)
+                self.assertEqual(error.exception.code, 2)
+                storage.assert_not_called()
+
+    def test_publish_prepared_reauthenticates_feed_and_artifact_signatures(self):
+        with self.split_release():
+            output = self.prepare_split()
+            writes = list(self.store.writes)
+            args = ["--version", "0.1.1", "--publish-prepared", str(output)]
+            for verifier in ("verify_feed", "verify_archive"):
+                with self.subTest(verifier=verifier), patch.object(auto, verifier,
+                        side_effect=auto.ReleaseError("Bad signature")) as verification:
+                    self.assertEqual(auto.main(args), 1)
+                    verification.assert_called()
+                    self.assertEqual(self.store.writes, writes)
+            self.build_call.assert_called_once()
 
     def test_missing_developer_id_configuration_cannot_fall_back_or_reserve_a_build(self):
         self.key_file.write_text(base64.b64encode(b"0" * 32).decode())

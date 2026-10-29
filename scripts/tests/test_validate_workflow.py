@@ -12,6 +12,19 @@ CHECKOUT = "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
 
 
 class ValidateWorkflowTests(unittest.TestCase):
+    def test_crash_symbols_are_verified_and_retained_before_publication(self):
+        text = RELEASE.read_text()
+        prepare = text.index("--prepare-only")
+        verify = text.index("dwarfdump")
+        retain = text.index("name: msgblast-symbols-")
+        publish = text.index("--publish-prepared")
+        self.assertLess(prepare, verify)
+        self.assertLess(verify, retain)
+        self.assertLess(retain, publish)
+        self.assertNotIn("continue-on-error:", text[prepare:publish])
+        self.assertNotIn("if: always()", text[prepare:publish])
+        self.assertIn("if-no-files-found: error", text[retain:publish])
+
     def test_validation_workflow_does_not_publish(self):
         text = WORKFLOW.read_text()
         release = RELEASE.read_text()
@@ -23,6 +36,7 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertIn("runs-on: xcode-27", text)
         self.assertIn("DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer", text)
         self.assertIn("-only-testing:msgblastTests", text)
+        self.assertIn("-p test_test_builds.py -k real_lipo -v", text)
         self.assertIn("python3 scripts/test_updates.py --derived-data build/updater-validation", text)
         self.assertIn("ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo", text)
         self.assertIn(CHECKOUT, text)
@@ -98,3 +112,22 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertNotIn("xcodebuild", text)
         self.assertNotIn("automate_release", text)
         self.assertNotIn("pip install --user", text)
+
+    def test_testing_publisher_separates_feature_code_credentials_and_write_token(self):
+        text = (ROOT / ".github/workflows/test-build.yml").read_text()
+        build = text.split("\n  build:\n", 1)[1].split("\n  sign:\n", 1)[0]
+        signing = text.split("\n  sign:\n", 1)[1].split("\n  publish:\n", 1)[0]
+        publishing = text.split("\n  publish:\n", 1)[1]
+        self.assertNotIn("secrets.", build)
+        self.assertIn("--variant development --universal", build)
+        self.assertNotIn("contents: write", build + signing)
+        self.assertIn("environment: test-build-signing", signing)
+        self.assertIn("ref: ${{ github.sha }}", signing)
+        self.assertNotIn("ref: ${{ env.REVIEW_SHA }}", signing)
+        self.assertIn("if: always()", signing)
+        self.assertIn("ci_signing.py cleanup", signing)
+        self.assertIn("contents: write", publishing)
+        self.assertNotIn("secrets.", publishing)
+        for forbidden in ("pull_request:", "pull_request_target:", "tags:",
+                          "MSGBLAST_SPARKLE_PRIVATE_KEY", "MSGBLAST_R2_ACCESS_KEY_ID", "automate_release.py"):
+            self.assertNotIn(forbidden, text)

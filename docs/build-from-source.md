@@ -134,7 +134,9 @@ xcodebuild -project msgblast.xcodeproj -scheme msgblast \
 This is a compile check. Blue artwork does not enable Demo mode; signing-disabled
 output is not the runnable packaged Demo. Use the preview script for runnable apps
 with explicit mode and state isolation. Intel Macs can attempt this native-
-destination compile path, but the two-app packager currently hardcodes `arm64`.
+destination compile path. Preview packaging defaults to `arm64`; add `--universal`
+to build and verify arm64/x86_64 app, framework, and embedded helper slices. The
+feature testing-build workflow requires this universal package before signing.
 
 For debugging, open `msgblast.xcodeproj`, select **msgblast**, and use Debug.
 The unmodified scheme uses the production bundle ID and support folder; plain
@@ -211,8 +213,13 @@ and choose its **Connect** action on the connection screen. Gemini’s native pa
 you choose Chat or Task, model, and available thinking levels; install it from
 [Google’s Mac download](https://gemini.google/mac). For
 Grok Bot App, choose your bot from the **Bot** menu in msgblast; the connection
-checks automatically and the saved bot reopens before sending. The check
-does not send a test prompt; it confirms readiness before your first real message.
+checks automatically and the saved bot reopens before sending. Listing, choosing,
+and checking a bot are read-only and work while another conversation has a draft
+or response in progress. Setup preserves that conversation; sending separately
+checks the composer before entering text. The check does not send a test prompt.
+Muse, Grok Bot, and Wabi briefly come forward during an explicit send, then return
+focus to msgblast once the outgoing request is observed. Replies are read in the
+background. Setup checks never take foreground control.
 Native app entries keep separate saved state from their website and webhook
 counterparts; enabling one does not migrate an existing website account or history. See [desktop app conversations](desktop-app-conversations.md) for
 capabilities and limits.
@@ -244,6 +251,10 @@ Releases are a separate maintainer workflow. Building or pushing source does not
 publish to the production update feed.
 
 ## Optional local installer preview
+
+To share a reviewed feature with outside testers, use the maintainer
+[testing-build publisher](testing-builds.md). It provides signed, notarized Dev
+downloads alongside production, including unmerged feature revisions.
 
 The selected Remotion onboarding source lives in `prototypes/remotion-onboarding`.
 Its MP4 is a standalone preview; standard Finder DMGs display a static PNG.

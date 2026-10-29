@@ -207,10 +207,13 @@ def signing_arguments():
 def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="Numeric marketing version or v-prefixed tag")
+    phase = parser.add_mutually_exclusive_group()
+    phase.add_argument("--prepare-only", action="store_true", help="Prepare signed artifacts without publishing")
+    phase.add_argument("--publish-prepared", type=Path, metavar="OUTPUT", help="Publish previously prepared output without rebuilding")
     options = parser.parse_args(args)
     try:
         version = release_version(options.version)
-        signing = signing_arguments()
+        signing = signing_arguments() if options.publish_prepared is None else None
         base_url = required_environment("MSGBLAST_PUBLIC_BASE_URL")
         prefix = object_prefix(base_url)
         key_file = Path(required_environment("MSGBLAST_ED_KEY_FILE")).resolve()
@@ -223,36 +226,57 @@ def main(args=None):
         store = R2Store(required_environment("MSGBLAST_R2_ACCOUNT_ID"), required_environment("MSGBLAST_R2_BUCKET"))
         with tempfile.TemporaryDirectory(prefix="msgblast-release-state-") as temporary:
             snapshot = current_release(store, prefix, Path(temporary), tools, key_file)
-            verify_signing_continuity(snapshot, signing[1])
-            build = reserve_build(store, prefix, Path(temporary), snapshot["build"])
-        # An Actions run/attempt has a fresh path; failed artifacts cannot be mistaken for success.
-        run_id = os.environ.get("GITHUB_RUN_ID", "local")
-        attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id + "-" + attempt):
-            raise ReleaseError("Invalid run identifier")
-        output = release.ROOT / "build/releases" / f"{version}-{build}-{run_id}-{attempt}"
-        preparation = release.parse_args([*signing, "--version", version,
-            "--build", str(build), "--previous-build", str(snapshot["build"]),
-            "--feed-url", base_url + "appcast.xml", "--download-url-prefix", base_url + "downloads/",
-            "--public-key", public_key, "--sparkle-bin", str(tools), "--ed-key-file", str(key_file),
-            "--output", str(output)])
-        release.prepare(preparation)
-        prepare_installer(preparation, tools, key_file)
-        manifest_file = output / "publish/release.json"
-        manifest = json.loads(manifest_file.read_text())
+            if options.publish_prepared is None:
+                verify_signing_continuity(snapshot, signing[1])
+                build = reserve_build(store, prefix, Path(temporary), snapshot["build"])
         revision = os.environ.get("GITHUB_SHA") or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=release.ROOT, text=True).strip()
         if not re.fullmatch(r"[a-fA-F0-9]{40}", revision):
             raise ReleaseError("Release source revision is invalid")
-        manifest["source_revision"] = revision
-        manifest_file.write_text(json.dumps(manifest, indent=2) + "\n")
+        if options.publish_prepared is not None:
+            output = options.publish_prepared.resolve()
+            manifest = json.loads((output / "publish/release.json").read_text())
+            if manifest["version"] != version or manifest["source_revision"] != revision:
+                raise ReleaseError("Prepared release version/source revision does not match this invocation")
+            if manifest["signing_mode"] not in ("ad-hoc", "developer-id"):
+                raise ReleaseError("Prepared release has an invalid signing mode")
+            verify_signing_continuity(snapshot, manifest["signing_mode"])
+            if json.loads((output / "publication-snapshot.json").read_text()) != snapshot:
+                raise ReleaseError("Published feed changed since preparation; prepare a new release")
+        else:
+            # An Actions run/attempt has a fresh path; failed artifacts cannot be mistaken for success.
+            run_id = os.environ.get("GITHUB_RUN_ID", "local")
+            attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id + "-" + attempt):
+                raise ReleaseError("Invalid run identifier")
+            output = release.ROOT / "build/releases" / f"{version}-{build}-{run_id}-{attempt}"
+            preparation = release.parse_args([*signing, "--version", version,
+                "--build", str(build), "--previous-build", str(snapshot["build"]),
+                "--feed-url", base_url + "appcast.xml", "--download-url-prefix", base_url + "downloads/",
+                "--public-key", public_key, "--sparkle-bin", str(tools), "--ed-key-file", str(key_file),
+                "--output", str(output)])
+            release.prepare(preparation)
+            prepare_installer(preparation, tools, key_file)
+            manifest_file = output / "publish/release.json"
+            manifest = json.loads(manifest_file.read_text())
+            manifest["source_revision"] = revision
+            manifest_file.write_text(json.dumps(manifest, indent=2) + "\n")
+            (output / "publication-snapshot.json").write_text(json.dumps(snapshot) + "\n")
+            if options.prepare_only:
+                github_output = os.environ.get("GITHUB_OUTPUT")
+                if github_output:
+                    with Path(github_output).open("a") as file:
+                        file.write(f"prepared-output={output}\n")
+                print(f"Prepared msgblast {version} ({build}) at {output}; no release artifacts published.", flush=True)
+                return 0
         result = publish_release(store, base_url, output / "publish", snapshot, tools, key_file)
+        version, build, revision = result["version"], result["build"], result["source_revision"]
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:
             with Path(summary).open("a") as file:
                 file.write(f"msgblast {version} ({build}) published from `{revision}`.\n\n"
                     f"[Installer]({result['installer_url']}) · [Update ZIP]({result['archive_url']}) · [Feed]({result['feed_url']})\n\n"
                     + ("Developer ID app signing and Apple notarization; Sparkle archive/feed signatures verified.\n"
-                     if preparation.signing_mode == "developer-id" else
+                     if result["signing_mode"] == "developer-id" else
                      "Ad-hoc app signing; Sparkle archive/feed signatures verified. No Apple notarization.\n"))
         return 0
     except (ReleaseError, OSError, ValueError, KeyError, ET.ParseError) as error:

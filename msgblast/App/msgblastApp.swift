@@ -37,6 +37,7 @@ struct msgblastApp: App {
                         else { MainView(model: model, updater: updater) }
                     }.onAppear {
                         lifecycle.configure(model: model); updater.configure(delegate: lifecycle)
+                        CrashReporting.shared.start(model: model)
                         lifecycle.reopenWorkspace = { [weak model] in model?.coordinator?.reopenWorkspace() ?? false }
                         startup.shortcut.onTrigger = startNewBlast
                     }
@@ -47,6 +48,7 @@ struct msgblastApp: App {
             BlastCommands()
             CommandGroup(after: .appInfo) {
                 Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
+                Button("Review Crash Reports…") { CrashReporting.shared.show() }
                 Button("Build a New Feature…") { BuildFeatureWindowController.show() }
                 Button("Check for Updates…") { updater.checkForUpdates() }
                     .disabled(updater.configuration.isEnabled && !updater.canCheckForUpdates)
@@ -61,6 +63,7 @@ struct msgblastApp: App {
             }
             CommandGroup(replacing: .help) {
                 Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
+                Button("Review Crash Reports…") { CrashReporting.shared.show() }
                 Button("Build a New Feature…") { BuildFeatureWindowController.show() }
             }
         }
@@ -106,7 +109,7 @@ private struct QuickAccessMenu: View {
                 }
             }
             if model.quickChatAgents.isEmpty { Text("No connected agents") }
-        }.disabled(!model.canStartNewBlast || model.quickChatAgents.isEmpty)
+        }.disabled(!model.canStartNewBlast || model.webBroadcastBusy || model.quickChatAgents.isEmpty)
         Button("Show msgblast", action: showWorkspace)
         Divider()
         Button("Settings…") { NSApp.activate(ignoringOtherApps: true); openSettings() }

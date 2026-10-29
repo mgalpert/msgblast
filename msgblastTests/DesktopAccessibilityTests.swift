@@ -30,6 +30,42 @@ final class DesktopAccessibilityTests: XCTestCase {
         XCTAssertEqual(field.classes, ["editor"])
     }
 
+    func testMuseReplyLayoutKeepsCompoundComposerReadableAcrossLineBreaks() throws {
+        let url = URL(string: "https://muse.ai/thread/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        for action in ["Send", "Stop"] {
+            let composer = DesktopAccessibilityNode(role: "AXButton", label: "Message Attach file Dictate a message\n\n" + action, editorText: "")
+            XCTAssertTrue(DesktopAccessibility.isComposer(composer, app: .muse))
+            let root = DesktopAccessibilityNode(role: "AXWindow", children: [
+                .init(role: "AXWebArea", url: url, children: [
+                    .init(role: "AXGroup", label: "Chat messages", children: [
+                        .init(role: "AXGroup", children: [.init(role: "AXStaticText", value: "Assistant message: Completed reply")])
+                    ]), composer
+                ])
+            ])
+            let observed = try MuseAppProfile.parse(root)
+            XCTAssertEqual(observed.messages, [.init(role: .assistant, text: "Completed reply")])
+            XCTAssertEqual(observed.draft, "")
+            XCTAssertEqual(observed.generating, action == "Stop")
+        }
+        XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXButton", label: "Message Attach file Dictate a message Delete"), app: .muse))
+        XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXStaticText", label: "Message Attach file Dictate a message Send"), app: .muse))
+    }
+
+    func testMuseReplyReaderDoesNotDependOnComposerOrInputFocus() throws {
+        let url = URL(string: "https://muse.ai/thread/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        let messages = DesktopAccessibilityNode(role: "AXGroup", label: "Chat messages", children: [
+            .init(role: "AXGroup", children: [.init(role: "AXStaticText", value: "User message: Owned prompt")]),
+            .init(role: "AXGroup", children: [.init(role: "AXStaticText", value: "Assistant message: Owned reply")])
+        ])
+        let root = DesktopAccessibilityNode(role: "AXWindow", children: [.init(role: "AXWebArea", url: url, children: [messages])])
+        XCTAssertThrowsError(try MuseAppProfile.parse(root), "Input still requires its own composer verification")
+        let observed = try MuseAppProfile.parseReply(root)
+        XCTAssertEqual(observed.url, url)
+        XCTAssertEqual(observed.messages, [.init(role: .user, text: "Owned prompt"), .init(role: .assistant, text: "Owned reply")])
+        let foreign = DesktopAccessibilityNode(role: "AXWindow", children: [.init(role: "AXWebArea", url: URL(string: "https://foreign.invalid"), children: [messages])])
+        XCTAssertThrowsError(try MuseAppProfile.parseReply(foreign))
+    }
+
     func testEveryProfileRejectsPartialTreesInsteadOfReturningAUsableComposer() throws {
         let source = [0: Source(node: .init(role: "AXWindow"), children: [1, 2]),
                       1: Source(node: .init(role: "AXTextArea", label: "Message", value: "")),

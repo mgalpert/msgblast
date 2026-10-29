@@ -14,6 +14,8 @@ final class FeedbackSession: ObservableObject {
     @Published private var sentRequest: DiagnosticRequest?
     private var lastAttempt: (request: DiagnosticRequest, id: UUID)?
     private var sendTask: Task<Void, Never>?
+    private let transport: URLSession?
+    var onSent: (() -> Void)?
 
     private var request: DiagnosticRequest {
         DiagnosticRequest(kind: .feedback, note: note, contact: contact, includeDiagnostics: includeDiagnostics, facts: facts)
@@ -22,7 +24,10 @@ final class FeedbackSession: ObservableObject {
     var canSend: Bool { canExport && !isSending && sentRequest != request }
     var sendTitle: String { isSending ? "Sending…" : sentRequest == request ? "Feedback sent" : "Send feedback" }
 
-    init(facts: DiagnosticFacts) { self.facts = facts }
+    init(facts: DiagnosticFacts, transport: URLSession? = nil) {
+        self.facts = facts
+        self.transport = transport
+    }
 
     var canExport: Bool {
         !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && contactIsAcceptable
@@ -71,9 +76,10 @@ final class FeedbackSession: ObservableObject {
         sendTask = Task { @MainActor in
             defer { isSending = false; sendTask = nil }
             do {
-                let receipt = try await FeedbackSubmission.send(snapshot, id: id, endpoint: endpoint, isLocalFixture: fixture)
+                let receipt = try await FeedbackSubmission.send(snapshot, id: id, endpoint: endpoint, isLocalFixture: fixture, session: transport)
                 sentRequest = snapshot
                 message = "Sent to msgblast. Report ID: \(receipt.id.uuidString.lowercased())"
+                onSent?()
             } catch {
                 message = "\(error.localizedDescription) Your note is still here."
             }
@@ -112,8 +118,8 @@ final class FeedbackWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    init(model: AppModel?, updater: AppUpdater) {
-        session = FeedbackSession(facts: FeedbackFacts.capture(model: model, updater: updater))
+    init(model: AppModel?, updater: AppUpdater, transport: URLSession? = nil) {
+        session = FeedbackSession(facts: FeedbackFacts.capture(model: model, updater: updater), transport: transport)
         super.init()
         let host = NSHostingView(rootView: FeedbackView(session: session))
         host.sizingOptions = []
@@ -129,6 +135,10 @@ final class FeedbackWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         hostedWindow = window
+        session.onSent = { [weak self, weak model] in
+            self?.hostedWindow?.close()
+            if model?.coordinator?.reopenWorkspace() == true { NSApp.activate(ignoringOtherApps: true) }
+        }
     }
 
     nonisolated func windowWillClose(_ notification: Notification) {
@@ -166,6 +176,7 @@ struct FeedbackView: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
+            Button("Review earlier crash reports…") { CrashReporting.shared.show() }
             Text("Send feedback to msgblast")
                 .font(.headline)
             Text("Send your note directly to the msgblast team. A diagnostic report is included to help us investigate; you can uncheck it below.")

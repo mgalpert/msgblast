@@ -2,7 +2,48 @@ import XCTest
 
 final class WebServiceWorkflowTests: XCTestCase {
     @MainActor
+    func testAddNamedAccountFromSettingsAndOpenSeparateSignIn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
+        app.typeKey(",", modifierFlags: .command)
+        let add = app.buttons["add-account-chatgpt"]
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -1200)
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.click()
+        let name = app.textFields["Agent name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.click(); name.typeKey("a", modifierFlags: .command); name.typeText("ChatGPT Work")
+        XCTAssertFalse(app.switches["Use another account"].exists, "Adding an account must always isolate its sign-in")
+        app.buttons["Add account"].click()
+        let signIn = app.buttons["Sign in to ChatGPT Work"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 5))
+        signIn.click()
+        XCTAssertTrue(app.staticTexts["Sign in to ChatGPT Work"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Demo website · sign-in is simulated; no provider account is contacted."].exists)
+        capture(app, name: "Separate account website — simulated sign-in")
+        app.buttons["Done"].click()
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["ChatGPT Work"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["ChatGPT Work"].value as? String, "Not selected")
+    }
+
+    @MainActor
     private func selectWebFixtureRecipients(_ app: XCUIApplication) {
+        // New profiles explicitly enable website alternatives in Settings.
+        app.typeKey(",", modifierFlags: .command)
+        for provider in ["muse", "chatgpt", "claude", "grok"] {
+            let toggle = app.switches["enable-web-\(provider)"]
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+            let enabled = (toggle.value as? NSNumber)?.boolValue ??
+                ["1", "on"].contains(toggle.value as? String ?? "")
+            if !enabled { toggle.click() }
+        }
+        app.typeKey("w", modifierFlags: .command)
         for name in ["Muse", "ChatGPT", "Claude", "Grok"] {
             let button = app.buttons[name]
             XCTAssertTrue(button.waitForExistence(timeout: 5))
@@ -287,7 +328,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         selectWebFixtureRecipients(app)
         app.activate()
         defer { app.terminate() }
-        for name in ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint", "ChatGPT", "Claude", "Grok"] { app.buttons[name].click() }
+        for name in ["Maple", "Echo", "Flint", "ChatGPT", "Claude", "Grok"] { app.buttons[name].click() }
         app.buttons["Muse"].rightClick()
         app.menuItems["Open chat"].click()
         let signOut = app.buttons["Sign out of fixture"]
@@ -307,6 +348,9 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Connect your accounts", "Connect your accounts")).firstMatch.waitForExistence(timeout: 10))
         capture(app, name: "Only signed-out Muse requires login; prompt preserved — isolated fixture")
         app.activate(); app.buttons["Start signing in"].click()
+        for name in ["Cedar", "Lumen", "Orbit"] {
+            XCTAssertTrue(app.staticTexts["\(name) (Demo)"].waitForExistence(timeout: 5), "Selected Messages panes remain visible while Muse needs sign-in")
+        }
         XCTAssertEqual(editor.value as? String, "Keep this comparison request")
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Fixture reply: Keep this comparison request", "Fixture reply: Keep this comparison request")).firstMatch.exists)
         app.activate(); app.buttons["Sign in to fixture"].click()
@@ -315,6 +359,9 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Fixture reply: Keep this comparison request", "Fixture reply: Keep this comparison request")).firstMatch.exists, "Signing in must not submit automatically")
         app.activate(); send.click()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "Fixture reply: Keep this comparison request", "Fixture reply: Keep this comparison request")).firstMatch.waitForExistence(timeout: 10))
+        for name in ["Cedar", "Lumen", "Orbit"] {
+            XCTAssertTrue(app.textViews["Private reply to \(name)"].waitForExistence(timeout: 10), "Messages recipients become full conversation panes after sending")
+        }
         XCTAssertFalse(app.staticTexts["Appeared in Muse"].exists)
     }
 
