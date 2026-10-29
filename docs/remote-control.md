@@ -224,6 +224,12 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   `prepareConversation` runs; photos and files for Messages agents), new
   conversation grid grouped by product, Mac banner, and Settings (Mac name, key
   fingerprint, forget, keep-awake).
+- **Compose bar after a refused prepare:** the Mac's reason stays under the
+  composer with a "Try again" button, and Send stays enabled: tapping it prepares
+  again and sends only if that succeeds; if it fails again the reason updates. The
+  prepare also runs again by itself when the refused agents become ready on the
+  Mac. Being disconnected, a locked Mac, or an agent that is not ready still
+  disables Send.
 
 ### UX iteration against the Demo Mac
 

@@ -64,6 +64,37 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(ChipState(.uncertain), .unconfirmed)
         XCTAssertEqual(ChipState(.observed), .replied)
     }
+    func testARefusedPrepareKeepsSendEnabledAndRetriesOnceTheAgentIsReady() throws {
+        var state = try RecordedFixtures.reduce(["snapshot"])
+        var app = try XCTUnwrap(state.agents["chatgptApp"])
+        app.readiness = .ready
+        state.agents["chatgptApp"] = app
+        let name = app.displayName
+        let refused = ["chatgptApp": "The app is still updating its controls. No input was sent."]
+        let ready = ProjectionPresenter(state: state)
+
+        // Only the refused prepare is in the way: its reason shows, Send stays enabled.
+        let failed = try XCTUnwrap(ready.composeBlock(canSend: true, connectionText: "Connected", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused))
+        XCTAssertEqual(failed, .prepareFailed("\(name): The app is still updating its controls. No input was sent."))
+        XCTAssertTrue(failed.allowsSend)
+        XCTAssertNil(ready.composeBlock(canSend: true, connectionText: "Connected", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: [:]))
+        XCTAssertEqual(ready.composeBlock(canSend: true, connectionText: "", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: ["": "Not ready"]), .prepareFailed("Not ready"))
+
+        // Disconnection and the projection's own reasons still disable Send.
+        let offline = try XCTUnwrap(ready.composeBlock(canSend: false, connectionText: "Reconnecting…", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused))
+        XCTAssertEqual(offline, .blocked("Reconnecting…")); XCTAssertFalse(offline.allowsSend)
+        var busyState = state
+        app.readiness = .busy(detail: "Sending")
+        busyState.agents["chatgptApp"] = app
+        let busy = ProjectionPresenter(state: busyState)
+        XCTAssertFalse(try XCTUnwrap(busy.composeBlock(canSend: true, connectionText: "", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused)).allowsSend)
+
+        // The prepare runs again by itself only when the refused agents can accept a send.
+        XCTAssertFalse(busy.shouldRetryPrepare(prepareReasons: refused, agentIDs: ["chatgptApp"]))
+        XCTAssertTrue(ready.shouldRetryPrepare(prepareReasons: refused, agentIDs: ["chatgptApp"]))
+        XCTAssertFalse(ready.shouldRetryPrepare(prepareReasons: [:], agentIDs: ["chatgptApp"]), "Nothing to retry")
+        XCTAssertNotEqual(busy.readiness(agentIDs: ["chatgptApp"]), ready.readiness(agentIDs: ["chatgptApp"]), "The view notices the change")
+    }
 }
 
 @MainActor

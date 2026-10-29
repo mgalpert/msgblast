@@ -1,6 +1,16 @@
 import Foundation
 import msgblastRemoteProtocol
 
+/// What stops the compose bar from sending.
+public enum ComposeBlock: Equatable, Sendable {
+    /// Disconnected, locked, not ready in the projection: Send is disabled.
+    case blocked(String)
+    /// The last `prepareConversation` was refused. Send stays enabled and prepares again.
+    case prepareFailed(String)
+    public var text: String { switch self { case .blocked(let text), .prepareFailed(let text): text } }
+    public var allowsSend: Bool { if case .prepareFailed = self { true } else { false } }
+}
+
 /// How a status chip under one of your messages reads, per agent.
 public enum ChipState: String, Equatable, Sendable {
     case sending = "Sending on Mac"
@@ -103,6 +113,31 @@ public struct ProjectionPresenter: Sendable {
         }
         return nil
     }
+
+    /// Why the compose bar cannot send right now, and whether Send may still be tapped.
+    /// Disconnection and the projection's own reasons block Send. A failed
+    /// `prepareConversation` only shows its reason: tapping Send prepares again first.
+    public func composeBlock(canSend: Bool, connectionText: String, agentIDs: [String], conversation: UUID?,
+                             prepareReasons: [String: String]) -> ComposeBlock? {
+        if !canSend { return .blocked(connectionText) }
+        if let reason = disabledReason(agentIDs: agentIDs, conversation: conversation) { return .blocked(reason) }
+        if let first = prepareReasons.sorted(by: { $0.key < $1.key }).first {
+            return .prepareFailed(first.key.isEmpty ? first.value : "\(shortName(first.key)): \(first.value)")
+        }
+        return nil
+    }
+
+    /// Whether the agents whose prepare failed can now accept a send, so the prepare runs
+    /// again by itself (for example a Mac app that finished updating its controls).
+    public func shouldRetryPrepare(prepareReasons: [String: String], agentIDs: [String]) -> Bool {
+        guard !prepareReasons.isEmpty else { return false }
+        let failed = prepareReasons.keys.filter { !$0.isEmpty }
+        let ids = failed.isEmpty ? agentIDs : failed
+        return !ids.isEmpty && ids.allSatisfy { state.agents[$0]?.readiness.acceptsSend == true }
+    }
+
+    /// The readiness of each recipient, so a view can notice when one changes.
+    public func readiness(agentIDs: [String]) -> [AgentReadiness?] { agentIDs.map { state.agents[$0]?.readiness } }
 
     /// "Will open ChatGPT on your Mac" for agents whose send launches a Mac app.
     public func launchNotes(agentIDs: [String]) -> [String] {
