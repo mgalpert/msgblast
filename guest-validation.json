@@ -1,0 +1,63 @@
+{
+  "environment": {
+    "os": "26.5.2",
+    "python": "3.14.8"
+  },
+  "runs": [
+    {
+      "label": "baseline lipo regression",
+      "sha": "08e29ee679058b2513abe9ebad6288f2a7c301cb",
+      "exit": 1,
+      "summary": "rch_type> ...\n  options are one or more of:\n    -arch <arch_type> <input_file>\n    -hideARM64\n    -output <output_file>\n    -segalign <arch_type> <alignment>\n======================================================================\nERROR: test_real_lipo_accepts_universal_code_and_rejects_a_thin_helper (test_test_builds.TestBuildTests.test_real_lipo_accepts_universal_code_and_rejects_a_thin_helper)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"<source>/scripts/tests/test_test_builds.py\", line 152, in test_real_lipo_accepts_universal_code_and_rejects_a_thin_helper\n    builds.builder.verify_universal_bundle(app)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^\n  File \"<source>/scripts/build_preview_apps.py\", line 143, in verify_universal_bundle\n    run([\"xcrun\", \"lipo\", \"-verify_arch\", architecture, str(binary)], app.parent)\n    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<source>/scripts/build_preview_apps.py\", line 22, in run\n    raise SystemExit(f\"Command failed ({result.returncode}): {' '.join(command)}\")\nSystemExit: Command failed (1): xcrun lipo -verify_arch arm64 <temporary-fixture> Dev.app/Contents/MacOS/msgblast\n\n----------------------------------------------------------------------\nRan 1 test in 0.071s\n\nFAILED (errors=1)\n"
+    },
+    {
+      "label": "instruction/runbook whitespace",
+      "sha": "6c186c708ca9cd695106b50cd017a8fffe327159",
+      "exit": 0,
+      "summary": ""
+    },
+    {
+      "label": "guardrail fixtures",
+      "sha": "2309a1da55c57e838bd2aa24cdd29c94a5a9b868",
+      "exit": 0,
+      "summary": "----------------------------------------------------------------------\nRan 6 tests in 1.077s\n\nOK\n"
+    },
+    {
+      "label": "guardrail fixtures",
+      "sha": "725f9df17db499807337e19f248b776482fe274e",
+      "exit": 0,
+      "summary": "----------------------------------------------------------------------\nRan 12 tests in 1.433s\n\nOK\n"
+    },
+    {
+      "label": "real SwiftLint ratchet",
+      "sha": "725f9df17db499807337e19f248b776482fe274e",
+      "exit": 0,
+      "summary": "SwiftLint 0.65.1: 0 new/worsened metrics; 106 existing metrics.\n"
+    },
+    {
+      "label": "guardrail fixtures",
+      "sha": "378d301b18832002806718691a39e1912e370ab5",
+      "exit": 0,
+      "summary": "----------------------------------------------------------------------\nRan 16 tests in 1.829s\n\nOK\n"
+    },
+    {
+      "label": "real SwiftLint ratchet",
+      "sha": "378d301b18832002806718691a39e1912e370ab5",
+      "exit": 0,
+      "summary": "SwiftLint 0.65.1: 0 new/worsened metrics; 106 existing metrics.\n"
+    },
+    {
+      "label": "context budget",
+      "sha": "378d301b18832002806718691a39e1912e370ab5",
+      "exit": 0,
+      "summary": "1 instruction files; 4172/24576 bytes; 0 failures.\n"
+    },
+    {
+      "label": "full tooling suite",
+      "sha": "378d301b18832002806718691a39e1912e370ab5",
+      "exit": 1,
+      "summary": "_type> ...\n  options are one or more of:\n    -arch <arch_type> <input_file>\n    -hideARM64\n    -output <output_file>\n    -segalign <arch_type> <alignment>\n======================================================================\nERROR: test_real_lipo_accepts_universal_code_and_rejects_a_thin_helper (test_test_builds.TestBuildTests.test_real_lipo_accepts_universal_code_and_rejects_a_thin_helper)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"<source>/scripts/tests/test_test_builds.py\", line 152, in test_real_lipo_accepts_universal_code_and_rejects_a_thin_helper\n    builds.builder.verify_universal_bundle(app)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^\n  File \"<source>/scripts/build_preview_apps.py\", line 143, in verify_universal_bundle\n    run([\"xcrun\", \"lipo\", \"-verify_arch\", architecture, str(binary)], app.parent)\n    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<source>/scripts/build_preview_apps.py\", line 22, in run\n    raise SystemExit(f\"Command failed ({result.returncode}): {' '.join(command)}\")\nSystemExit: Command failed (1): xcrun lipo -verify_arch arm64 <temporary-fixture> Dev.app/Contents/MacOS/msgblast\n\n----------------------------------------------------------------------\nRan 137 tests in 2.218s\n\nFAILED (errors=1)\n"
+    }
+  ],
+  "limits": "Executed inside the existing isolated macOS test guest through its local controller. Synthetic tooling fixtures; no application UI, live accounts, sends, production publishing, or guest Xcode build. Full suite has one existing lipo failure reproduced at the pre-change base. Hosted native CI passed separately."
+}
