@@ -10,3 +10,5 @@ Actual CLI verification rendered in a local browser capture. Temporary Git fixtu
 The documentation-only capture prints the shortened instructions and preserved runbook size. The test captures exercise accepted and rejected inputs through the actual checkers; a passing test may assert an expected checker rejection.
 
 Studio validation is unavailable: the configured isolated guest did not connect to its controller after start/reconnect attempts. These captures and tests are local fixture evidence, not Studio evidence.
+
+`scope-final-*.log` contains the final exact-head scope runs. Earlier `scope-*.log` and `complexity-*.log` are historical pre-review-fix runs; final revised-pair complexity verification is recorded in `independent-review.json`.

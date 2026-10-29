@@ -1,0 +1,4 @@
+Head: 6c186c708ca9cd695106b50cd017a8fffe327159
+480 changed lines (274 added, 206 deleted); 2 files; 1 new; 0 binary; 28857 bytes in changed head files.
+Advisory: exceeds 250 changed lines. Explain why this remains one reviewable change.
+PASS: size and declared paths accepted; semantic scope still needs human review.

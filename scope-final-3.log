@@ -1,0 +1,3 @@
+Head: 725f9df17db499807337e19f248b776482fe274e
+244 changed lines (244 added, 0 deleted); 3 files; 3 new; 0 binary; 10990 bytes in changed head files.
+PASS: size and declared paths accepted; semantic scope still needs human review.
