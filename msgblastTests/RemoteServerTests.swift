@@ -243,3 +243,71 @@ final class RemoteInterfaceTests: XCTestCase {
         XCTAssertTrue(RemoteInterfaces.current().allSatisfy { !$0.address.hasPrefix("127.") && $0.address != "0.0.0.0" })
     }
 }
+
+@MainActor
+private final class FakeBoundListener: RemoteBoundListener {
+    let port: UInt16
+    private(set) var cancelled = false
+    init(port: UInt16) { self.port = port }
+    func cancel() { cancelled = true }
+}
+
+/// The saved port is retried before a temporary one is used, and reclaimed afterwards.
+@MainActor
+final class RemoteListenerPortTests: XCTestCase {
+    private let address = RemoteInterfaceAddress(interface: "utun4", address: "100.64.0.7", kind: .tailscale)
+    private var attempts: [UInt16] = []
+    private var savedPortFree: () -> Bool = { true }
+    private var opened: [FakeBoundListener] = []
+
+    private func listener(window: Duration = .milliseconds(200)) -> RemoteListener {
+        RemoteListener(retry: .init(savedPortWindow: window, savedPortInterval: .milliseconds(10), reclaimInterval: .milliseconds(20), randomAttempts: 2),
+                       addresses: { [address] _ in [address] }, randomPort: { 61_855 }) { [unowned self] _, port in
+            self.attempts.append(port)
+            guard port != 50_530 || self.savedPortFree() else { return nil }
+            let bound = FakeBoundListener(port: port)
+            self.opened.append(bound)
+            return [bound]
+        }
+    }
+
+    func testABusySavedPortIsRetriedUntilItIsFree() async {
+        var failures = 3
+        savedPortFree = { failures -= 1; return failures < 0 }
+        let listener = listener()
+        let port = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertEqual(port, 50_530)
+        XCTAssertEqual(attempts, [50_530, 50_530, 50_530, 50_530], "Three busy attempts, then the saved port")
+        XCTAssertNil(listener.waitingForPort)
+        XCTAssertEqual(listener.endpoints.map(\.host), ["100.64.0.7"])
+    }
+
+    func testATemporaryPortIsDroppedOnceTheSavedPortIsFree() async throws {
+        var free = false
+        savedPortFree = { free }
+        let listener = listener(window: .milliseconds(50))
+        let port = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertEqual(port, 61_855, "After the retry window a temporary port is used")
+        XCTAssertEqual(listener.waitingForPort, 50_530)
+        XCTAssertGreaterThan(attempts.filter { $0 == 50_530 }.count, 1)
+        free = true
+        for _ in 0..<100 where listener.port != 50_530 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(listener.port, 50_530, "The saved port is reclaimed in the background")
+        XCTAssertNil(listener.waitingForPort)
+        XCTAssertTrue(opened.first { $0.port == 61_855 }?.cancelled == true, "The temporary listener is closed")
+        XCTAssertFalse(opened.last?.cancelled ?? true)
+        listener.shutdown()
+    }
+
+    func testNoReclaimWithoutAPairedPhone() async throws {
+        savedPortFree = { false }
+        let listener = listener(window: .milliseconds(30))
+        _ = await listener.start(policy: .automatic, port: 50_530, reclaimSavedPort: { false })
+        let tries = attempts.count
+        savedPortFree = { true }
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(listener.port, 61_855)
+        XCTAssertEqual(attempts.count, tries, "Without a paired phone the saved port is not retried")
+        listener.shutdown()
+    }
+}

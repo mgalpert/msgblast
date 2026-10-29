@@ -63,6 +63,11 @@ final class RemoteService: ObservableObject {
     var endpoints: [RemoteEndpoint] { listener?.endpoints ?? [] }
     var port: UInt16? { listener?.port }
     var listenerError: String? { listener?.error }
+    /// Set while a temporary port is in use because the saved port is still busy.
+    var portWarning: String? {
+        guard let saved = listener?.waitingForPort, let port else { return nil }
+        return "Listening on temporary port \(port) because port \(saved) is busy. Your paired phone uses \(saved); msgblast switches back as soon as it is free."
+    }
 
     private func update(_ edit: (inout RemoteSettings) -> Void) {
         var next = settings
@@ -133,7 +138,11 @@ final class RemoteService: ObservableObject {
         let listener = self.listener ?? RemoteListener(identity: identity, serviceName: "msgblast on \(macName)") { [weak server] in server?.accept($0) }
         self.listener = listener
         listener.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
-        if let port = await listener.start(policy: settings.bindPolicy, port: settings.port), port != settings.port {
+        let pairing = pairing
+        // Only a first port is saved. A temporary port after the saved one stayed busy is
+        // never saved: the paired phone knows only the saved port, which is reclaimed.
+        if let port = await listener.start(policy: settings.bindPolicy, port: settings.port, reclaimSavedPort: { pairing.device != nil }),
+           settings.port == nil {
             update { $0.port = port }
         }
         objectWillChange.send()

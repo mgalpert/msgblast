@@ -31,6 +31,12 @@ struct RemoteSettingsView: View {
         Toggle("Allow a paired phone to use msgblast on this Mac", isOn: Binding(get: { service.settings.enabled }, set: { service.setEnabled($0) }))
             .toggleStyle(.switch).accessibilityIdentifier("remote-enabled")
         LabeledContent("Status") { Text(service.statusText).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
+        if let port = service.port {
+            LabeledContent("Port") { Text(String(port)).foregroundStyle(.secondary).monospacedDigit() }
+            if let warning = service.portWarning {
+                Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            }
+        }
         if service.settings.enabled {
             pairedPhone
             pairingSection

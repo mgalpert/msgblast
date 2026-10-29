@@ -45,8 +45,13 @@ removes the record. There are no accounts.
 | Tailscale and local network | Both |
 | Local network only | Private (RFC 1918) addresses on non-tunnel interfaces |
 
-The listener binds each address explicitly on one port (saved in settings, a new
-random port if it is taken). It never binds loopback (the Grok Bot callback range)
+The listener binds each address explicitly on one port, saved in settings the
+first time. The paired phone knows only that port. If it is busy (for example the
+previous copy of msgblast is still quitting), msgblast keeps trying it for about 30
+seconds, then listens on a temporary port. While a phone is paired it keeps trying
+the saved port every few seconds and moves back as soon as it is free. The
+temporary port is never saved; Settings → Remote shows the port in use and a
+warning while it is temporary. It never binds loopback (the Grok Bot callback range)
 or a wildcard address, and never uses Tailscale Funnel. Bonjour `_msgblast._tcp`
 is advertised only by LAN listeners, scoped to their interface. Addresses are
 rechecked when the network changes. Both the Mac App Store and standalone
