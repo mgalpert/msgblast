@@ -1,5 +1,6 @@
 import Foundation
 import IOKit.pwr_mgt
+import os
 
 /// Holds one `PreventUserIdleSystemSleep` assertion while a phone that asked for it is
 /// connected, and during any remote send. The Mac's Settings toggle disables both.
@@ -12,12 +13,18 @@ public final class RemoteKeepAwake: ObservableObject {
             var id = IOPMAssertionID(0)
             let result = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
                                                      IOPMAssertionLevel(kIOPMAssertionLevelOn), reason as CFString, &id)
+            if result == kIOReturnSuccess { RemoteKeepAwake.logger.info("Keep-awake assertion \(id, privacy: .public) created") }
+            else { RemoteKeepAwake.logger.error("Keep-awake assertion could not be created: IOReturn \(result, privacy: .public)") }
             return result == kIOReturnSuccess ? id : nil
-        }, release: { id in IOPMAssertionRelease(id) })
+        }, release: { id in
+            let result = IOPMAssertionRelease(id)
+            RemoteKeepAwake.logger.info("Keep-awake assertion \(id, privacy: .public) released: IOReturn \(result, privacy: .public)")
+        })
         public init(create: @escaping @Sendable (String) -> UInt32?, release: @escaping @Sendable (UInt32) -> Void) {
             self.create = create; self.release = release
         }
     }
+    nonisolated static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "msgblast", category: "keep-awake")
     @Published public private(set) var held = false
     public private(set) var settingEnabled: Bool
     private var clientConnected = false
@@ -49,6 +56,9 @@ public final class RemoteKeepAwake: ObservableObject {
 
     private func update() {
         let wanted = settingEnabled && ((clientConnected && clientRequested) || activeSends > 0)
+        if wanted != (assertion != nil) {
+            Self.logger.info("Keep-awake \(wanted ? "wanted" : "not wanted", privacy: .public): setting \(self.settingEnabled, privacy: .public), phone connected \(self.clientConnected, privacy: .public), requested \(self.clientRequested, privacy: .public), sends \(self.activeSends, privacy: .public)")
+        }
         if wanted, assertion == nil {
             assertion = assertions.create("msgblast remote control: a paired phone is connected or a send is running")
         } else if !wanted, let id = assertion {

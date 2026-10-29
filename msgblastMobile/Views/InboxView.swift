@@ -81,6 +81,10 @@ struct SettingsView: View {
             }
             Section {
                 Toggle("Keep my Mac awake while connected", isOn: $app.keepAwake)
+                if let status = app.store.projection.macStatus {
+                    LabeledContent("Mac kept awake", value: status.keepAwakeHeld ? "Yes" : "No")
+                        .accessibilityIdentifier("mac-kept-awake")
+                }
                 Text("Your Mac can turn this off in msgblast Settings → Remote.").font(.footnote).foregroundStyle(.secondary)
             }
             Section {

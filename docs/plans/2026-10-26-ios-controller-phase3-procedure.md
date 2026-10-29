@@ -128,14 +128,22 @@ after unlock the banner clears and anything that happened meanwhile appears.
 
 ### 6. Display sleep with keep-awake on and off
 
-1. Keep-awake on (Mac setting) and the phone connected: `pmset displaysleepnow`
-   in Terminal. Wait 5 minutes. Send "Reply with OK" to the website agent.
+0. Run `pmset -g assertions` and note any holder other than msgblast. Another app
+   can keep the display or the Mac awake by itself and hide the result. For
+   example a standalone CuaDriver.app with an agent session holds
+   `PreventUserIdleDisplaySleep`; quit it, or record it as a limit, before going on.
+1. Keep-awake on (Mac setting) and the phone connected. Check that the phone's
+   Settings shows "Mac kept awake: Yes" and that `pmset -g assertions` lists
+   "msgblast remote control…" for the msgblast Dev Remote process. Then run
+   `pmset displaysleepnow` in Terminal. Wait 5 minutes. Send "Reply with OK" to the
+   website agent.
 2. Wake the display. In Dev → Settings → Remote turn keep-awake **off**. Put the
    display to sleep again and wait past your Mac's system sleep setting
    (`pmset -g | grep sleep`).
 3. Wake the Mac and turn keep-awake back on.
 
-Record: for each, whether the phone stayed connected, whether the send replied,
+Record: other assertion holders from step 0; the phone's "Mac kept awake" line;
+for each, whether the phone stayed connected, whether the send replied,
 `pmset -g assertions | grep -i msgblast` output before sleeping.
 Pass: with keep-awake on, the phone stays connected and the send replies with the
 display asleep; with it off, the phone eventually shows Reconnecting and never shows

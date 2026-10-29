@@ -157,8 +157,12 @@ Mac paths refresh it.
 ## Lock, sleep, and keep-awake
 
 A locked Mac is disconnected as a whole: the phone receives one
-"Disconnected: your Mac is locked" notice, no data, and every command is refused
-with `macLocked`. On unlock the session resumes from the phone's cursor. Lock
+"Disconnected: your Mac is locked" notice, no data, and every command except
+`setKeepAwake` is refused with `macLocked`. Keep-awake is accepted while locked,
+because the phone asks for it once per connection and a reconnect can happen while
+the Mac is locked. On unlock the session resumes from the phone's cursor. The
+phone's Settings shows "Mac kept awake: Yes/No" from the Mac's status, and the Mac
+logs each assertion it creates or releases under the `keep-awake` log category. Lock
 state comes from `CGSessionCopyCurrentDictionary` and lock notifications; display
 and system sleep from `NSWorkspace` notifications. Keep-awake prevents idle system
 sleep only; it does not wake a sleeping Mac, keep the display on, or unlock.
@@ -285,5 +289,10 @@ Record phone reducer fixtures from the Demo Mac with
   matrix, and display-sleep behavior are not yet measured; see the
   [phase 0 spike](plans/2026-10-26-ios-controller-spike.md).
 - Command results are remembered only while msgblast runs.
+- Other apps can hold their own sleep assertions and hide whether keep-awake
+  works. For example a standalone CuaDriver.app (not msgblast's built-in helper)
+  holds `PreventUserIdleDisplaySleep` while it has an agent session, so the display
+  never sleeps. Check `pmset -g assertions` for other holders before judging
+  keep-awake.
 - IPv4 addresses only; Tailscale MagicDNS names are not in the QR code.
 - The optional Tailscale LocalAPI `whois` check is not implemented.

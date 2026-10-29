@@ -30,7 +30,13 @@ final class FakeRemoteHost: RemoteCommandHost {
     func endConversation(_ id: UUID) -> RemoteHostResult { ended.append(id); return .applied(conversationID: id) }
     func acknowledgeIncomplete(agentID: String, attemptID: String?) -> RemoteHostResult { acknowledged.append((agentID, attemptID)); return .applied() }
     func cancelNative(agentID: String) -> RemoteHostResult { .applied() }
-    func setKeepAwake(_ enabled: Bool) -> RemoteHostResult { keepAwake.append(enabled); return .applied() }
+    /// When set, keep-awake requests drive a real controller as `AppRemoteHost` does.
+    var keepAwakeController: RemoteKeepAwake?
+    func setKeepAwake(_ enabled: Bool) -> RemoteHostResult {
+        keepAwake.append(enabled)
+        guard let keepAwakeController else { return .applied() }
+        return keepAwakeController.setClientRequested(enabled) ? .applied() : .rejected(.keepAwakeDisabled, "Keep awake is off on the Mac.")
+    }
     func stageAttachment(_ data: Data, filename: String) throws -> String { let id = UUID().uuidString; staged[id] = (data, filename); return id }
     func hasStagedAttachment(_ id: String) -> Bool { staged[id] != nil }
     func requestReport(_ id: UUID) async -> RemoteHostResult { .applied(conversationID: id) }
@@ -116,7 +122,7 @@ final class RemoteCommandExecutorTests: XCTestCase {
 
         host.isLocked = true
         do { let result = await run(.createConversation(text: "Hi", agentIDs: ["claude"], attachmentIDs: [])); XCTAssertEqual(result.code, .macLocked) }
-        do { let result = await run(.setKeepAwake(enabled: true)); XCTAssertEqual(result.code, .macLocked, "A locked Mac accepts no command") }
+        do { let result = await run(.setKeepAwake(enabled: true)); XCTAssertEqual(result.outcome, .applied, "Keep-awake is the one command a locked Mac accepts") }
         host.isLocked = false
 
         do { let result = await run(.createConversation(text: "Hi", agentIDs: ["messages:A"], attachmentIDs: [])); XCTAssertEqual(result.code, .messagesSendsOff, "iMessage sends from the phone are off by default") }

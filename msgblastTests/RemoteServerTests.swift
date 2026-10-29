@@ -122,6 +122,35 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertEqual(stale.snapshots.first?.grid.visibleAgentIDs, ["codexCLI"])
     }
 
+    func testKeepAwakeIsHeldAgainAfterAReconnectEvenWhileLocked() async throws {
+        let (server, _, host) = try makeServer()
+        let keepAwake = RemoteKeepAwake(settingEnabled: true, assertions: .init(create: { _ in 7 }, release: { _ in }))
+        host.keepAwakeController = keepAwake
+        server.onClientChange = { keepAwake.setClient(connected: $0) }
+        let offer = try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity)
+        let phoneKey = P256.Signing.PrivateKey()
+        let phone = connect(server, .pair(offer: offer, deviceName: "Test iPhone", deviceKey: phoneKey))
+        await settle { !phone.snapshots.isEmpty }
+        let (paired, macKey) = try XCTUnwrap(phone.paired)
+        XCTAssertFalse(keepAwake.held, "Connecting alone does not hold the Mac awake")
+        phone.send(.command(RemoteCommand(action: .setKeepAwake(enabled: true))))
+        await settle { keepAwake.held }
+        XCTAssertTrue(keepAwake.held)
+
+        phone.connection.close()
+        await settle { !keepAwake.held }
+        XCTAssertFalse(keepAwake.held, "Disconnecting releases it")
+
+        // The phone reconnects while the Mac is locked and asks again, as it does on every connection.
+        locked = true; host.isLocked = true
+        let resumed = connect(server, .resume(deviceID: paired.deviceID, deviceKey: phoneKey, macIdentityKey: macKey), since: nil)
+        await settle { resumed.authenticated != nil }
+        resumed.send(.command(RemoteCommand(action: .setKeepAwake(enabled: true))))
+        await settle { !resumed.results.isEmpty }
+        XCTAssertEqual(resumed.results.first?.outcome, .applied)
+        XCTAssertTrue(keepAwake.held, "Connect, request, disconnect, reconnect, request again: held")
+    }
+
     func testStrangersWrongCodesAndClosedPairingAreRefused() async throws {
         let (server, _, _) = try makeServer()
         let notOpen = try RemotePairingOffer(url: try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity).url)

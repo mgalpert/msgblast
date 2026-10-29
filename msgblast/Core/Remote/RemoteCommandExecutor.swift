@@ -255,6 +255,9 @@ public final class RemoteCommandExecutor {
 
     private func apply(_ command: RemoteCommand) async -> RemoteCommandResult {
         guard let host else { return reject(command, .failed, "Remote control stopped on the Mac.") }
+        // Keep-awake matters most while the Mac is locked, and the phone sends it only once
+        // per connection, so it is never refused for the lock.
+        if case .setKeepAwake(let enabled) = command.action { return outcome(command, host.setKeepAwake(enabled)) }
         guard !host.isLocked else { return reject(command, .macLocked, "Your Mac is locked. Unlock it first.") }
         switch command.action {
         case .endConversation(let id):
