@@ -71,6 +71,9 @@ public struct AgentSessionSignals: Sendable, Equatable {
     /// Another agent that uses the same Mac app is sending or has an unfinished request.
     /// The Mac composer then shows this agent as Busy and keeps it out of new sends.
     public var sameAppBusyWith: String?
+    /// The Mac composer would still try this app: a send prepares it first
+    /// (`WebAgentSession.canSubmitNativePrompt`).
+    public var canSubmitNativePrompt = false
     public var accountStatus: PersonalAgentAccountStatus = .unknown
     public var grokBotConfigured = false
     public var grokBotActivity: String?
@@ -94,6 +97,7 @@ public struct AgentSessionSignals: Sendable, Equatable {
             hasDesktopBinding = session.state.desktopConversation != nil
             desktopError = session.desktopRecoveryMessage
             unresolvedAttemptIDs = session.state.attempts.filter { $0.status.isUnresolved }.map(\.id.uuidString)
+            canSubmitNativePrompt = session.canSubmitNativePrompt
         } else if session.provider.usesNativeConversation {
             unresolvedAttemptIDs = session.state.attempts.filter { $0.status.isUnresolved }.map(\.id.uuidString)
         }
@@ -180,9 +184,21 @@ public enum AvailabilityCalculator {
                 }
                 if s.isSending { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "\(s.name) is handling a request.", .none) }
                 else if s.loading { readiness = .busy(detail: "Checking \(s.name) on the Mac…"); add(.sendInFlight, "msgblast is checking \(s.name).", .none) }
+                else if !s.desktopReady && s.canSubmitNativePrompt {
+                    // As on the Mac, the first explicit prompt prepares the app; a failure is
+                    // recorded as not sent and never blocks the other recipients.
+                    readiness = s.desktopRunning ? .ready : .readyWillLaunch; source = .live
+                    if let error = s.desktopError, !error.isEmpty {
+                        add(.preparesOnSend, "\(s.name)'s last check on your Mac did not finish. Sending prepares it again; nothing is sent if that fails.", .none, detail: error)
+                    } else if !s.hasDesktopBinding {
+                        add(.preparesOnSend, "Sending connects \(s.name) on your Mac first.", .none)
+                    } else if !s.desktopRunning {
+                        add(.appNotRunning, "Sending will open \(s.name) on your Mac.", .none)
+                    }
+                }
                 else if !s.hasDesktopBinding && !s.desktopReady { readiness = .blocked; add(.notConnected, "Connect \(s.name) in msgblast on your Mac first.", .mac) }
                 else if let error = s.desktopError, !error.isEmpty {
-                    // The same condition shows Reconnect in the Mac's pane.
+                    // The Mac composer would not try this app either; its pane shows Reconnect.
                     readiness = .blocked
                     switch desktopCode(error) {
                     case .controlsUpdating:

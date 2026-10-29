@@ -117,6 +117,8 @@ public struct AvailabilityReasonCode: RemoteOpenValue {
     public static let reconnectNeeded: Self = "reconnectNeeded"
     /// Added in phase 3: a Mac app's accessibility tree could not be read completely, so no input was sent.
     public static let controlsUpdating: Self = "controlsUpdating"
+    /// Added in phase 3: a Mac app is not connected or its last check failed, and a send prepares it first.
+    public static let preparesOnSend: Self = "preparesOnSend"
 }
 
 public enum MacPermission: String, Codable, Hashable, Sendable, CaseIterable {

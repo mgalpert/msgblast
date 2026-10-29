@@ -93,6 +93,20 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(updating.readiness, .blocked); XCTAssertEqual(codes(updating), [.controlsUpdating])
         XCTAssertTrue(updating.reasons.first?.userText.contains("on your Mac") == true)
         XCTAssertEqual(codes(evaluate(signals(.claudeApp) { $0.desktopReady = false; $0.desktopError = "Claude's controls are still updating." })), [.controlsUpdating])
+        // When the Mac composer would still try the app (it prepares on the first prompt),
+        // the phone matches it: sendable, with the Mac's failure as detail.
+        let retry = evaluate(signals(.museApp) { $0.desktopReady = false; $0.desktopError = failed; $0.canSubmitNativePrompt = true })
+        XCTAssertEqual(retry.readiness, .ready); XCTAssertEqual(codes(retry), [.preparesOnSend])
+        XCTAssertEqual(retry.reasons.first?.fixOn, FixLocation.none); XCTAssertEqual(retry.reasons.first?.detail, failed)
+        let settling = evaluate(signals(.museApp) {
+            $0.desktopReady = false; $0.desktopRunning = false; $0.canSubmitNativePrompt = true
+            $0.desktopError = "The app is still updating its controls. No input was sent."
+        })
+        XCTAssertEqual(settling.readiness, .readyWillLaunch, "Controls updating blocks only when the Mac composer blocks too")
+        XCTAssertEqual(codes(settling), [.preparesOnSend])
+        let neverConnected = evaluate(signals(.claudeApp) { $0.hasDesktopBinding = false; $0.desktopReady = false; $0.canSubmitNativePrompt = true })
+        XCTAssertTrue(neverConnected.readiness.acceptsSend); XCTAssertEqual(codes(neverConnected), [.preparesOnSend])
+        XCTAssertEqual(neverConnected.reasons.first?.userText, "Sending connects \(WebProvider.claudeApp.name) on your Mac first.")
         // An agent that shares its Mac app with one that is sending is busy, as on the Mac.
         let shared = evaluate(signals(.dotsApp) { $0.sameAppBusyWith = "ChatGPT" })
         if case .busy = shared.readiness {} else { XCTFail("Shared app in use is busy: \(shared.readiness)") }

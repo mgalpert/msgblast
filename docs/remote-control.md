@@ -146,6 +146,14 @@ requests, queued desktop sends, unroutable Messages chats, and two phase 1
 additions: `notConnected` (a Mac app has no saved conversation yet) and
 `remoteMessagesOff`.
 
+Mac app agents follow the Mac composer. When the composer would still send to an
+app that is not connected or whose last check failed (it prepares the app on the
+first prompt and records a failure as not sent), the phone shows it as sendable
+with `preparesOnSend` and the Mac's text as detail. Only when the composer would
+refuse the app is it `blocked`, with `reconnectNeeded` ("Reconnect Muse in msgblast
+on your Mac.") or `controlsUpdating`. An agent whose Mac app is in use by another
+agent is `busy`, as on the Mac.
+
 Computing availability never connects a session, loads a page, refreshes a desktop
 binding, launches an app, or prompts. While a phone is connected a loop runs every
 5 seconds with the existing prompt-free probes (Accessibility and screen-capture
