@@ -40,3 +40,4 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
           python3 scripts/check_pr_scope.py --base "$BASE_SHA" --head "$HEAD_SHA" \
             --event-file "$GITHUB_EVENT_PATH" --repo "$REPOSITORY"
+          python3 scripts/check_context_budget.py --head "$HEAD_SHA"
