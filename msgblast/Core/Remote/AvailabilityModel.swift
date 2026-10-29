@@ -174,8 +174,16 @@ public enum AvailabilityCalculator {
                 else if s.loading { readiness = .busy(detail: "Checking \(s.name) on the Mac…"); add(.sendInFlight, "msgblast is checking \(s.name).", .none) }
                 else if !s.hasDesktopBinding && !s.desktopReady { readiness = .blocked; add(.notConnected, "Connect \(s.name) in msgblast on your Mac first.", .mac) }
                 else if let error = s.desktopError, !error.isEmpty {
+                    // The same condition shows Reconnect in the Mac's pane.
                     readiness = .blocked
-                    add(desktopCode(error), error, .mac)
+                    switch desktopCode(error) {
+                    case .controlsUpdating:
+                        add(.controlsUpdating, "\(s.name) is still updating its controls on your Mac. No input was sent. If this stays, reconnect \(s.name) in msgblast on your Mac.", .mac, detail: error)
+                    case .reconnectNeeded:
+                        add(.reconnectNeeded, "Reconnect \(s.name) in msgblast on your Mac.", .mac, detail: error)
+                    case let code:
+                        add(code, error, .mac)
+                    }
                 } else if !s.desktopRunning {
                     readiness = .readyWillLaunch; source = .live
                     add(.appNotRunning, "Sending will open \(s.name) on your Mac.", .none)
@@ -216,10 +224,11 @@ public enum AvailabilityCalculator {
 
     static func desktopCode(_ message: String) -> AvailabilityReasonCode {
         let text = message.lowercased()
+        if text.contains("still updating its controls") || text.contains("controls are still updating") { return .controlsUpdating }
         if text.contains("not supported yet") { return .appVersionUnsupported }
         if text.contains("dialog") { return .dialogOpen }
         if text.contains("main window") || text.contains("extra copies") || text.contains("one main window") { return .windowMissingOrAmbiguous }
-        return .notConnected
+        return .reconnectNeeded
     }
 
     public static func availability(_ agent: MessagesAgentSignal, inputs m: MacAvailabilityInputs, now: Date) -> AgentAvailability {

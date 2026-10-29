@@ -113,6 +113,10 @@ public struct AvailabilityReasonCode: RemoteOpenValue {
     public static let notConnected: Self = "notConnected"
     /// Added in phase 1: iMessage sends from the phone are turned off in Settings → Remote.
     public static let remoteMessagesOff: Self = "remoteMessagesOff"
+    /// Added in phase 3: a Mac app agent's last connection check failed; the Mac's pane offers Reconnect.
+    public static let reconnectNeeded: Self = "reconnectNeeded"
+    /// Added in phase 3: a Mac app's accessibility tree could not be read completely, so no input was sent.
+    public static let controlsUpdating: Self = "controlsUpdating"
 }
 
 public enum MacPermission: String, Codable, Hashable, Sendable, CaseIterable {

@@ -82,6 +82,19 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(codes(evaluate(signals(.chatgptApp) { $0.desktopReady = false; $0.desktopError = "Keep one main window open and dismiss any dialogs." })), [.dialogOpen])
         XCTAssertEqual(codes(evaluate(signals(.chatgptApp) { $0.desktopReady = false; $0.desktopError = "This ChatGPT application version is not supported yet." })), [.appVersionUnsupported])
         XCTAssertEqual(codes(evaluate(signals(.chatgptApp) { $0.desktopReady = false; $0.desktopError = "Open ChatGPT’s main window." })), [.windowMissingOrAmbiguous])
+
+        // The Mac pane's Reconnect states block the phone too, with phone wording and the Mac's text as detail.
+        let failed = "App control could not complete this request. Review msgblast permissions; nothing will be retried automatically."
+        let reconnect = evaluate(signals(.museApp) { $0.desktopReady = false; $0.desktopError = failed })
+        XCTAssertEqual(reconnect.readiness, .blocked); XCTAssertEqual(codes(reconnect), [.reconnectNeeded])
+        XCTAssertEqual(reconnect.reasons.first?.userText, "Reconnect \(WebProvider.museApp.name) in msgblast on your Mac.")
+        XCTAssertEqual(reconnect.reasons.first?.fixOn, .mac); XCTAssertEqual(reconnect.reasons.first?.detail, failed)
+        let updating = evaluate(signals(.museApp) { $0.desktopReady = false; $0.desktopError = "The app is still updating its controls. No input was sent." })
+        XCTAssertEqual(updating.readiness, .blocked); XCTAssertEqual(codes(updating), [.controlsUpdating])
+        XCTAssertTrue(updating.reasons.first?.userText.contains("on your Mac") == true)
+        XCTAssertEqual(codes(evaluate(signals(.claudeApp) { $0.desktopReady = false; $0.desktopError = "Claude's controls are still updating." })), [.controlsUpdating])
+        // Once a check succeeds the failure is gone and the agent is ready again by itself.
+        XCTAssertEqual(evaluate(signals(.museApp)).readiness, .ready)
         let queued = evaluate(signals(.claudeApp), otherDesktopSending: true)
         XCTAssertEqual(queued.readiness, .ready, "A queued desktop send is not a refusal")
         XCTAssertEqual(codes(queued), [.queuedBehindDesktopSend])
