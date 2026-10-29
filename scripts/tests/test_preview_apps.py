@@ -1,9 +1,14 @@
 """Preview planning stays free of production publishing and preserves committed icons."""
+import argparse
+import contextlib
 import importlib.util
+import io
+from datetime import datetime
 from pathlib import Path
 import binascii
 import shutil
 import struct
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -23,6 +28,11 @@ def load(name):
 
 preview = load("preview_apps")
 evidence = load("check_pr_evidence")
+
+
+def load_builder():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    return load("build_preview_apps")
 
 
 class PreviewPlanTests(unittest.TestCase):
@@ -109,6 +119,74 @@ class PreviewPlanTests(unittest.TestCase):
     def test_all_keeps_building_only_dev_and_demo(self):
         self.assertEqual([variant["id"] for variant in preview.selected_variants("all")], ["development", "demo"])
         self.assertEqual([variant["id"] for variant in preview.selected_variants("development-remote")], ["development-remote"])
+
+    def test_default_build_stamp_uses_the_local_minute(self):
+        build = load_builder()
+        fixed = datetime(2026, 10, 29, 10, 18, 59)
+        self.assertEqual(build.resolve_build_stamp(None, now=fixed), "20261029-1018")
+        self.assertRegex(build.resolve_build_stamp(None), r"^\d{8}-\d{4}$")
+        self.assertRegex(build.require_build_stamp(argparse.ArgumentParser(), None), r"^\d{8}-\d{4}$")
+
+    def test_build_stamp_none_keeps_today_names(self):
+        build = load_builder()
+        self.assertIsNone(build.resolve_build_stamp("none"))
+        self.assertIsNone(build.require_build_stamp(argparse.ArgumentParser(), "none"))
+        original = preview.VARIANTS["development"]
+        variant = preview.stamped(original, None)
+        self.assertIs(variant, original)
+        self.assertEqual(variant["app_name"], "msgblast Dev.app")
+        self.assertEqual(variant["bundle_name"], "msgblast Dev")
+        self.assertEqual(variant["display_name"], "msgblast Dev")
+        info = preview.configure_info({"CFBundleName": "msgblast"}, variant, "a" * 40)
+        self.assertNotIn("msgblastBuildStamp", info)
+        self.assertEqual(build.archive_name(variant, "abcdef1234567890ffff"), "msgblast-dev-abcdef123456.zip")
+
+    def test_invalid_build_stamp_is_rejected(self):
+        build = load_builder()
+        parser = argparse.ArgumentParser(prog="build_preview_apps.py")
+        for stamp in ("", "bad stamp", "-leading", "a" * 33, "stamp/slash", "."):
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured), self.assertRaises(SystemExit):
+                build.require_build_stamp(parser, stamp)
+            self.assertIn("must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$, or be none", captured.getvalue())
+        self.assertEqual(build.require_build_stamp(parser, "20261029-1018"), "20261029-1018")
+        self.assertEqual(build.require_build_stamp(parser, "a" * 32), "a" * 32)
+        self.assertEqual(build.require_build_stamp(parser, "a.b_c-1"), "a.b_c-1")
+
+    def test_stamp_changes_visible_names_and_leaves_identity(self):
+        build = load_builder()
+        stamp = "20261029-1018"
+        sha = "abcdef1234567890" + ("f" * 24)
+        info = {"CFBundleIdentifier": "com.msgblast.mac", "CFBundleName": "msgblast"}
+        expectations = {
+            "development": ("msgblast Dev", "msgblast-dev", "com.msgblast.development", "msgblast-Dev"),
+            "demo": ("msgblast Demo", "msgblast-demo", "com.msgblast.demo", "msgblast-Demo"),
+            "development-remote": ("msgblast Dev Remote", "msgblast-dev-remote", "com.msgblast.development.remote", "msgblast-Dev-Remote"),
+        }
+        for key, (base_name, prefix, bundle_id, support) in expectations.items():
+            original = preview.VARIANTS[key]
+            variant = preview.stamped(original, stamp)
+            self.assertIsNot(variant, original)
+            self.assertEqual(original["app_name"], base_name + ".app")
+            self.assertEqual(original["bundle_id"], bundle_id)
+            self.assertEqual(original["support_directory"], support)
+            self.assertEqual(variant["app_name"], f"{base_name} {stamp}.app")
+            self.assertEqual(variant["bundle_name"], f"{base_name} {stamp}")
+            self.assertEqual(variant["display_name"], f"{base_name} {stamp}")
+            self.assertEqual(variant["bundle_id"], bundle_id)
+            self.assertEqual(variant["support_directory"], support)
+            self.assertEqual(variant["build_stamp"], stamp)
+            configured = preview.configure_info(info, variant, sha)
+            self.assertEqual(configured["CFBundleName"], f"{base_name} {stamp}")
+            self.assertEqual(configured["CFBundleDisplayName"], f"{base_name} {stamp}")
+            self.assertEqual(configured["msgblastBuildStamp"], stamp)
+            self.assertEqual(configured["CFBundleIdentifier"], bundle_id)
+            self.assertEqual(configured["msgblastSupportDirectory"], support)
+            preview.verify_configured_info(configured, variant, sha)
+            self.assertEqual(build.archive_name(variant, sha), f"{prefix}-{sha[:12]}-{stamp}.zip")
+            self.assertIn(variant["app_name"], build.instructions(variant))
+        remote = preview.stamped(preview.VARIANTS["development-remote"], stamp)
+        self.assertIn("msgblast Dev Remote 20261029-1018.app", build.instructions(remote))
 
     def test_workspace_copy_refuses_the_source_tree(self):
         with self.assertRaises(RuntimeError):

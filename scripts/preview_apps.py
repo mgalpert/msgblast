@@ -78,6 +78,22 @@ def selected_variants(choice):
     return [VARIANTS[choice]]
 
 
+def stamped(variant, stamp):
+    """Return a variant whose visible names include stamp.
+
+    bundle_id and support_directory stay as they are so saved state and TCC
+    grants remain keyed on them. None returns the original variant.
+    """
+    if stamp is None:
+        return variant
+    updated = dict(variant)
+    updated["bundle_name"] = f"{variant['bundle_name']} {stamp}"
+    updated["display_name"] = f"{variant['display_name']} {stamp}"
+    updated["app_name"] = f"{variant['bundle_name']} {stamp}.app"
+    updated["build_stamp"] = stamp
+    return updated
+
+
 def icon_fill(directory):
     return json.loads((Path(directory) / "icon.json").read_text())["fill"]
 
@@ -138,6 +154,8 @@ def configure_info(info, variant, source_revision):
         "msgblastPreviewVariant": variant["id"],
         "msgblastSourceRevision": source_revision,
     })
+    if variant.get("build_stamp"):
+        updated["msgblastBuildStamp"] = variant["build_stamp"]
     if variant["fixture"] and updated["msgblastDemo"] is not True:
         raise RuntimeError("Fixture mode requires msgblastDemo, not only a blue icon")
     if variant["development"] and (variant["fixture"] or updated["msgblastDemo"] is not False):

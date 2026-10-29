@@ -34,6 +34,10 @@ them as current setup instructions or proof that today's branch passes.
   It creates separate blue-green **msgblast Dev** and blue **msgblast Demo**
   identities/profiles with production updates disabled, and preserves the
   committed production icon by staging changes in a temporary workspace.
+- Always build stamped previews locally. The stamp in the app name lets
+  Launch Services and System Settings tell copies apart. Delete superseded
+  preview copies, and launch a preview by its explicit path rather than by
+  bundle id.
 - Use Demo for simulated sends, fixture demonstrations, and PR evidence. Dev
   uses live accounts/data; do not pass `--demo` or `--isolated-demo` to Dev.
 - Keep the installed production app and its support folder intact. A different
