@@ -93,8 +93,10 @@ The build embeds the official CuaDriver **0.38.0** executable at
 `Contents/Helpers/cua-driver`, pinned by URL and SHA-256 in `scripts/cua-driver.json`.
 Only the exact regular executable is extracted; the standalone app, SDK library,
 and Node runtime are excluded. Build signing includes this nested executable.
-The app launches the helper directly with `serve --embedded`, keeping it in
-msgblast's responsibility chain. Provider authentication remains in each app.
+The app launches the helper directly with `serve --embedded --no-overlay`, keeping
+it in msgblast's responsibility chain. `--no-overlay` turns off the driver's
+agent-cursor overlay, which is on by default and otherwise leaves a transparent
+full-screen `cua-driver` window on screen for as long as the helper runs. Provider authentication remains in each app.
 The driver is not downloaded or discovered from PATH at runtime. Before reusing
 a daemon, msgblast checks the host's current Accessibility and Screen Recording
 grants. An observed grant or revocation starts a fresh private generation; calls

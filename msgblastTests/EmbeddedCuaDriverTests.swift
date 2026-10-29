@@ -32,6 +32,7 @@ final class EmbeddedCuaDriverTests: XCTestCase {
         assert os.environ['CUA_DRIVER_PERMISSION_MODE'] == 'standard'
         if args[0] == 'serve':
             assert '--parent-liveness-stdio' in args
+            assert '--no-overlay' in args
             assert os.stat(os.path.dirname(path)).st_mode & 0o777 == 0o700
             with open(os.path.join(os.path.dirname(__file__), 'started'), 'w') as signal:
                 signal.write(str(os.getpid()))
