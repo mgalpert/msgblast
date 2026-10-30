@@ -32,6 +32,7 @@ struct ConversationView: View {
     @State private var savedSelection: Set<String>?
     @State private var focusRequest = 0
     @State private var scrollTarget: String?
+    @State private var scrollAnchor: UnitPoint = .center
     /// A link, photo or document being opened from the thread.
     @State private var opening: SharedOpen?
     @State private var details: IncompleteSummary?
@@ -78,8 +79,10 @@ struct ConversationView: View {
                 // Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs (and
                 // anything after a status row) are 8 pt apart, and a time header has 12 pt
                 // above and below. Rows set their own edges: bubbles sit 16 pt from the screen,
-                // a group's incoming avatar 8 pt.
-                LazyVStack(alignment: .leading, spacing: 0) {
+                // a group's incoming avatar 8 pt. A plain stack, not a lazy one: estimated row
+                // heights made a long thread's height swing while it scrolled to its newest
+                // message, and it opened blank.
+                VStack(alignment: .leading, spacing: 0) {
                     let latestMine = turns.last { $0.role == .user }?.id
                     let isGroup = conversation.agentIDs.count > 1 && selection.count != 1
                     ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
@@ -113,6 +116,9 @@ struct ConversationView: View {
                 .coordinateSpace(.named(Self.threadSpace))
             }
             .scrollDismissesKeyboard(.interactively)
+            // Content fades under the bars rather than tinting them (a photo under the header
+            // must not turn the bar its colour).
+            .scrollEdgeEffectStyle(.soft, for: .top)
             // Groups: the prompt that formed the group, pinned while it is scrolled away, in a
             // safe-area bar so the thread fades under it like under the navigation bar.
             .safeAreaBar(edge: .top, spacing: 0) {
@@ -167,7 +173,10 @@ struct ConversationView: View {
             }
             .onChange(of: scrollTarget) { _, id in
                 guard let id else { return }
-                withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) }
+                // Leaving the newest message: rows that load on the way must not pull it back.
+                atBottom = false
+                withAnimation(.snappy) { proxy.scrollTo(id, anchor: scrollAnchor) }
+                scrollAnchor = .center
                 scrollTarget = nil
             }
             .onChange(of: presenter.typingAgents(in: conversationID, selection: selection)) { _, _ in
@@ -199,6 +208,13 @@ struct ConversationView: View {
                 opening = .photo(first)
             }
             if let agents = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FILTER"] { selection = Set(agents.split(separator: ",").map(String.init)) }
+            // `MSGBLAST_FIXTURE_SCROLL=photo` scrolls the first message with photos up under the header:
+            // The message after it goes to the top, so the photos and the file row sit under the bars.
+            let all = presenter.turns(in: conversationID, agentID: nil)
+            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_SCROLL"] == "photo",
+               let index = all.firstIndex(where: { $0.attachments.contains { $0.mimeType?.hasPrefix("image/") == true } }), index + 1 < all.count {
+                Task { try? await Task.sleep(for: .seconds(1.5)); scrollAnchor = .top; scrollTarget = all[index + 1].id }
+            }
             #endif
         }
         // Reply mode narrows the selection to that agent and restores it after.
@@ -217,6 +233,8 @@ struct ConversationView: View {
             ToolbarItem(placement: .principal) {
                 ThreadHeader(app: app, agentIDs: conversation.agentIDs, selection: $selection) { showingDetails = true }
             }
+            // The cluster and its pill sit on the bar itself, with no glass block behind them.
+            .sharedBackgroundVisibility(.hidden)
         }
         .sharedContentPresentation(app, opening: $opening)
         .sheet(isPresented: $showingDetails) { ThreadDetailsSheet(app: app, conversationID: conversationID, selection: $selection, run: run) }
@@ -427,7 +445,9 @@ struct PinnedPromptRow: View {
             .accessibilityHint(expanded ? "Shows two lines" : "Shows the whole prompt")
         }
         .padding(.horizontal, Space.screen).padding(.vertical, Space.pinnedV)
-        .background(.bar)
+        // Opaque, no material: nothing shows through the prompt's text, and the system's
+        // scroll-edge effect fades the thread under the bars instead of tinting a material.
+        .background(Color(.systemBackground))
     }
 }
 

@@ -181,6 +181,7 @@ Send shows (simctl cannot type); `MSGBLAST_FIXTURE_FOCUS=1` focuses the field so
 keyboard opens, `MSGBLAST_FIXTURE_DICTATION=1` shows the dictation glyph even without a microphone, and
 `MSGBLAST_FIXTURE_DETAILS=1` opens a conversation's Details sheet,
 `MSGBLAST_FIXTURE_RECIPIENTS=1` opens the recipient strip above the field with the keyboard up,
+`MSGBLAST_FIXTURE_SCROLL=photo` scrolls the thread's first photo message up under the header,
 `MSGBLAST_FIXTURE_SEARCH=<text>` types a query into the inbox's search field with the keyboard up,
 `MSGBLAST_FIXTURE_FILTER=claude,museApp` selects agents in the header (with `new`, it checks them in
 the new thread's strip, which opens pushed with the field focused), and

@@ -29,6 +29,7 @@ struct ThreadHeader: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, Space.gap).padding(.vertical, Space.hairline)
+                // Standard glass, no tint, so it reads the same over any content.
                 .glassEffect(.regular.interactive(), in: .capsule)
             }
             .buttonStyle(.plain)

@@ -50,6 +50,7 @@ struct NewConversationView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) { NewThreadHeader(app: app, agentIDs: selected) }
+                    .sharedBackgroundVisibility(.hidden)
             }
             .sensoryFeedback(.selection, trigger: selected)
             .onAppear {
