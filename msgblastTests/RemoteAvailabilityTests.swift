@@ -48,7 +48,8 @@ final class RemoteAvailabilityTests: XCTestCase {
         if case .busy = evaluate(signals(.claude) { $0.isSending = true }).readiness {} else { XCTFail("Sending is busy") }
         let dialog = evaluate(signals(.claude) { $0.snapshotReady = false; $0.snapshotReason = "Finish the open dialog in Claude first." })
         XCTAssertEqual(dialog.readiness, .blocked); XCTAssertEqual(codes(dialog), [.dialogOpen])
-        XCTAssertEqual(dialog.reasons.first?.userText, "Finish the open dialog in Claude on your Mac first.", "Mac reasons are worded for the phone")
+        XCTAssertEqual(dialog.reasons.first?.userText, "Close Claude’s dialog on your Mac", "Mac reasons are worded for the phone")
+        XCTAssertEqual(dialog.reasons.first?.detail, "Finish the open dialog in Claude on your Mac first.", "The Mac's reason stays as the detail")
         if case .busy = evaluate(signals(.grok) { $0.snapshotReady = false; $0.snapshotReason = "Wait for Grok to finish its current reply." }).readiness {} else { XCTFail("Generating is busy") }
         let hark = evaluate(signals(.hark))
         XCTAssertEqual(hark.readiness, .unavailable); XCTAssertEqual(codes(hark), [.noSharedSends]); XCTAssertFalse(hark.capabilities.sharedSend)
@@ -72,10 +73,13 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(permissions.readiness, .blocked)
         XCTAssertEqual(codes(permissions), [.driverUnavailable, .permissionMissing, .permissionMissing])
         XCTAssertEqual(permissions.reasons.compactMap(\.permission), [.accessibility, .screenRecording])
+        XCTAssertEqual(permissions.reasons.map(\.userText), ["Reinstall msgblast on your Mac", "Allow Accessibility on your Mac", "Allow Screen Recording on your Mac"])
         XCTAssertTrue(permissions.reasons.allSatisfy { $0.fixOn == .mac })
 
         let pending = evaluate(signals(.dotsApp) { $0.unresolvedAttemptIDs = ["A1"] })
         XCTAssertEqual(pending.readiness, .blocked); XCTAssertEqual(pending.reasons.first?.attemptID, "A1"); XCTAssertEqual(pending.reasons.first?.fixOn, .phone)
+        XCTAssertEqual(pending.reasons.first?.userText, "Finish the \(WebProvider.dotsApp.name) request first")
+        XCTAssertTrue(pending.reasons.first?.detail?.contains("usage may have been consumed") == true, "The usage note stays in the detail")
         if case .busy = evaluate(signals(.claudeApp) { $0.isSending = true }).readiness {} else { XCTFail("Sending is busy") }
         if case .busy = evaluate(signals(.claudeApp) { $0.loading = true }).readiness {} else { XCTFail("Connection checks are busy") }
         XCTAssertEqual(codes(evaluate(signals(.grokBotApp) { $0.hasDesktopBinding = false; $0.desktopReady = false })), [.notConnected])
@@ -87,11 +91,12 @@ final class RemoteAvailabilityTests: XCTestCase {
         let failed = "App control could not complete this request. Review msgblast permissions; nothing will be retried automatically."
         let reconnect = evaluate(signals(.museApp) { $0.desktopReady = false; $0.desktopError = failed })
         XCTAssertEqual(reconnect.readiness, .blocked); XCTAssertEqual(codes(reconnect), [.reconnectNeeded])
-        XCTAssertEqual(reconnect.reasons.first?.userText, "Reconnect \(WebProvider.museApp.name) in msgblast on your Mac.")
+        XCTAssertEqual(reconnect.reasons.first?.userText, "Reconnect \(WebProvider.museApp.name) on your Mac")
         XCTAssertEqual(reconnect.reasons.first?.fixOn, .mac); XCTAssertEqual(reconnect.reasons.first?.detail, failed)
         let updating = evaluate(signals(.museApp) { $0.desktopReady = false; $0.desktopError = "The app is still updating its controls. No input was sent." })
         XCTAssertEqual(updating.readiness, .blocked); XCTAssertEqual(codes(updating), [.controlsUpdating])
-        XCTAssertTrue(updating.reasons.first?.userText.contains("on your Mac") == true)
+        XCTAssertEqual(updating.reasons.first?.userText, "\(WebProvider.museApp.name) is still loading")
+        XCTAssertTrue(updating.reasons.first?.detail?.contains("If this stays, reconnect \(WebProvider.museApp.name) on your Mac.") == true)
         XCTAssertEqual(codes(evaluate(signals(.claudeApp) { $0.desktopReady = false; $0.desktopError = "Claude's controls are still updating." })), [.controlsUpdating])
         // When the Mac composer would still try the app (it prepares on the first prompt),
         // the phone matches it: sendable, with the Mac's failure as detail.
@@ -106,7 +111,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(codes(settling), [.preparesOnSend])
         let neverConnected = evaluate(signals(.claudeApp) { $0.hasDesktopBinding = false; $0.desktopReady = false; $0.canSubmitNativePrompt = true })
         XCTAssertTrue(neverConnected.readiness.acceptsSend); XCTAssertEqual(codes(neverConnected), [.preparesOnSend])
-        XCTAssertEqual(neverConnected.reasons.first?.userText, "Sending connects \(WebProvider.claudeApp.name) on your Mac first.")
+        XCTAssertEqual(neverConnected.reasons.first?.userText, "Connects \(WebProvider.claudeApp.name) on your Mac first")
         // An agent that shares its Mac app with one that is sending is busy, as on the Mac.
         let shared = evaluate(signals(.dotsApp) { $0.sameAppBusyWith = "ChatGPT" })
         if case .busy = shared.readiness {} else { XCTFail("Shared app in use is busy: \(shared.readiness)") }
@@ -165,6 +170,43 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(lost.reasons.map(\.code), [.conversationUnroutable]); XCTAssertEqual(lost.reasons[0].detail, "No supported conversation found")
         var busy = m; busy.messagesBusy = true
         if case .busy = AvailabilityCalculator.availability(agent, inputs: busy, now: now).readiness {} else { XCTFail("A Messages send is busy") }
+    }
+
+    /// Every reason reads at a glance on the phone: one short clause, "on your Mac" at most
+    /// once, never "in msgblast on your Mac", no trailing period, no consequence clause.
+    func testEveryReasonIsOneShortLine() {
+        var denied = allowed(); denied.accessibility = .denied; denied.screenRecording = .denied; denied.driverInstalled = false
+        let failed = "App control could not complete this request. Review msgblast permissions; nothing will be retried automatically."
+        var all: [AgentAvailability] = WebProvider.allCases.flatMap { provider in [
+            evaluate(signals(provider)), evaluate(signals(provider) { $0.isEnabled = false }), evaluate(signals(provider) { $0.isStorageAvailable = false }),
+            evaluate(signals(provider) { $0.isSending = true }), evaluate(signals(provider) { $0.signedIn = false }), evaluate(signals(provider) { $0.signedIn = nil }),
+            evaluate(signals(provider) { $0.unresolvedAttemptIDs = ["A"] }), evaluate(signals(provider), denied), evaluate(signals(provider), otherDesktopSending: true),
+            evaluate(signals(provider) { $0.loading = true }), evaluate(signals(provider) { $0.sameAppBusyWith = "ChatGPT" }),
+            evaluate(signals(provider) { $0.desktopInstalled = false }), evaluate(signals(provider) { $0.desktopRunning = false; $0.desktopReady = false }),
+            evaluate(signals(provider) { $0.desktopReady = false; $0.desktopError = failed }),
+            evaluate(signals(provider) { $0.desktopReady = false; $0.desktopError = failed; $0.canSubmitNativePrompt = true }),
+            evaluate(signals(provider) { $0.desktopReady = false; $0.desktopError = "The app is still updating its controls. No input was sent." }),
+            evaluate(signals(provider) { $0.desktopReady = false; $0.desktopError = "Keep one main \(provider.name) window open and dismiss any dialogs before connecting." }),
+            evaluate(signals(provider) { $0.hasDesktopBinding = false; $0.desktopReady = false }),
+            evaluate(signals(provider) { $0.snapshotReady = false; $0.accountStatus = .signedOut }),
+            evaluate(signals(provider) { $0.snapshotReady = false; $0.accountStatus = .unknown; $0.snapshotReason = "Install Codex, then sign in with your local account." }),
+            evaluate(signals(provider) { $0.grokBotConfigured = false }), evaluate(signals(provider) { $0.snapshotReady = false }),
+            evaluate(signals(provider) { $0.snapshotReady = false; $0.snapshotReason = "Finish the open dialog in \(provider.name) first." }),
+        ] }
+        let agent = MessagesAgentSignal(agentID: UUID(), gridID: .messages(UUID()), name: "Cedar", routable: false, routeStatus: "No supported conversation found", selected: true)
+        var messages = MacAvailabilityInputs(); messages.fullDiskAccess = .denied; messages.contacts = .denied; messages.automation = .denied
+        all.append(AvailabilityCalculator.availability(agent, inputs: messages, now: now))
+        var busy = allowed(); busy.messagesBusy = true; busy.automation = .needsMessages
+        all.append(AvailabilityCalculator.availability(MessagesAgentSignal(agentID: UUID(), gridID: .messages(UUID()), name: "Cedar", routable: true, routeStatus: "", selected: true), inputs: busy, now: now))
+        let texts = Set(all.flatMap { $0.reasons.map(\.userText) })
+        XCTAssertGreaterThan(texts.count, 30)
+        for text in texts {
+            XCTAssertLessThanOrEqual(text.count, 44, text)
+            XCTAssertFalse(text.hasSuffix("."), text)
+            XCTAssertFalse(text.contains("in msgblast on your Mac"), text)
+            XCTAssertLessThanOrEqual(text.components(separatedBy: "on your Mac").count - 1, 1, text)
+            for clause in ["Nothing was sent", "Nothing was submitted", "retried automatically", "usage may have been consumed"] { XCTAssertFalse(text.contains(clause), text) }
+        }
     }
 
     @MainActor private final class Apps {

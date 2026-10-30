@@ -35,7 +35,7 @@ final class FakeRemoteHost: RemoteCommandHost {
     func setKeepAwake(_ enabled: Bool) -> RemoteHostResult {
         keepAwake.append(enabled)
         guard let keepAwakeController else { return .applied() }
-        return keepAwakeController.setClientRequested(enabled) ? .applied() : .rejected(.keepAwakeDisabled, "Keep awake is off on the Mac.")
+        return keepAwakeController.setClientRequested(enabled) ? .applied() : .rejected(.keepAwakeDisabled, "Keep awake is off on your Mac")
     }
     func stageAttachment(_ data: Data, filename: String) throws -> String { let id = UUID().uuidString; staged[id] = (data, filename); return id }
     func hasStagedAttachment(_ id: String) -> Bool { staged[id] != nil }
@@ -52,7 +52,7 @@ final class FakeRemoteHost: RemoteCommandHost {
     static func agent(_ id: String, form: AgentForm = .website, readiness: AgentReadiness = .ready, privateSend: Bool = true) -> AgentAvailability {
         AgentAvailability(agentID: id, product: form == .messages ? .messages : .claude, form: form, displayName: id, visibleInGrid: true, selectedForSharedSend: false,
             capabilities: AgentCapabilities(sharedSend: true, privateSend: privateSend, attachments: form == .messages, namedCopies: false, endConversation: true, sharesOneConversation: false),
-            readiness: readiness, reasons: readiness.acceptsSend ? [] : [AvailabilityReason(code: .signedOut, userText: "Sign in to \(id) on your Mac.", fixOn: .mac)],
+            readiness: readiness, reasons: readiness.acceptsSend ? [] : [AvailabilityReason(code: .signedOut, userText: "Sign in to \(id) on your Mac", fixOn: .mac)],
             observedAt: Date(), source: .live)
     }
 }
@@ -131,7 +131,7 @@ final class RemoteCommandExecutorTests: XCTestCase {
 
         host.agents["claude"] = FakeRemoteHost.agent("claude", readiness: .blocked)
         let blocked = await run(.createConversation(text: "Hi", agentIDs: ["claude"], attachmentIDs: []))
-        XCTAssertEqual(blocked.code, .agentUnavailable); XCTAssertEqual(blocked.message, "Sign in to claude on your Mac.")
+        XCTAssertEqual(blocked.code, .agentUnavailable); XCTAssertEqual(blocked.message, "Sign in to claude on your Mac")
         do { let result = await run(.createConversation(text: "Hi", agentIDs: ["nobody"], attachmentIDs: [])); XCTAssertEqual(result.code, .unknownAgent) }
         do { let result = await run(.createConversation(text: "   ", agentIDs: ["chatgptApp"], attachmentIDs: [])); XCTAssertEqual(result.code, .invalidCommand) }
         do { let result = await run(.createConversation(text: "Hi", agentIDs: [], attachmentIDs: [])); XCTAssertEqual(result.code, .invalidCommand) }
@@ -221,22 +221,47 @@ final class RemoteCommandExecutorTests: XCTestCase {
         let executor = RemoteCommandExecutor(host: host)
         let result = await executor.execute(RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["os3"])))
         let reason = try? XCTUnwrap(result.agentReasons["os3"])
-        XCTAssertEqual(reason, "rabbit OS3’s comparison chat could not open. Open rabbit OS3 in msgblast on your Mac and sign in if needed. Nothing was sent.")
+        XCTAssertEqual(reason, "Open rabbit OS3 on your Mac and sign in", "The phone gets one short line")
         XCTAssertFalse(reason?.lowercased().contains("pane") ?? true)
+        XCTAssertEqual(RemotePhoneText.split(host.notReadyReason, agentName: "rabbit OS3").detail,
+                       "rabbit OS3’s comparison chat could not open. Open rabbit OS3 on your Mac and sign in if needed.",
+                       "The full reason stays available as the detail, without the clause the chip already shows")
 
         // Other Mac reasons that point at the Mac's screen also name the Mac.
         for (mac, phone) in [
-            ("Open this agent to sign in here.", "Open rabbit OS3 in msgblast on your Mac and sign in."),
-            ("rabbit OS3 already has a draft. Send or clear it in the page first.", "rabbit OS3 already has a draft. Send or clear it in msgblast on your Mac first."),
-            ("rabbit OS3’s page layout is not recognized yet. Reload the page and try again.", "rabbit OS3’s page layout is not recognized yet. Reload rabbit OS3 in msgblast on your Mac and try again."),
-            ("The page did not accept text. Use its composer directly.", "The page did not accept text. Use rabbit OS3 directly in msgblast on your Mac."),
-            ("Open the intended conversation in Claude, then connect it here.", "Open the intended conversation in Claude, then connect it in msgblast on your Mac."),
+            ("Open this agent to sign in here.", "Open rabbit OS3 on your Mac and sign in."),
+            ("rabbit OS3 already has a draft. Send or clear it in the page first.", "rabbit OS3 already has a draft. Send or clear it on your Mac first."),
+            ("rabbit OS3’s page layout is not recognized yet. Reload the page and try again.", "rabbit OS3’s page layout is not recognized yet. Reload rabbit OS3 on your Mac and try again."),
+            ("The page did not accept text. Use its composer directly.", "The page did not accept text. Use rabbit OS3 directly on your Mac."),
+            ("Open the intended conversation in Claude, then connect it here.", "Open the intended conversation in Claude, then connect it on your Mac."),
             ("Finish the open dialog in rabbit OS3 first.", "Finish the open dialog in rabbit OS3 on your Mac first."),
         ] {
             XCTAssertEqual(RemotePhoneText.phrase(mac, agentName: "rabbit OS3"), phone)
         }
-        XCTAssertEqual(RemotePhoneText.phrase("Sign in to rabbit OS3 in msgblast on your Mac.", agentName: "rabbit OS3"), "Sign in to rabbit OS3 in msgblast on your Mac.",
+        XCTAssertEqual(RemotePhoneText.phrase("Sign in to rabbit OS3 on your Mac", agentName: "rabbit OS3"), "Sign in to rabbit OS3 on your Mac",
                        "Reasons already written for the phone are unchanged")
+        XCTAssertEqual(RemotePhoneText.phrase("Sign in to rabbit OS3 in msgblast on your Mac.", agentName: "rabbit OS3"), "Sign in to rabbit OS3 on your Mac.",
+                       "The app is implied: \"on your Mac\" is enough")
+    }
+
+    func testDesktopDriverMessagesGetShortFormsWithTheFullTextAsDetail() {
+        let cases: [(String, String?, String)] = [
+            ("App control could not complete this request. Review msgblast permissions; nothing will be retried automatically.", "Muse", "Check msgblast permissions on your Mac"),
+            ("The app is still updating its controls. No input was sent.", "Muse", "Muse is still loading"),
+            ("Keep one main Muse window open and dismiss any dialogs before connecting.", nil, "Open one Muse window on your Mac"),
+            ("Outgoing message observed in the app. Waiting for its reply.", nil, "Sent, waiting for a reply"),
+            ("Finish the open dialog in Claude first.", "Claude", "Close Claude’s dialog on your Mac"),
+        ]
+        for (mac, name, short) in cases {
+            let line = RemotePhoneText.split(mac, agentName: name)
+            XCTAssertEqual(line.text, short)
+            XCTAssertLessThanOrEqual(line.text.count, 40)
+            XCTAssertEqual(line.detail, RemotePhoneText.phrase(mac, agentName: name), "The Mac's full reason is kept")
+        }
+        XCTAssertEqual(RemotePhoneText.phrase("App control could not complete this request. Review msgblast permissions; nothing will be retried automatically."),
+                       "App control could not complete this request. Review msgblast permissions.")
+        let plain = RemotePhoneText.split("Sign in to Claude on your Mac")
+        XCTAssertEqual(plain.text, "Sign in to Claude on your Mac"); XCTAssertNil(plain.detail, "Short text has no separate detail")
     }
 
     func testNonSendCommandsReachTheHost() async {
@@ -245,7 +270,7 @@ final class RemoteCommandExecutorTests: XCTestCase {
         let active = UUID(), ended = UUID()
         host.conversations = [active: .active(members: []), ended: .ended]
         do { let result = await executor.execute(RemoteCommand(action: .endConversation(conversationID: active))); XCTAssertEqual(result.outcome, .applied) }
-        do { let result = await executor.execute(RemoteCommand(action: .endConversation(conversationID: ended))); XCTAssertEqual(result.message, "Already ended.") }
+        do { let result = await executor.execute(RemoteCommand(action: .endConversation(conversationID: ended))); XCTAssertEqual(result.message, "Already ended") }
         XCTAssertEqual(host.ended, [active])
         _ = await executor.execute(RemoteCommand(action: .acknowledgeIncomplete(agentID: "chatgptApp", attemptID: "X")))
         XCTAssertEqual(host.acknowledged.first?.1, "X")

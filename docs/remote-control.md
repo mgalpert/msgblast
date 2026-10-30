@@ -150,9 +150,19 @@ Mac app agents follow the Mac composer. When the composer would still send to an
 app that is not connected or whose last check failed (it prepares the app on the
 first prompt and records a failure as not sent), the phone shows it as sendable
 with `preparesOnSend` and the Mac's text as detail. Only when the composer would
-refuse the app is it `blocked`, with `reconnectNeeded` ("Reconnect Muse in msgblast
-on your Mac.") or `controlsUpdating`. An agent whose Mac app is in use by another
-agent is `busy`, as on the Mac.
+refuse the app is it `blocked`, with `reconnectNeeded` ("Reconnect Muse on your
+Mac") or `controlsUpdating` ("Muse is still loading"). An agent whose Mac app is in
+use by another agent is `busy`, as on the Mac.
+
+Reason text is written to be read at a glance: one short clause (about 40
+characters, no trailing period), "on your Mac" at most once, and no clause the
+phone already shows through state ("Nothing was sent"). The Mac's full reason, such
+as the usage note for an unfinished request or the desktop driver's own message, is
+kept in the reason's `detail`, which the phone shows on demand.
+`RemotePhoneText.short` gives long desktop-driver messages their short form (for
+example "Check msgblast permissions on your Mac" for an app-control failure), and
+`RemotePhoneText.phrase` rewrites Mac-screen wording ("in this pane") for the
+phone.
 
 Computing availability never connects a session, loads a page, refreshes a desktop
 binding, launches an app, or prompts. While a phone is connected a loop runs every
