@@ -53,7 +53,11 @@ struct ComposeBar: View {
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var members: [String] { conversationID.flatMap { app.store.projection.conversations[$0]?.agentIDs } ?? [] }
     private var draftKey: String { MobileStore.draftKey(conversation: conversationID, agentID: recipients.count == 1 && conversationID != nil ? recipients[0] : nil) }
-    private var onlyMessages: Bool { !recipients.isEmpty && recipients.allSatisfy { app.store.projection.agents[$0]?.form == .messages } }
+    /// The plus shows only when a recipient takes attachments (Messages contacts today).
+    private var takesAttachments: Bool {
+        recipients.contains { id in app.store.projection.agents[id].map { $0.form == .messages || $0.capabilities.attachments } ?? false }
+    }
+    @State private var capturing = false
     private var block: ComposeBlock? {
         presenter.composeBlock(canSend: app.connection.state.canSend, connectionText: app.connection.state == .macLocked ? app.connection.state.statusText : "Not connected",
                                agentIDs: recipients, conversation: conversationID, prepareReasons: prepareReasons)
@@ -94,11 +98,13 @@ struct ComposeBar: View {
             // Telegram's bar: a plain plus circle, one quiet capsule (an agent badge when one is
             // chosen, the text, then the dictation glyph inside), and a round Send outside.
             HStack(alignment: .bottom, spacing: Space.gap) {
-                // Always present; attachments go to Messages contacts only.
+                // Only for recipients that take attachments; otherwise the field starts at the edge.
+                if takesAttachments {
                 Menu {
-                    PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }.disabled(!onlyMessages)
-                    Button { importing = true } label: { Label("File", systemImage: "doc") }.disabled(!onlyMessages)
-                    if !onlyMessages { Text("Attachments go to Messages contacts only") }
+                    // Messages' order: Camera (on a device with one), Photo, File.
+                    if CameraPicker.isAvailable { Button { capturing = true } label: { Label("Camera", systemImage: "camera") } }
+                    PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }
+                    Button { importing = true } label: { Label("File", systemImage: "doc") }
                 } label: {
                     Image(systemName: "plus").font(.system(size: Space.glyph + 2, weight: .regular))
                         .foregroundStyle(Color(.label).opacity(0.7))
@@ -107,6 +113,8 @@ struct ComposeBar: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add Photo or File")
+                .transition(.opacity)
+                }
                 HStack(alignment: .bottom, spacing: 0) {
                     if choosesRecipients {
                         // Who this goes to; tap to choose next to the keyboard.
@@ -175,6 +183,14 @@ struct ComposeBar: View {
         .onChange(of: photo) { _, item in if let item { Task { await upload(item) } } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result { Task { await upload(url) } }
+        }
+        .fullScreenCover(isPresented: $capturing) {
+            CameraPicker { image in
+                capturing = false
+                guard let image, let data = image.jpegData(compressionQuality: 0.9) else { return }
+                Task { await upload(data, name: CameraPicker.filename()) }
+            }
+            .ignoresSafeArea()
         }
     }
 
@@ -402,5 +418,38 @@ struct CheckBadge: View {
         .frame(width: Space.badge, height: Space.badge)
         .background(Circle().fill(Color(.systemBackground)).padding(-Space.hairline))
         .accessibilityHidden(true)
+    }
+}
+
+/// The system camera, photos only, rear camera, no editing. Device-only: the simulator has none.
+struct CameraPicker: UIViewControllerRepresentable {
+    var done: (UIImage?) -> Void
+    static var isAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+    /// "Photo 2026-10-30 at 01.58.jpg", as Messages names a captured photo.
+    static func filename(_ date: Date = Date()) -> String {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.dateFormat = "yyyy-MM-dd 'at' HH.mm"
+        return "Photo \(format.string(from: date)).jpg"
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(done: done) }
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.mediaTypes = ["public.image"]
+        picker.cameraCaptureMode = .photo
+        picker.cameraDevice = .rear
+        picker.allowsEditing = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let done: (UIImage?) -> Void
+        init(done: @escaping (UIImage?) -> Void) { self.done = done }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            done(info[.originalImage] as? UIImage)
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { done(nil) }
     }
 }

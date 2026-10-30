@@ -97,7 +97,7 @@ for name in products:
                          'INFOPLIST_KEY_CFBundleDisplayName':'msgblast', 'INFOPLIST_KEY_UILaunchScreen_Generation':'YES', 'INFOPLIST_KEY_UIApplicationSceneManifest_Generation':'YES',
                          'INFOPLIST_KEY_UISupportedInterfaceOrientations':'"UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"',
                          'INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad':'"UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"',
-                         'INFOPLIST_KEY_NSCameraUsageDescription':'"msgblast uses the camera to scan the pairing code shown on your Mac."',
+                         'INFOPLIST_KEY_NSCameraUsageDescription':'"msgblast uses the camera to scan the pairing code shown on your Mac and to take photos you send from your Mac."',
                          'INFOPLIST_KEY_NSLocalNetworkUsageDescription':'"msgblast connects to msgblast on your Mac over your local network or Tailscale."',
                          'INFOPLIST_KEY_NSPhotoLibraryUsageDescription':'"msgblast sends the photos you choose to your Messages agents through your Mac."',
                          # The phone uses the canonical green live icon bundle, unmodified; the interface keeps the system blue tint, as Messages does.
