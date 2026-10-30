@@ -209,6 +209,31 @@ final class PresenterTests: XCTestCase {
         XCTAssertNil(ArtworkTone.luminance(of: empty))
     }
 
+    func testNewConversationChecksStartEmptyAndMeanNoOne() {
+        let agents = ["museApp", "hark", "instinct", "fo"]
+        // The thread's rule: from All (empty), a tap leaves everyone else. Not for a new conversation.
+        XCTAssertEqual(ProjectionPresenter.toggling("museApp", selection: [], members: agents), ["hark", "instinct", "fo"])
+        var chosen: [String] = []
+        chosen = ProjectionPresenter.togglingNew("museApp", chosen: chosen)
+        XCTAssertEqual(chosen, ["museApp"], "One tap on a new conversation checks exactly that agent")
+        chosen = ProjectionPresenter.togglingNew("fo", chosen: chosen)
+        XCTAssertEqual(chosen, ["museApp", "fo"], "In the order checked")
+        chosen = ProjectionPresenter.togglingNew("museApp", chosen: chosen)
+        XCTAssertEqual(chosen, ["fo"], "A second tap removes")
+        chosen = ProjectionPresenter.togglingNew("fo", chosen: chosen)
+        XCTAssertEqual(chosen, [], "Removing the last leaves no one, not everyone")
+
+        // The created conversation's agents are exactly the checked ones.
+        let checked = ["hark", "instinct", "fo"]
+        guard case .createConversation(_, let created, _) = ProjectionPresenter.sendAction(conversationID: nil, members: checked, recipients: checked, text: "Hi", attachmentIDs: []) else {
+            return XCTFail("Several checked agents create a group")
+        }
+        XCTAssertEqual(created, checked)
+        guard case .sendPrivate(nil, "museApp", _, _) = ProjectionPresenter.sendAction(conversationID: nil, members: ["museApp"], recipients: ["museApp"], text: "Hi", attachmentIDs: []) else {
+            return XCTFail("One checked agent starts a direct conversation with it")
+        }
+    }
+
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
         var state = ProjectionState()
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {

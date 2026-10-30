@@ -290,6 +290,13 @@ public struct ProjectionPresenter: Sendable {
         return next.isEmpty || next == Set(members) ? [] : next
     }
 
+    /// New Conversation's check: an empty choice is no one (never everyone). A tap adds the
+    /// agent at the end, a second tap removes it. The thread's All rules apply only once the
+    /// conversation exists.
+    public static func togglingNew(_ agent: String, chosen: [String]) -> [String] {
+        chosen.contains(agent) ? chosen.filter { $0 != agent } : chosen + [agent]
+    }
+
     /// "Message Claude" for one recipient, else "Message".
     public func placeholder(recipients: [String]) -> String { recipients.count == 1 ? "Message \(shortName(recipients[0]))" : "Message" }
 

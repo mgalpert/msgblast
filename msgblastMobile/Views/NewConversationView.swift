@@ -7,7 +7,12 @@ import msgblastRemoteProtocol
 /// the conversation, this same screen becomes its thread in place.
 struct NewConversationView: View {
     @ObservedObject var app: MobileApp
+    /// The checked agents, in the order checked. Starts empty: nothing is pre-checked, not
+    /// even the Mac's own composer selection.
     @State private var selected: [String] = []
+    /// The strip's order, fixed when the screen opens so icons never move under a finger
+    /// while readiness changes.
+    @State private var order: (agents: [String], messages: [String])?
     @State private var focusRequest = 0
     /// The conversation the send created, once known.
     @State private var created: UUID?
@@ -23,17 +28,17 @@ struct NewConversationView: View {
     }
 
     private var empty: some View {
-        let list = presenter.newConversationAgents
+        let list = order ?? Self.order(presenter.newConversationAgents)
         return Color(.systemBackground)
             .ignoresSafeArea(.container, edges: .horizontal)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Space.inset) {
-                            ForEach(list.agents, id: \.agentID) { agent in icon(agent) }
+                            ForEach(list.agents, id: \.self) { id in icon(id) }
                             if !list.messages.isEmpty {
                                 Divider().frame(height: Space.avatarRow)
-                                ForEach(list.messages, id: \.agentID) { agent in icon(agent) }
+                                ForEach(list.messages, id: \.self) { id in icon(id) }
                             }
                         }
                         .padding(.horizontal, Space.screen).padding(.top, Space.gap)
@@ -48,6 +53,7 @@ struct NewConversationView: View {
             }
             .sensoryFeedback(.selection, trigger: selected)
             .onAppear {
+                if order == nil { order = Self.order(presenter.newConversationAgents) }
                 // The keyboard comes up with the screen.
                 Task { focusRequest += 1 }
                 #if DEBUG
@@ -59,11 +65,19 @@ struct NewConversationView: View {
 
     /// An agent as the thread's strip shows it: the avatar with the Mac's corner check,
     /// unchosen at 60%.
+    private static func order(_ list: (agents: [AgentAvailability], messages: [AgentAvailability])) -> (agents: [String], messages: [String]) {
+        (list.agents.map(\.agentID), list.messages.map(\.agentID))
+    }
+
+    @ViewBuilder private func icon(_ id: String) -> some View {
+        if let agent = app.store.projection.agents[id] { icon(agent) }
+    }
+
     private func icon(_ agent: AgentAvailability) -> some View {
         let checked = selected.contains(agent.agentID)
         let available = agent.readiness != .unavailable
         return Button {
-            if checked { selected.removeAll { $0 == agent.agentID } } else { selected.append(agent.agentID) }
+            selected = ProjectionPresenter.togglingNew(agent.agentID, chosen: selected)
         } label: {
             AgentAvatar(app: app, agentID: agent.agentID, name: agent.displayName, size: Space.avatarRow)
                 .opacity(checked ? 1 : 0.6)
