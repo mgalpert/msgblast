@@ -70,14 +70,27 @@ struct ComposeBar: View {
                         Button { importing = true } label: { Label("File", systemImage: "doc") }
                     } label: { Image(systemName: "plus.circle").font(.title2) }
                 }
-                TextField("Message", text: $text, axis: .vertical)
-                    .lineLimit(1...6)
-                    .padding(8).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
-                Button { send() } label: { Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 22, height: 22) }
-                    .buttonStyle(.glassProminent)
-                    .buttonBorderShape(.circle)
-                    .disabled(sending || preparing || block?.allowsSend == false || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty))
-                    .accessibilityLabel("Send")
+                // Messages layout: Send sits inside the field's trailing edge and appears with content.
+                HStack(alignment: .bottom, spacing: 4) {
+                    TextField(placeholder, text: $text, axis: .vertical)
+                        .lineLimit(1...6)
+                        .padding(.vertical, 7).padding(.leading, 12)
+                    if hasContent {
+                        Button { send() } label: { Image(systemName: "arrow.up").font(.subheadline.weight(.bold)).frame(width: 18, height: 18) }
+                            .buttonStyle(.glassProminent)
+                            .buttonBorderShape(.circle)
+                            .controlSize(.small)
+                            .frame(width: 30, height: 30)
+                            .disabled(sending || preparing || block?.allowsSend == false)
+                            .accessibilityLabel("Send")
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                .padding(.trailing, 3).padding(.vertical, 2)
+                .frame(minHeight: 36)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
+                .animation(.snappy(duration: 0.2), value: hasContent)
             }
         }
         .padding(10)
@@ -96,6 +109,10 @@ struct ComposeBar: View {
             if case .success(let url) = result { Task { await upload(url) } }
         }
     }
+
+    private var hasContent: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty }
+    /// "Message" for a group, "Message Muse" for one agent.
+    private var placeholder: String { recipients.count == 1 ? "Message \(presenter.shortName(recipients[0]))" : "Message" }
 
     private struct Status {
         var text: String
