@@ -152,7 +152,7 @@ public enum RemoteProjectionBuilder {
             attempts += conversationAttempts
             // Native requests (Mac apps, CLIs, bots) that never completed block that agent here.
             let incomplete = comparison.resolvedWebAgentIDs.filter(\.provider.usesNativeConversation).flatMap { agent in
-                (input.webAttempts[cid]?[agent] ?? []).filter(\.status.isUnresolved).map {
+                (input.webAttempts[cid]?[agent] ?? []).filter { $0.blocksAsIncomplete(now: Date()) }.map {
                     RemoteIncompleteAttempt(agentID: agent.id, attemptID: "wa:\($0.id.uuidString)", reasonCode: .incompleteRequestBlocking)
                 }
             }

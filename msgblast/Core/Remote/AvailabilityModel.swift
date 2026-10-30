@@ -68,6 +68,8 @@ public struct AgentSessionSignals: Sendable, Equatable {
     public var hasDesktopBinding = false
     public var desktopError: String?
     public var unresolvedAttemptIDs: [String] = []
+    /// Native requests still inside their normal reply window: the agent is working, not stuck.
+    public var replyingAttemptIDs: [String] = []
     /// Another agent that uses the same Mac app is sending or has an unfinished request.
     /// The Mac composer then shows this agent as Busy and keeps it out of new sends.
     public var sameAppBusyWith: String?
@@ -85,6 +87,13 @@ public struct AgentSessionSignals: Sendable, Equatable {
         self.loading = loading; self.snapshotReady = snapshotReady; self.snapshotReason = snapshotReason; self.signedIn = signedIn; self.signedOut = signedOut
     }
 
+    /// Unfinished requests block only once they are past the reply window (or the Mac marked
+    /// them uncertain); younger ones read as the agent handling a request.
+    private mutating func sortAttempts(_ attempts: [WebSendAttempt], now: Date = Date()) {
+        unresolvedAttemptIDs = attempts.filter { $0.blocksAsIncomplete(now: now) }.map(\.id.uuidString)
+        replyingAttemptIDs = attempts.filter { $0.isAwaitingReply(now: now) }.map(\.id.uuidString)
+    }
+
     @MainActor public init(_ session: WebAgentSession) {
         self.init(agentID: session.id.id, gridID: session.id.gridID, provider: session.provider, name: session.name, isEnabled: session.isEnabled,
                   isStorageAvailable: session.isStorageAvailable, selected: session.state.selected, connected: session.connected,
@@ -96,10 +105,10 @@ public struct AgentSessionSignals: Sendable, Equatable {
             desktopReady = session.desktopReady
             hasDesktopBinding = session.state.desktopConversation != nil
             desktopError = session.desktopRecoveryMessage
-            unresolvedAttemptIDs = session.state.attempts.filter { $0.status.isUnresolved }.map(\.id.uuidString)
+            sortAttempts(session.state.attempts)
             canSubmitNativePrompt = session.canSubmitNativePrompt
         } else if session.provider.usesNativeConversation {
-            unresolvedAttemptIDs = session.state.attempts.filter { $0.status.isUnresolved }.map(\.id.uuidString)
+            sortAttempts(session.state.attempts)
         }
         accountStatus = session.accountStatus
         if session.provider == .grokbot {
@@ -185,7 +194,7 @@ public enum AvailabilityCalculator {
                     add(.sendInFlight, "\(other) is using this app", .none, detail: "\(other) is using the same app on your Mac. \(s.name) is busy until it finishes.")
                     break
                 }
-                if s.isSending { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
+                if s.isSending || !s.replyingAttemptIDs.isEmpty { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
                 else if s.loading { readiness = .busy(detail: "Checking \(s.name)…"); add(.sendInFlight, "Checking \(s.name) on your Mac", .none) }
                 else if !s.desktopReady && s.canSubmitNativePrompt {
                     // As on the Mac, the first explicit prompt prepares the app; a failure is
@@ -220,7 +229,7 @@ public enum AvailabilityCalculator {
                 }
             case .cli:
                 source = s.connected ? .live : .lastKnown
-                if s.isSending { readiness = .busy(detail: "\(s.name) is working…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
+                if s.isSending || !s.replyingAttemptIDs.isEmpty { readiness = .busy(detail: "\(s.name) is working…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
                 else if s.snapshotReady { }
                 else if s.accountStatus == .signedOut { readiness = .blocked; add(.cliSignedOut, "Sign in to \(s.name) on your Mac", .mac) }
                 else if s.snapshotReason.hasPrefix("Install ") { readiness = .unavailable; add(.notInstalled, "Install \(s.name) on your Mac", .mac, detail: RemotePhoneText.phrase(s.snapshotReason, agentName: s.name)) }
@@ -233,7 +242,7 @@ public enum AvailabilityCalculator {
                 if !s.grokBotConfigured { readiness = .blocked; add(.webhookNotConfigured, "Set up \(s.name)'s webhook on your Mac", .mac) }
                 // While the key is read or the reply tunnel starts, the bot is blocked; it becomes ready by itself.
                 else if let activity = s.grokBotActivity { readiness = .blocked; add(.tunnelStarting, activity, .none) }
-                else if s.isSending { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "Sending to \(s.name)…", .none) }
+                else if s.isSending || !s.replyingAttemptIDs.isEmpty { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
                 else if !s.snapshotReady && s.unresolvedAttemptIDs.isEmpty { add(.tunnelStarting, "Replies need your Mac awake", .none, detail: "The reply connection starts on your Mac with your first send. Keep it awake for replies.") }
                 for id in s.unresolvedAttemptIDs {
                     add(.incompleteRequestBlocking, "Finish the \(s.name) request first", .phone, attempt: id,
@@ -322,7 +331,7 @@ public final class AvailabilityModel: ObservableObject {
             guard let app = signals[i].provider.desktopApp else { continue }
             signals[i].sameAppBusyWith = signals.first { other in
                 other.agentID != signals[i].agentID && other.provider.desktopApp?.bundleID == app.bundleID &&
-                    (other.isSending || !other.unresolvedAttemptIDs.isEmpty)
+                    (other.isSending || !other.unresolvedAttemptIDs.isEmpty || !other.replyingAttemptIDs.isEmpty)
             }?.name
         }
         let sendingDesktop = Set(signals.filter { $0.provider.desktopApp != nil && $0.isSending }.map(\.agentID))
@@ -354,4 +363,16 @@ public final class AvailabilityModel: ObservableObject {
     }
 
     public func stop() { loop?.cancel(); loop = nil }
+}
+
+extension WebSendAttempt {
+    /// How long a native request (Mac app, CLI, bot) may wait for its reply before it counts
+    /// as incomplete: the Mac app reply timeout (`DesktopAppConversation.Timing.replyTimeout`).
+    public static let replyWindow: TimeInterval = 360
+    /// Submitted or being submitted, and still within the reply window.
+    public func isAwaitingReply(now: Date) -> Bool {
+        [.attempting, .waiting].contains(status) && now.timeIntervalSince(created) < Self.replyWindow
+    }
+    /// Unfinished and either marked uncertain by the Mac or older than the reply window.
+    public func blocksAsIncomplete(now: Date) -> Bool { status.isUnresolved && !isAwaitingReply(now: now) }
 }

@@ -26,6 +26,25 @@ final class RemoteAvailabilityTests: XCTestCase {
     }
     private func codes(_ a: AgentAvailability) -> [AvailabilityReasonCode] { a.reasons.map(\.code) }
 
+    func testARequestWithinItsReplyWindowIsHandledNotIncomplete() {
+        // Muse is still answering: busy with the quiet line, never "Finish the Muse request first".
+        let replying = evaluate(signals(.museApp) { $0.replyingAttemptIDs = ["A1"] })
+        if case .busy = replying.readiness {} else { XCTFail("A request being answered keeps the agent busy") }
+        XCTAssertEqual(codes(replying), [.sendInFlight])
+        XCTAssertEqual(replying.reasons.first?.userText, "\(WebProvider.museApp.name) is handling a request")
+        XCTAssertEqual(replying.reasons.first?.fixOn, FixLocation.none)
+        XCTAssertEqual(codes(evaluate(signals(.codexCLI) { $0.replyingAttemptIDs = ["C1"] })), [.sendInFlight])
+
+        let now = Date()
+        var waiting = WebSendAttempt(text: "Hi", status: .waiting); waiting.created = now.addingTimeInterval(-15)
+        XCTAssertTrue(waiting.isAwaitingReply(now: now)); XCTAssertFalse(waiting.blocksAsIncomplete(now: now), "15 s in is the normal wait")
+        waiting.created = now.addingTimeInterval(-(WebSendAttempt.replyWindow + 1))
+        XCTAssertFalse(waiting.isAwaitingReply(now: now)); XCTAssertTrue(waiting.blocksAsIncomplete(now: now), "Past the reply window it blocks")
+        var uncertain = WebSendAttempt(text: "Hi", status: .uncertain); uncertain.created = now
+        XCTAssertTrue(uncertain.blocksAsIncomplete(now: now), "What the Mac marked uncertain blocks at once")
+        XCTAssertFalse(WebSendAttempt(text: "Hi", status: .observed).blocksAsIncomplete(now: now))
+    }
+
     func testEveryProviderMapsToAProductAndForm() {
         let forms = Dictionary(grouping: WebProvider.allCases, by: AvailabilityCalculator.form).mapValues { Set($0) }
         XCTAssertEqual(forms[.macApp], [.museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp])
