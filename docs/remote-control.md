@@ -208,6 +208,13 @@ answers `attachmentUnavailable` when the file is gone or too large. The phone ca
 what it fetched in its local database, which Forget This Mac clears; an older Mac
 answers `unsupported` and the lists show names only, with "Open on your Mac".
 
+Messages tapbacks (the six standard ones and custom emoji reactions) are read from
+`chat.db` as today and folded onto the message they react to; a removal takes its
+reaction away. The projection carries them as an optional `reactions` list on the
+turn (a reaction to your own message lands on the prompt or follow-up you sent), so a
+new tapback is an ordinary turn update and never a message of its own. Older phones
+ignore the field.
+
 Agent artwork is the one image the phone receives unasked. Each agent's
 `avatarRef` is `sha256:<hex>` of the picture the Mac shows for it (normalized to
 256 × 256, at most 64 KB). The phone fetches each reference once with

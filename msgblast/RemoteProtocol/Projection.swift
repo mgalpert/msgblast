@@ -87,6 +87,15 @@ public struct RemoteAttachmentRef: Codable, Hashable, Sendable {
     }
 }
 
+/// A Messages tapback on a turn: one of the standard six or a custom emoji reaction.
+public struct RemoteReaction: Codable, Hashable, Sendable {
+    public var emoji: String
+    /// The Messages agent who reacted; nil when you reacted (from the Mac or another device).
+    public var agentID: String?
+    public var date: Date?
+    public init(emoji: String, agentID: String?, date: Date? = nil) { self.emoji = emoji; self.agentID = agentID; self.date = date }
+}
+
 public struct RemoteTurn: Codable, Hashable, Sendable, Identifiable {
     /// Stable projection id. Website turns use agent + conversation + ordinal, so a
     /// re-rendered or still-streaming reply updates in place rather than duplicating.
@@ -102,9 +111,14 @@ public struct RemoteTurn: Codable, Hashable, Sendable, Identifiable {
     public var attachments: [RemoteAttachmentRef]
     /// SHA-256 prefix of the text; lets a client skip unchanged bodies.
     public var contentHash: String
-    public init(id: String, conversationID: UUID, agentID: String?, role: RemoteTurnRole, origin: RemoteTurnOrigin, text: String, created: Date?, ordinal: Int, attachments: [RemoteAttachmentRef] = [], contentHash: String) {
+    /// Messages tapbacks on this turn, in the order they were made. Optional and omitted when
+    /// empty, so older phones ignore it; a change is an ordinary turn update.
+    public var reactions: [RemoteReaction]?
+    public init(id: String, conversationID: UUID, agentID: String?, role: RemoteTurnRole, origin: RemoteTurnOrigin, text: String, created: Date?, ordinal: Int,
+                attachments: [RemoteAttachmentRef] = [], contentHash: String, reactions: [RemoteReaction]? = nil) {
         self.id = id; self.conversationID = conversationID; self.agentID = agentID; self.role = role; self.origin = origin
         self.text = text; self.created = created; self.ordinal = ordinal; self.attachments = attachments; self.contentHash = contentHash
+        self.reactions = reactions?.isEmpty == true ? nil : reactions
     }
 }
 

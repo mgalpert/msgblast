@@ -64,7 +64,23 @@ public enum SharedContent {
     }
 }
 
+/// The tapbacks on one bubble as Messages stacks them: up to three distinct emoji, newest
+/// last, and the total when more reactions than that were made.
+public struct ReactionSummary: Equatable, Sendable {
+    public var emoji: [String]
+    public var total: Int
+    /// Shown beside the stack when it hides some reactions.
+    public var countLabel: String? { total > emoji.count ? "\(total)" : nil }
+}
+
 extension ProjectionPresenter {
+    public func reactionSummary(for turn: RemoteTurn) -> ReactionSummary? {
+        guard let reactions = turn.reactions, !reactions.isEmpty else { return nil }
+        var distinct: [String] = []
+        for reaction in reactions.reversed() where !distinct.contains(reaction.emoji) { distinct.append(reaction.emoji) }
+        return ReactionSummary(emoji: Array(distinct.prefix(3).reversed()), total: reactions.count)
+    }
+
     /// Photos, links and documents shared in a conversation, oldest first.
     public func sharedContent(in conversation: UUID) -> (photos: [SharedAttachment], links: [SharedLink], documents: [SharedAttachment]) {
         var photos: [SharedAttachment] = [], links: [SharedLink] = [], documents: [SharedAttachment] = []

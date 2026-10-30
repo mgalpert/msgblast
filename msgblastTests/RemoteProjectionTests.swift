@@ -48,6 +48,25 @@ final class RemoteProjectionTests: XCTestCase {
         XCTAssertEqual(Set(state.attempts.map(\.status)), [.submitted, .uncertain, .waiting])
     }
 
+    func testTapbacksAttachToTheirTurnsAndUpdateThem() throws {
+        var (input, comparison, member) = fixture()
+        let journal = RemoteChangeJournal(capacity: 50, startingSeq: 0)
+        _ = journal.apply(RemoteProjectionBuilder.state(from: input))
+        // The contact loves your prompt and you laugh at its reply.
+        input.messagesTranscripts[comparison.id]?[member.id]?[0].reactions = [MessageReaction(id: "handle-1:0", emoji: "❤️", outgoing: false)]
+        input.messagesTranscripts[comparison.id]?[member.id]?[1].reactions = [MessageReaction(id: "me:0", emoji: "😂", outgoing: true)]
+        let state = RemoteProjectionBuilder.state(from: input)
+        let agentID = "messages:\(member.id.uuidString)"
+        XCTAssertEqual(state.turns.first { $0.id == "p:\(comparison.id.uuidString)" }?.reactions, [RemoteReaction(emoji: "❤️", agentID: agentID)])
+        XCTAssertEqual(state.turns.first { $0.id == "m:in-2" }?.reactions, [RemoteReaction(emoji: "😂", agentID: nil)])
+        XCTAssertEqual(state.turns.count, RemoteProjectionBuilder.state(from: fixture().0).turns.count, "A tapback is never a turn of its own")
+        let changes = journal.apply(state)
+        XCTAssertEqual(Set(changes.compactMap { if case .turnUpsert(let turn) = $0.change { turn.id } else { nil } }), ["p:\(comparison.id.uuidString)", "m:in-2"],
+                       "Reactions arrive as updates to existing turns")
+        let old = try JSONDecoder().decode(RemoteTurn.self, from: Data(#"{"id":"t","conversationID":"\#(comparison.id.uuidString)","role":"user","origin":"followUp","text":"Hi","ordinal":0,"attachments":[],"contentHash":"h"}"#.utf8))
+        XCTAssertNil(old.reactions, "A Mac without reactions decodes cleanly")
+    }
+
     func testAttachmentFilesAreKeyedByTheProjectedTurnIDs() throws {
         var (input, comparison, _) = fixture()
         let file = MessageAttachment(filename: "menu.jpg", path: "/tmp/menu.jpg", mimeType: "image/jpeg")

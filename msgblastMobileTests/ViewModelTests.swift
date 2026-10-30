@@ -243,6 +243,20 @@ final class PresenterTests: XCTestCase {
         XCTAssertFalse(SharedContent.isEmojiOnly(""))
     }
 
+    func testReactionStacksShowUpToThreeAndACount() {
+        func turn(_ emoji: [String]) -> RemoteTurn {
+            RemoteTurn(id: "t", conversationID: UUID(), agentID: "messages:x", role: .assistant, origin: .messagesHistory, text: "Hi", created: fixedNow, ordinal: 0, contentHash: "h",
+                       reactions: emoji.enumerated().map { RemoteReaction(emoji: $0.element, agentID: $0.offset == 0 ? nil : "messages:x") })
+        }
+        let presenter = ProjectionPresenter(state: ProjectionState())
+        XCTAssertNil(presenter.reactionSummary(for: turn([])))
+        XCTAssertEqual(presenter.reactionSummary(for: turn(["❤️"])), ReactionSummary(emoji: ["❤️"], total: 1))
+        XCTAssertNil(presenter.reactionSummary(for: turn(["❤️"]))?.countLabel)
+        let many = presenter.reactionSummary(for: turn(["❤️", "👍", "❤️", "😂", "‼️"]))
+        XCTAssertEqual(many?.emoji, ["❤️", "😂", "‼️"], "Three distinct, newest last")
+        XCTAssertEqual(many?.countLabel, "5")
+    }
+
     func testLinksAttachmentsAndSharedContent() throws {
         let text = "See https://en.wikipedia.org/wiki/Trofie and www.seriouseats.com/pesto, not mailto:a@b.c."
         let found = SharedContent.links(in: text)

@@ -288,6 +288,13 @@ struct ConversationView: View {
                             withAnimation(.snappy) { if expanded.contains(turn.id) { expanded.remove(turn.id) } else { expanded.insert(turn.id) } }
                         }
                 }
+                // Tapbacks overlap the top corner away from the tail: top-left on yours,
+                // top-right on a reply. They are never messages of their own.
+                .overlay(alignment: mine ? .topLeading : .topTrailing) {
+                    if let reactions = presenter.reactionSummary(for: turn) {
+                        ReactionStack(summary: reactions).offset(x: mine ? -Space.gap : Space.gap, y: -Space.inset - Space.tight)
+                    }
+                }
                 }
             }
             if !turn.attachments.isEmpty {
@@ -322,6 +329,7 @@ struct ConversationView: View {
                 }
             }
         }
+        .padding(.top, turn.reactions?.isEmpty == false ? Space.inset + Space.tight : 0)
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
     }
 
@@ -396,6 +404,23 @@ struct PinnedPromptRow: View {
         }
         .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
         .background(.bar)
+    }
+}
+
+/// Messages' tapback bubble: the emoji in a small rounded pill ringed in the background
+/// color, with a count when more reactions were made than it shows.
+struct ReactionStack: View {
+    var summary: ReactionSummary
+    var body: some View {
+        HStack(spacing: -Space.tight) {
+            ForEach(Array(summary.emoji.enumerated()), id: \.offset) { _, emoji in Text(emoji).font(.callout) }
+            if let count = summary.countLabel { Text(count).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.leading, Space.tight + Space.hairline) }
+        }
+        .padding(.horizontal, Space.gap).padding(.vertical, Space.tight)
+        .background(Capsule().fill(Color(.secondarySystemBackground)))
+        .background(Capsule().stroke(Color(.systemBackground), lineWidth: Space.hairline))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Reactions: \(summary.emoji.joined(separator: " "))\(summary.countLabel.map { ", \($0) in all" } ?? "")")
     }
 }
 

@@ -62,6 +62,11 @@ public enum RemoteProjectionBuilder {
     }
     static func status(_ submission: Submission) -> RemoteAttemptStatus { RemoteAttemptStatus(rawValue: submission.rawValue) ?? .uncertain }
     static func status(_ web: WebSendStatus) -> RemoteAttemptStatus { RemoteAttemptStatus(rawValue: web.rawValue) ?? .uncertain }
+    /// A Messages reaction made by you (outgoing) or by the contact.
+    static func reactions(_ reactions: [MessageReaction], contact: String) -> [RemoteReaction]? {
+        let mapped = reactions.map { RemoteReaction(emoji: $0.emoji, agentID: $0.outgoing ? nil : contact) }
+        return mapped.isEmpty ? nil : mapped
+    }
     static func role(_ role: String) -> RemoteTurnRole { role == "user" ? .user : role == "assistant" ? .assistant : .system }
 
     /// The files recorded on each projected turn, by the same turn ids `state(from:)` uses.
@@ -98,7 +103,8 @@ public enum RemoteProjectionBuilder {
                                                           status: status(member.submission), detail: member.error, created: member.attemptedAt))
                 for (index, message) in (input.messagesTranscripts[cid]?[member.id] ?? []).enumerated() where !message.outgoing {
                     turns.append(RemoteTurn(id: "m:\(message.guid)", conversationID: cid, agentID: agentID, role: .assistant, origin: .messagesHistory, text: message.text,
-                                            created: message.date, ordinal: index, attachments: refs(message.attachments), contentHash: hash(message.text)))
+                                            created: message.date, ordinal: index, attachments: refs(message.attachments), contentHash: hash(message.text),
+                                            reactions: reactions(message.reactions, contact: agentID)))
                     activity = max(activity, message.date)
                 }
             }
@@ -127,6 +133,21 @@ public enum RemoteProjectionBuilder {
                                                               status: status(attempt.status), detail: attempt.detail, created: attempt.created))
                     activity = max(activity, attempt.created)
                 }
+            }
+            // Tapbacks on your own messages: the contact reacted to the prompt or a follow-up
+            // you sent; attach them to that turn rather than showing them as messages.
+            var onYours: [String: [RemoteReaction]] = [:]
+            for member in comparison.members {
+                let agentID = RemoteAgentIDs.messages(member.id)
+                for message in input.messagesTranscripts[cid]?[member.id] ?? [] where message.outgoing && !message.reactions.isEmpty {
+                    let target = message.text == comparison.prompt ? "p:\(cid.uuidString)"
+                        : comparison.followUps.last { $0.text == message.text && $0.memberIDs.contains(member.id) }.map { "f:\($0.id.uuidString)" }
+                    guard let target else { continue }
+                    onYours[target, default: []] += reactions(message.reactions, contact: agentID) ?? []
+                }
+            }
+            for index in turns.indices where turns[index].conversationID == cid {
+                if let added = onYours[turns[index].id], !added.isEmpty { turns[index].reactions = (turns[index].reactions ?? []) + added }
             }
             attempts += conversationAttempts
             // Native requests (Mac apps, CLIs, bots) that never completed block that agent here.

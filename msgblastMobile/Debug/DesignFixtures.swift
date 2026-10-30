@@ -132,7 +132,9 @@ enum DesignFixtures {
         // A reply from this phone to Claude's first answer (a private send; the quote is local).
         user(&state, group, "q1", Self.replyText, at: t0.addingTimeInterval(120), agent: "claude")
         attempt(&state, group, "claude", Self.replyText, .observed, at: t0.addingTimeInterval(120))
-        reply(&state, group, "claude", "r3", "Its tight twists trap the sauce in every bite. Serious Eats agrees: https://www.seriouseats.com/pesto-sauce-recipe", at: t0.addingTimeInterval(150))
+        reply(&state, group, "claude", "r3", "Its tight twists trap the sauce in every bite. Serious Eats agrees: https://www.seriouseats.com/pesto-sauce-recipe", at: t0.addingTimeInterval(150),
+              reactions: [RemoteReaction(emoji: "❤️", agentID: nil)])
+        reply(&state, group, "claude", "r4", "🍝👌", at: t0.addingTimeInterval(160))
         let t1 = now.addingTimeInterval(-4 * 60)
         user(&state, group, "p2", "What about gnocchi?", at: t1)
         attempt(&state, group, "claude", "What about gnocchi?", .sending, at: t1)
@@ -281,9 +283,9 @@ enum DesignFixtures {
         state.turns["\(id)-\(turn)"] = RemoteTurn(id: "\(id)-\(turn)", conversationID: id, agentID: agent, role: .user, origin: agent == nil ? .sharedPrompt : .followUp,
                                                  text: text, created: date, ordinal: state.turns.count, attachments: attachments, contentHash: turn)
     }
-    private static func reply(_ state: inout ProjectionState, _ id: UUID, _ agent: String, _ turn: String, _ text: String, at date: Date) {
+    private static func reply(_ state: inout ProjectionState, _ id: UUID, _ agent: String, _ turn: String, _ text: String, at date: Date, reactions: [RemoteReaction]? = nil) {
         state.turns["\(id)-\(turn)"] = RemoteTurn(id: "\(id)-\(turn)", conversationID: id, agentID: agent, role: .assistant, origin: .agentTranscript,
-                                                 text: text, created: date, ordinal: state.turns.count, contentHash: turn)
+                                                 text: text, created: date, ordinal: state.turns.count, contentHash: turn, reactions: reactions)
     }
     private static func attempt(_ state: inout ProjectionState, _ id: UUID, _ agent: String, _ text: String, _ status: RemoteAttemptStatus, at date: Date, detail: String? = nil) {
         let key = "\(id)-\(agent)-\(text.hashValue)"
