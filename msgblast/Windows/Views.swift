@@ -28,47 +28,14 @@ struct AgentAvatar: View {
     }
 }
 
+/// `ComparisonWorkspace`'s header input (separate conversation windows). The agents
+/// workspace passes `ConversationView.recipient` instead; phase 2b retires this.
 struct ConversationHeaderControls {
     var enabled = true
     let selected: Bool
     let included: Bool
     let selectConversation: () -> Void
     let toggleRecipient: () -> Void
-}
-
-struct ContactHeader: View {
-    let agent: Agent?
-    let name: String
-    let destination: String
-    var controls: ConversationHeaderControls?
-    var removeFromView: (() -> Void)?
-    var body: some View {
-        VStack(spacing: 2) {
-            if let controls {
-                Button(action: controls.selectConversation) {
-                    AgentAvatar(agent: agent, name: name, size: 38)
-                        .overlay { if controls.selected { Circle().stroke(.blue, lineWidth: 2).padding(-3) } }
-                }.buttonStyle(.plain).disabled(!controls.enabled).accessibilityLabel("Select \(agent?.name ?? name) conversation")
-                    .accessibilityValue(controls.selected ? "Selected" : "Not selected")
-                Button(action: controls.toggleRecipient) {
-                    Text(name).font(.system(size: 13, weight: .semibold)).padding(.horizontal, 11).padding(.vertical, 5)
-                }.buttonStyle(.plain).disabled(!controls.enabled)
-                    .background(controls.included ? Color.blue.opacity(0.25) : Color.clear, in: Capsule())
-                    .accessibilityLabel("Shared recipient \(agent?.name ?? name)")
-                    .accessibilityValue(controls.included ? "Included" : "Excluded")
-                    .help(controls.included ? "Exclude from shared sends" : "Include in shared sends")
-            } else {
-                AgentAvatar(agent: agent, name: name, size: 38)
-                Text(name).font(.system(size: 13, weight: .semibold))
-                    .padding(.horizontal, 11).padding(.vertical, 5)
-                    .background(.regularMaterial, in: Capsule())
-            }
-        }.frame(height: 78).help(destination)
-            .frame(maxWidth: .infinity).contentShape(Rectangle())
-            .contextMenu {
-                if let removeFromView { Button("Remove from view", action: removeFromView) }
-            }
-    }
 }
 
 struct MessageText: NSViewRepresentable {
@@ -115,12 +82,14 @@ struct MessageInput: View {
     @State private var attachmentError: String?
     private var unavailable: Bool { disabled || importing }
     private var hasContent: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty }
+    /// Messages' field: a capsule in the text background with a hairline edge.
+    private var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: Space.fieldHeight / 2, style: .continuous) }
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: Space.tight) {
             if !attachments.isEmpty { AttachmentDraftStrip(attachments: attachments, disabled: unavailable, remove: removeAttachment) }
-            HStack(alignment: .bottom, spacing: 9) {
+            HStack(alignment: .bottom, spacing: Space.gap) {
                 if attachmentsEnabled { AttachmentComposer(disabled: unavailable, add: addAttachments, importing: $importing) }
-                HStack(alignment: .bottom, spacing: 8) {
+                HStack(alignment: .bottom, spacing: 0) {
                     MessageEditor(text: $text, accessibilityName: accessibilityName, attachmentsEnabled: attachmentsEnabled && !unavailable, importAttachment: { selection in
                         importing = true
                         Task { await addAttachments(selection); importing = false }
@@ -129,20 +98,24 @@ struct MessageInput: View {
                             if text.isEmpty { Text(placeholder).font(.system(size: 14)).foregroundStyle(Color(nsColor: .placeholderTextColor)).padding(.top, 2).allowsHitTesting(false).accessibilityHidden(true) }
                         }
                     if hasContent {
-                        Button(action: send) { Image(systemName: "arrow.up").font(.system(size: 12, weight: .semibold)).frame(width: 22, height: 22) }
-                            .buttonStyle(.plain).foregroundStyle(.white)
-                            .background(unavailable ? Color.gray : Color.blue, in: Circle())
+                        Button(action: send) {
+                            Image(systemName: "arrow.up.circle.fill").font(.system(size: Space.fieldHeight - Space.gap))
+                                .foregroundStyle(unavailable ? Color.secondary : Color.accentColor)
+                        }
+                            .buttonStyle(.plain)
                             .accessibilityLabel(sendLabel)
                             .accessibilityHint(sendDisabledReason ?? "")
                             .help(sendDisabledReason ?? "\(sendLabel) (Return or ⌘Return; ⇧Return for a new line)")
                             .disabled(unavailable)
                     }
                 }
-                .padding(.leading, 14).padding(.trailing, 7).padding(.vertical, 5)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 23))
+                .padding(.leading, Space.fieldTextInset).padding(.trailing, Space.tight).padding(.vertical, Space.tight)
+                .frame(minHeight: Space.fieldHeight)
+                .background(fieldShape.fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(fieldShape.stroke(Color(nsColor: .separatorColor), lineWidth: 1))
             }
         }
-        .overlay { if dropTarget { RoundedRectangle(cornerRadius: 18).stroke(.blue, lineWidth: 2) } }
+        .overlay { if dropTarget { fieldShape.stroke(.blue, lineWidth: 2) } }
         .onDrop(of: [.fileURL, .image], isTargeted: $dropTarget) { providers in
             guard attachmentsEnabled, !unavailable else { return false }
             importProviders(providers); return true
@@ -346,34 +319,52 @@ struct ConversationView: View {
     @ObservedObject var model: AppModel
     let comparisonID: UUID
     let memberID: UUID
-    var headerControls: ConversationHeaderControls?
+    /// Separate-window input from `ComparisonWorkspace`; the agents workspace passes `recipient`.
+    var headerControls: ConversationHeaderControls? = nil
+    /// Whether this member receives the workspace's next message, and the click that toggles it.
+    var recipient: (included: Bool, toggle: () -> Void)? = nil
+    /// False when the workspace owns the one compose bar.
+    var showsComposer = true
     var removeFromView: (() -> Void)?
     var body: some View {
         if let comparison = model.comparison(comparisonID), let member = comparison.members.first(where: { $0.id == memberID }) {
+            let recipient = recipient ?? headerControls.map { (included: $0.included, toggle: $0.toggleRecipient) }
             VStack(spacing: 0) {
-                ContactHeader(agent: model.state.agents.first { $0.id == member.id }, name: member.name + (model.demo ? " (Demo)" : ""), destination: member.chat.handle, controls: headerControls, removeFromView: removeFromView)
-                    .frame(maxWidth: .infinity).background(.bar)
-                    .disabled(model.busy || model.webBroadcastBusy)
-                if let error = member.error { Text(error).font(.caption).foregroundStyle(.orange).padding(12) }
+                ColumnHeader(agent: model.state.agents.first { $0.id == member.id }, name: member.name + (model.demo ? " (Demo)" : ""),
+                             included: recipient?.included ?? true,
+                             enabled: recipient != nil && (headerControls?.enabled ?? true) && !(model.busy || model.webBroadcastBusy),
+                             detail: member.chat.handle, toggle: { recipient?.toggle() }) {
+                    Button("Open in Messages") { model.openMessages(member) }
+                    if let removeFromView { Button("Remove from View", action: removeFromView) }
+                }
+                if let error = member.error { NoticeRow(error, systemImage: "exclamationmark.circle", detail: error, attention: true) }
                 if member.submission == .ready && !model.busy {
-                    Button("Submit unsent recipients") { Task { await model.submit(comparisonID, retry: false) } }.disabled(comparison.endedAt != nil || model.busy).padding(8)
+                    NoticeRow(text: "Not sent yet", attention: true) {
+                        Button("Submit unsent recipients") { Task { await model.submit(comparisonID, retry: false) } }.disabled(comparison.endedAt != nil || model.busy)
+                    }
                 }
                 if member.submission.canRetry {
-                    Button("Retry only failed recipients") { Task { await model.submit(comparisonID, retry: true) } }.disabled(comparison.endedAt != nil || model.busy).padding(8)
+                    NoticeRow(text: "Not sent to every recipient", systemImage: "exclamationmark.circle", attention: true) {
+                        Button("Retry only failed recipients") { Task { await model.submit(comparisonID, retry: true) } }.disabled(comparison.endedAt != nil || model.busy)
+                    }
                 }
-                if !model.databaseAvailable { Text(model.databaseStatus).font(.caption).foregroundStyle(.orange).padding(12) }
+                if !model.databaseAvailable { NoticeRow(model.databaseStatus, detail: model.databaseStatus, attention: true) }
                 if let headerControls {
+                    // Separate windows still choose the conversation the floating composer follows.
                     TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
                         .contentShape(Rectangle())
                         .simultaneousGesture(TapGesture().onEnded { if !model.busy { headerControls.selectConversation() } })
                 } else {
                     TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
                 }
-                MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || (model.webBroadcastBusy && !model.webBroadcastInputsFinished) || member.anchor == nil) {
-                    Task { await model.followUp(comparisonID, only: memberID) }
-                }.padding(12)
-                FollowUpStatus(model: model, comparison: comparison, only: memberID).disabled(comparison.endedAt != nil)
-            }.frame(minWidth: 320, minHeight: 320).background(Color(nsColor: .textBackgroundColor))
+                if showsComposer {
+                    MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || (model.webBroadcastBusy && !model.webBroadcastInputsFinished) || member.anchor == nil) {
+                        Task { await model.followUp(comparisonID, only: memberID) }
+                    }.padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
+                    FollowUpStatus(model: model, comparison: comparison, only: memberID).disabled(comparison.endedAt != nil)
+                        .padding(.horizontal, Space.barEdge).padding(.bottom, Space.barV)
+                }
+            }.frame(minWidth: Space.columnMin, minHeight: Space.columnMin).background(Color(nsColor: .textBackgroundColor))
         }
     }
     private var privateDraft: Binding<String> {
@@ -511,17 +502,23 @@ struct FollowUpStatus: View {
                 }
             }
             if !failures.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(failures) { member in
-                        Text("\(member.name): \(attempt.errors[member.id.uuidString] ?? attempt.states[member.id.uuidString]?.label ?? "Pending")").font(.caption).foregroundStyle(.orange)
-                    }
+                // One line: who was not reached; each reason behind the ⓘ. The bar spaces it.
+                HStack(spacing: Space.tight) {
+                    Image(systemName: "exclamationmark.circle")
+                    Text("Not sent to \(failures.map(\.name).formatted(.list(type: .and)))").lineLimit(1)
+                    DetailButton(detail: failures.map { member in
+                        "\(member.name): \(attempt.errors[member.id.uuidString] ?? attempt.states[member.id.uuidString]?.label ?? "Pending")"
+                    }.joined(separator: "\n"))
+                    Spacer()
                     if attempt.states.values.contains(.failed) {
-                        Button("Retry failed follow-up recipients") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id) } }.disabled(model.busy)
+                        Button("Retry") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id) } }.disabled(model.busy)
                     }
                     if attempt.states.values.contains(.ready) && !model.busy {
-                        Button("Resume unsent follow-up recipients") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id, resumeUnsent: true) } }.disabled(model.busy)
+                        Button("Resume") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id, resumeUnsent: true) } }.disabled(model.busy)
                     }
-                }.padding(.horizontal, 12).padding(.bottom, 8)
+                }
+                .font(.caption).foregroundStyle(.orange)
+                .buttonStyle(.borderless).controlSize(.small)
             }
         }
     }

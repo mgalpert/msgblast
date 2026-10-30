@@ -42,6 +42,8 @@ enum Space {
     static let glyph: CGFloat = 16
     static let cornerCard: CGFloat = 10
     static let popoverWidth: CGFloat = 320
+    static let columnMin: CGFloat = 320   // a conversation column's least width and height
+    static let sheetWidth: CGFloat = 440  // the options sheet
 }
 
 /// Proposes at most `width` to its content and takes the content's own size, so a bubble

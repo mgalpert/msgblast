@@ -164,6 +164,88 @@ struct CheckBadge: View {
     }
 }
 
+/// A column's header, as Messages shows a thread's identity: the avatar with a check badge
+/// (this agent receives the next message) and the name under it. Click to toggle.
+struct ColumnHeader<MenuItems: View>: View {
+    let agent: Agent?
+    let name: String
+    var included: Bool
+    var enabled = true
+    var busy = false            // a mini ProgressView beside the name
+    var detail: String? = nil   // tooltip: destination handle or location label
+    let toggle: () -> Void
+    @ViewBuilder let menu: () -> MenuItems
+    var body: some View {
+        VStack(spacing: Space.tight) {
+            Button(action: toggle) {
+                AgentAvatar(agent: agent, name: name, size: Space.avatarHeader)
+                    .overlay(alignment: .bottomTrailing) {
+                        CheckBadge(checked: included).offset(x: Space.hairline, y: Space.hairline)
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(!enabled)
+            .accessibilityLabel("Recipient \(name)")
+            .accessibilityValue(included ? "Selected" : "Not selected")
+            HStack(spacing: Space.tight) {
+                Text(name).font(.system(size: Space.threadCaption, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                if busy { ProgressView().controlSize(.mini) }
+            }
+        }
+        .padding(.top, Space.gap).padding(.bottom, Space.tight)
+        .frame(maxWidth: .infinity).contentShape(Rectangle())
+        .contextMenu { menu() }
+        .help(detail ?? name)
+        .accessibilityIdentifier("Agent header \(name)")
+    }
+}
+
+/// An ⓘ that shows the full text of a one-line notice in a popover.
+struct DetailButton: View {
+    let detail: String
+    @State private var showing = false
+    var body: some View {
+        Button { showing.toggle() } label: { Image(systemName: "info.circle") }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Details")
+            .popover(isPresented: $showing, arrowEdge: .bottom) {
+                Text(detail).textSelection(.enabled)
+                    .frame(maxWidth: Space.popoverWidth)
+                    .padding(Space.screen)
+            }
+    }
+}
+
+/// A one-line notice under a column header: an optional symbol, one short clause, the full
+/// text behind an ⓘ when there is more to say, and at most one small button. Orange only
+/// when the user must act.
+struct NoticeRow<Action: View>: View {
+    let text: String
+    var systemImage: String? = nil
+    var detail: String? = nil
+    var attention = false
+    var progress = false
+    @ViewBuilder let action: () -> Action
+    var body: some View {
+        HStack(spacing: Space.gap) {
+            if progress { ProgressView().controlSize(.mini) }
+            if let systemImage { Image(systemName: systemImage) }
+            Text(text).font(.caption).lineLimit(1).truncationMode(.tail)
+            if let detail { DetailButton(detail: detail) }
+            Spacer()
+            action().controlSize(.small)
+        }
+        .padding(.horizontal, Space.screen).padding(.vertical, Space.tight)
+        .foregroundStyle(attention ? Color.orange : Color.secondary)
+    }
+}
+
+extension NoticeRow where Action == EmptyView {
+    init(_ text: String, systemImage: String? = nil, detail: String? = nil, attention: Bool = false, progress: Bool = false) {
+        self.init(text: text, systemImage: systemImage, detail: detail, attention: attention, progress: progress) { EmptyView() }
+    }
+}
+
 /// The app-agent thread in Messages' layout: your prompts as blue bubbles with a status
 /// caption, the agent's replies as gray bubbles named and signed with its avatar, a time
 /// header before a prompt sent more than five minutes after the previous one, and a typing
