@@ -16,8 +16,8 @@ struct ThreadHeader: View {
     var body: some View {
         VStack(spacing: Space.hairline) {
             if agentIDs.count == 1 {
-                Button(action: open) { AgentAvatar(app: app, agentID: agentIDs[0], name: presenter.shortName(agentIDs[0]), size: Space.avatarThread) }
-                    .buttonStyle(.plain).accessibilityHidden(true)
+                Button(action: open) { AgentAvatar(app: app, agentID: agentIDs[0], name: presenter.shortName(agentIDs[0]), size: Space.avatarHeaderDirect) }
+                    .buttonStyle(PressScale()).accessibilityHidden(true)
             } else {
                 cluster
             }
@@ -53,9 +53,11 @@ struct ThreadHeader: View {
         if selection.count == agentIDs.count { selection = [] }
     }
 
-    /// Up to three avatars overlapping left to right in 2 pt rings, then "+N".
+    /// Up to three 36 pt avatars overlapping by 8 pt in 2 pt rings, then "+N". Each has a
+    /// 44 pt hit target; where targets overlap, the one drawn in front takes the tap.
     private var cluster: some View {
-        HStack(spacing: -Space.gap) {
+        let ringed = Space.avatarHeader + 2 * Space.hairline
+        return HStack(spacing: ringed - Space.gap - Space.control) {
             ForEach(Array(agentIDs.prefix(3).enumerated()), id: \.offset) { index, id in
                 ClusterAvatar(app: app, agentID: id, name: presenter.shortName(id), chosen: selection.contains(id),
                               dimmed: !selection.isEmpty && !selection.contains(id),
@@ -65,16 +67,19 @@ struct ThreadHeader: View {
             }
             if agentIDs.count > 3 {
                 Button(action: open) {
-                    Text("+\(agentIDs.count - 3)").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                        .frame(width: Space.avatarGroup, height: Space.avatarGroup)
+                    Text("+\(agentIDs.count - 3)").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                        .frame(width: Space.avatarHeader, height: Space.avatarHeader)
                         .background(Circle().fill(Color(.tertiarySystemFill)))
                         .padding(Space.hairline)
                         .background(Circle().fill(Color(.systemBackground)))
+                        .frame(width: Space.control, height: Space.control)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressScale())
                 .accessibilityLabel("\(agentIDs.count - 3) more agents, details")
             }
         }
+        .sensoryFeedback(.selection, trigger: selection)
     }
 }
 
@@ -89,17 +94,28 @@ struct ClusterAvatar: View {
     var only: () -> Void
     var body: some View {
         Button(action: toggle) {
-            AgentAvatar(app: app, agentID: agentID, name: name, size: Space.avatarGroup)
+            AgentAvatar(app: app, agentID: agentID, name: name, size: Space.avatarHeader)
                 .padding(Space.hairline)
                 .background(Circle().fill(Color(.systemBackground)))
                 .opacity(dimmed ? 0.4 : 1)
+                .frame(width: Space.control, height: Space.control)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressScale())
         .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in only() })
         .accessibilityLabel(name)
         .accessibilityHint(chosen ? "Removes from the selection" : "Adds to the selection")
         .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: "Show Only") { only() }
+    }
+}
+
+/// A subtle scale-down while pressed, so a tap on a header avatar registers visibly.
+struct PressScale: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
     }
 }
 
