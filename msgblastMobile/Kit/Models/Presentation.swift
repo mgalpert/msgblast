@@ -123,16 +123,23 @@ public struct ProjectionPresenter: Sendable {
     }
     public func shortName(_ agentID: String) -> String { state.agents[agentID]?.displayName ?? agentID }
 
+    /// One list, newest activity first like Messages, groups, direct agents and Messages contacts
+    /// together. The phone sorts by recency itself: the Mac's activity time, the newest turn it has
+    /// seen, or the phone's own latest send, so a reply or a send moves the row to the top at once.
     public var inbox: [InboxRow] {
-        state.sortedConversations.map { conversation in
-            let reply = state.turns(in: conversation.id).last { $0.role == .assistant }
+        let latestSend = Dictionary(commands.values.compactMap { record in record.conversationID.map { ($0, record.sentAt) } }, uniquingKeysWith: max)
+        return state.conversations.values.map { conversation in
+            let turns = state.turns(in: conversation.id)
+            let reply = turns.last { $0.role == .assistant }
+            let activity = [conversation.lastActivity, turns.compactMap(\.created).max(), latestSend[conversation.id]].compactMap { $0 }.max() ?? conversation.lastActivity
             let unconfirmedCommands = commands.values.filter { $0.conversationID == conversation.id && $0.status == .unconfirmed }.count
             return InboxRow(id: conversation.id, title: conversation.title, agentNames: conversation.agentIDs.map(shortName), agentIDs: conversation.agentIDs,
                             // A direct row already shows the agent; only group previews name who replied.
-                            preview: reply.map { conversation.agentIDs.count == 1 ? $0.text : "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: conversation.lastActivity,
+                            preview: reply.map { conversation.agentIDs.count == 1 ? $0.text : "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: activity,
                             unconfirmed: conversation.unresolvedAttemptCount + unconfirmedCommands, ended: conversation.endedAt != nil,
                             unread: isUnread(conversation.id, latestReply: reply?.created))
         }
+        .sorted { ($0.lastActivity, $1.id.uuidString) > ($1.lastActivity, $0.id.uuidString) }
     }
 
     /// `agentID == nil` is the All view: your messages and every agent's replies.

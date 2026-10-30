@@ -23,13 +23,9 @@ struct InboxView: View {
                         .listRowBackground(Color.clear)
                 }
             }
-            let group = rows.filter { !$0.isDirect }
-            if !group.isEmpty {
-                Section("Groups") { ForEach(group) { row in link(row) } }
-            }
-            let direct = rows.filter(\.isDirect)
-            if !direct.isEmpty {
-                Section("Direct") { ForEach(direct) { row in link(row) } }
+            // One list, newest first, like Messages.
+            if !rows.isEmpty {
+                Section { ForEach(rows) { row in link(row) } }
             }
             if rows.isEmpty {
                 ContentUnavailableView("No Conversations", systemImage: "bubble.left.and.bubble.right",

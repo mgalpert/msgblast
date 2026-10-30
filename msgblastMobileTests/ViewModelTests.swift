@@ -155,6 +155,27 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(rows[old], false, "Replies from before this phone started tracking are not unread")
     }
 
+    func testInboxIsOneListByRecencyAndAReplyOrSendMovesARowToTheTop() {
+        var state = ProjectionState()
+        let group = UUID(), direct = UUID(), contact = UUID()
+        for (id, agents, minutes) in [(group, ["claude", "museApp"], 30.0), (direct, ["claude"], 20.0), (contact, ["messages:cedar"], 10.0)] {
+            state.conversations[id] = RemoteConversation(id: id, title: "T", prompt: "P", created: fixedNow, endedAt: nil, agentIDs: agents, canEnd: true,
+                                                         unresolvedAttemptCount: 0, lastActivity: fixedNow.addingTimeInterval(-minutes * 60))
+        }
+        XCTAssertEqual(ProjectionPresenter(state: state).inbox.map(\.id), [contact, direct, group], "Groups, direct agents and Messages contacts share one list, newest first")
+
+        // A reply the phone has seen moves its row up before the Mac's activity time catches up.
+        state.turns["r"] = RemoteTurn(id: "r", conversationID: group, agentID: "claude", role: .assistant, origin: .agentTranscript, text: "R",
+                                      created: fixedNow, ordinal: 1, contentHash: "h")
+        let replied = ProjectionPresenter(state: state).inbox
+        XCTAssertEqual(replied.map(\.id), [group, contact, direct])
+        XCTAssertEqual(replied.first?.lastActivity, fixedNow, "The row's time is the reply's")
+
+        // So does the phone's own send.
+        let send = CommandRecord(id: UUID(), kind: "sendShared", conversationID: direct, agentIDs: ["claude"], text: "Hi", sentAt: fixedNow.addingTimeInterval(60), status: .sending)
+        XCTAssertEqual(ProjectionPresenter(state: state, commands: [send.id: send]).inbox.map(\.id), [direct, group, contact])
+    }
+
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
         var state = ProjectionState()
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {
