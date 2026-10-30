@@ -11,6 +11,7 @@ The public source repository is [mgalpert/msgblast](https://github.com/mgalpert/
 | [Contributing](../CONTRIBUTING.md) | Personal changes, forks, branches, review, and PR screenshots/video |
 | [Architecture](architecture.md) | Source map, data flow, providers, state, and generated files |
 | [Testing](testing.md) | Native tests, local fixtures, backend checks, evidence, and CI limits |
+| [iPhone design principles](mobile-design-principles.md) | What the phone app is, Messages as the reference, one control per concept, artwork, spacing, protocol discipline, and the build-capture-critique loop |
 | [Dedicated Mac permission testing](remote-permission-testing.md) | Stable signed Dev builds and unattended real permission checks in a privately configured persistent Space |
 | [Agent instructions](../AGENTS.md) | Coding-agent quickstart and maintainer constraints |
 
