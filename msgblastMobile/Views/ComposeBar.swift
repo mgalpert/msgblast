@@ -55,6 +55,9 @@ struct ComposeBar: View {
                                agentIDs: recipients, conversation: conversationID, prepareReasons: prepareReasons)
     }
 
+    /// Send fills with the tint once there is something to send and someone to send it to.
+    private var canSend: Bool { hasContent && !recipients.isEmpty }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Space.gap) {
             Group {
@@ -113,13 +116,15 @@ struct ComposeBar: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Recipients, \(recipients.count == members.count ? "everyone" : recipients.map(presenter.shortName).formatted(.list(type: .and)))")
                         .accessibilityHint(recipientsOpen ? "Hides the agents" : "Shows the agents to choose from")
-                    } else if recipients.count == 1, let agent = recipients.first {
-                        AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.badge)
+                    } else if !recipients.isEmpty {
+                        // Who this goes to: one agent, or a pair in New Conversation.
+                        RecipientBadge(app: app, recipients: recipients)
                             .padding(.leading, Space.fieldBadgeInset)
-                            .padding(.bottom, (Space.fieldHeight - Space.badge) / 2)
+                            .padding(.bottom, (Space.fieldHeight - (recipients.count == 1 ? Space.badge : Space.avatarChip)) / 2)
+                            .accessibilityHidden(true)
                     }
                     MessageField(text: $text, placeholder: placeholder, focused: $fieldFocused,
-                                 leadingInset: choosesRecipients || recipients.count == 1 ? Space.gap : Space.fieldTextInset)
+                                 leadingInset: choosesRecipients || !recipients.isEmpty ? Space.gap : Space.fieldTextInset)
                     if !hasContent && showsDictation {
                         DictationGlyph(listening: dictation.state == .listening) { dictation.toggle(base: text) { text = $0 } }
                     }
@@ -130,13 +135,13 @@ struct ComposeBar: View {
                 .animation(.snappy(duration: 0.2), value: hasContent)
                 Button { send() } label: {
                     Image(systemName: "arrow.up").font(.system(size: Space.glyph * 0.85, weight: .semibold))
-                        .foregroundStyle(hasContent ? Color.white : Color.secondary)
+                        .foregroundStyle(canSend ? Color.white : Color.secondary)
                         .frame(width: Space.fieldHeight, height: Space.fieldHeight)
-                        .background(Circle().fill(hasContent ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.tertiarySystemFill))))
-                        .animation(.easeOut(duration: 0.15), value: hasContent)
+                        .background(Circle().fill(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.tertiarySystemFill))))
+                        .animation(.easeOut(duration: 0.15), value: canSend)
                 }
                 .buttonStyle(.plain)
-                .disabled(!hasContent || sending || preparing || block?.allowsSend == false)
+                .disabled(!hasContent || recipients.isEmpty || sending || preparing || block?.allowsSend == false)
                 .accessibilityLabel("Send")
             }
         }

@@ -59,7 +59,8 @@ struct InboxView: View {
                 Button { composing = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("New conversation")
             }
         }
-        .sheet(isPresented: $composing) { NavigationStack { NewBlastView(app: app) } }
+        // A new conversation is an empty thread pushed on the stack, not a sheet.
+        .navigationDestination(isPresented: $composing) { NewConversationView(app: app) }
         .refreshable { app.connection.connect() }
         .onAppear {
             if launchScreen == .newConversation { composing = true }

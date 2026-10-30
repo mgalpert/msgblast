@@ -5,6 +5,8 @@ import msgblastRemoteProtocol
 struct ConversationView: View {
     @ObservedObject var app: MobileApp
     let conversationID: UUID
+    /// The keyboard stays up when a new conversation becomes this thread.
+    var startFocused = false
     /// The header cluster's selection, both the thread's filter and its recipients: empty is
     /// All, one agent is that agent's private thread, several are their union.
     @State private var selection: Set<String> = []
@@ -181,6 +183,7 @@ struct ConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             app.store.markOpened(conversationID)
+            if startFocused { focusRequest += 1 }
             #if DEBUG
             // Design review: `MSGBLAST_FIXTURE_DETAILS` opens the Details sheet.
             if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DETAILS"] != nil { showingDetails = true }
