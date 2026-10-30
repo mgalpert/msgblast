@@ -31,7 +31,7 @@ import msgblastCore
         // Let SwiftUI commit the sidebar layout before capturing WindowServer.
         try await Task.sleep(for: .milliseconds(150))
         window.contentView?.layoutSubtreeIfNeeded()
-        window.title = "msgblast · " + title
+        window.title = title
         window.titleVisibility = .visible
         window.displayIfNeeded()
         let content = try await SCShareableContent.currentProcess

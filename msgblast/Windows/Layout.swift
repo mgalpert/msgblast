@@ -29,6 +29,7 @@ enum Space {
     static let avatarHeader: CGFloat = 36
     static let avatarList: CGFloat = 24
     static let avatarChip: CGFloat = 16
+    static let avatarGroup: CGFloat = 20  // one of the two overlapped avatars in a sidebar row
     static let badge: CGFloat = 16       // check badge on a header avatar
     static let checkRing: CGFloat = 1.5  // the hollow check badge's stroke
     static let typingDot: CGFloat = 7
