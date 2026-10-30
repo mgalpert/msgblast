@@ -205,7 +205,7 @@ enum DesignFixtures {
         return state
     }
 
-    /// Generated artwork: a 256-pt squircle with the agent's letter (no third-party art).
+    /// Generated artwork with the agent's letter (no third-party art).
     static let avatars: [String: (ref: String, data: Data)] = {
         let looks: [(String, String, UIColor, UIColor)] = [
             ("claude", "C", UIColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1), UIColor(red: 0.70, green: 0.33, blue: 0.22, alpha: 1)),
@@ -219,13 +219,18 @@ enum DesignFixtures {
         var result: [String: (ref: String, data: Data)] = [:]
         for (id, letter, top, bottom) in looks {
             let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            // Two are transparent marks (no background), the rest opaque full squares the
+            // phone clips to a circle, so captures show both treatments.
+            let mark = ["codexCLI", "geminiApp"].contains(id)
+            format.opaque = !mark
             let data = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format).pngData { context in
-                let rect = CGRect(x: 0, y: 0, width: 256, height: 256)
-                UIBezierPath(roundedRect: rect, cornerRadius: 58).addClip()
-                let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [top.cgColor, bottom.cgColor] as CFArray, locations: [0, 1])!
-                context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: 256), options: [])
+                if !mark {
+                    let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [top.cgColor, bottom.cgColor] as CFArray, locations: [0, 1])!
+                    context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: 256), options: [])
+                }
                 let dark = id == "grok"
-                let text = NSAttributedString(string: letter, attributes: [.font: UIFont.systemFont(ofSize: 132, weight: .bold), .foregroundColor: dark ? UIColor.black : UIColor.white])
+                let color = mark ? top : dark ? UIColor.black : UIColor.white
+                let text = NSAttributedString(string: letter, attributes: [.font: UIFont.systemFont(ofSize: mark ? 220 : 132, weight: .heavy), .foregroundColor: color])
                 let size = text.size()
                 text.draw(at: CGPoint(x: (256 - size.width) / 2, y: (256 - size.height) / 2))
             }

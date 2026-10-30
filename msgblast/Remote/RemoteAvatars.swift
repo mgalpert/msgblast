@@ -42,35 +42,77 @@ final class RemoteAvatars {
 
     static func ref(_ data: Data) -> String { "sha256:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
-    /// A square 256 × 256 image under `maximumAvatarBytes`. Native app icons (icns) are
-    /// cropped to their tile and masked to a circle, as the Mac's Grok Bot avatar is;
-    /// other artwork is center-cropped to fill.
+    /// The phone's avatar for this artwork, under `maximumAvatarBytes`:
+    /// - Artwork with transparency (PDF marks, transparent PNGs, app icons with their margins)
+    ///   keeps its alpha: transparent margins are trimmed and the mark is fitted into the
+    ///   256 px box with at most 8 % padding, never masked and never placed on a color.
+    /// - Opaque full-bleed artwork (contact photos, square app-store icons, Muse's photo)
+    ///   is center-cropped to a 256 px square; the phone clips it to a circle.
+    /// The reference is a hash of these bytes, so a change in treatment is a new reference.
     static func normalize(_ data: Data) -> Data? {
-        guard let source = NSImage(data: data), source.size.width > 0, source.size.height > 0 else { return nil }
-        let isIcon = data.starts(with: [0x69, 0x63, 0x6e, 0x73])
-        let pixels = Int(side)
-        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-                                            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        bitmap.size = NSSize(width: side, height: side)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        NSGraphicsContext.current?.imageInterpolation = .high
-        let bounds = NSRect(x: 0, y: 0, width: side, height: side)
-        let size = source.size
-        if isIcon {
-            NSBezierPath(ovalIn: bounds).addClip()
-            NSColor(calibratedWhite: 0.2, alpha: 1).setFill()
-            bounds.fill()
-            source.draw(in: bounds, from: NSRect(origin: .zero, size: size).insetBy(dx: size.width * 0.1, dy: size.height * 0.1), operation: .sourceOver, fraction: 1)
-        } else {
-            let edge = min(size.width, size.height)
-            source.draw(in: bounds, from: NSRect(x: (size.width - edge) / 2, y: (size.height - edge) / 2, width: edge, height: edge), operation: .sourceOver, fraction: 1)
+        guard let source = NSImage(data: data), source.size.width > 0, source.size.height > 0,
+              let probe = rgba(source, width: 256, height: Int(max(1, (256 * source.size.height / source.size.width).rounded()))) else { return nil }
+        if let bounds = opaqueBounds(probe) {
+            // Transparent artwork: trim to the visible mark, fit with up to 8 % padding.
+            let scaleX = source.size.width / CGFloat(probe.pixelsWide), scaleY = source.size.height / CGFloat(probe.pixelsHigh)
+            let crop = NSRect(x: CGFloat(bounds.minX) * scaleX, y: source.size.height - CGFloat(bounds.maxY) * scaleY,
+                              width: CGFloat(bounds.width) * scaleX, height: CGFloat(bounds.height) * scaleY)
+            for pixels in [256, 192, 128] {
+                let box = CGFloat(pixels) * 0.84, scale = box / max(crop.width, crop.height)
+                let target = NSRect(x: (CGFloat(pixels) - crop.width * scale) / 2, y: (CGFloat(pixels) - crop.height * scale) / 2,
+                                    width: crop.width * scale, height: crop.height * scale)
+                guard let bitmap = draw(source, from: crop, into: target, pixels: pixels) else { return nil }
+                if let png = bitmap.representation(using: .png, properties: [:]), png.count <= RemoteProtocol.maximumAvatarBytes { return png }
+            }
+            return nil
         }
-        NSGraphicsContext.restoreGraphicsState()
-        if let png = bitmap.representation(using: .png, properties: [:]), png.count <= RemoteProtocol.maximumAvatarBytes { return png }
+        // Opaque artwork: a full square, no mask and no backing.
+        let size = source.size, edge = min(size.width, size.height)
+        let crop = NSRect(x: (size.width - edge) / 2, y: (size.height - edge) / 2, width: edge, height: edge)
+        guard let bitmap = draw(source, from: crop, into: NSRect(x: 0, y: 0, width: side, height: side), pixels: Int(side)) else { return nil }
         for quality in [0.85, 0.7, 0.5, 0.35] {
             if let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]), jpeg.count <= RemoteProtocol.maximumAvatarBytes { return jpeg }
         }
         return nil
+    }
+
+    private static func draw(_ source: NSImage, from crop: NSRect, into target: NSRect, pixels: Int) -> NSBitmapImageRep? {
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        bitmap.size = NSSize(width: pixels, height: pixels)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        source.draw(in: target, from: crop, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap
+    }
+
+    private static func rgba(_ source: NSImage, width: Int, height: Int) -> NSBitmapImageRep? {
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        source.draw(in: NSRect(x: 0, y: 0, width: width, height: height), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap
+    }
+
+    /// The box around pixels that are not (nearly) transparent, in top-left pixel
+    /// coordinates; nil when the artwork has no transparency to speak of (opaque art).
+    static func opaqueBounds(_ bitmap: NSBitmapImageRep) -> (minX: Int, minY: Int, maxX: Int, maxY: Int, width: Int, height: Int)? {
+        guard let data = bitmap.bitmapData else { return nil }
+        let width = bitmap.pixelsWide, height = bitmap.pixelsHigh, row = bitmap.bytesPerRow
+        var minX = width, minY = height, maxX = -1, maxY = -1, transparent = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let alpha = data[y * row + x * 4 + 3]
+                if alpha < 250 { transparent += 1 }
+                if alpha > 8 { minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y) }
+            }
+        }
+        // Under 1 % transparent pixels (antialiased edges) still counts as opaque artwork.
+        guard maxX >= 0, transparent * 100 > width * height else { return nil }
+        return (minX, minY, maxX + 1, maxY + 1, maxX + 1 - minX, maxY + 1 - minY)
     }
 }

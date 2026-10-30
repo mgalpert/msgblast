@@ -71,6 +71,20 @@ extension View {
 @MainActor
 enum AvatarImages {
     private static let cache = NSCache<NSString, UIImage>()
+    /// Decided when drawn, from the decoded image: an alpha channel with transparent corners
+    /// (an 8 × 8 sample, cheap enough per render).
+    static func isTransparent(_ image: UIImage) -> Bool { cornersTransparent(image) }
+
+    private static func cornersTransparent(_ image: UIImage) -> Bool {
+        guard let cg = image.cgImage, ![.none, .noneSkipFirst, .noneSkipLast].contains(cg.alphaInfo) else { return false }
+        let side = 8
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+        let corners = [0, side - 1, side * (side - 1), side * side - 1]
+        return corners.contains { pixels[$0 * 4 + 3] < 250 }
+    }
     static func image(_ ref: String?, store: MobileStore) -> UIImage? {
         guard let ref, let data = store.avatar(ref) else { return nil }
         if let image = cache.object(forKey: ref as NSString) { return image }
@@ -145,8 +159,11 @@ struct AgentAvatar: View {
 
     var body: some View {
         Group {
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+            if let image, AvatarImages.isTransparent(image) {
+                // Transparent artwork (a mark, an app icon) is drawn as it is: no disc, no clip.
+                Image(uiImage: image).resizable().scaledToFit()
+            } else if let image {
+                Image(uiImage: image).resizable().scaledToFill().clipShape(Circle())
             } else {
                 // No letter below 11 pt: small avatars are a plain color.
                 Text(size * 0.45 >= 11 ? String(name.prefix(1)).uppercased() : "")
@@ -154,10 +171,10 @@ struct AgentAvatar: View {
                     .foregroundStyle(.white)
                     .frame(width: size, height: size)
                     .background(Self.color(product))
+                    .clipShape(Circle())
             }
         }
         .frame(width: size, height: size)
-        .clipShape(Circle())
         .accessibilityHidden(true)
     }
     static func color(_ product: String) -> Color {
