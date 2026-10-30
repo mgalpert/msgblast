@@ -130,8 +130,9 @@ struct ConversationView: View {
             }
             if mine {
                 let visible = presenter.visibleChips(for: turn, agentID: filter, isLatest: isLatest, expanded: expanded.contains(turn.id))
-                // Name the agent whenever several got this message, even if only one chip shows.
-                FlowChips(chips: visible, showsNames: all.count > 1, retry: { chip in chip.state == .notSent ? retry(turn, chip) : nil })
+                if !visible.isEmpty {
+                    StatusGlyphRow(app: app, chips: visible, retry: { chip in chip.state == .notSent ? retry(turn, chip) : nil })
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
@@ -208,16 +209,78 @@ struct RequestDetailsSheet: View {
 }
 
 /// Sending → Sent → Replied / Not sent / Unconfirmed, per agent. Tap a chip for the Mac's reason.
-struct FlowChips: View {
+/// Send status as glyphs on one trailing line: each agent's avatar with a small status
+/// badge, no words. Tap a glyph for the agent, the state and the Mac's reason.
+struct StatusGlyphRow: View {
+    @ObservedObject var app: MobileApp
     var chips: [StatusChip]
-    var showsNames: Bool
     var retry: (StatusChip) -> (() -> Void)? = { _ in nil }
     var body: some View {
-        // One row when it fits; several agents stack rather than clip.
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { ForEach(chips) { chip in ChipView(chip: chip, showsName: showsNames, retry: retry(chip)) } }
-            VStack(alignment: .trailing, spacing: 3) { ForEach(chips) { chip in ChipView(chip: chip, showsName: showsNames, retry: retry(chip)) } }
+        HStack(spacing: 6) {
+            ForEach(chips) { chip in StatusGlyph(app: app, chip: chip, retry: retry(chip)) }
         }
+        .fixedSize()
+        // Scales with the caption, capped so the row always stays on one line.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct StatusGlyph: View {
+    @ObservedObject var app: MobileApp
+    var chip: StatusChip
+    var retry: (() -> Void)?
+    @ScaledMetric(relativeTo: .caption) private var avatar: CGFloat = 16
+    @ScaledMetric(relativeTo: .caption) private var badge: CGFloat = 10
+    @State private var showing = false
+    var body: some View {
+        Button { showing = true } label: {
+            AgentAvatar(app: app, agentID: chip.agentID, name: chip.agentName, size: avatar)
+                .overlay(alignment: .bottomTrailing) {
+                    StatusBadge(state: chip.state, size: badge).offset(x: badge * 0.35, y: badge * 0.25)
+                }
+                .padding(.trailing, badge * 0.35)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(chip.agentName), \(chip.state.rawValue.lowercased())")
+        .accessibilityHint("Shows details")
+        .popover(isPresented: $showing) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(chip.agentName).font(.headline)
+                Label(chip.state.rawValue, systemImage: chip.state.symbol).font(.subheadline).foregroundStyle(StatusBadge.color(chip.state))
+                if let reason = chip.reason, !reason.isEmpty { Text(reason).font(.callout).fixedSize(horizontal: false, vertical: true) }
+                if let retry { Button("Try Again") { showing = false; retry() }.buttonStyle(.borderedProminent).padding(.top, 4) }
+            }
+            .frame(maxWidth: 300, alignment: .leading)
+            .padding()
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+/// The small badge on a status glyph: a symbol in a circle ringed with the background color.
+struct StatusBadge: View {
+    var state: ChipState
+    var size: CGFloat
+    var body: some View {
+        Image(systemName: Self.symbol(state))
+            .resizable().scaledToFit()
+            .fontWeight(.bold)
+            .foregroundStyle(Self.color(state))
+            .frame(width: size, height: size)
+            .background(Circle().fill(Color(.systemBackground)).padding(-1.5))
+    }
+    static func symbol(_ state: ChipState) -> String {
+        switch state {
+        case .sending: "clock.fill"
+        case .sent: "checkmark.circle.fill"
+        case .replied: "checkmark.bubble.fill"
+        case .notSent: "xmark.circle.fill"
+        case .unconfirmed: "questionmark.circle.fill"
+        }
+    }
+    static func color(_ state: ChipState) -> Color {
+        switch state { case .notSent: .red; case .unconfirmed: .orange; default: .secondary }
     }
 }
 
