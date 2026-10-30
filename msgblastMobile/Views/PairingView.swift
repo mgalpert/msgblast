@@ -18,6 +18,8 @@ struct PairingView: View {
     @State private var pairing = false
     @State private var scanning = false
     @State private var pasting = false
+    /// Opens with the Paste Link field shown.
+    var startPasting = false
 
     var body: some View {
         Form {
@@ -49,13 +51,13 @@ struct PairingView: View {
                 }
             } else {
                 Section {
-                    VStack(spacing: 12) {
-                        AppIconImage(size: 96)
+                    VStack(spacing: Space.section) {
+                        AppIconImage(size: Space.hero)
                         Text("Open msgblast › Settings › Remote on your Mac")
                             .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                 }
                 Section {
@@ -71,32 +73,44 @@ struct PairingView: View {
                 }
                 if pasting {
                     Section {
-                        TextField("msgblast://pair…", text: $link, axis: .vertical)
-                            .lineLimit(1...3)
+                        TextField("msgblast://pair…", text: $link)
+                            .lineLimit(1)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        Button("Continue") { read(link) }.disabled(link.isEmpty)
+                            .submitLabel(.continue)
+                            .onSubmit { if !link.isEmpty { read(link) } }
+                    }
+                    Section {
+                        // Same edges as Scan Code above.
+                        Button { read(link) } label: { Text("Continue").frame(maxWidth: .infinity) }
+                            .buttonStyle(.borderedProminent).controlSize(.large)
+                            .disabled(link.isEmpty)
+                            .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
                     }
                 }
                 if error != nil { Section { errorRows } }
             }
         }
+        .listSectionSpacing(Space.section)
         .safeAreaInset(edge: .bottom) {
             Label("Encrypted, device to device. Keys stay on your Mac.", systemImage: "lock.fill")
                 .font(.footnote).foregroundStyle(.secondary)
-                .padding(.bottom, 8)
+                .padding(.bottom, Space.gap)
         }
         .navigationTitle("Pair Your Mac")
         .toolbar {
             if let close { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { close() }.disabled(pairing) } }
         }
         .sheet(isPresented: $scanning) { ScannerView { code in scanning = false; read(code) } }
-        .onAppear { if let incomingLink { read(incomingLink); self.incomingLink = nil } }
+        .onAppear {
+            if startPasting { pasting = true }
+            if let incomingLink { read(incomingLink); self.incomingLink = nil }
+        }
         .onChange(of: incomingLink) { _, value in if let value { read(value); incomingLink = nil } }
     }
 
     @ViewBuilder private var errorRows: some View {
         if let error {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Space.tight) {
                 Text(error).foregroundStyle(.red)
                 if unreachable { Text("Check Tailscale or Wi‑Fi").font(.caption).foregroundStyle(.secondary) }
             }

@@ -172,17 +172,18 @@ manual simulator check.
 
 Debug builds of the phone app open on simulated screens without pairing or any
 network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `typing`, `incomplete`,
-`blocked`, `new`, `settings`, `reconnecting`, `locked` or `pairing`. The fake Mac is
+`blocked`, `new`, `settings`, `reconnecting`, `locked`, `pairing` or `pairing-paste`. The fake Mac is
 named "Studio Mac"; the data is built in `msgblastMobile/Debug/DesignFixtures.swift`
 and compiles out of Release. `MSGBLAST_FIXTURE_CONVERSATION=<uuid>` opens a
-particular conversation. Build the Debug app for a simulator, install it, then:
+particular conversation, and `MSGBLAST_FIXTURE_DRAFT=<text>` pre-fills its composer so
+Send shows (simctl cannot type). Build the Debug app for a simulator, install it, then:
 
 ```sh
 SIMCTL_CHILD_MSGBLAST_FIXTURE=conversation xcrun simctl launch --terminate-running-process <udid> com.msgblast.ios
 xcrun simctl io <udid> screenshot build/design-review/conversation.png
 ```
 
-The reconnecting banner explains itself only after 20 seconds, so wait that long
+The reconnecting subtitle explains itself only after 20 seconds, so wait that long
 before capturing `reconnecting`. Scan Code is disabled in the simulator, which has
 no camera scanner.
 

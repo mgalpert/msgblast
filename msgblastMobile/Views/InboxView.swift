@@ -61,33 +61,39 @@ struct InboxView: View {
         }
     }
 
+    /// A fixed grid, as Messages lays out its rows: unread gutter, 40 pt avatar, text
+    /// column, then the system disclosure chevron. Accessories sit in a trailing column under
+    /// the time, so every row's height depends only on its preview.
     private func link(_ row: InboxRow) -> some View {
         NavigationLink(value: row.id) {
-            HStack(alignment: .top, spacing: 10) {
-                // Messages' unread dot, left of the avatar.
-                Circle().fill(row.unread ? Color.accentColor : Color.clear).frame(width: 10, height: 10).padding(.top, 15)
+            HStack(alignment: .center, spacing: 0) {
+                Circle().fill(row.unread ? Color.accentColor : Color.clear)
+                    .frame(width: Space.dot, height: Space.dot)
+                    .frame(width: Space.unreadGutter)
                     .accessibilityHidden(true)
                 RowAvatar(app: app, agentIDs: row.agentIDs, names: row.agentIDs.map(presenter.shortName))
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(row.isDirect ? presenter.name(row.agentIDs[0]) : row.title).font(.headline.weight(row.unread ? .bold : .semibold)).lineLimit(1)
-                        Spacer(minLength: 8)
+                VStack(alignment: .leading, spacing: Space.hairline) {
+                    HStack(alignment: .firstTextBaseline, spacing: Space.gap) {
+                        Text(row.isDirect ? presenter.name(row.agentIDs[0]) : row.title)
+                            .font(.headline.weight(row.unread ? .bold : .semibold)).lineLimit(1)
+                        Spacer(minLength: 0)
                         Text(ProjectionPresenter.inboxTimestamp(row.lastActivity)).font(.subheadline).foregroundStyle(.secondary)
                     }
-                    Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                    // The meta line sits right under the preview: Ended, then the unconfirmed badge.
-                    if row.ended || row.unconfirmed > 0 {
-                        HStack(spacing: 6) {
-                            if row.ended { Text("Ended").font(.caption).foregroundStyle(.secondary) }
-                            Spacer(minLength: 0)
-                            if row.unconfirmed > 0 { UnconfirmedBadge(count: row.unconfirmed) }
-                        }
+                    HStack(alignment: .top, spacing: Space.gap) {
+                        Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .layoutPriority(1)
+                        // The accessory keeps its full size; the preview wraps beside it.
+                        if row.unconfirmed > 0 { UnconfirmedBadge(count: row.unconfirmed).fixedSize() }
+                        else if row.ended { Text("Ended").font(.caption).foregroundStyle(.secondary).fixedSize() }
                     }
                 }
+                .padding(.leading, Space.inset)
             }
             .accessibilityElement(children: .combine)
             .accessibilityValue(row.unread ? "Unread" : "")
         }
+        .listRowInsets(Space.row)
     }
 }
 
@@ -103,15 +109,15 @@ struct SettingsView: View {
                     LabeledContent("Key", value: mac.fingerprint).font(.callout.monospaced())
                     LabeledContent("Paired", value: mac.pairedAt.formatted(date: .abbreviated, time: .shortened))
                     LabeledContent {
-                        VStack(alignment: .trailing, spacing: 1) {
+                        VStack(alignment: .trailing, spacing: Space.hairline) {
                             Text(app.connection.state.statusText)
                             if let route = app.connection.connectedVia { Text(route).font(.caption.monospaced()).foregroundStyle(.secondary) }
                         }
                     } label: { Text("Status") }
                     if let seconds = app.connection.lastConnectSeconds { LabeledContent("Connect time", value: String(format: "%.1f s", seconds)) }
                 } header: {
-                    HStack(spacing: 10) {
-                        AppIconImage(size: 28)
+                    HStack(spacing: Space.gap) {
+                        AppIconImage(size: Space.section)
                         Text("Mac")
                     }
                 }
@@ -145,13 +151,13 @@ struct SettingsView: View {
 struct UnconfirmedBadge: View {
     var count: Int
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: Space.hairline) {
             Image(systemName: "exclamationmark.circle.fill")
             Text("\(count)")
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(.white)
-        .padding(.horizontal, 6).padding(.vertical, 2)
+        .padding(.horizontal, Space.gap).padding(.vertical, Space.hairline)
         .background(.orange, in: Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count) unconfirmed")
@@ -163,19 +169,19 @@ struct RowAvatar: View {
     @ObservedObject var app: MobileApp
     var agentIDs: [String]
     var names: [String]
-    static let side: CGFloat = 40
+    static let side = Space.avatarRow
     var body: some View {
         if agentIDs.count == 1 {
             AgentAvatar(app: app, agentID: agentIDs[0], name: names[0], size: Self.side)
         } else {
             // Messages' group avatar: the first member top-left behind, the second
-            // bottom-right in front with a 2 pt ring in the row color.
+            // bottom-right in front with a 2 pt ring in the row color, all inside 40 pt.
             ZStack(alignment: .topLeading) {
-                AgentAvatar(app: app, agentID: agentIDs[0], name: names[0], size: 26)
-                AgentAvatar(app: app, agentID: agentIDs[1], name: names[1], size: 26)
-                    .padding(2)
+                AgentAvatar(app: app, agentID: agentIDs[0], name: names[0], size: Space.avatarGroup)
+                AgentAvatar(app: app, agentID: agentIDs[1], name: names[1], size: Space.avatarGroup)
+                    .padding(Space.hairline)
                     .background(Circle().fill(Color(.secondarySystemGroupedBackground)))
-                    .offset(x: Self.side - 26 - 2, y: Self.side - 26 - 2)
+                    .offset(x: Self.side - Space.avatarGroup - 2 * Space.hairline, y: Self.side - Space.avatarGroup - 2 * Space.hairline)
             }
             .frame(width: Self.side, height: Self.side, alignment: .topLeading)
         }

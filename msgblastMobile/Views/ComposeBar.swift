@@ -36,19 +36,19 @@ struct ComposeBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.gap) {
             if conversationID != nil && members.count > 1 {
                 // Recipients wrap like Mail's, with the summary always the last item.
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: Space.gap) {
                     ForEach(members, id: \.self) { id in
                         let on = recipients.contains(id)
                         Button { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } } label: {
-                            HStack(spacing: 5) {
-                                AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: 16)
+                            HStack(spacing: Space.tight) {
+                                AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: Space.avatarChip)
                                 Text(presenter.shortName(id)).font(.subheadline)
                                     .foregroundStyle(on ? Color.primary : Color.secondary)
                             }
-                            .padding(.leading, 5).padding(.trailing, 10).padding(.vertical, 5)
+                            .padding(.leading, Space.tight).padding(.trailing, Space.gap).padding(.vertical, Space.tight)
                             .opacity(on ? 1 : 0.6)
                         }
                         .buttonStyle(.plain)
@@ -56,44 +56,52 @@ struct ComposeBar: View {
                         .glassEffect(on ? .regular.tint(Color.accentColor.opacity(0.35)).interactive() : .regular.interactive(), in: .capsule)
                         .accessibilityValue(on ? "Selected" : "Not selected")
                     }
-                    Text(presenter.recipientSummary(recipients, members: members)).font(.caption).foregroundStyle(.secondary).padding(.leading, 2)
+                    Text(presenter.recipientSummary(recipients, members: members)).font(.caption).foregroundStyle(.secondary)
                 }
             }
             if let status { statusLine(status) }
             if !attachments.isEmpty {
                 ScrollView(.horizontal) { HStack { ForEach(attachments, id: \.id) { Label($0.name, systemImage: "paperclip").font(.caption) } } }
             }
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: Space.gap) {
                 if onlyMessages {
                     Menu {
                         PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }
                         Button { importing = true } label: { Label("File", systemImage: "doc") }
-                    } label: { Image(systemName: "plus.circle").font(.title2) }
+                    } label: {
+                        Image(systemName: "plus").font(.body.weight(.semibold))
+                            .frame(width: Space.fieldButton, height: Space.fieldButton)
+                    }
+                    .buttonStyle(.glass).buttonBorderShape(.circle)
+                    .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
+                    .accessibilityLabel("Add Photo or File")
                 }
-                // Messages layout: Send sits inside the field's trailing edge and appears with content.
-                HStack(alignment: .bottom, spacing: 4) {
+                // Messages on iOS 26: a glass capsule, text inset 12 × 8, growing to five lines,
+                // with Send inside its trailing edge once there is something to send.
+                HStack(alignment: .bottom, spacing: Space.tight) {
                     TextField(placeholder, text: $text, axis: .vertical)
-                        .lineLimit(1...6)
-                        .padding(.vertical, 7).padding(.leading, 12)
+                        .lineLimit(1...5)
+                        .padding(.horizontal, Space.inset).padding(.vertical, Space.gap)
                     if hasContent {
-                        Button { send() } label: { Image(systemName: "arrow.up").font(.subheadline.weight(.bold)).frame(width: 18, height: 18) }
-                            .buttonStyle(.glassProminent)
-                            .buttonBorderShape(.circle)
-                            .controlSize(.small)
-                            .frame(width: 30, height: 30)
-                            .disabled(sending || preparing || block?.allowsSend == false)
-                            .accessibilityLabel("Send")
-                            .transition(.scale.combined(with: .opacity))
+                        Button { send() } label: {
+                            Image(systemName: "arrow.up").font(.subheadline.weight(.bold))
+                                .frame(width: Space.fieldButton, height: Space.fieldButton)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .buttonBorderShape(.circle)
+                        .disabled(sending || preparing || block?.allowsSend == false)
+                        .accessibilityLabel("Send")
+                        .padding(.trailing, (Space.fieldHeight - Space.fieldButton) / 2)
+                        .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
+                        .transition(.scale.combined(with: .opacity))
                     }
                 }
-                .padding(.trailing, 3).padding(.vertical, 2)
-                .frame(minHeight: 36)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
+                .frame(minHeight: Space.fieldHeight)
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Space.fieldHeight / 2))
                 .animation(.snappy(duration: 0.2), value: hasContent)
             }
         }
-        .padding(10)
+        .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
         .background(.bar)
         .sensoryFeedback(.success, trigger: sentCount)
         .sensoryFeedback(.error, trigger: refusedCount)
@@ -146,7 +154,7 @@ struct ComposeBar: View {
         // A line too long to read at a glance shows its start; ⓘ has the rest.
         let long = status.text.count > 44
         let detail = status.detail ?? (long ? status.text : nil)
-        return HStack(spacing: 6) {
+        return HStack(spacing: Space.tight) {
             if status.progress { ProgressView().controlSize(.mini) }
             else if let symbol = status.symbol { Image(systemName: symbol) }
             // Wraps at accessibility sizes rather than cutting the meaning.
@@ -157,7 +165,6 @@ struct ComposeBar: View {
         }
         .font(.caption)
         .foregroundStyle(status.blocks ? Color.orange : Color.secondary)
-        .padding(.horizontal, 4)
     }
 
     /// Tells the Mac which agents are coming so their pages are ready before Send.
@@ -246,7 +253,7 @@ struct ComposeBar: View {
 
 /// Lays out subviews left to right, wrapping onto new lines; each line is centered vertically.
 struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
+    var spacing: CGFloat = Space.gap
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let rows = rows(width: proposal.width ?? .infinity, subviews: subviews)

@@ -14,7 +14,7 @@ struct RootView: View {
     var body: some View {
         Group {
             if app.connection.pairedMac == nil {
-                NavigationStack { PairingView(app: app, incomingLink: $incomingLink) }
+                NavigationStack { PairingView(app: app, incomingLink: $incomingLink, startPasting: launchScreen == .pastePairingLink) }
             } else {
                 NavigationStack(path: $path) { InboxView(app: app, launchScreen: launchScreen) }
             }
@@ -41,7 +41,7 @@ extension RootView {
 
 /// Where the app opens. Production always opens on the inbox (or pairing).
 enum LaunchScreen: Equatable {
-    case inbox, conversation(UUID), newConversation, settings
+    case inbox, conversation(UUID), newConversation, settings, pastePairingLink
 }
 
 /// The connection status as the navigation subtitle, where Mail and Messages put theirs:
@@ -84,13 +84,14 @@ enum AvatarImages {
 /// production icon. The layered app icon itself is never loaded as an image (UIKit
 /// asserts on it). Falls back to a symbol when the asset is missing.
 struct AppIconImage: View {
-    var size: CGFloat = 96
+    var size: CGFloat = Space.hero
     static let image = UIImage(named: "BrandMark")
     var body: some View {
         if let image = Self.image {
             Image(uiImage: image)
                 .resizable()
                 .frame(width: size, height: size)
+                // The icon's own squircle: 22 pt at 96 pt, scaled with the size (icon geometry, not spacing).
                 .clipShape(RoundedRectangle(cornerRadius: size * 22 / 96, style: .continuous))
                 .shadow(color: .black.opacity(0.15), radius: size / 16, y: size / 32)
                 .accessibilityHidden(true)
@@ -119,8 +120,8 @@ struct DetailPopover: View {
         Text(text)
             .font(.callout)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: 300, alignment: .leading)
-            .padding()
+            .frame(maxWidth: Space.popoverWidth, alignment: .leading)
+            .padding(Space.screen)
             .presentationCompactAdaptation(.popover)
     }
 }
@@ -130,15 +131,15 @@ struct DetailPopover: View {
 struct AgentAvatar: View {
     var name: String
     var product: String
-    var size: CGFloat = 28
+    var size: CGFloat = Space.avatarInline
     var image: UIImage? = nil
 
     /// The agent's name, product color and cached artwork from the projection.
-    init(app: MobileApp, agentID: String, name: String, size: CGFloat = 28) {
+    init(app: MobileApp, agentID: String, name: String, size: CGFloat = Space.avatarInline) {
         let agent = app.store.projection.agents[agentID]
         self.init(name: name, product: agent?.product.rawValue ?? agentID, size: size, image: AvatarImages.image(agent?.avatarRef, store: app.store))
     }
-    init(name: String, product: String, size: CGFloat = 28, image: UIImage? = nil) {
+    init(name: String, product: String, size: CGFloat = Space.avatarInline, image: UIImage? = nil) {
         self.name = name; self.product = product; self.size = size; self.image = image
     }
 

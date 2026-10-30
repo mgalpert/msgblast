@@ -32,9 +32,9 @@ struct NewBlastView: View {
         return Button {
             if isSelected { selected.removeAll { $0 == agent.agentID } } else { selected.append(agent.agentID) }
         } label: {
-            HStack(spacing: 12) {
-                AgentAvatar(app: app, agentID: agent.agentID, name: agent.displayName, size: 32)
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: Space.inset) {
+                AgentAvatar(app: app, agentID: agent.agentID, name: agent.displayName, size: Space.avatarRow)
+                VStack(alignment: .leading, spacing: Space.hairline) {
                     Text(agent.displayName).foregroundStyle(sendable ? .primary : .secondary)
                     // Messages rows sit under a Messages header; they need no form label.
                     let form = agent.form == .messages ? nil : ProjectionPresenter.formLabel(agent.form)
@@ -49,6 +49,7 @@ struct NewBlastView: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .listRowInsets(Space.row)
         .opacity(agent.readiness == .unavailable ? 0.5 : 1)
         .disabled(agent.readiness == .unavailable)
         .accessibilityValue(isSelected ? "Selected" : "Not selected")

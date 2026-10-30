@@ -13,6 +13,9 @@ struct ConversationView: View {
     @State private var details: IncompleteSummary?
     /// Your messages whose full chip row was revealed by a tap, as Messages reveals times.
     @State private var expanded: Set<String> = []
+    /// The scroll view's width, for the 78 percent bubble limit.
+    /// Starts at a phone's width until the first layout measures it.
+    @State private var width: CGFloat = 390
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var conversation: RemoteConversation? { app.store.projection.conversations[conversationID] }
@@ -29,31 +32,44 @@ struct ConversationView: View {
         let turns = presenter.turns(in: conversationID, agentID: filter)
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                // Spacing is explicit per row: 2 pt within one sender's run, 8 pt between
+                // senders, a time header 24 pt above and 8 pt below (Messages' rhythm).
+                LazyVStack(alignment: .leading, spacing: 0) {
                     if conversation.agentIDs.count > 1 {
                         Picker("Show", selection: $filter) {
                             Text("All").tag(String?.none)
                             ForEach(conversation.agentIDs, id: \.self) { Text(presenter.shortName($0)).tag(String?.some($0)) }
-                        }.pickerStyle(.segmented)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.bottom, Space.gap)
                     }
                     // A submitted request shows as typing below; the row is for Stop or review.
                     ForEach(conversation.incompleteAttempts.filter { ![.waiting, .submitted].contains(app.store.projection.attempts[$0.attemptID]?.status) }, id: \.attemptID) { incomplete in
-                        incompleteRow(incomplete)
+                        incompleteRow(incomplete).padding(.bottom, Space.gap)
                     }
                     let latestMine = turns.last { $0.role == .user }?.id
                     ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
-                        if let created = turn.created, let header = ProjectionPresenter.timeHeader(created, previous: index == 0 ? nil : turns[index - 1].created) {
-                            Text(header).font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 6)
+                        let previous = index == 0 ? nil : turns[index - 1]
+                        let header = turn.created.flatMap { ProjectionPresenter.timeHeader($0, previous: previous?.created) }
+                        if let header {
+                            Text(header).font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                                .padding(.top, index == 0 ? 0 : Space.section).padding(.bottom, Space.gap)
                         }
-                        bubble(turn, showsName: turn.role != .user && (index == 0 || turns[index - 1].agentID != turn.agentID), isLatest: turn.id == latestMine).id(turn.id)
+                        let sameSender = previous.map { $0.role == turn.role && $0.agentID == turn.agentID } ?? false
+                        bubble(turn, showsName: turn.role != .user && !sameSender, isLatest: turn.id == latestMine)
+                            .padding(.top, header != nil || previous == nil ? 0 : sameSender ? Space.hairline : Space.gap)
+                            .id(turn.id)
                     }
                     ForEach(presenter.typingAgents(in: conversationID, agentID: filter), id: \.self) { agent in
-                        TypingBubble(app: app, agentID: agent, name: presenter.shortName(agent)).id("typing-\(agent)")
+                        TypingBubble(app: app, agentID: agent, name: presenter.shortName(agent)).padding(.top, Space.gap).id("typing-\(agent)")
                     }
-                    if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity) }
-                    if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 4) }
-                }.padding()
+                    if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap) }
+                    if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section) }
+                }
+                .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .onChange(of: turns.last?.id) { _, id in
                 if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
                 app.store.markOpened(conversationID)
@@ -100,22 +116,23 @@ struct ConversationView: View {
         let text = turn.text.isEmpty ? turn.attachments.map(\.filename).joined(separator: ", ") : turn.text
         let all = mine ? presenter.chips(for: turn, agentID: filter) : []
         let notSent = all.first { $0.state == .notSent }
-        return VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+        return VStack(alignment: mine ? .trailing : .leading, spacing: Space.tight) {
             if showsName, let agent = turn.agentID {
-                HStack(spacing: 6) {
-                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: 22)
+                HStack(spacing: Space.gap) {
+                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarInline)
                     Text(presenter.name(agent)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 }
             }
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: Space.gap) {
                 // Messages' Not Delivered mark sits at the bubble's leading edge.
                 if let notSent { ChipView(chip: notSent, showsName: false, iconOnly: true, retry: retry(turn, notSent)) }
+                MaxWidth(width: (width - 2 * Space.screen) * Space.bubbleWidth) {
                 Text(text)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(mine ? Color("Bubble") : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal, Space.inset).padding(.vertical, Space.gap)
+                    .background(mine ? Color("Bubble") : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: Space.corner, style: .continuous))
                     .foregroundStyle(mine ? .white : .primary)
-                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16))
+                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: Space.corner, style: .continuous))
                     .contextMenu {
                         // Copy only: resending your own message is never offered, so nothing is sent twice by accident.
                         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
@@ -124,6 +141,7 @@ struct ConversationView: View {
                         guard mine else { return }
                         withAnimation(.snappy) { if expanded.contains(turn.id) { expanded.remove(turn.id) } else { expanded.insert(turn.id) } }
                     }
+                }
             }
             if !turn.attachments.isEmpty && !turn.text.isEmpty {
                 Label(turn.attachments.map(\.filename).joined(separator: ", "), systemImage: "paperclip").font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -136,7 +154,6 @@ struct ConversationView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
-        .padding(mine ? .leading : .trailing, 40)
     }
 
     /// Try Again for a Not sent chip: a new private send of the same text to that agent.
@@ -149,9 +166,9 @@ struct ConversationView: View {
     /// One compact row: what is happening, and the one action that fits. Tap for the Mac's full text.
     private func incompleteRow(_ incomplete: RemoteIncompleteAttempt) -> some View {
         let summary = presenter.incompleteSummary(incomplete)
-        return HStack(spacing: 10) {
+        return HStack(spacing: Space.gap) {
             Button { details = summary } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: Space.gap) {
                     Image(systemName: summary.running ? "hourglass" : "exclamationmark.circle")
                         .foregroundStyle(summary.running ? Color.secondary : Color.orange)
                     Text(summary.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
@@ -168,8 +185,8 @@ struct ConversationView: View {
                     .buttonStyle(.bordered).controlSize(.small)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        .padding(Space.inset)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: Space.cornerCard, style: .continuous))
     }
 
     private func run(_ action: RemoteAction) {
@@ -216,7 +233,7 @@ struct StatusGlyphRow: View {
     var chips: [StatusChip]
     var retry: (StatusChip) -> (() -> Void)? = { _ in nil }
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.gap) {
             ForEach(chips) { chip in StatusGlyph(app: app, chip: chip, retry: retry(chip)) }
         }
         .fixedSize()
@@ -230,8 +247,8 @@ struct StatusGlyph: View {
     @ObservedObject var app: MobileApp
     var chip: StatusChip
     var retry: (() -> Void)?
-    @ScaledMetric(relativeTo: .caption) private var avatar: CGFloat = 16
-    @ScaledMetric(relativeTo: .caption) private var badge: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption) private var avatar: CGFloat = Space.avatarChip
+    @ScaledMetric(relativeTo: .caption) private var badge: CGFloat = Space.statusBadge
     @State private var showing = false
     var body: some View {
         Button { showing = true } label: {
@@ -245,14 +262,14 @@ struct StatusGlyph: View {
         .accessibilityLabel("\(chip.agentName), \(chip.state.rawValue.lowercased())")
         .accessibilityHint("Shows details")
         .popover(isPresented: $showing) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Space.gap) {
                 Text(chip.agentName).font(.headline)
                 Label(chip.state.rawValue, systemImage: chip.state.symbol).font(.subheadline).foregroundStyle(StatusBadge.color(chip.state))
                 if let reason = chip.reason, !reason.isEmpty { Text(reason).font(.callout).fixedSize(horizontal: false, vertical: true) }
-                if let retry { Button("Try Again") { showing = false; retry() }.buttonStyle(.borderedProminent).padding(.top, 4) }
+                if let retry { Button("Try Again") { showing = false; retry() }.buttonStyle(.borderedProminent).padding(.top, Space.tight) }
             }
-            .frame(maxWidth: 300, alignment: .leading)
-            .padding()
+            .frame(maxWidth: Space.popoverWidth, alignment: .leading)
+            .padding(Space.screen)
             .presentationCompactAdaptation(.popover)
         }
     }
@@ -268,7 +285,7 @@ struct StatusBadge: View {
             .fontWeight(.bold)
             .foregroundStyle(Self.color(state))
             .frame(width: size, height: size)
-            .background(Circle().fill(Color(.systemBackground)).padding(-1.5))
+            .background(Circle().fill(Color(.systemBackground)).padding(-Space.hairline))
     }
     static func symbol(_ state: ChipState) -> String {
         switch state {
@@ -300,15 +317,15 @@ struct ChipView: View {
                 .accessibilityLabel(iconOnly ? "Not sent to \(chip.agentName)" : chip.label(showsName: true))
                 .accessibilityHint("Shows why")
                 .popover(isPresented: $showingReason) {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: Space.inset) {
                         if let reason = chip.reason, !reason.isEmpty { Text(reason).font(.callout).fixedSize(horizontal: false, vertical: true) }
                         else { Text("\(chip.agentName) didn't get this message").font(.callout) }
                         if let retry {
                             Button("Try Again") { showingReason = false; retry() }.buttonStyle(.borderedProminent)
                         }
                     }
-                    .frame(maxWidth: 300, alignment: .leading)
-                    .padding()
+                    .frame(maxWidth: Space.popoverWidth, alignment: .leading)
+                    .padding(Space.screen)
                     .presentationCompactAdaptation(.popover)
                 }
         } else {
@@ -341,16 +358,16 @@ struct TypingBubble: View {
     var name: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        HStack(alignment: .bottom, spacing: 6) {
-            AgentAvatar(app: app, agentID: agentID, name: name, size: 22)
+        HStack(alignment: .bottom, spacing: Space.gap) {
+            AgentAvatar(app: app, agentID: agentID, name: name, size: Space.avatarInline)
             TimelineView(.animation(minimumInterval: 0.15, paused: reduceMotion)) { timeline in
                 let phase = reduceMotion ? -1 : Int(timeline.date.timeIntervalSinceReferenceDate / 0.3) % 3
-                HStack(spacing: 4) {
+                HStack(spacing: Space.tight) {
                     ForEach(0..<3, id: \.self) { dot in
-                        Circle().fill(Color.secondary).frame(width: 7, height: 7).opacity(phase == dot ? 0.9 : 0.35)
+                        Circle().fill(Color.secondary).frame(width: Space.dot, height: Space.dot).opacity(phase == dot ? 0.9 : 0.35)
                     }
                 }
-                .padding(.horizontal, 12).padding(.vertical, 11)
+                .padding(.horizontal, Space.inset).padding(.vertical, Space.inset)
                 .background(Color(.secondarySystemBackground), in: Capsule())
             }
         }

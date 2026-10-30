@@ -7,10 +7,11 @@ import msgblastRemoteProtocol
 
 /// Debug-only screens for design review without pairing or a network. Launch with
 /// `MSGBLAST_FIXTURE` set to inbox, conversation, typing, incomplete, blocked, new, settings,
-/// reconnecting, locked or pairing (and optionally `MSGBLAST_FIXTURE_CONVERSATION=<uuid>`).
+/// reconnecting, locked, pairing or pairing-paste (and optionally `MSGBLAST_FIXTURE_CONVERSATION=<uuid>`
+/// and `MSGBLAST_FIXTURE_DRAFT=<text>` to pre-fill the composer).
 /// Everything here is simulated; nothing is read from or sent to a Mac.
 enum DesignFixtures {
-    enum Name: String, CaseIterable { case inbox, conversation, typing, incomplete, blocked, new, settings, reconnecting, locked, pairing }
+    enum Name: String, CaseIterable { case inbox, conversation, typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
 
     static var current: Name? { ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE"].flatMap(Name.init(rawValue:)) }
 
@@ -31,13 +32,14 @@ enum DesignFixtures {
         case .blocked: return .conversation(requested ?? blockedConversation)
         case .new: return .newConversation
         case .settings: return .settings
+        case .pairingPaste: return .pastePairingLink
         case .inbox, .reconnecting, .locked, .pairing: return requested.map(LaunchScreen.conversation) ?? .inbox
         }
     }
 
     @MainActor static func makeModel(_ name: Name) -> MobileApp {
         let database = try! LocalDatabase(url: nil)
-        if name != .pairing {
+        if name != .pairing && name != .pairingPaste {
             database.setValue(PairedMac(macName: "Studio Mac", variant: .production, deviceID: UUID(), identityKey: Data((0..<65).map { UInt8($0 &* 37 & 0xFF) }),
                                         spkiSHA256: Data(repeating: 7, count: 32), addresses: [], port: 52000, pairedAt: now.addingTimeInterval(-9 * 86_400)), "pairedMac")
             database.setValue(projection(name), "projection")
@@ -45,12 +47,16 @@ enum DesignFixtures {
         let defaults = UserDefaults(suiteName: "msgblast-design-fixtures")!
         let app = MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: defaults)
         switch name {
-        case .pairing: break
+        case .pairing, .pairingPaste: break
         case .reconnecting: app.connection.showDesignFixture(.reconnecting(attempt: 3, retryAt: now.addingTimeInterval(8)), lastHeard: now.addingTimeInterval(-130))
         case .locked: app.connection.showDesignFixture(.macLocked, lastHeard: now.addingTimeInterval(-40))
         default: app.connection.showDesignFixture(.connected, lastHeard: now, connectedVia: "100.101.102.103:52000", connectSeconds: 0.4)
         }
-        if name != .pairing { for (_, avatar) in avatars { app.store.storeAvatar(avatar.data, for: avatar.ref) } }
+        if name != .pairing && name != .pairingPaste { for (_, avatar) in avatars { app.store.storeAvatar(avatar.data, for: avatar.ref) } }
+        // `MSGBLAST_FIXTURE_DRAFT` pre-fills the opened conversation's composer, so Send shows.
+        if let draft = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DRAFT"], case .conversation(let id) = screen(name) {
+            app.store.setDraft(draft, for: MobileStore.draftKey(conversation: id, agentID: nil))
+        }
         // Every row but the group has been read on this phone, so the inbox shows one unread dot.
         for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
         return app
