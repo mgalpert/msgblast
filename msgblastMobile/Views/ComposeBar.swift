@@ -21,6 +21,9 @@ struct ComposeBar: View {
     @State private var photo: PhotosPickerItem?
     @State private var importing = false
     @State private var uploading = false
+    /// Counters for haptics: a confirmed send, and one the Mac refused or did not confirm.
+    @State private var sentCount = 0
+    @State private var refusedCount = 0
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
@@ -42,11 +45,16 @@ struct ComposeBar: View {
                         Button { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } } label: {
                             HStack(spacing: 5) {
                                 AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: 16)
-                                Text(presenter.shortName(id))
+                                Text(presenter.shortName(id)).font(.subheadline)
+                                    .foregroundStyle(on ? Color.primary : Color.secondary)
                             }
+                            .padding(.leading, 5).padding(.trailing, 10).padding(.vertical, 5)
+                            .opacity(on ? 1 : 0.6)
                         }
-                            .buttonStyle(.bordered).controlSize(.small).tint(on ? .accentColor : .secondary)
-                            .accessibilityValue(on ? "Selected" : "Not selected")
+                        .buttonStyle(.plain)
+                        // Liquid Glass chips; a chosen recipient takes the accent tint.
+                        .glassEffect(on ? .regular.tint(Color.accentColor.opacity(0.35)).interactive() : .regular.interactive(), in: .capsule)
+                        .accessibilityValue(on ? "Selected" : "Not selected")
                     }
                     Text(presenter.recipientSummary(recipients, members: members)).font(.caption).foregroundStyle(.secondary).padding(.leading, 2)
                 }
@@ -65,13 +73,17 @@ struct ComposeBar: View {
                 TextField("Message", text: $text, axis: .vertical)
                     .lineLimit(1...6)
                     .padding(8).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
-                Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.title) }
+                Button { send() } label: { Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 22, height: 22) }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
                     .disabled(sending || preparing || block?.allowsSend == false || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty))
                     .accessibilityLabel("Send")
             }
         }
         .padding(10)
         .background(.bar)
+        .sensoryFeedback(.success, trigger: sentCount)
+        .sensoryFeedback(.error, trigger: refusedCount)
         .onAppear { text = app.store.draft(draftKey); prepare() }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
@@ -181,13 +193,15 @@ struct ComposeBar: View {
             defer { sending = false }
             do {
                 let result = try await app.perform(action)
-                if result.outcome == .rejected { message = result.message; return }
+                if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
+                sentCount += 1
                 text = ""; attachments = []
                 onSent(result.conversationID)
             } catch {
                 // Keep the text and files: the Mac may never have received them. An unconfirmed
                 // command is recorded and never resent; the user checks before sending again.
                 message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
+                refusedCount += 1
             }
         }
     }

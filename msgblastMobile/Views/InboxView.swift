@@ -62,23 +62,17 @@ struct InboxView: View {
     private func link(_ row: InboxRow) -> some View {
         NavigationLink(value: row.id) {
             HStack(alignment: .top, spacing: 12) {
-                HStack(spacing: -12) {
-                    ForEach(Array(row.agentIDs.prefix(3).enumerated()), id: \.offset) { index, id in
-                        AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: 30)
-                            .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
-                            .zIndex(Double(3 - index))
-                    }
-                }.frame(width: 66, alignment: .leading)
+                RowAvatar(app: app, agentIDs: row.agentIDs, names: row.agentIDs.map(presenter.shortName))
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack {
+                    HStack(alignment: .firstTextBaseline) {
                         Text(row.isDirect ? presenter.name(row.agentIDs[0]) : row.title).font(.headline).lineLimit(1)
-                        Spacer()
+                        Spacer(minLength: 8)
                         Text(ProjectionPresenter.inboxTimestamp(row.lastActivity)).font(.subheadline).foregroundStyle(.secondary)
                     }
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
                         Spacer(minLength: 0)
-                        if row.unconfirmed > 0 { UnconfirmedBadge(count: row.unconfirmed) }
+                        if row.unconfirmed > 0 { UnconfirmedBadge(count: row.unconfirmed).padding(.top, 2) }
                     }
                     if row.ended { Text("Ended").font(.caption).foregroundStyle(.tertiary) }
                 }
@@ -151,5 +145,31 @@ struct UnconfirmedBadge: View {
         .background(.orange, in: Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count) unconfirmed")
+    }
+}
+
+/// A 40 pt avatar for a direct row, or a trio for a group, each ringed in the row's color.
+struct RowAvatar: View {
+    @ObservedObject var app: MobileApp
+    var agentIDs: [String]
+    var names: [String]
+    static let side: CGFloat = 40
+    var body: some View {
+        if agentIDs.count == 1 {
+            AgentAvatar(app: app, agentID: agentIDs[0], name: names[0], size: Self.side)
+        } else {
+            // Two across the top, one centered below; later ones sit on top, each in a 2 pt ring.
+            let small: CGFloat = 22
+            let centers = [CGPoint(x: 11, y: 11), CGPoint(x: 29, y: 11), CGPoint(x: 20, y: 28)]
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(agentIDs.prefix(3).enumerated()), id: \.offset) { index, id in
+                    AgentAvatar(app: app, agentID: id, name: names[index], size: small)
+                        .padding(2)
+                        .background(Circle().fill(Color(.secondarySystemGroupedBackground)))
+                        .position(centers[agentIDs.count == 2 && index == 1 ? 2 : index])
+                }
+            }
+            .frame(width: Self.side, height: Self.side)
+        }
     }
 }

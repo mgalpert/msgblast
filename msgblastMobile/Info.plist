@@ -6,6 +6,11 @@
 	<array>
 		<string>_msgblast._tcp</string>
 	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
