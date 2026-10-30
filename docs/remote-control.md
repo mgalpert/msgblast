@@ -192,6 +192,11 @@ than projected replies in a conversation's range, Contacts data, macOS
 permissions, and the Mac's composer drafts. Sign-in, permissions, and keys are set
 up on the Mac; the phone shows the blocked state and where to fix it.
 
+Dictation in the compose field runs on the phone with Apple's speech recognition (on
+device when the language supports it; otherwise Apple's speech service, which the
+field says once). The microphone and audio never reach the Mac; only the text you
+send does.
+
 Agent artwork is the one image the phone receives unasked. Each agent's
 `avatarRef` is `sha256:<hex>` of the picture the Mac shows for it (normalized to
 256 × 256, at most 64 KB). The phone fetches each reference once with

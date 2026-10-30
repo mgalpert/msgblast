@@ -1,0 +1,200 @@
+import AVFoundation
+import Speech
+import SwiftUI
+import UIKit
+
+/// The text view behind the compose field. It can switch the keyboard to emoji: while
+/// `emojiMode` is set it reports the emoji input mode, as Messages' emoji button does.
+final class MessageTextView: UITextView {
+    var emojiMode = false {
+        didSet { if oldValue != emojiMode { reloadInputViews() } }
+    }
+    static var emojiInputMode: UITextInputMode? { UITextInputMode.activeInputModes.first { $0.primaryLanguage == "emoji" } }
+    override var textInputMode: UITextInputMode? {
+        if emojiMode, let emoji = Self.emojiInputMode { return emoji }
+        return super.textInputMode
+    }
+}
+
+/// A UITextView field: placeholder, body text with 12 × 8 insets, growing from one line to
+/// five and scrolling after that.
+struct MessageField: UIViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    @Binding var focused: Bool
+    var emojiMode: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> MessageTextView {
+        let view = MessageTextView()
+        view.delegate = context.coordinator
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.backgroundColor = .clear
+        view.textContainerInset = UIEdgeInsets(top: Space.gap, left: Space.inset, bottom: Space.gap, right: 0)
+        view.textContainer.lineFragmentPadding = 0
+        view.isScrollEnabled = false
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let label = UILabel()
+        label.font = .preferredFont(forTextStyle: .body)
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = .secondaryLabel
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.inset),
+            label.topAnchor.constraint(equalTo: view.topAnchor, constant: Space.gap),
+        ])
+        context.coordinator.placeholder = label
+        view.accessibilityLabel = placeholder
+        return view
+    }
+
+    func updateUIView(_ view: MessageTextView, context: Context) {
+        context.coordinator.parent = self
+        if view.text != text { view.text = text }
+        context.coordinator.placeholder?.text = placeholder
+        context.coordinator.placeholder?.isHidden = !text.isEmpty
+        view.accessibilityLabel = placeholder
+        view.emojiMode = emojiMode
+        if focused && !view.isFirstResponder { DispatchQueue.main.async { view.becomeFirstResponder() } }
+        if !focused && view.isFirstResponder { DispatchQueue.main.async { view.resignFirstResponder() } }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView view: MessageTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 240
+        let font = view.font ?? .preferredFont(forTextStyle: .body)
+        let maximum = ceil(font.lineHeight * 5) + 2 * Space.gap
+        let fitting = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        let scrolls = fitting > maximum
+        if view.isScrollEnabled != scrolls { DispatchQueue.main.async { view.isScrollEnabled = scrolls } }
+        return CGSize(width: width, height: max(Space.fieldHeight, min(fitting, maximum)))
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: MessageField
+        weak var placeholder: UILabel?
+        init(_ parent: MessageField) { self.parent = parent }
+        func textViewDidChange(_ view: UITextView) {
+            parent.text = view.text
+            placeholder?.isHidden = !view.text.isEmpty
+        }
+        func textViewDidBeginEditing(_ view: UITextView) { if !parent.focused { parent.focused = true } }
+        func textViewDidEndEditing(_ view: UITextView) { if parent.focused { parent.focused = false } }
+    }
+}
+
+/// Dictation on the phone with Apple's speech recognition: on device when the language
+/// supports it, else Apple's service (said once). Only the text reaches the Mac.
+@MainActor
+final class Dictation: ObservableObject {
+    enum State: Equatable { case idle, listening, denied }
+    @Published private(set) var state: State = .idle
+    /// A one-line note under the field: the server fallback, or how to allow access.
+    @Published var note: String?
+    private let engine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var silence: Task<Void, Never>?
+    private var notedServer = false
+    static let silenceLimit: Duration = .seconds(60)
+
+    /// The simulator, and a phone with no microphone, have no input: the glyph hides.
+    static var hasInput: Bool { AVAudioSession.sharedInstance().isInputAvailable }
+
+    func toggle(base: String, onText: @escaping (String) -> Void) {
+        switch state {
+        case .listening: stop()
+        case .denied: if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        case .idle: Task { await start(base: base, onText: onText) }
+        }
+    }
+
+    private func start(base: String, onText: @escaping (String) -> Void) async {
+        let speech = await withCheckedContinuation { continuation in SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) } }
+        let microphone = await AVAudioApplication.requestRecordPermission()
+        guard speech == .authorized, microphone else {
+            state = .denied
+            note = "Allow Speech Recognition and Microphone in Settings to dictate"
+            return
+        }
+        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else { note = "Dictation is not available right now"; return }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        } else if !notedServer {
+            notedServer = true
+            note = "Dictation for this language uses Apple's speech service"
+        }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            let input = engine.inputNode
+            input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in request.append(buffer) }
+            engine.prepare()
+            try engine.start()
+        } catch {
+            note = "Dictation could not start"
+            stop()
+            return
+        }
+        self.request = request
+        let prefix = base.isEmpty || base.hasSuffix(" ") ? base : base + " "
+        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            let text = result?.bestTranscription.formattedString
+            let done = error != nil || result?.isFinal == true
+            Task { @MainActor in
+                guard let self else { return }
+                if let text { onText(prefix + text); self.resetSilence() }
+                if done { self.stop() }
+            }
+        }
+        state = .listening
+        resetSilence()
+    }
+
+    /// Stops listening; called by the glyph, by Send, and after a minute of silence.
+    func stop() {
+        silence?.cancel(); silence = nil
+        if engine.isRunning { engine.stop(); engine.inputNode.removeTap(onBus: 0) }
+        request?.endAudio(); request = nil
+        task?.cancel(); task = nil
+        if state == .listening { state = .idle }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func resetSilence() {
+        silence?.cancel()
+        silence = Task { [weak self] in
+            try? await Task.sleep(for: Self.silenceLimit)
+            guard !Task.isCancelled else { return }
+            self?.stop()
+        }
+    }
+}
+
+/// The dictation glyph inside the field: a waveform, or a pulsing stop while listening.
+struct DictationGlyph: View {
+    var listening: Bool
+    var action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: listening ? "stop.circle.fill" : "waveform")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(listening ? Color.red : Color.secondary)
+                .scaleEffect(listening && pulse && !reduceMotion ? 1.12 : 1)
+                .frame(width: Space.fieldButton, height: Space.fieldButton)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(listening ? "Stop Dictation" : "Dictate")
+        .onChange(of: listening) { _, value in
+            guard value, !reduceMotion else { pulse = false; return }
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { pulse = true }
+        }
+    }
+}

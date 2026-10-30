@@ -6,6 +6,10 @@
 	<array>
 		<string>_msgblast._tcp</string>
 	</array>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turns your voice into message text on this phone</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Needed for dictating a message</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

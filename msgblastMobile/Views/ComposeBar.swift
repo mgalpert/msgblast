@@ -25,7 +25,16 @@ struct ComposeBar: View {
     @State private var sentCount = 0
     @State private var refusedCount = 0
     @Environment(\.dynamicTypeSize) private var typeSize
-    @FocusState private var fieldFocused: Bool
+    @State private var fieldFocused = false
+    @State private var emojiMode = false
+    @StateObject private var dictation = Dictation()
+    /// Debug design review forces the dictation glyph, which the simulator would hide.
+    private var showsDictation: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DICTATION"] != nil { return true }
+        #endif
+        return Dictation.hasInput
+    }
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var members: [String] { conversationID.flatMap { app.store.projection.conversations[$0]?.agentIDs } ?? [] }
@@ -64,26 +73,32 @@ struct ComposeBar: View {
             if !attachments.isEmpty {
                 ScrollView(.horizontal) { HStack { ForEach(attachments, id: \.id) { Label($0.name, systemImage: "paperclip").font(.caption) } } }
             }
+            if let note = dictation.note { Text(note).font(.caption).foregroundStyle(.secondary) }
             HStack(alignment: .bottom, spacing: Space.gap) {
-                if onlyMessages {
-                    Menu {
-                        PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }
-                        Button { importing = true } label: { Label("File", systemImage: "doc") }
-                    } label: {
-                        Image(systemName: "plus").font(.body.weight(.semibold))
-                            .frame(width: Space.fieldButton, height: Space.fieldButton)
-                    }
-                    .buttonStyle(.glass).buttonBorderShape(.circle)
-                    .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
-                    .accessibilityLabel("Add Photo or File")
+                // Always present, as in Messages; attachments go to Messages contacts only.
+                Menu {
+                    PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }.disabled(!onlyMessages)
+                    Button { importing = true } label: { Label("File", systemImage: "doc") }.disabled(!onlyMessages)
+                    if !onlyMessages { Text("Attachments go to Messages contacts only") }
+                } label: {
+                    Image(systemName: "plus").font(.body.weight(.semibold))
+                        .frame(width: Space.fieldButton, height: Space.fieldButton)
                 }
-                // Messages on iOS 26: a glass capsule, text inset 12 × 8, growing to five lines,
-                // with Send inside its trailing edge once there is something to send.
+                .buttonStyle(.glass).buttonBorderShape(.circle)
+                .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
+                .accessibilityLabel("Add Photo or File")
+                // Messages on iOS 26: a glass field with a hairline, text inset 12 × 8, growing to
+                // five lines, with Send inside its trailing edge once there is something to send
+                // and the dictation glyph there while it is empty.
                 HStack(alignment: .bottom, spacing: Space.tight) {
-                    TextField(placeholder, text: $text, axis: .vertical)
-                        .focused($fieldFocused)
-                        .lineLimit(1...5)
-                        .padding(.horizontal, Space.inset).padding(.vertical, Space.gap)
+                    MessageField(text: $text, placeholder: placeholder, focused: $fieldFocused, emojiMode: emojiMode)
+                    if !hasContent && showsDictation {
+                        DictationGlyph(listening: dictation.state == .listening) {
+                            dictation.toggle(base: text) { text = $0 }
+                        }
+                        .padding(.trailing, (Space.fieldHeight - Space.fieldButton) / 2)
+                        .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
+                    }
                     if hasContent {
                         Button { send() } label: {
                             Image(systemName: "arrow.up").font(.subheadline.weight(.bold))
@@ -100,7 +115,17 @@ struct ComposeBar: View {
                 }
                 .frame(minHeight: Space.fieldHeight)
                 .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Space.fieldHeight / 2))
+                .overlay(RoundedRectangle(cornerRadius: Space.fieldHeight / 2).strokeBorder(Color(.separator), lineWidth: 0.5))
                 .animation(.snappy(duration: 0.2), value: hasContent)
+                if MessageTextView.emojiInputMode != nil {
+                    Button { emojiMode.toggle(); fieldFocused = true } label: {
+                        Image(systemName: emojiMode ? "keyboard" : "face.smiling").font(.body.weight(.semibold))
+                            .frame(width: Space.fieldButton, height: Space.fieldButton)
+                    }
+                    .buttonStyle(.glass).buttonBorderShape(.circle)
+                    .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
+                    .accessibilityLabel(emojiMode ? "Keyboard" : "Emoji")
+                }
             }
         }
         .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
@@ -112,6 +137,7 @@ struct ComposeBar: View {
             #if DEBUG
             // Design review: `MSGBLAST_FIXTURE_FOCUS` opens the keyboard, which simctl cannot tap.
             if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FOCUS"] != nil { fieldFocused = true }
+            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_EMOJI"] != nil { emojiMode = true; fieldFocused = true }
             #endif
         }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
@@ -196,6 +222,7 @@ struct ComposeBar: View {
     }
 
     private func send() {
+        dictation.stop()
         guard !prepareReasons.isEmpty else { submit(); return }
         // The last prepare was refused: prepare again, and send only if it now succeeds.
         sending = true

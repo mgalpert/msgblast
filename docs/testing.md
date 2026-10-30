@@ -177,7 +177,9 @@ named "Studio Mac"; the data is built in `msgblastMobile/Debug/DesignFixtures.sw
 and compiles out of Release. `MSGBLAST_FIXTURE_CONVERSATION=<uuid>` opens a
 particular conversation, and `MSGBLAST_FIXTURE_DRAFT=<text>` pre-fills its composer so
 Send shows (simctl cannot type); `MSGBLAST_FIXTURE_FOCUS=1` focuses the field so the
-keyboard opens. Build the Debug app for a simulator, install it, then:
+keyboard opens, `MSGBLAST_FIXTURE_EMOJI=1` opens the emoji keyboard,
+`MSGBLAST_FIXTURE_DICTATION=1` shows the dictation glyph even without a microphone, and
+`MSGBLAST_FIXTURE_DETAILS=1` opens a conversation's Details sheet. Build the Debug app for a simulator, install it, then:
 
 ```sh
 SIMCTL_CHILD_MSGBLAST_FIXTURE=conversation xcrun simctl launch --terminate-running-process <udid> com.msgblast.ios
