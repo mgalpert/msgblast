@@ -87,6 +87,31 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertTrue(messages[2].attachments.isEmpty)
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
+    func testPluginPayloadsEmptyAndHiddenAttachmentsAreNotFiles() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &writer), SQLITE_OK)
+        // A rich link reply as Messages stores it: two plugin payloads beside a real photo.
+        let sql = """
+        CREATE TABLE attachment(guid TEXT,filename TEXT,transfer_name TEXT,mime_type TEXT,total_bytes INTEGER,uti TEXT);
+        CREATE TABLE message_attachment_join(message_id INTEGER,attachment_id INTEGER);
+        INSERT INTO attachment VALUES
+          ('p1','~/Library/Messages/Attachments/a/EDEDFC10-EA2D-401D-B35A-CEA26A570AF8.pluginPayloadAttachment','EDEDFC10-EA2D-401D-B35A-CEA26A570AF8.pluginPayloadAttachment',NULL,2048,'com.apple.messages.pluginPayloadAttachment'),
+          ('p2','~/Library/Messages/Attachments/b/payload','payload',NULL,512,'com.apple.messages.pluginPayloadAttachment'),
+          ('photo','~/Library/Messages/Attachments/c/photo.jpg','photo.jpg','image/jpeg',4096,'public.jpeg'),
+          ('empty','~/Library/Messages/Attachments/d/empty.pdf','empty.pdf','application/pdf',0,'com.adobe.pdf'),
+          ('hidden','~/Library/Messages/Attachments/e/.DS_Store','.DS_Store',NULL,6148,NULL),
+          ('doc','/tmp/notes.pdf','notes.pdf','application/pdf',100,'com.adobe.pdf');
+        INSERT INTO message_attachment_join VALUES(1,1),(1,2),(1,3),(1,4),(1,5),(2,6);
+        """
+        XCTAssertEqual(sqlite3_exec(writer, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(writer)
+        let messages = try MessagesDatabase(path: url.path).messages(chatID: "A")
+        XCTAssertEqual(messages[0].attachments.map(\.filename), ["photo.jpg"], "Only the real photo is a file")
+        XCTAssertEqual(messages[1].attachments.map(\.filename), ["notes.pdf"])
+        XCTAssertFalse(MessageAttachment.isUserFile(filename: "x.PLUGINPAYLOADATTACHMENT", path: "/a/x", uti: nil, byteCount: nil))
+        XCTAssertTrue(MessageAttachment.isUserFile(filename: "report.pdf", path: "/a/report.pdf", uti: nil, byteCount: nil), "An unknown size is kept")
+    }
     func testEmptyOrdinaryMessageDoesNotBecomeAnUnavailableBusinessCard() throws {
         let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
         var db: OpaquePointer?
