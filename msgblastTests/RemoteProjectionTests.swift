@@ -48,6 +48,17 @@ final class RemoteProjectionTests: XCTestCase {
         XCTAssertEqual(Set(state.attempts.map(\.status)), [.submitted, .uncertain, .waiting])
     }
 
+    func testARenamedConversationProjectsItsName() throws {
+        var (input, comparison, _) = fixture()
+        XCTAssertEqual(RemoteProjectionBuilder.state(from: input).conversations.first?.title, "Compare approaches")
+        comparison.customTitle = "Approaches"
+        input.comparisons = [comparison]
+        let renamed = try XCTUnwrap(RemoteProjectionBuilder.state(from: input).conversations.first)
+        XCTAssertEqual(renamed.title, "Approaches"); XCTAssertEqual(renamed.prompt, "Compare approaches", "The prompt is not the name")
+        let decoded = try JSONDecoder().decode(Comparison.self, from: JSONEncoder().encode(Comparison(prompt: "Old", members: [])))
+        XCTAssertNil(decoded.customTitle, "Saved conversations without a name decode unchanged")
+    }
+
     func testIncompleteNativeRequestsAreListedPerConversation() throws {
         var (input, comparison, _) = fixture()
         var stuck = WebSendAttempt(text: "Compare approaches", status: .uncertain); stuck.comparisonID = comparison.id

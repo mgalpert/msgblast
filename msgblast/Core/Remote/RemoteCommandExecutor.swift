@@ -117,10 +117,13 @@ public protocol RemoteCommandHost: AnyObject {
     func requestReport(_ id: UUID) async -> RemoteHostResult
     /// The normalized artwork an agent's `avatarRef` names, or nil when the Mac has none.
     func avatar(_ ref: String) -> Data?
+    /// Names a conversation through the Mac's model. The executor has checked the name.
+    func renameConversation(_ id: UUID, title: String) -> RemoteHostResult
 }
 
 public extension RemoteCommandHost {
     func avatar(_ ref: String) -> Data? { nil }
+    func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { .rejected(.unsupported, "Update msgblast on your Mac") }
 }
 
 /// Applies phone commands. Idempotent by `clientCommandID`: a replay returns the
@@ -327,6 +330,12 @@ public final class RemoteCommandExecutor {
         case .acknowledgeIncomplete(let agent, let attempt): return outcome(command, host.acknowledgeIncomplete(agentID: agent, attemptID: attempt))
         case .cancelNative(let agent): return outcome(command, host.cancelNative(agentID: agent))
         case .setKeepAwake(let enabled): return outcome(command, host.setKeepAwake(enabled))
+        case .renameConversation(let id, let title):
+            let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return reject(command, .invalidCommand, "Enter a name") }
+            guard name.count <= Comparison.maximumTitleLength else { return reject(command, .invalidCommand, "Names are limited to \(Comparison.maximumTitleLength) characters") }
+            guard host.conversation(id) != nil else { return reject(command, .unknownConversation, "This conversation is gone from your Mac") }
+            return outcome(command, host.renameConversation(id, title: name))
         case .requestReport(let id):
             guard case .active? = host.conversation(id) else { return reject(command, .unknownConversation, "Reports need an active conversation") }
             return outcome(command, await host.requestReport(id))

@@ -38,6 +38,9 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     /// Read-only: the artwork an agent's `avatarRef` (`sha256:<hex>`) names. The result's
     /// `avatar` carries the bytes. A Mac without it answers `unsupported`: show initials.
     case fetchAvatar(ref: String)
+    /// Names a conversation (Messages' "Change Name"). The Mac trims it and refuses an empty
+    /// name or one over 80 characters. Older Macs answer `unsupported`.
+    case renameConversation(conversationID: UUID, title: String)
     case unknown(kind: String)
 
     public var kind: String {
@@ -55,6 +58,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .prepareConversation: "prepareConversation"
         case .queryCommand: "queryCommand"
         case .fetchAvatar: "fetchAvatar"
+        case .renameConversation: "renameConversation"
         case .unknown(let kind): kind
         }
     }
@@ -69,7 +73,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID, ref
+        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID, ref, title
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -93,6 +97,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case "prepareConversation": self = .prepareConversation(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentIDs: try ids(.agentIDs))
         case "queryCommand": self = .queryCommand(clientCommandID: try c.decode(UUID.self, forKey: .clientCommandID))
         case "fetchAvatar": self = .fetchAvatar(ref: try c.decode(String.self, forKey: .ref))
+        case "renameConversation": self = .renameConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID), title: try c.decode(String.self, forKey: .title))
         default: self = .unknown(kind: kind)
         }
     }
@@ -120,6 +125,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .prepareConversation(let id, let agents): try c.encodeIfPresent(id, forKey: .conversationID); try c.encode(agents, forKey: .agentIDs)
         case .queryCommand(let id): try c.encode(id, forKey: .clientCommandID)
         case .fetchAvatar(let ref): try c.encode(ref, forKey: .ref)
+        case .renameConversation(let id, let title): try c.encode(id, forKey: .conversationID); try c.encode(title, forKey: .title)
         case .unknown: break
         }
     }

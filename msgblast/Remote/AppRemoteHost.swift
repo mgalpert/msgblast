@@ -219,6 +219,13 @@ final class AppRemoteHost: RemoteCommandHost {
         return .applied()
     }
 
+    func renameConversation(_ id: UUID, title: String) -> RemoteHostResult {
+        guard model.comparison(id) != nil else { return .rejected(.unknownConversation, "This conversation is gone from your Mac") }
+        let capture = RemoteErrorCapture()
+        let renamed = RemoteErrorCapture.$current.withValue(capture) { model.renameConversation(id, title: title) }
+        return renamed ? .applied(conversationID: id) : .rejected(.failed, capture.summary ?? "Couldn't rename this conversation")
+    }
+
     func cancelNative(agentID: String) -> RemoteHostResult {
         guard let session = session(agentID), session.provider.usesNativeConversation else { return .rejected(.unknownAgent, "No request to stop") }
         session.cancelNativeRequest()

@@ -678,6 +678,16 @@ final class AppModel: ObservableObject {
         catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
     }
 
+    /// Names a conversation; an empty name or the prompt's own title returns to the prompt.
+    func renameConversation(_ id: UUID, title: String) -> Bool {
+        guard let i = index(id) else { return false }
+        let previous = state.comparisons[i]
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.comparisons[i].customTitle = name.isEmpty || name == previous.derivedTitle ? nil : name
+        do { try save(); return true }
+        catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
+    }
+
     func comparison(_ id: UUID) -> Comparison? { state.comparisons.first { $0.id == id } }
     func index(_ id: UUID) -> Int? { state.comparisons.firstIndex { $0.id == id } }
     func transcript(_ comparison: Comparison, member: Member) -> [Message] {

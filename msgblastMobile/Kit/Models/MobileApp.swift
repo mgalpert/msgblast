@@ -14,6 +14,8 @@ public final class MobileApp: ObservableObject {
     private var waiting: [UUID: CheckedContinuation<RemoteCommandResult, Error>] = [:]
     private var subscriptions: Set<AnyCancellable> = []
     public var commandTimeout: Duration = .seconds(90)
+    /// Command kinds the paired Mac answered `unsupported`: their controls hide until it is updated.
+    @Published public var unsupportedActions: Set<String> = []
     private var snapshotRequested = false
     /// `fetchAvatar` commands in flight, by command id. Never recorded in the command ledger.
     private var avatarRequests: [UUID: String] = [:]

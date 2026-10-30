@@ -44,6 +44,8 @@ final class FakeRemoteHost: RemoteCommandHost {
     /// The reason the Mac's session reports for an agent that is not ready.
     var notReadyReason = "Sign in"
     var avatars: [String: Data] = [:]
+    var renamed: [(UUID, String)] = []
+    func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { renamed.append((id, title)); return .applied(conversationID: id) }
     var avatarReads = 0
     func avatar(_ ref: String) -> Data? { avatarReads += 1; return avatars[ref] }
     func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult {
@@ -287,6 +289,27 @@ final class RemoteCommandExecutorTests: XCTestCase {
         host.avatars["sha256:big"] = Data(count: RemoteProtocol.maximumAvatarBytes + 1)
         let big = await executor.execute(RemoteCommand(action: .fetchAvatar(ref: "sha256:big")))
         XCTAssertEqual(big.code, .unknownAvatar, "Oversized artwork is never sent")
+    }
+
+    func testRenameTrimsAndRefusesEmptyOrLongNames() async {
+        let host = host()
+        let executor = RemoteCommandExecutor(host: host)
+        let id = UUID()
+        host.conversations = [id: .active(members: [])]
+        let applied = await executor.execute(RemoteCommand(action: .renameConversation(conversationID: id, title: "  Pesto  ")))
+        XCTAssertEqual(applied.outcome, .applied)
+        XCTAssertEqual(host.renamed.map(\.1), ["Pesto"], "The Mac trims the name")
+        let empty = await executor.execute(RemoteCommand(action: .renameConversation(conversationID: id, title: "   ")))
+        XCTAssertEqual(empty.code, .invalidCommand); XCTAssertEqual(empty.message, "Enter a name")
+        let long = await executor.execute(RemoteCommand(action: .renameConversation(conversationID: id, title: String(repeating: "a", count: 81))))
+        XCTAssertEqual(long.code, .invalidCommand); XCTAssertEqual(long.message, "Names are limited to 80 characters")
+        let missing = await executor.execute(RemoteCommand(action: .renameConversation(conversationID: UUID(), title: "X")))
+        XCTAssertEqual(missing.code, .unknownConversation)
+        XCTAssertEqual(host.renamed.count, 1, "Refused names never reach the Mac's model")
+        let command = RemoteCommand(action: .renameConversation(conversationID: id, title: "Again"))
+        _ = await executor.execute(command)
+        let replay = await executor.execute(command)
+        XCTAssertTrue(replay.replayed); XCTAssertEqual(host.renamed.count, 2, "Idempotent by command id")
     }
 
     func testNonSendCommandsReachTheHost() async {

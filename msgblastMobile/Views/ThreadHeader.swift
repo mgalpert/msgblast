@@ -31,6 +31,11 @@ struct ThreadHeader: View {
                 .glassEffect(.regular.interactive(), in: .capsule)
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                if agentIDs.count > 1 && !app.unsupportedActions.contains("renameConversation") {
+                    Button("Rename", systemImage: "pencil") { open() }
+                }
+            }
             .accessibilityLabel("\(title), details")
             ConnectionCaption(app: app)
         }
@@ -125,13 +130,51 @@ struct ThreadDetailsSheet: View {
     @Binding var selection: Set<String>
     var run: (RemoteAction) -> Void
     @State private var confirmEnd = false
+    /// The Name field: its text, a rename in flight, and the Mac's reason if it refused.
+    @State private var name = ""
+    @State private var renaming = false
+    @State private var renameError: String?
     @Environment(\.dismiss) private var dismiss
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
+
+    /// Sends the new name; the title updates when the Mac's projection does.
+    private func rename(_ conversation: RemoteConversation) {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard title != conversation.title else { return }
+        renaming = true
+        renameError = nil
+        Task {
+            defer { renaming = false }
+            do {
+                let result = try await app.perform(.renameConversation(conversationID: conversationID, title: title))
+                if result.outcome == .rejected {
+                    if result.code == .unsupported { app.unsupportedActions.insert("renameConversation") }
+                    renameError = result.message
+                }
+            } catch { renameError = (error as? LocalizedError)?.errorDescription }
+        }
+    }
 
     var body: some View {
         NavigationStack {
             if let conversation = app.store.projection.conversations[conversationID] {
                 List {
+                    if conversation.agentIDs.count > 1 && !app.unsupportedActions.contains("renameConversation") {
+                        Section {
+                            HStack(spacing: Space.gap) {
+                                TextField("Name", text: $name)
+                                    .submitLabel(.done)
+                                    .onSubmit { rename(conversation) }
+                                    .disabled(renaming)
+                                if renaming { ProgressView() }
+                                else if name.trimmingCharacters(in: .whitespacesAndNewlines) != conversation.title {
+                                    Button("Done") { rename(conversation) }.buttonStyle(.borderless).bold()
+                                }
+                            }
+                        } header: { Text("Name") } footer: {
+                            if let renameError { Text(renameError).foregroundStyle(.red) }
+                        }
+                    }
                     if !selection.isEmpty && conversation.agentIDs.count > 1 {
                         Section { Button("Show All", systemImage: "person.3") { selection = [] } }
                     }
@@ -174,6 +217,7 @@ struct ThreadDetailsSheet: View {
                     }
                 }
                 .navigationTitle(conversation.agentIDs.count == 1 ? presenter.name(conversation.agentIDs[0]) : conversation.title)
+                .onAppear { if name.isEmpty { name = conversation.title } }
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { Button("Done") { dismiss() } }
                 .confirmationDialog(conversation.canEnd ? "End This Conversation?" : "Can't End Yet", isPresented: $confirmEnd, titleVisibility: .visible) {

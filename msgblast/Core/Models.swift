@@ -273,7 +273,13 @@ public struct Comparison: Codable, Identifiable, Sendable {
     public func joiningPrompt() -> String {
         joiningContext().map(\.text).joined(separator: "\n\n")
     }
-    public var title: String { String((prompt.isEmpty ? attachments?.map(\.filename).joined(separator: ", ") ?? "Attachment" : prompt).prefix(65)) }
+    /// A name the user gave the conversation (from the phone's Details); nil uses the prompt.
+    /// Optional, so older saved conversations decode unchanged.
+    public var customTitle: String?
+    public var derivedTitle: String { String((prompt.isEmpty ? attachments?.map(\.filename).joined(separator: ", ") ?? "Attachment" : prompt).prefix(65)) }
+    public var title: String { customTitle ?? derivedTitle }
+    /// The longest name a conversation can be given.
+    public static let maximumTitleLength = 80
 }
 public struct SavedFrame: Codable, Sendable { public var x: Double; public var y: Double; public var width: Double; public var height: Double
     public init(x: Double, y: Double, width: Double, height: Double) { self.x = x; self.y = y; self.width = width; self.height = height }

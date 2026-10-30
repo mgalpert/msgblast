@@ -103,6 +103,7 @@ duplicate-send and unresolved-attempt guard applies:
 | Shared follow-up | `AppModel.sendShared` with the existing conversation |
 | Private message | `AppModel.sendDirect`, a Messages private follow-up, or a one-agent `startBlast` |
 | End conversation | `AppModel.endConversation`, only when every website history is loaded (`historyNotLoaded` otherwise) |
+| Rename | `AppModel.renameConversation` sets the comparison's name (trimmed, 1 to 80 characters); the prompt stays as it was |
 | Acknowledge / stop waiting | `acknowledgeIncompleteRequest`, `cancelNativeRequest` (the other app is not stopped) |
 | Attachments | Chunked upload (256 KB chunks, 25 MB, SHA-256 checked) → `LocalStore.stage`; Messages agents only |
 | Keep awake | The phone's request; the Mac setting can refuse it |
