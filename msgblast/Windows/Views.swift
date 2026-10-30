@@ -84,7 +84,7 @@ struct MessageText: NSViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true
-        view.font = .systemFont(ofSize: 14)
+        view.font = .systemFont(ofSize: Space.bodyText)
         return view
     }
     func updateNSView(_ view: NSTextView, context: Context) {
@@ -397,49 +397,31 @@ struct TranscriptView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                LazyVStack(alignment: .leading, spacing: 3) {
+                // Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs are 8 pt
+                // apart, and a time header has 12 pt above and below. Rows set their own side
+                // insets. A plain stack, not a lazy one, so row heights are exact while following
+                // the newest message.
+                VStack(alignment: .leading, spacing: 0) {
                     if transcript.isEmpty {
-                        Text(member.anchor == nil ? "Waiting for Messages…" : "History unavailable").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30)
+                        Text(member.anchor == nil ? "Waiting for Messages…" : "History unavailable")
+                            .font(.system(size: Space.bodyText)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section)
                     }
+                    let lastOutgoingID = transcript.last(where: { $0.outgoing })?.id
                     ForEach(Array(transcript.enumerated()), id: \.element.id) { offset, message in
-                        if offset == 0 || message.date.timeIntervalSince(transcript[offset - 1].date) > 300 {
-                            Text(timestamp(message.date))
-                                .font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 10)
+                        let previous = offset == 0 ? nil : transcript[offset - 1]
+                        let next = offset + 1 < transcript.count ? transcript[offset + 1] : nil
+                        let header = ThreadFormat.showsTimeHeader(message.date, previous: previous?.date)
+                        let continues = !header && previous.map { $0.outgoing == message.outgoing && $0.replyTo == message.replyTo } == true
+                        let endsRun = next.map { ThreadFormat.showsTimeHeader($0.date, previous: message.date) || $0.outgoing != message.outgoing || $0.replyTo != message.replyTo } ?? true
+                        if header { ThreadTimeHeader(date: message.date, first: offset == 0) }
+                        ThreadRow(mine: message.outgoing, firstOfRun: !continues, lastOfRun: endsRun,
+                                  sender: sender(for: message), status: status(for: message, lastOutgoingID: lastOutgoingID)) {
+                            bubbleColumn(message, tail: endsRun, maxWidth: geometry.size.width * Space.bubbleMax)
                         }
-                        VStack(alignment: .trailing, spacing: 3) {
-                            HStack(alignment: .bottom, spacing: 0) {
-                                if message.outgoing { Spacer(minLength: geometry.size.width * 0.25) }
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ForEach(message.attachments) { file in AttachmentView(attachment: file) }
-                                    if let payload = message.businessPayload {
-                                        BusinessChoicesView(model: model, message: message, member: member, payload: payload)
-                                    } else if let preview = message.linkPreview {
-                                        if !preview.remainingText.isEmpty {
-                                            textBubble(message, text: preview.remainingText, tail: false)
-                                        }
-                                        RichLinkView(store: model.linkPreviews, url: preview.url)
-                                    } else if !message.text.isEmpty {
-                                        textBubble(message, text: message.text, tail: offset == transcript.count - 1 || transcript[offset + 1].outgoing != message.outgoing || transcript[offset + 1].date.timeIntervalSince(message.date) > 300 || transcript[offset + 1].replyTo != message.replyTo)
-                                    }
-                                }
-                                .overlay(alignment: message.outgoing ? .topLeading : .topTrailing) {
-                                    if !message.reactions.isEmpty {
-                                        ReactionBadge(reactions: message.reactions).offset(x: message.outgoing ? -12 : 12, y: -23)
-                                    }
-                                }
-                                .padding(.top, message.reactions.isEmpty ? 0 : 23)
-                                if !message.outgoing { Spacer(minLength: geometry.size.width * 0.25) }
-                            }
-                            if message.outgoing, message.delivery == .failed {
-                                Text("Not Delivered").font(.caption2.weight(.medium)).foregroundStyle(.red)
-                                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.bottom, 4)
-                            } else if message.outgoing, message.delivery == .delivered, message.id == transcript.last(where: { $0.outgoing })?.id {
-                                Text("Delivered").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.bottom, 4)
-                            }
-                        }.padding(.top, offset > 0 && transcript[offset - 1].outgoing != message.outgoing ? 6 : 0).id(message.id)
+                        .padding(.top, header || previous == nil ? 0 : continues ? Space.run : Space.runGap)
+                        .id(message.id)
                     }
-                }.padding(.horizontal, 20).padding(.bottom, 10)
+                }.padding(.vertical, Space.gap)
                 Color.clear.frame(height: 1).id(bottomID)
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in
@@ -470,40 +452,46 @@ struct TranscriptView: View {
         }
         }
     }
-    private func textBubble(_ message: Message, text: String, tail: Bool) -> some View {
-        MessageText(text: text, outgoing: message.outgoing).fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 12).padding(.vertical, 6.5)
-            .foregroundStyle(message.outgoing ? Color.white : Color.primary)
-            .background(message.outgoing ? Color(nsColor: .systemBlue) : MessageAppearance.incomingBubbleColor, in: MessageBubble(outgoing: message.outgoing, tail: tail))
+    /// Replies are named and signed with the member's avatar; your own rows carry neither.
+    private func sender(for message: Message) -> (name: String, avatar: AnyView)? {
+        guard !message.outgoing else { return nil }
+        return (member.name, AnyView(AgentAvatar(agent: model.state.agents.first { $0.id == member.id }, name: member.name, size: Space.avatarThread)))
     }
-    private func timestamp(_ date: Date) -> String {
-        let time = date.formatted(date: .omitted, time: .shortened)
-        if Calendar.current.isDateInToday(date) { return "Today \(time)" }
-        if Calendar.current.isDateInYesterday(date) { return "Yesterday \(time)" }
-        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) + " at " + time
+    private func status(for message: Message, lastOutgoingID: Int64?) -> (text: String, color: Color)? {
+        guard message.outgoing else { return nil }
+        if message.delivery == .failed { return ("Not Delivered", .red) }
+        if message.delivery == .delivered, message.id == lastOutgoingID { return ("Delivered", .secondary) }
+        return nil
     }
-}
-
-struct MessageBubble: Shape {
-    let outgoing: Bool
-    let tail: Bool
-    func path(in rect: CGRect) -> Path {
-        let w = rect.width, h = rect.height, r = min(15.0, rect.height / 2), c = r * 0.55228475
-        guard tail else { return Path(roundedRect: rect, cornerRadius: r) }
-        var bubble = Path()
-        bubble.move(to: CGPoint(x: r, y: 0))
-        bubble.addLine(to: CGPoint(x: w - r, y: 0))
-        bubble.addCurve(to: CGPoint(x: w, y: r), control1: CGPoint(x: w - r + c, y: 0), control2: CGPoint(x: w, y: r - c))
-        bubble.addLine(to: CGPoint(x: w, y: h - r))
-        bubble.addCurve(to: CGPoint(x: w - 8, y: h), control1: CGPoint(x: w, y: h - 7), control2: CGPoint(x: w - 8, y: h - 6))
-        bubble.addCurve(to: CGPoint(x: w - 6.5, y: h + 4), control1: CGPoint(x: w - 8, y: h + 1), control2: CGPoint(x: w - 7, y: h + 3))
-        bubble.addCurve(to: CGPoint(x: w - 15, y: h), control1: CGPoint(x: w - 6.5, y: h + 5), control2: CGPoint(x: w - 13, y: h + 2))
-        bubble.addLine(to: CGPoint(x: r, y: h))
-        bubble.addCurve(to: CGPoint(x: 0, y: h - r), control1: CGPoint(x: r - c, y: h), control2: CGPoint(x: 0, y: h - r + c))
-        bubble.addLine(to: CGPoint(x: 0, y: r))
-        bubble.addCurve(to: CGPoint(x: r, y: 0), control1: CGPoint(x: 0, y: r - c), control2: CGPoint(x: r - c, y: 0))
-        bubble.closeSubpath()
-        return outgoing ? bubble : bubble.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: rect.width, ty: 0))
+    /// The bubble column: attachments, business choices, a link preview with its remaining
+    /// text, or the text bubble; reactions overlap the top corner away from the tail.
+    private func bubbleColumn(_ message: Message, tail: Bool, maxWidth: CGFloat) -> some View {
+        VStack(alignment: message.outgoing ? .trailing : .leading, spacing: Space.tight) {
+            ForEach(message.attachments) { file in AttachmentView(attachment: file) }
+            if let payload = message.businessPayload {
+                BusinessChoicesView(model: model, message: message, member: member, payload: payload)
+            } else if let preview = message.linkPreview {
+                if !preview.remainingText.isEmpty {
+                    ThreadBubble(mine: message.outgoing, tail: false, maxWidth: maxWidth) {
+                        MessageText(text: preview.remainingText, outgoing: message.outgoing).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                RichLinkView(store: model.linkPreviews, url: preview.url)
+            } else if !message.text.isEmpty {
+                ThreadBubble(mine: message.outgoing, tail: tail, maxWidth: maxWidth) {
+                    MessageText(text: message.text, outgoing: message.outgoing).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .overlay(alignment: message.outgoing ? .topLeading : .topTrailing) {
+            if !message.reactions.isEmpty {
+                // It dips only into the bubble's top inset, so it never covers the first line.
+                ReactionBadge(reactions: message.reactions)
+                    .offset(x: message.outgoing ? -Space.bubbleH : Space.bubbleH, y: -(Space.reactionPill - Space.bubbleV))
+            }
+        }
+        // Room for the part of a reaction pill above the bubble.
+        .padding(.top, message.reactions.isEmpty ? 0 : Space.reactionPill - Space.bubbleV)
     }
 }
 
