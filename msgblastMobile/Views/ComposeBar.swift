@@ -14,6 +14,9 @@ struct ComposeBar: View {
     @Binding var recipients: [String]
     /// The response being replied to; the conversation narrows recipients to its agent.
     var replyTo: Binding<RemoteTurn?> = .constant(nil)
+    /// A group's header selection (empty is everyone). The badge in the field opens a strip to
+    /// change it next to the keyboard; nil in direct threads and New Conversation.
+    var selection: Binding<Set<String>>? = nil
     /// Focus requests from the conversation, such as starting a reply.
     var focusRequest = 0
     var onSent: (UUID?) -> Void
@@ -31,7 +34,9 @@ struct ComposeBar: View {
     @State private var refusedCount = 0
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var fieldFocused = false
-    @State private var emojiMode = false
+    /// The recipient strip above the field, opened from the badge.
+    @State private var recipientsOpen = false
+    private var choosesRecipients: Bool { selection != nil && conversationID != nil && members.count > 1 }
     @StateObject private var dictation = Dictation()
     /// Debug design review forces the dictation glyph, which the simulator would hide.
     private var showsDictation: Bool {
@@ -66,62 +71,66 @@ struct ComposeBar: View {
                 }
             }
             if let status { statusLine(status) }
+            if recipientsOpen, let selection, choosesRecipients {
+                RecipientStrip(app: app, members: members, selection: selection)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             if !attachments.isEmpty {
                 ScrollView(.horizontal) { HStack { ForEach(attachments, id: \.id) { Label($0.name, systemImage: "paperclip").font(.caption) } } }
             }
             if let note = dictation.note { Text(note).font(.caption).foregroundStyle(.secondary) }
+            // Telegram's bar: a plain plus circle, one quiet capsule (an agent badge when one is
+            // chosen, the text, then the dictation glyph inside), and a round Send outside.
             HStack(alignment: .bottom, spacing: Space.gap) {
-                // Always present, as in Messages; attachments go to Messages contacts only.
+                // Always present; attachments go to Messages contacts only.
                 Menu {
                     PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }.disabled(!onlyMessages)
                     Button { importing = true } label: { Label("File", systemImage: "doc") }.disabled(!onlyMessages)
                     if !onlyMessages { Text("Attachments go to Messages contacts only") }
                 } label: {
-                    Image(systemName: "plus").font(.body.weight(.semibold))
-                        .frame(width: Space.fieldButton, height: Space.fieldButton)
+                    Image(systemName: "plus").font(.system(size: Space.glyph, weight: .regular)).foregroundStyle(.secondary)
+                        .frame(width: Space.fieldHeight, height: Space.fieldHeight)
+                        .background(Circle().fill(Color(.secondarySystemBackground)))
                 }
-                .buttonStyle(.glass).buttonBorderShape(.circle)
-                .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
+                .buttonStyle(.plain)
                 .accessibilityLabel("Add Photo or File")
-                // Messages on iOS 26: a glass field with a hairline, text inset 12 × 8, growing to
-                // five lines, with Send inside its trailing edge once there is something to send
-                // and the dictation glyph there while it is empty.
-                HStack(alignment: .bottom, spacing: Space.tight) {
-                    MessageField(text: $text, placeholder: placeholder, focused: $fieldFocused, emojiMode: emojiMode)
+                HStack(alignment: .bottom, spacing: 0) {
+                    if choosesRecipients {
+                        // Who this goes to; tap to choose next to the keyboard.
+                        Button { withAnimation(.snappy) { recipientsOpen.toggle() } } label: {
+                            RecipientBadge(app: app, recipients: recipients)
+                                .frame(width: Space.control - Space.gap, height: Space.fieldHeight)
+                                .contentShape(Rectangle().inset(by: -Space.tight))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.leading, Space.tight)
+                        .accessibilityLabel("Recipients, \(recipients.count == members.count ? "everyone" : recipients.map(presenter.shortName).formatted(.list(type: .and)))")
+                        .accessibilityHint(recipientsOpen ? "Hides the agents" : "Shows the agents to choose from")
+                    } else if recipients.count == 1, let agent = recipients.first {
+                        AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.badge)
+                            .padding(.leading, Space.inset)
+                            .padding(.bottom, (Space.fieldHeight - Space.badge) / 2)
+                    }
+                    MessageField(text: $text, placeholder: placeholder, focused: $fieldFocused,
+                                 leadingInset: choosesRecipients ? Space.tight : recipients.count == 1 ? Space.gap : Space.inset)
                     if !hasContent && showsDictation {
-                        DictationGlyph(listening: dictation.state == .listening) {
-                            dictation.toggle(base: text) { text = $0 }
-                        }
-                        .padding(.trailing, (Space.fieldHeight - Space.fieldButton) / 2)
-                        .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
+                        DictationGlyph(listening: dictation.state == .listening) { dictation.toggle(base: text) { text = $0 } }
                     }
-                    if hasContent {
-                        Button { send() } label: {
-                            Image(systemName: "arrow.up").font(.subheadline.weight(.bold))
-                                .frame(width: Space.fieldButton, height: Space.fieldButton)
-                        }
-                        .buttonStyle(.glassProminent)
-                        .buttonBorderShape(.circle)
-                        .disabled(sending || preparing || block?.allowsSend == false)
-                        .accessibilityLabel("Send")
-                        .padding(.trailing, (Space.fieldHeight - Space.fieldButton) / 2)
-                        .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
-                        .transition(.scale.combined(with: .opacity))
-                    }
+                    Color.clear.frame(width: Space.inset - Space.tight, height: 1)
                 }
                 .frame(minHeight: Space.fieldHeight)
-                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Space.fieldHeight / 2))
-                .overlay(RoundedRectangle(cornerRadius: Space.fieldHeight / 2).strokeBorder(Color(.separator), lineWidth: 0.5))
+                .background(RoundedRectangle(cornerRadius: Space.fieldHeight / 2, style: .continuous).fill(Color(.secondarySystemBackground)))
                 .animation(.snappy(duration: 0.2), value: hasContent)
-                if MessageTextView.emojiInputMode != nil {
-                    Button { emojiMode.toggle(); fieldFocused = true } label: {
-                        Image(systemName: emojiMode ? "keyboard" : "face.smiling").font(.body.weight(.semibold))
-                            .frame(width: Space.fieldButton, height: Space.fieldButton)
-                    }
-                    .buttonStyle(.glass).buttonBorderShape(.circle)
-                    .padding(.bottom, (Space.fieldHeight - Space.fieldButton) / 2)
-                    .accessibilityLabel(emojiMode ? "Keyboard" : "Emoji")
+                Button { send() } label: {
+                    Image(systemName: "arrow.up").font(.system(size: Space.glyph * 0.85, weight: .semibold))
+                        .foregroundStyle(hasContent ? Color.white : Color.secondary)
+                        .frame(width: Space.fieldHeight, height: Space.fieldHeight)
+                        .background(Circle().fill(hasContent ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.tertiarySystemFill))))
+                        .animation(.easeOut(duration: 0.15), value: hasContent)
                 }
+                .buttonStyle(.plain)
+                .disabled(!hasContent || sending || preparing || block?.allowsSend == false)
+                .accessibilityLabel("Send")
             }
         }
         .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
@@ -129,12 +138,15 @@ struct ComposeBar: View {
         .sensoryFeedback(.success, trigger: sentCount)
         .sensoryFeedback(.error, trigger: refusedCount)
         .onChange(of: focusRequest) { _, _ in fieldFocused = true }
+        // The strip goes with the keyboard.
+        .onChange(of: fieldFocused) { _, focused in if !focused { withAnimation(.snappy) { recipientsOpen = false } } }
+        .sensoryFeedback(.selection, trigger: selection?.wrappedValue)
         .onAppear {
             text = app.store.draft(draftKey); prepare()
             #if DEBUG
             // Design review: `MSGBLAST_FIXTURE_FOCUS` opens the keyboard, which simctl cannot tap.
             if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FOCUS"] != nil { fieldFocused = true }
-            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_EMOJI"] != nil { emojiMode = true; fieldFocused = true }
+            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_RECIPIENTS"] != nil { fieldFocused = true; recipientsOpen = true }
             #endif
         }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
@@ -244,6 +256,7 @@ struct ComposeBar: View {
                 if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
                 sentCount += 1
                 text = ""; attachments = []
+                withAnimation(.snappy) { recipientsOpen = false }
                 // The reply link stays on this phone; the Mac only gets a private send.
                 if let quoted = replyTo.wrappedValue { app.store.recordReply(result.clientCommandID, quoting: quoted.id); replyTo.wrappedValue = nil }
                 onSent(result.conversationID)
@@ -274,5 +287,72 @@ struct ComposeBar: View {
         defer { uploading = false }
         do { attachments.append((try await app.upload(data, filename: name), name)); message = nil }
         catch { message = error.localizedDescription }
+    }
+}
+
+/// The badge inside the field: the chosen agent's avatar, or a pair for everyone or a subset.
+struct RecipientBadge: View {
+    @ObservedObject var app: MobileApp
+    var recipients: [String]
+    private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
+    var body: some View {
+        if recipients.count == 1, let agent = recipients.first {
+            AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.badge)
+        } else {
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(recipients.prefix(2).enumerated()), id: \.offset) { index, agent in
+                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarChip)
+                        .background(Circle().fill(Color(.secondarySystemBackground)).padding(-1))
+                        .offset(x: CGFloat(index) * Space.gap)
+                }
+            }
+            .frame(width: Space.section, height: Space.avatarChip, alignment: .leading)
+        }
+    }
+}
+
+/// The agents above the field, as the Mac's agent grid shows them: each avatar with a check
+/// badge on its corner. Tapping toggles with the Details sheet's rules.
+struct RecipientStrip: View {
+    @ObservedObject var app: MobileApp
+    var members: [String]
+    @Binding var selection: Set<String>
+    private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Space.inset) {
+                ForEach(members, id: \.self) { agent in
+                    let checked = ProjectionPresenter.isChecked(agent, selection: selection)
+                    Button { withAnimation(.snappy) { selection = ProjectionPresenter.toggling(agent, selection: selection, members: members) } } label: {
+                        AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarRow)
+                            .opacity(checked ? 1 : 0.6)
+                            .overlay(alignment: .bottomTrailing) { CheckBadge(checked: checked).offset(x: Space.tight, y: Space.tight) }
+                            .padding(Space.tight)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(presenter.shortName(agent)), \(checked ? "selected" : "not selected")")
+                    .accessibilityAddTraits(checked ? [.isButton, .isSelected] : .isButton)
+                }
+            }
+            .padding(.vertical, Space.tight)
+        }
+    }
+}
+
+/// The Mac agent grid's check: filled tint with a white checkmark, or a hollow circle.
+struct CheckBadge: View {
+    var checked: Bool
+    var body: some View {
+        ZStack {
+            Circle().fill(checked ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.systemBackground)))
+            if checked {
+                Image(systemName: "checkmark").font(.system(size: Space.badge * 0.5, weight: .bold)).foregroundStyle(.white)
+            } else {
+                Circle().strokeBorder(Color.secondary, lineWidth: 1.5)
+            }
+        }
+        .frame(width: Space.badge, height: Space.badge)
+        .background(Circle().fill(Color(.systemBackground)).padding(-Space.hairline))
+        .accessibilityHidden(true)
     }
 }

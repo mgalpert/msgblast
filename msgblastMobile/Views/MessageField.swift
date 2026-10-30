@@ -3,36 +3,24 @@ import Speech
 import SwiftUI
 import UIKit
 
-/// The text view behind the compose field. It can switch the keyboard to emoji: while
-/// `emojiMode` is set it reports the emoji input mode, as Messages' emoji button does.
-final class MessageTextView: UITextView {
-    var emojiMode = false {
-        didSet { if oldValue != emojiMode { reloadInputViews() } }
-    }
-    static var emojiInputMode: UITextInputMode? { UITextInputMode.activeInputModes.first { $0.primaryLanguage == "emoji" } }
-    override var textInputMode: UITextInputMode? {
-        if emojiMode, let emoji = Self.emojiInputMode { return emoji }
-        return super.textInputMode
-    }
-}
-
 /// A UITextView field: placeholder, body text with 12 × 8 insets, growing from one line to
 /// five and scrolling after that.
 struct MessageField: UIViewRepresentable {
     @Binding var text: String
     var placeholder: String
     @Binding var focused: Bool
-    var emojiMode: Bool
+    /// Text inset from the field's leading edge (less when an agent badge precedes it).
+    var leadingInset: CGFloat = Space.inset
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> MessageTextView {
-        let view = MessageTextView()
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
         view.delegate = context.coordinator
         view.font = .preferredFont(forTextStyle: .body)
         view.adjustsFontForContentSizeCategory = true
         view.backgroundColor = .clear
-        view.textContainerInset = UIEdgeInsets(top: Space.gap, left: Space.inset, bottom: Space.gap, right: 0)
+        view.textContainerInset = UIEdgeInsets(top: Space.gap, left: leadingInset, bottom: Space.gap, right: Space.tight)
         view.textContainer.lineFragmentPadding = 0
         view.isScrollEnabled = false
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -42,27 +30,29 @@ struct MessageField: UIViewRepresentable {
         label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.inset),
-            label.topAnchor.constraint(equalTo: view.topAnchor, constant: Space.gap),
-        ])
+        let leading = label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: leadingInset)
+        NSLayoutConstraint.activate([leading, label.topAnchor.constraint(equalTo: view.topAnchor, constant: Space.gap)])
         context.coordinator.placeholder = label
+        context.coordinator.placeholderLeading = leading
         view.accessibilityLabel = placeholder
         return view
     }
 
-    func updateUIView(_ view: MessageTextView, context: Context) {
+    func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
+        if view.textContainerInset.left != leadingInset {
+            view.textContainerInset.left = leadingInset
+            context.coordinator.placeholderLeading?.constant = leadingInset
+        }
         if view.text != text { view.text = text }
         context.coordinator.placeholder?.text = placeholder
         context.coordinator.placeholder?.isHidden = !text.isEmpty
         view.accessibilityLabel = placeholder
-        view.emojiMode = emojiMode
         if focused && !view.isFirstResponder { DispatchQueue.main.async { view.becomeFirstResponder() } }
         if !focused && view.isFirstResponder { DispatchQueue.main.async { view.resignFirstResponder() } }
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView view: MessageTextView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView view: UITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? 240
         let font = view.font ?? .preferredFont(forTextStyle: .body)
         let maximum = ceil(font.lineHeight * 5) + 2 * Space.gap
@@ -75,6 +65,7 @@ struct MessageField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: MessageField
         weak var placeholder: UILabel?
+        weak var placeholderLeading: NSLayoutConstraint?
         init(_ parent: MessageField) { self.parent = parent }
         func textViewDidChange(_ view: UITextView) {
             parent.text = view.text
@@ -205,7 +196,7 @@ final class Dictation: ObservableObject {
     }
 }
 
-/// The dictation glyph inside the field: a waveform, or a pulsing stop while listening.
+/// The dictation glyph inside the field: a waveform, or a red pulsing stop while listening.
 struct DictationGlyph: View {
     var listening: Bool
     var action: () -> Void
@@ -214,10 +205,11 @@ struct DictationGlyph: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: listening ? "stop.circle.fill" : "waveform")
-                .font(.body.weight(.semibold))
+                .font(.system(size: Space.glyph, weight: .regular))
                 .foregroundStyle(listening ? Color.red : Color.secondary)
                 .scaleEffect(listening && pulse && !reduceMotion ? 1.12 : 1)
-                .frame(width: Space.fieldButton, height: Space.fieldButton)
+                .frame(width: Space.glyph + Space.gap, height: Space.fieldHeight)
+                .contentShape(Rectangle().inset(by: -Space.tight))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(listening ? "Stop Dictation" : "Dictate")

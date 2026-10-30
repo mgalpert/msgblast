@@ -66,10 +66,11 @@ enum Space {
     static let corner: CGFloat = 16
     static let cornerCard: CGFloat = 12
 
-    /// The compose field's minimum height, and the send and plus buttons inside or beside it;
-    /// Send sits (fieldHeight - fieldButton) / 2 = 3 pt from the capsule's edge.
+    /// The compose field's minimum height; the plus and Send circles beside it match it.
     static let fieldHeight: CGFloat = 36
-    static let fieldButton: CGFloat = 30
+    /// Glyphs in and beside the compose field, and the agent badge inside it.
+    static let glyph: CGFloat = 20
+    static let badge: CGFloat = 18
     /// Minimum tap target.
     static let control: CGFloat = 44
 

@@ -173,7 +173,8 @@ struct ConversationView: View {
         .safeAreaInset(edge: .bottom) {
             if conversation.endedAt == nil {
                 ComposeBar(app: app, conversationID: conversationID,
-                           recipients: .constant(ProjectionPresenter.recipients(selection: selection, members: conversation.agentIDs)), replyTo: $replyTo, focusRequest: focusRequest, onSent: { _ in })
+                           recipients: .constant(ProjectionPresenter.recipients(selection: selection, members: conversation.agentIDs)), replyTo: $replyTo,
+                           selection: conversation.agentIDs.count > 1 ? $selection : nil, focusRequest: focusRequest, onSent: { _ in })
             }
         }
         .navigationTitle(conversation.title)
