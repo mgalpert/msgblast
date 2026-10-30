@@ -88,7 +88,8 @@ struct ComposeBar: View {
                     Button { importing = true } label: { Label("File", systemImage: "doc") }.disabled(!onlyMessages)
                     if !onlyMessages { Text("Attachments go to Messages contacts only") }
                 } label: {
-                    Image(systemName: "plus").font(.system(size: Space.glyph, weight: .regular)).foregroundStyle(.secondary)
+                    Image(systemName: "plus").font(.system(size: Space.glyph + 2, weight: .regular))
+                        .foregroundStyle(Color(.label).opacity(0.7))
                         .frame(width: Space.fieldHeight, height: Space.fieldHeight)
                         .background(Circle().fill(Color(.secondarySystemBackground)))
                 }
