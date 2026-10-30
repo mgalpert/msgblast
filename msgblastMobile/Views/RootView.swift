@@ -16,11 +16,7 @@ struct RootView: View {
             if app.connection.pairedMac == nil {
                 NavigationStack { PairingView(app: app, incomingLink: $incomingLink) }
             } else {
-                // The banner sits above the navigation bar so it never covers its buttons.
-                VStack(spacing: 0) {
-                    MacBanner(app: app)
-                    NavigationStack(path: $path) { InboxView(app: app, launchScreen: launchScreen) }
-                }
+                NavigationStack(path: $path) { InboxView(app: app, launchScreen: launchScreen) }
             }
         }
         .sheet(isPresented: $showingRepair) {
@@ -48,64 +44,27 @@ enum LaunchScreen: Equatable {
     case inbox, conversation(UUID), newConversation, settings
 }
 
-/// Reconnecting / Mac Locked / Not Paired / Disconnected, with when the Mac was last heard.
-/// Why it may be reconnecting shows only once that has lasted a while.
-struct MacBanner: View {
+/// The connection status as the navigation subtitle, where Mail and Messages put theirs:
+/// "Reconnecting…", "Mac Locked · 40s ago". Nothing when connected.
+struct MacStatusSubtitle: ViewModifier {
     @ObservedObject var app: MobileApp
-    /// When the current reconnecting stretch began.
-    @State private var reconnectingSince: Date?
-    static let explainAfter: TimeInterval = 20
-
-    var body: some View {
+    @State private var now = Date()
+    func body(content: Content) -> some View {
         let state = app.store.projection.macLocked && app.connection.state.canSend ? MacConnectionState.macLocked : app.connection.state
-        VStack(spacing: 0) {
-            if state != .connected {
-                TimelineView(.periodic(from: .now, by: 5)) { timeline in
-                    HStack(spacing: 10) {
-                        Image(systemName: icon(state)).foregroundStyle(.secondary).imageScale(.medium)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(state.title).font(.subheadline.weight(.semibold))
-                            if let caption = caption(state, now: timeline.date) {
-                                Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                        Spacer(minLength: 8)
-                        if case .pairingLost = state {
-                            Button("Pair Again") { app.forgetMac() }.font(.subheadline).buttonStyle(.bordered).controlSize(.small)
-                        } else if state == .stopped {
-                            Button("Connect") { app.connection.connect() }.font(.subheadline).buttonStyle(.bordered).controlSize(.small)
-                        }
-                    }
-                    .padding(.horizontal).padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.bar)
-                    .accessibilityElement(children: .combine)
+        let subtitle = state.navigationSubtitle(lastHeard: app.connection.lastHeard, reconnectingSince: app.connection.reconnectingSince, now: now)
+        content
+            .navigationSubtitle(subtitle ?? "")
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(5))
+                    now = Date()
                 }
             }
-        }
-        .onAppear { track(state) }
-        .onChange(of: state.isReconnecting) { _, _ in track(state) }
     }
+}
 
-    private func track(_ state: MacConnectionState) {
-        if state.isReconnecting { if reconnectingSince == nil { reconnectingSince = Date() } } else { reconnectingSince = nil }
-    }
-
-    private func caption(_ state: MacConnectionState, now: Date) -> String? {
-        if state.isReconnecting, let since = reconnectingSince, now.timeIntervalSince(since) >= Self.explainAfter { return state.detail }
-        if case .pairingLost = state { return state.detail }
-        guard let heard = app.connection.lastHeard else { return nil }
-        return "Last heard \(heard.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated)))"
-    }
-
-    private func icon(_ state: MacConnectionState) -> String {
-        switch state {
-        case .macLocked: "lock.fill"
-        case .connecting, .reconnecting: "arrow.triangle.2.circlepath"
-        case .pairingLost: "exclamationmark.triangle"
-        default: "desktopcomputer"
-        }
-    }
+extension View {
+    func macStatusSubtitle(_ app: MobileApp) -> some View { modifier(MacStatusSubtitle(app: app)) }
 }
 
 /// A small ⓘ that shows the Mac's full reason in a popover, also on iPhone.

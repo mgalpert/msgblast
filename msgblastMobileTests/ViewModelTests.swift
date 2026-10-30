@@ -37,7 +37,7 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(presenter.chips(for: prompt, agentID: "codexCLI").map(\.state), [.unconfirmed], "One agent's view shows only its chip")
     }
 
-    func testDisabledReasonsLaunchNotesAndProductGroups() throws {
+    func testDisabledReasonsLaunchNotesAndNewConversationList() throws {
         var state = try RecordedFixtures.reduce(["snapshot"])
         let presenter = ProjectionPresenter(state: state)
         let messages = try XCTUnwrap(state.orderedAgents.first { $0.form == .messages })
@@ -59,9 +59,13 @@ final class PresenterTests: XCTestCase {
         state.macLocked = true
         XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: [messages.agentID], conversation: nil), "Mac locked")
 
-        let groups = presenter.productGroups
-        XCTAssertEqual(Set(groups.map(\.product)).count, groups.count, "One group per product")
-        XCTAssertTrue(groups.allSatisfy { group in group.agents.allSatisfy { $0.product == group.product } }, "Forms are grouped, histories stay separate")
+        let list = presenter.newConversationAgents
+        XCTAssertFalse(list.agents.isEmpty)
+        XCTAssertTrue(list.agents.allSatisfy { $0.form != .messages }); XCTAssertTrue(list.messages.allSatisfy { $0.form == .messages })
+        XCTAssertFalse(list.messages.isEmpty, "Messages contacts have their own section")
+        let gridOrder = state.grid.filter { id in list.agents.contains { $0.agentID == id } }
+        XCTAssertEqual(Array(list.agents.map(\.agentID).prefix(gridOrder.count)), gridOrder, "The Mac's grid order")
+        XCTAssertEqual(Set(list.agents.map(\.agentID)).count, list.agents.count, "Each form is its own row; histories stay separate")
         XCTAssertEqual(ProjectionPresenter.formLabel(.webhookBot), "Bot")
         XCTAssertEqual(ChipState(.uncertain), .unconfirmed)
         XCTAssertEqual(ChipState(.observed), .replied)

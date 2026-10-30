@@ -21,6 +21,7 @@ struct ComposeBar: View {
     @State private var photo: PhotosPickerItem?
     @State private var importing = false
     @State private var uploading = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var members: [String] { conversationID.flatMap { app.store.projection.conversations[$0]?.agentIDs } ?? [] }
@@ -100,7 +101,9 @@ struct ComposeBar: View {
         }
         if preparing { return Status(text: "Getting ready…", progress: true) }
         if let message { return Status(text: message, progress: uploading) }
-        let notes = presenter.launchNotes(agentIDs: recipients)
+        // A launch note matters only once there is something to send.
+        let drafting = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
+        let notes = drafting ? presenter.launchNotes(agentIDs: recipients) : []
         if notes.count == 1 { return Status(text: notes[0], symbol: "macwindow") }
         if notes.count > 1 { return Status(text: "Opens \(notes.count) apps on your Mac", detail: notes.joined(separator: "\n"), symbol: "macwindow") }
         return nil
@@ -113,7 +116,8 @@ struct ComposeBar: View {
         return HStack(spacing: 6) {
             if status.progress { ProgressView().controlSize(.mini) }
             else if let symbol = status.symbol { Image(systemName: symbol) }
-            Text(status.text).lineLimit(1).truncationMode(.tail)
+            // Wraps at accessibility sizes rather than cutting the meaning.
+            Text(status.text).lineLimit(typeSize.isAccessibilitySize ? 3 : 1).truncationMode(.tail)
             if let detail { DetailButton(detail: detail) }
             Spacer(minLength: 0)
             if status.retry { Button("Try Again") { prepare() }.buttonStyle(.borderless).disabled(preparing || sending) }

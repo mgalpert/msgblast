@@ -214,5 +214,15 @@ final class ConnectionTests: XCTestCase {
         XCTAssertNotNil(MacConnectionState.reconnecting(attempt: 2, retryAt: Date()).detail, "Why it may be reconnecting stays available")
         XCTAssertEqual(MacConnectionState.pairingLost("This phone was forgotten.").detail, "This phone was forgotten.")
         XCTAssertEqual(MacConnectionState.stopped.statusText, "Not connected")
+
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertNil(MacConnectionState.connected.navigationSubtitle(lastHeard: now, reconnectingSince: nil, now: now))
+        XCTAssertEqual(MacConnectionState.macLocked.navigationSubtitle(lastHeard: now.addingTimeInterval(-40), reconnectingSince: nil, now: now), "Mac Locked · 40s ago")
+        let reconnecting = MacConnectionState.reconnecting(attempt: 1, retryAt: now)
+        XCTAssertEqual(reconnecting.navigationSubtitle(lastHeard: nil, reconnectingSince: now.addingTimeInterval(-5), now: now), "Reconnecting…")
+        XCTAssertEqual(reconnecting.navigationSubtitle(lastHeard: nil, reconnectingSince: now.addingTimeInterval(-21), now: now), "Reconnecting… Mac asleep or offline")
+        XCTAssertEqual(MacConnectionState.stopped.navigationSubtitle(lastHeard: nil, reconnectingSince: nil, now: now), "Disconnected")
+        XCTAssertEqual(MacConnectionState.pairingLost("x").navigationSubtitle(lastHeard: nil, reconnectingSince: nil, now: now), "Not Paired")
+        XCTAssertEqual(MacConnectionState.ago(now.addingTimeInterval(-150), now: now), "2m ago")
     }
 }

@@ -228,23 +228,13 @@ public struct ProjectionPresenter: Sendable {
         return date.formatted(style)
     }
 
-    public struct ProductGroup: Identifiable, Equatable, Sendable {
-        public var id: String { product.rawValue }
-        public var product: AgentProduct
-        public var title: String
-        public var agents: [AgentAvailability]
-    }
-
-    /// The new-conversation grid: grouped by product, in the Mac's grid order, forms labeled.
-    public var productGroups: [ProductGroup] {
+    /// The new-conversation list: one flat list in the Mac's grid order, with Messages
+    /// contacts apart. Agents outside the grid follow, unless they are unavailable.
+    public var newConversationAgents: (agents: [AgentAvailability], messages: [AgentAvailability]) {
         let visible = state.grid.compactMap { state.agents[$0] }
         let rest = state.orderedAgents.filter { !state.grid.contains($0.agentID) && $0.readiness != .unavailable }
-        var groups: [ProductGroup] = []
-        for agent in visible + rest {
-            if let index = groups.firstIndex(where: { $0.product == agent.product }) { groups[index].agents.append(agent) }
-            else { groups.append(ProductGroup(product: agent.product, title: agent.form == .messages ? "Messages" : agent.displayName, agents: [agent])) }
-        }
-        return groups
+        let all = visible + rest
+        return (all.filter { $0.form != .messages }, all.filter { $0.form == .messages })
     }
 
     public static func formLabel(_ form: AgentForm) -> String {

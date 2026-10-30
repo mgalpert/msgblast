@@ -229,11 +229,11 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   LAN are tried at once over TLS 1.3 with the Mac's key pinned. After connecting the
   phone resumes from its stored `seq`, requests keep-awake (Settings toggle), asks
   about commands still waiting for a result, and pings every 20 s. It reconnects
-  with backoff. The banner title is at most three words (Connecting…,
-  Reconnecting…, Mac Locked, Disconnected, Not Paired) with "Last heard …" as its
-  caption; after 20 seconds of reconnecting the caption explains why (msgblast may
-  be closed, or the Mac is asleep or off this network). It offers Pair Again when
-  the Mac forgot this phone.
+  with backoff. The connection status is the navigation subtitle of the inbox and
+  of each conversation, as in Mail and Messages: Connecting…, Reconnecting…, "Mac
+  Locked · 40s ago", Disconnected or Not Paired, and nothing when connected. After
+  20 seconds of reconnecting it reads "Reconnecting… Mac asleep or offline". The
+  inbox shows a Connect or Pair Again capsule when one of those is needed.
 - **Cache:** a SQLite file (system sqlite3) in the app's Application Support holds
   the projection, the last `seq`, per-device drafts, and each command with its last
   result. It is derived from the Mac, so it is excluded from iCloud and computer
@@ -253,8 +253,9 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   Active), compose bar (recipient chips: all = shared, one = private; at most one
   status line, what blocks Send first, then "Getting ready…" while
   `prepareConversation` runs, then the last result, then "Opens ChatGPT on your
-  Mac"; ⓘ shows the Mac's longer reason; photos and files for Messages agents), new
-  conversation list grouped by product, Mac banner, and Settings (Mac name, key
+  Mac" once there is something to send; ⓘ shows the Mac's longer reason; photos and
+  files for Messages agents), the new-conversation list in the Mac's grid order
+  with Messages contacts apart, the status subtitle, and Settings (Mac name, key
   fingerprint, status and route, Keep Mac Awake, Forget This Mac). Every screen
   follows one rule: a short line to glance at, the Mac's full text on demand.
 - **Compose bar after a refused prepare:** the Mac's reason stays above the

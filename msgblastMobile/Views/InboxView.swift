@@ -13,9 +13,17 @@ struct InboxView: View {
     var body: some View {
         let rows = presenter.inbox
         List {
+            if let action = connectionAction {
+                Section {
+                    Button(action.title, action: action.run)
+                        .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                }
+            }
             let group = rows.filter { !$0.isDirect }
             if !group.isEmpty {
-                Section("Conversations") { ForEach(group) { row in link(row) } }
+                Section("Groups") { ForEach(group) { row in link(row) } }
             }
             let direct = rows.filter(\.isDirect)
             if !direct.isEmpty {
@@ -27,6 +35,7 @@ struct InboxView: View {
             }
         }
         .navigationTitle(app.connection.pairedMac?.macName ?? "msgblast")
+        .macStatusSubtitle(app)
         .navigationDestination(for: UUID.self) { ConversationView(app: app, conversationID: $0) }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings") }
@@ -38,6 +47,15 @@ struct InboxView: View {
         .onAppear {
             if launchScreen == .newConversation { composing = true }
             if launchScreen == .settings { settings = true }
+        }
+    }
+
+    /// The one action a disconnected state needs, shown as a capsule at the top of the list.
+    private var connectionAction: (title: String, run: () -> Void)? {
+        switch app.connection.state {
+        case .pairingLost: ("Pair Again", { app.forgetMac() })
+        case .stopped: ("Connect", { app.connection.connect() })
+        default: nil
         }
     }
 
@@ -91,12 +109,11 @@ struct SettingsView: View {
             }
             Section {
                 Toggle("Keep Mac Awake", isOn: $app.keepAwake)
-                if let status = app.store.projection.macStatus {
-                    LabeledContent("Awake now", value: status.keepAwakeHeld ? "Yes" : "No")
-                        .accessibilityIdentifier("mac-kept-awake")
-                }
             } footer: {
-                Text(app.store.projection.macStatus?.keepAwakeHeld == true ? "Your Mac is awake for this phone" : "While this phone is connected")
+                let held = app.store.projection.macStatus?.keepAwakeHeld == true
+                Text(held ? "Your Mac is awake for this phone" : "While this phone is connected")
+                    .accessibilityIdentifier("mac-kept-awake")
+                    .accessibilityValue(held ? "Yes" : "No")
             }
             Section {
                 Button("Forget This Mac", role: .destructive) { confirmForget = true }

@@ -2,8 +2,8 @@ import SwiftUI
 import msgblastMobileKit
 import msgblastRemoteProtocol
 
-/// The Mac's agent grid, grouped by product with each form labeled. Choose recipients,
-/// then write the first message.
+/// The Mac's agents in its grid order, each row naming its form, with Messages contacts
+/// in their own section. Choose recipients, then write the first message.
 struct NewBlastView: View {
     @ObservedObject var app: MobileApp
     @State private var selected: [String] = []
@@ -11,11 +11,12 @@ struct NewBlastView: View {
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
 
     var body: some View {
+        let list = presenter.newConversationAgents
         List {
-            ForEach(presenter.productGroups) { group in
-                Section(group.title) {
-                    ForEach(group.agents, id: \.agentID) { agent in row(agent) }
-                }
+            // One flat list in the Mac's grid order; the row says the form.
+            Section { ForEach(list.agents, id: \.agentID) { agent in row(agent) } }
+            if !list.messages.isEmpty {
+                Section("Messages") { ForEach(list.messages, id: \.agentID) { agent in row(agent) } }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -35,8 +36,12 @@ struct NewBlastView: View {
                 AgentAvatar(name: agent.displayName, product: agent.product.rawValue)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(agent.displayName).foregroundStyle(sendable ? .primary : .secondary)
-                    Text([ProjectionPresenter.formLabel(agent.form), ProjectionPresenter.agentStatus(agent)].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    // Messages rows sit under a Messages header; they need no form label.
+                    let form = agent.form == .messages ? nil : ProjectionPresenter.formLabel(agent.form)
+                    if let subtitle = [form, ProjectionPresenter.agentStatus(agent)].compactMap({ $0 }).joined(separator: " · ").nilIfBlank {
+                        Text(subtitle)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle").foregroundStyle(isSelected ? Color.accentColor : .secondary)
@@ -48,4 +53,8 @@ struct NewBlastView: View {
         .disabled(agent.readiness == .unavailable)
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
     }
+}
+
+private extension String {
+    var nilIfBlank: String? { isEmpty ? nil : self }
 }

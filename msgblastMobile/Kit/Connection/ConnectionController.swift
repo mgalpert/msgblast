@@ -43,12 +43,39 @@ public enum MacConnectionState: Equatable, Sendable {
     public var detail: String? {
         switch self {
         case .macLocked: "Unlock your Mac to send"
-        case .reconnecting: "Mac asleep, offline, or msgblast closed"
+        case .reconnecting: "Mac asleep or offline"
         case .pairingLost(let reason): reason
         default: nil
         }
     }
     public var isReconnecting: Bool { if case .reconnecting = self { true } else { false } }
+
+    /// After this long, the reconnecting subtitle also says why.
+    public static let explainReconnectingAfter: TimeInterval = 20
+
+    /// The navigation subtitle under the inbox and conversation titles, as Mail and Messages
+    /// show theirs; nil when connected. "Mac Locked · 40s ago", "Reconnecting… Mac asleep or offline".
+    public func navigationSubtitle(lastHeard: Date?, reconnectingSince: Date?, now: Date = Date()) -> String? {
+        switch self {
+        case .connected: return nil
+        case .macLocked: return lastHeard.map { "\(title) · \(Self.ago($0, now: now))" } ?? title
+        case .reconnecting:
+            if let since = reconnectingSince, now.timeIntervalSince(since) >= Self.explainReconnectingAfter, let detail { return "\(title) \(detail)" }
+            return title
+        default: return title
+        }
+    }
+
+    /// "40s ago", "2m ago", "3h ago", "2d ago".
+    public static func ago(_ date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        switch seconds {
+        case ..<60: return "\(seconds)s ago"
+        case ..<3600: return "\(seconds / 60)m ago"
+        case ..<86_400: return "\(seconds / 3600)h ago"
+        default: return "\(seconds / 86_400)d ago"
+        }
+    }
     public var canSend: Bool { self == .connected }
 }
 
@@ -66,7 +93,11 @@ public struct ConnectionTiming: Sendable {
 /// keep-awake request, heartbeat, and reconnect with backoff. It never queues a send.
 @MainActor
 public final class MacConnection: ObservableObject {
-    @Published public private(set) var state: MacConnectionState
+    @Published public private(set) var state: MacConnectionState {
+        didSet { if state.isReconnecting { if reconnectingSince == nil { reconnectingSince = now() } } else { reconnectingSince = nil } }
+    }
+    /// When the current stretch of reconnecting began, so a view can explain it after a while.
+    @Published public private(set) var reconnectingSince: Date?
     @Published public private(set) var lastHeard: Date?
     @Published public private(set) var lastError: String?
     /// The candidate that won the last race (for example "100.101.102.103:52000" or a Bonjour name).

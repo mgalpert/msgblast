@@ -51,6 +51,7 @@ struct ConversationView: View {
         }
         .navigationTitle(filter.map(presenter.name) ?? conversation.title)
         .navigationBarTitleDisplayMode(.inline)
+        .macStatusSubtitle(app)
         .onAppear { recipients = filter.map { [$0] } ?? conversation.agentIDs }
         .onChange(of: filter) { _, value in recipients = value.map { [$0] } ?? conversation.agentIDs }
         .toolbar {
@@ -106,7 +107,7 @@ struct ConversationView: View {
                 HStack(spacing: 10) {
                     Image(systemName: summary.running ? "hourglass" : "exclamationmark.circle")
                         .foregroundStyle(summary.running ? Color.secondary : Color.orange)
-                    Text(summary.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
+                    Text(summary.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
@@ -178,7 +179,7 @@ struct ChipView: View {
     @State private var showingReason = false
     var body: some View {
         let label = Label(chip.label(showsName: showsName), systemImage: chip.state.symbol)
-            .font(.caption2).foregroundStyle(color).lineLimit(1)
+            .font(.caption2).foregroundStyle(color)
         if let reason = chip.reason, !reason.isEmpty {
             Button { showingReason = true } label: { label }
                 .buttonStyle(.plain)
