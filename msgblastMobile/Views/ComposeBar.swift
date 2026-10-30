@@ -197,6 +197,8 @@ struct ComposeBar: View {
         // With nobody chosen, Send is simply disabled; there is nothing to explain.
         if recipients.isEmpty { return nil }
         if let block {
+            // Quiet for a passing state (checking, handling a request); orange only to fix something.
+            if !block.warns { return Status(text: block.text, detail: block.detail, progress: true) }
             return Status(text: block.text, detail: block.detail, symbol: block.allowsSend ? "exclamationmark.circle" : "exclamationmark.triangle.fill",
                           blocks: !block.allowsSend, retry: block.allowsSend)
         }

@@ -5,7 +5,9 @@ import msgblastRemoteProtocol
 public struct StatusLine: Equatable, Sendable {
     public var text: String
     public var detail: String?
-    public init(_ text: String, detail: String? = nil) { self.text = text; self.detail = detail == text ? nil : detail }
+    /// A passing state nobody needs to fix (checking, handling a request): shown quietly.
+    public var quiet = false
+    public init(_ text: String, detail: String? = nil, quiet: Bool = false) { self.text = text; self.detail = detail == text ? nil : detail; self.quiet = quiet }
 }
 
 /// What stops the compose bar from sending.
@@ -14,9 +16,14 @@ public enum ComposeBlock: Equatable, Sendable {
     case blocked(String, detail: String? = nil)
     /// The last `prepareConversation` was refused. Send stays enabled and prepares again.
     case prepareFailed(String, detail: String? = nil)
-    public var text: String { switch self { case .blocked(let text, _), .prepareFailed(let text, _): text } }
+    /// A passing state on the Mac (checking an app, handling a request): Send waits, but
+    /// nothing is wrong and nobody needs to act, so the line is quiet, not a warning.
+    case waiting(String, detail: String? = nil)
+    public var text: String { switch self { case .blocked(let text, _), .prepareFailed(let text, _), .waiting(let text, _): text } }
+    /// Orange with the warning glyph only for what someone has to fix.
+    public var warns: Bool { if case .waiting = self { false } else { true } }
     /// The Mac's longer reason, for the compose bar's info popover.
-    public var detail: String? { switch self { case .blocked(_, let detail), .prepareFailed(_, let detail): detail } }
+    public var detail: String? { switch self { case .blocked(_, let detail), .prepareFailed(_, let detail), .waiting(_, let detail): detail } }
     public var allowsSend: Bool { if case .prepareFailed = self { true } else { false } }
 }
 
@@ -254,8 +261,10 @@ public struct ProjectionPresenter: Sendable {
         for id in agentIDs {
             guard let agent = state.agents[id] else { return StatusLine("\(id) is gone from your Mac") }
             if !agent.readiness.acceptsSend {
-                if let reason = agent.reasons.first { return StatusLine(reason.userText, detail: reason.detail) }
-                if case .busy(let detail) = agent.readiness, !detail.isEmpty { return StatusLine(detail) }
+                // Busy with nothing to fix (checking, handling a request) passes by itself.
+                let passing: Bool = if case .busy = agent.readiness { true } else { false }
+                if let reason = agent.reasons.first { return StatusLine(reason.userText, detail: reason.detail, quiet: passing && reason.fixOn == .none) }
+                if case .busy(let detail) = agent.readiness, !detail.isEmpty { return StatusLine(detail, quiet: true) }
                 return StatusLine("\(agent.displayName) isn't ready")
             }
             if let conversation, let incomplete = state.conversations[conversation]?.incompleteAttempts.first(where: { $0.agentID == id }) {
@@ -364,7 +373,9 @@ public struct ProjectionPresenter: Sendable {
     public func composeBlock(canSend: Bool, connectionText: String, agentIDs: [String], conversation: UUID?,
                              prepareReasons: [String: String]) -> ComposeBlock? {
         if !canSend { return .blocked(connectionText) }
-        if let line = disabledLine(agentIDs: agentIDs, conversation: conversation) { return .blocked(line.text, detail: line.detail) }
+        if let line = disabledLine(agentIDs: agentIDs, conversation: conversation) {
+            return line.quiet ? .waiting(line.text, detail: line.detail) : .blocked(line.text, detail: line.detail)
+        }
         if let first = prepareReasons.sorted(by: { $0.key < $1.key }).first {
             guard !first.key.isEmpty else { return .prepareFailed(first.value) }
             let name = shortName(first.key)

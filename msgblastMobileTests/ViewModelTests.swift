@@ -249,6 +249,27 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(ChipState.replied.spoken, "replied")
     }
 
+    func testPassingMacStatesAreQuietAndOnlyFixesWarn() {
+        var state = ProjectionState()
+        func agent(_ id: String, _ readiness: AgentReadiness, _ reason: AvailabilityReason?) {
+            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: .macApp, displayName: id.capitalized, visibleInGrid: true, selectedForSharedSend: true,
+                capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                readiness: readiness, reasons: reason.map { [$0] } ?? [], observedAt: fixedNow, source: .live)
+        }
+        agent("muse", .busy(detail: "Checking Muse…"), AvailabilityReason(code: .sendInFlight, userText: "Checking Muse on your Mac", fixOn: .none))
+        agent("dots", .blocked, AvailabilityReason(code: .permissionMissing, userText: "Allow Accessibility on your Mac", fixOn: .mac))
+        agent("claude", .busy(detail: "Claude is working…"), nil)
+        let presenter = ProjectionPresenter(state: state)
+        func block(_ id: String) -> ComposeBlock? { presenter.composeBlock(canSend: true, connectionText: "", agentIDs: [id], conversation: nil, prepareReasons: [:]) }
+        XCTAssertEqual(block("muse"), .waiting("Checking Muse on your Mac"))
+        XCTAssertEqual(block("muse")?.warns, false, "A readiness re-check is informational")
+        XCTAssertEqual(block("muse")?.allowsSend, false, "Send still waits for it")
+        XCTAssertEqual(block("claude")?.warns, false)
+        XCTAssertEqual(block("dots"), .blocked("Allow Accessibility on your Mac"))
+        XCTAssertEqual(block("dots")?.warns, true, "Something to fix on the Mac warns")
+        XCTAssertEqual(presenter.composeBlock(canSend: false, connectionText: "Reconnecting…", agentIDs: ["muse"], conversation: nil, prepareReasons: [:])?.warns, true)
+    }
+
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
         var state = ProjectionState()
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {
