@@ -168,6 +168,24 @@ lock; the Mac's name is replaced with "Demo Mac"). There are no phone UI tests y
 [Remote control](remote-control.md#ux-iteration-against-the-demo-mac) lists the
 manual simulator check.
 
+#### Design review fixtures
+
+Debug builds of the phone app open on simulated screens without pairing or any
+network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `incomplete`,
+`blocked`, `new`, `settings`, `reconnecting`, `locked` or `pairing`. The fake Mac is
+named "Studio Mac"; the data is built in `msgblastMobile/Debug/DesignFixtures.swift`
+and compiles out of Release. `MSGBLAST_FIXTURE_CONVERSATION=<uuid>` opens a
+particular conversation. Build the Debug app for a simulator, install it, then:
+
+```sh
+SIMCTL_CHILD_MSGBLAST_FIXTURE=conversation xcrun simctl launch --terminate-running-process <udid> com.msgblast.ios
+xcrun simctl io <udid> screenshot build/design-review/conversation.png
+```
+
+The reconnecting banner explains itself only after 20 seconds, so wait that long
+before capturing `reconnecting`. Scan Code is disabled in the simulator, which has
+no camera scanner.
+
 ## Shared native app engine
 
 `DesktopAccessibilityTests` covers exact draft/URL metadata, bounded incomplete

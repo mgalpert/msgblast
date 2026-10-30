@@ -185,6 +185,18 @@ public final class MacConnection: ObservableObject {
         transport.send(frame)
     }
 
+    #if DEBUG
+    /// Design-review fixtures only: shows a connection state with no network at all.
+    public func showDesignFixture(_ state: MacConnectionState, lastHeard: Date?, connectedVia: String? = nil, connectSeconds: Double? = nil) {
+        reconnectTask?.cancel(); reconnectTask = nil
+        stopTransport()
+        self.state = state
+        self.lastHeard = lastHeard
+        self.connectedVia = connectedVia
+        lastConnectSeconds = connectSeconds
+    }
+    #endif
+
     // MARK: Internals
 
     private func open(_ endpoints: [MacEndpoint], spki: Data, driver: RemoteClientDriver) {
