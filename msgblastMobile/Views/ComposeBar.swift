@@ -23,6 +23,10 @@ struct ComposeBar: View {
     @State private var text = ""
     @State private var preparing = false
     @State private var prepareReasons: [String: String] = [:]
+    /// Each prepare's number; a newer one (the recipients changed) makes older answers stale.
+    @State private var prepareGeneration = 0
+    /// How long the phone waits for the Mac's readiness answer (the Mac bounds it at 20 s).
+    static let prepareTimeout: Duration = .seconds(25)
     @State private var sending = false
     @State private var message: String?
     @State private var attachments: [(id: String, name: String)] = []
@@ -56,7 +60,7 @@ struct ComposeBar: View {
     }
 
     /// Send fills with the tint once there is something to send and someone to send it to.
-    private var canSend: Bool { hasContent && !recipients.isEmpty }
+    private var canSend: Bool { hasContent && !recipients.isEmpty && !sending && !preparing && block?.allowsSend != false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.gap) {
@@ -141,7 +145,8 @@ struct ComposeBar: View {
                         .animation(.easeOut(duration: 0.15), value: canSend)
                 }
                 .buttonStyle(.plain)
-                .disabled(!hasContent || recipients.isEmpty || sending || preparing || block?.allowsSend == false)
+                // Looks exactly as enabled as it is: disabled while getting ready or sending.
+                .disabled(!canSend)
                 .accessibilityLabel("Send")
             }
         }
@@ -225,21 +230,50 @@ struct ComposeBar: View {
     /// Tells the Mac which agents are coming so their pages are ready before Send.
     private func prepare() { Task { await runPrepare() } }
 
-    /// Returns false when the Mac refused; the reason stays on screen until the next try.
+    private enum PrepareAnswer: Sendable { case result(RemoteCommandResult), lost, timedOut }
+
+    /// Returns false when the Mac refused or did not answer; the reason stays on screen with
+    /// Try Again until the next try. Only website agents need preparing (Messages contacts,
+    /// Mac apps and CLIs do not). A newer prepare makes this one's answer irrelevant.
     @discardableResult
     private func runPrepare() async -> Bool {
+        prepareGeneration += 1
+        let generation = prepareGeneration
         prepareReasons = [:]
-        guard app.connection.state.canSend, !recipients.isEmpty, presenter.disabledReason(agentIDs: recipients, conversation: conversationID) == nil else { return true }
+        guard app.connection.state.canSend, !recipients.isEmpty, presenter.disabledReason(agentIDs: recipients, conversation: conversationID) == nil else {
+            preparing = false
+            return true
+        }
         let needs = recipients.filter { app.store.projection.agents[$0]?.form == .website }
-        guard !needs.isEmpty else { return true }
+        guard !needs.isEmpty else { preparing = false; return true }
         preparing = true
-        defer { preparing = false }
-        guard let result = try? await app.perform(.prepareConversation(conversationID: conversationID, agentIDs: recipients)) else { return true }
-        if result.outcome == .rejected {
+        let action = RemoteAction.prepareConversation(conversationID: conversationID, agentIDs: needs)
+        // Whichever comes first: the Mac's answer or the phone's own deadline.
+        let (answers, race) = AsyncStream<PrepareAnswer>.makeStream()
+        let app = app
+        Task { @MainActor in
+            do { race.yield(.result(try await app.perform(action))) } catch { race.yield(.lost) }
+        }
+        Task {
+            try? await Task.sleep(for: Self.prepareTimeout)
+            race.yield(.timedOut)
+        }
+        var first = answers.makeAsyncIterator()
+        let answer = await first.next() ?? .lost
+        race.finish()
+        guard generation == prepareGeneration else { return false }
+        preparing = false
+        switch answer {
+        case .result(let result) where result.outcome == .rejected:
             prepareReasons = result.agentReasons.isEmpty ? ["": result.message ?? "Not ready"] : result.agentReasons
             return false
+        case .timedOut:
+            prepareReasons = ["": "Mac did not answer"]
+            return false
+        case .result, .lost:
+            // A lost connection shows in the bar's connection line; Send decides then.
+            return true
         }
-        return true
     }
 
     private func send() {

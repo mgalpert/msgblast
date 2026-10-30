@@ -190,9 +190,20 @@ final class AppRemoteHost: RemoteCommandHost {
             return .rejected(.notReady, "Not every agent was ready", conversationID: id, reasons: reasons)
         }
         let capture = RemoteErrorCapture()
+        // The whole answer is bounded: a page that never finishes loading must not hold the
+        // phone's "Getting ready…" forever. Preparation keeps going after the deadline; the
+        // phone gets the reasons that stand at that moment.
+        let deadline = ContinuousClock.now + Self.readinessWait
+        let webAgents = model.webAgents
         // The Mac composer does the same when it shows these agents: open their chats, never launch apps.
-        await RemoteErrorCapture.$current.withValue(capture) { _ = await model.webAgents.prepareComparison(id, for: sessions, startNativeApps: false) }
-        let waiting = await notReadyReasons(sessions, timeout: Self.readinessWait)
+        let preparing = Task { await RemoteErrorCapture.$current.withValue(capture) { _ = await webAgents.prepareComparison(id, for: sessions, startNativeApps: false) } }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await preparing.value }
+            group.addTask { try? await Task.sleep(until: deadline) }
+            await group.next()
+            group.cancelAll()
+        }
+        let waiting = await notReadyReasons(sessions, timeout: max(.zero, deadline - ContinuousClock.now))
         return waiting.isEmpty ? .applied(conversationID: id) : .rejected(.notReady, "Not every agent was ready", conversationID: id, reasons: waiting)
     }
 
