@@ -67,15 +67,26 @@ extension View {
     func macStatusSubtitle(_ app: MobileApp) -> some View { modifier(MacStatusSubtitle(app: app)) }
 }
 
+/// Decoded artwork and what was learned from its pixels, once per image.
+final class AvatarArtwork {
+    let image: UIImage
+    /// An alpha channel with transparent corners: a mark or an app icon, drawn without a disc.
+    let transparent: Bool
+    /// Average luminance of the opaque pixels, for marks that would vanish on the background.
+    let luminance: Double?
+    init(_ image: UIImage) {
+        self.image = image
+        transparent = AvatarImages.cornersTransparent(image)
+        luminance = transparent ? image.cgImage.flatMap { ArtworkTone.luminance(of: $0) } : nil
+    }
+}
+
 /// Decoded artwork, by content reference, so rows do not decode the same bytes again.
 @MainActor
 enum AvatarImages {
-    private static let cache = NSCache<NSString, UIImage>()
-    /// Decided when drawn, from the decoded image: an alpha channel with transparent corners
-    /// (an 8 × 8 sample, cheap enough per render).
-    static func isTransparent(_ image: UIImage) -> Bool { cornersTransparent(image) }
+    private static let cache = NSCache<NSString, AvatarArtwork>()
 
-    private static func cornersTransparent(_ image: UIImage) -> Bool {
+    nonisolated static func cornersTransparent(_ image: UIImage) -> Bool {
         guard let cg = image.cgImage, ![.none, .noneSkipFirst, .noneSkipLast].contains(cg.alphaInfo) else { return false }
         let side = 8
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
@@ -85,12 +96,13 @@ enum AvatarImages {
         let corners = [0, side - 1, side * (side - 1), side * side - 1]
         return corners.contains { pixels[$0 * 4 + 3] < 250 }
     }
-    static func image(_ ref: String?, store: MobileStore) -> UIImage? {
+    static func artwork(_ ref: String?, store: MobileStore) -> AvatarArtwork? {
         guard let ref, let data = store.avatar(ref) else { return nil }
-        if let image = cache.object(forKey: ref as NSString) { return image }
+        if let artwork = cache.object(forKey: ref as NSString) { return artwork }
         guard let image = UIImage(data: data) else { return nil }
-        cache.setObject(image, forKey: ref as NSString)
-        return image
+        let artwork = AvatarArtwork(image)
+        cache.setObject(artwork, forKey: ref as NSString)
+        return artwork
     }
 }
 
@@ -146,23 +158,30 @@ struct AgentAvatar: View {
     var name: String
     var product: String
     var size: CGFloat = Space.avatarInline
-    var image: UIImage? = nil
+    var artwork: AvatarArtwork? = nil
+    @Environment(\.colorScheme) private var colorScheme
 
     /// The agent's name, product color and cached artwork from the projection.
     init(app: MobileApp, agentID: String, name: String, size: CGFloat = Space.avatarInline) {
         let agent = app.store.projection.agents[agentID]
-        self.init(name: name, product: agent?.product.rawValue ?? agentID, size: size, image: AvatarImages.image(agent?.avatarRef, store: app.store))
+        self.init(name: name, product: agent?.product.rawValue ?? agentID, size: size, artwork: AvatarImages.artwork(agent?.avatarRef, store: app.store))
     }
-    init(name: String, product: String, size: CGFloat = Space.avatarInline, image: UIImage? = nil) {
-        self.name = name; self.product = product; self.size = size; self.image = image
+    init(name: String, product: String, size: CGFloat = Space.avatarInline, artwork: AvatarArtwork? = nil) {
+        self.name = name; self.product = product; self.size = size; self.artwork = artwork
     }
 
     var body: some View {
         Group {
-            if let image, AvatarImages.isTransparent(image) {
-                // Transparent artwork (a mark, an app icon) is drawn as it is: no disc, no clip.
-                Image(uiImage: image).resizable().scaledToFit()
-            } else if let image {
+            if let artwork, artwork.transparent {
+                // Transparent artwork (a mark, an app icon) is drawn as it is: no disc, no clip,
+                // unless it would vanish here (a black mark in dark mode, a white one in light).
+                Image(uiImage: artwork.image).resizable().scaledToFit()
+                    .background {
+                        if ArtworkTone.needsBacking(luminance: artwork.luminance, darkBackground: colorScheme == .dark) {
+                            Circle().fill(Color(.secondarySystemFill))
+                        }
+                    }
+            } else if let image = artwork?.image {
                 Image(uiImage: image).resizable().scaledToFill().clipShape(Circle())
             } else {
                 // No letter below 11 pt: small avatars are a plain color.

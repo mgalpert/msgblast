@@ -176,6 +176,39 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(ProjectionPresenter(state: state, commands: [send.id: send]).inbox.map(\.id), [direct, group, contact])
     }
 
+    func testATransparentMarkGetsABackingOnlyWhereItWouldVanish() throws {
+        /// A transparent 64 pt square with an opaque disc of one gray level in the middle.
+        func mark(gray: CGFloat) throws -> CGImage {
+            let context = try XCTUnwrap(CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
+                                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.setFillColor(CGColor(red: gray, green: gray, blue: gray, alpha: 1))
+            context.fillEllipse(in: CGRect(x: 8, y: 8, width: 48, height: 48))
+            return try XCTUnwrap(context.makeImage())
+        }
+        let black = try XCTUnwrap(ArtworkTone.luminance(of: mark(gray: 0)))
+        let white = try XCTUnwrap(ArtworkTone.luminance(of: mark(gray: 1)))
+        let middle = try XCTUnwrap(ArtworkTone.luminance(of: mark(gray: 0.55)))
+        XCTAssertEqual(black, 0, accuracy: 0.01, "Transparent pixels do not count")
+        XCTAssertEqual(white, 1, accuracy: 0.01)
+        XCTAssertTrue((ArtworkTone.darkMark...ArtworkTone.lightMark).contains(middle), "A mid gray (\(middle)) sits between the thresholds")
+
+        XCTAssertTrue(ArtworkTone.needsBacking(luminance: black, darkBackground: true), "A black mark in dark mode")
+        XCTAssertFalse(ArtworkTone.needsBacking(luminance: black, darkBackground: false))
+        XCTAssertTrue(ArtworkTone.needsBacking(luminance: white, darkBackground: false), "A white mark in light mode")
+        XCTAssertFalse(ArtworkTone.needsBacking(luminance: white, darkBackground: true))
+        XCTAssertFalse(ArtworkTone.needsBacking(luminance: middle, darkBackground: true))
+        XCTAssertFalse(ArtworkTone.needsBacking(luminance: middle, darkBackground: false))
+        XCTAssertTrue(ArtworkTone.needsBacking(luminance: 0.34, darkBackground: true))
+        XCTAssertFalse(ArtworkTone.needsBacking(luminance: 0.35, darkBackground: true))
+        XCTAssertTrue(ArtworkTone.needsBacking(luminance: 0.81, darkBackground: false))
+        XCTAssertFalse(ArtworkTone.needsBacking(luminance: 0.8, darkBackground: false))
+        XCTAssertFalse(ArtworkTone.needsBacking(luminance: nil, darkBackground: true), "Nothing opaque, nothing to back")
+
+        let empty = try XCTUnwrap(CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+                                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage())
+        XCTAssertNil(ArtworkTone.luminance(of: empty))
+    }
+
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
         var state = ProjectionState()
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {
