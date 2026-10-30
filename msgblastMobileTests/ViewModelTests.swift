@@ -152,6 +152,76 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(rows[old], false, "Replies from before this phone started tracking are not unread")
     }
 
+    func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
+        var state = ProjectionState()
+        for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {
+            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: .website, displayName: name, visibleInGrid: true, selectedForSharedSend: true,
+                capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                readiness: .ready, reasons: [], observedAt: Date(), source: .live)
+        }
+        let presenter = ProjectionPresenter(state: state)
+        let id = UUID(), three = ["claude", "museApp", "codexCLI"], five = three + ["grok", "dotsApp"]
+        func action(_ selection: Set<String>, _ members: [String] = three) -> RemoteAction {
+            ProjectionPresenter.sendAction(conversationID: id, members: members, recipients: ProjectionPresenter.recipients(selection: selection, members: members), text: "Hi", attachmentIDs: [])
+        }
+        XCTAssertEqual(action([]), .sendShared(conversationID: id, text: "Hi", agentIDs: [], attachmentIDs: []), "All sends to everyone")
+        XCTAssertEqual(action(["museApp"]), .sendPrivate(conversationID: id, agentID: "museApp", text: "Hi", attachmentIDs: []), "One is private")
+        XCTAssertEqual(action(["museApp", "claude"]), .sendShared(conversationID: id, text: "Hi", agentIDs: ["claude", "museApp"], attachmentIDs: []), "Several: those agents, in member order")
+        XCTAssertEqual(action(["claude"], ["claude"]), .sendShared(conversationID: id, text: "Hi", agentIDs: [], attachmentIDs: []), "A direct thread is unchanged")
+        XCTAssertEqual(presenter.placeholder(recipients: ProjectionPresenter.recipients(selection: [], members: three)), "Message")
+        XCTAssertEqual(presenter.placeholder(recipients: ProjectionPresenter.recipients(selection: ["claude"], members: three)), "Message Claude")
+        XCTAssertEqual(presenter.placeholder(recipients: ProjectionPresenter.recipients(selection: ["claude", "museApp"], members: three)), "Message")
+        XCTAssertEqual(presenter.selectionTitle([], members: three), "3 Agents")
+        XCTAssertEqual(presenter.selectionTitle(["claude"], members: three), "Claude")
+        XCTAssertEqual(presenter.selectionTitle(["museApp", "claude"], members: three), "Claude & Muse")
+        XCTAssertEqual(presenter.selectionTitle(["claude", "museApp", "grok"], members: five), "3 of 5")
+        XCTAssertEqual(presenter.selectionTitle(Set(three), members: three), "3 Agents", "Everyone selected reads as All")
+    }
+
+    func testAReplyQuotesTheRightResponseOnly() {
+        var state = ProjectionState()
+        let conversation = UUID(), sent = Date(timeIntervalSince1970: 1_800_000_000)
+        state.conversations[conversation] = RemoteConversation(id: conversation, title: "T", prompt: "P", created: sent, endedAt: nil, agentIDs: ["claude", "codexCLI"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: sent)
+        state.turns["answer"] = RemoteTurn(id: "answer", conversationID: conversation, agentID: "claude", role: .assistant, origin: .agentTranscript, text: "Trofie", created: sent.addingTimeInterval(-60), ordinal: 0, contentHash: "a")
+        let reply = RemoteTurn(id: "reply", conversationID: conversation, agentID: "claude", role: .user, origin: .followUp, text: "Why trofie?", created: sent.addingTimeInterval(2), ordinal: 1, contentHash: "b")
+        let other = RemoteTurn(id: "other", conversationID: conversation, agentID: "codexCLI", role: .user, origin: .followUp, text: "Why trofie?", created: sent.addingTimeInterval(2), ordinal: 2, contentHash: "c")
+        state.turns[reply.id] = reply; state.turns[other.id] = other
+        let command = RemoteCommand(action: .sendPrivate(conversationID: conversation, agentID: "claude", text: "Why trofie?", attachmentIDs: []))
+        let presenter = ProjectionPresenter(state: state, commands: [command.clientCommandID: CommandLedger.record(command, at: sent)], replyTo: [command.clientCommandID: "answer"])
+        XCTAssertEqual(presenter.quotedTurn(for: reply)?.id, "answer")
+        XCTAssertNil(presenter.quotedTurn(for: other), "Never on another agent's turn, even with the same text")
+        XCTAssertNil(presenter.quotedTurn(for: state.turns["answer"]!), "Only your own turns quote")
+        XCTAssertNil(ProjectionPresenter(state: state, commands: [command.clientCommandID: CommandLedger.record(command, at: sent)]).quotedTurn(for: reply), "No link, no quote")
+    }
+
+    @MainActor func testReplyLinksSurviveRelaunchAndForget() throws {
+        let database = try LocalDatabase(url: nil)
+        let store = MobileStore(database: database)
+        let command = UUID()
+        store.recordReply(command, quoting: "answer")
+        XCTAssertEqual(MobileStore(database: database).replyTo[command], "answer")
+        store.forgetMac()
+        XCTAssertTrue(MobileStore(database: database).replyTo.isEmpty)
+    }
+
+    func testPinnedPromptIsTheSharedPromptOfAGroupOnly() {
+        var state = ProjectionState()
+        let group = UUID(), direct = UUID(), noPrompt = UUID(), start = Date(timeIntervalSince1970: 1_800_000_000)
+        for (id, agents) in [(group, ["claude", "codexCLI"]), (direct, ["claude"]), (noPrompt, ["claude", "codexCLI"])] {
+            state.conversations[id] = RemoteConversation(id: id, title: "T", prompt: "P", created: start, endedAt: nil, agentIDs: agents, canEnd: true, unresolvedAttemptCount: 0, lastActivity: start)
+        }
+        state.turns["g0"] = RemoteTurn(id: "g0", conversationID: group, agentID: nil, role: .user, origin: .sharedPrompt, text: "Compare these", created: start, ordinal: 0, contentHash: "a")
+        state.turns["g1"] = RemoteTurn(id: "g1", conversationID: group, agentID: "claude", role: .assistant, origin: .agentTranscript, text: "Sure", created: start.addingTimeInterval(5), ordinal: 1, contentHash: "b")
+        state.turns["d0"] = RemoteTurn(id: "d0", conversationID: direct, agentID: nil, role: .user, origin: .sharedPrompt, text: "Hi", created: start, ordinal: 0, contentHash: "c")
+        state.turns["n0"] = RemoteTurn(id: "n0", conversationID: noPrompt, agentID: "claude", role: .user, origin: .followUp, text: "Only Claude", created: start, ordinal: 0, contentHash: "d")
+        let presenter = ProjectionPresenter(state: state)
+        XCTAssertEqual(presenter.pinnedPrompt(for: group)?.id, "g0")
+        XCTAssertEqual(presenter.pinnedPrompt(for: group, agentID: "codexCLI")?.id, "g0", "An agent's view still starts with the shared prompt")
+        XCTAssertNil(presenter.pinnedPrompt(for: direct), "Never in a direct thread")
+        XCTAssertNil(presenter.pinnedPrompt(for: noPrompt), "No shared prompt, no pin")
+        XCTAssertNil(presenter.pinnedPrompt(for: noPrompt, agentID: "claude"))
+    }
+
     func testSenderLabelsNameTheFormOnlyWhenTwoFormsShareAConversation() {
         var state = ProjectionState()
         func agent(_ id: String, _ product: AgentProduct, _ form: AgentForm, _ name: String) -> AgentAvailability {

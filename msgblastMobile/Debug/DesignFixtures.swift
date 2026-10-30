@@ -11,17 +11,19 @@ import msgblastRemoteProtocol
 /// and `MSGBLAST_FIXTURE_DRAFT=<text>` to pre-fill the composer).
 /// Everything here is simulated; nothing is read from or sent to a Mac.
 enum DesignFixtures {
-    enum Name: String, CaseIterable { case inbox, conversation, conversationShort = "conversation-short", typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
+    enum Name: String, CaseIterable { case inbox, conversation, conversationShort = "conversation-short", conversationPinned = "conversation-pinned", conversationMany = "conversation-many", typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
 
     static var current: Name? { ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE"].flatMap(Name.init(rawValue:)) }
 
     static let now = Date()
+    static let replyText = "Why trofie?"
     static let group = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000001")!
     static let codexDirect = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000002")!
     static let cedarDirect = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000003")!
     static let unfinished = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000004")!
     static let blockedConversation = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000005")!
     static let shortConversation = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000006")!
+    static let manyConversation = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000007")!
     static let cedar = "messages:6F1C2B4A-0000-4000-8000-0000000000C0"
 
     /// The screen the fixture opens on.
@@ -30,6 +32,8 @@ enum DesignFixtures {
         switch name {
         case .conversation, .typing: return .conversation(requested ?? group)
         case .conversationShort: return .conversation(requested ?? shortConversation)
+        case .conversationPinned: return .conversation(requested ?? group)
+        case .conversationMany: return .conversation(requested ?? manyConversation)
         case .incomplete: return .conversation(requested ?? unfinished)
         case .blocked: return .conversation(requested ?? blockedConversation)
         case .new: return .newConversation
@@ -61,6 +65,12 @@ enum DesignFixtures {
         }
         // Every row but the group has been read on this phone, so the inbox shows one unread dot.
         for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
+        if name != .pairing && name != .pairingPaste {
+            let command = RemoteCommand(action: .sendPrivate(conversationID: group, agentID: "claude", text: replyText, attachmentIDs: []))
+            app.store.recordSent(command, at: now.addingTimeInterval(-50 * 60 + 119))
+            app.store.handle(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, conversationID: group)))
+            app.store.recordReply(command.clientCommandID, quoting: "\(group)-r1")
+        }
         return app
     }
 
@@ -107,6 +117,10 @@ enum DesignFixtures {
         reply(&state, group, "claude", "r1", "Trofie. Its twists hold pesto better than anything else, and it is the Ligurian classic.", at: t0.addingTimeInterval(40))
         reply(&state, group, "claude", "r1b", "Fusilli is a close second.", at: t0.addingTimeInterval(45))
         reply(&state, group, "chatgptApp", "r2", "Trofie or trenette. If you can't find those, use fusilli.", at: t0.addingTimeInterval(55))
+        // A reply from this phone to Claude's first answer (a private send; the quote is local).
+        user(&state, group, "q1", Self.replyText, at: t0.addingTimeInterval(120), agent: "claude")
+        attempt(&state, group, "claude", Self.replyText, .observed, at: t0.addingTimeInterval(120))
+        reply(&state, group, "claude", "r3", "Its tight twists trap the sauce in every bite.", at: t0.addingTimeInterval(150))
         let t1 = now.addingTimeInterval(-4 * 60)
         user(&state, group, "p2", "What about gnocchi?", at: t1)
         attempt(&state, group, "claude", "What about gnocchi?", .sending, at: t1)
@@ -137,6 +151,27 @@ enum DesignFixtures {
                 text: "Plan two days in Lisbon.", status: .attempting, detail: "Outgoing message observed in the app. Waiting for its reply.", created: t4)
             state.attempts["wa:11111111-0000-4000-8000-000000000002"] = RemoteAttempt(id: "wa:11111111-0000-4000-8000-000000000002", conversationID: unfinished, agentID: "chatgptApp",
                 text: "Plan two days in Lisbon.", status: .uncertain, detail: "ChatGPT stopped answering before its reply finished.", created: t4)
+        }
+        if name == .conversationPinned {
+            // A longer group thread, so the first prompt scrolls away and the pinned row shows.
+            let more = ["Which olive oil?", "Pine nuts or walnuts?", "How much garlic?", "Pecorino or Parmigiano?"]
+            for (index, question) in more.enumerated() {
+                let at = now.addingTimeInterval(Double(-30 + index * 5) * 60)
+                user(&state, group, "q\(index)", question, at: at)
+                attempt(&state, group, "claude", question, .observed, at: at)
+                reply(&state, group, "claude", "a\(index)", "For \(question.lowercased().dropLast()) keep it simple: use what tastes good raw.", at: at.addingTimeInterval(30))
+            }
+        }
+        if name == .conversationMany {
+            // Six agents, so the agent tabs scroll.
+            let t7 = now.addingTimeInterval(-20 * 60)
+            let members = ["claude", "chatgptApp", "museApp", "codexCLI", "dotsApp", "grok"]
+            conversation(&state, manyConversation, "Name for a bakery", members, created: t7, last: t7.addingTimeInterval(90))
+            user(&state, manyConversation, "m0", "Suggest one name for a small neighborhood bakery.", at: t7)
+            for (index, (agent, answer)) in [("claude", "Crumb & Co."), ("museApp", "Morning Proof"), ("codexCLI", "Flour Hour")].enumerated() {
+                attempt(&state, manyConversation, agent, "Suggest one name for a small neighborhood bakery.", .observed, at: t7)
+                reply(&state, manyConversation, agent, "m\(index + 1)", answer, at: t7.addingTimeInterval(Double(30 + index * 20)))
+            }
         }
         if name == .conversationShort {
             // Like a real one-question Muse thread: one message and one reply.

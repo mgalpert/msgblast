@@ -16,6 +16,9 @@ public final class MobileStore: ObservableObject {
     @Published public private(set) var lastOpened: [UUID: Date]
     /// When this phone first heard from the paired Mac; older replies are not unread.
     public private(set) var unreadSince: Date?
+    /// Replies made from this phone: command id → the quoted turn. Local only; the Mac
+    /// never sees the link.
+    @Published public private(set) var replyTo: [UUID: String]
     private let database: LocalDatabase
     private var saveTask: Task<Void, Never>?
 
@@ -26,6 +29,7 @@ public final class MobileStore: ObservableObject {
         drafts = database.value([String: String].self, "drafts") ?? [:]
         lastOpened = database.value([UUID: Date].self, "lastOpened") ?? [:]
         unreadSince = database.value(Date.self, "unreadSince")
+        replyTo = database.value([UUID: String].self, "replyTo") ?? [:]
         let refs = database.value([String].self, "avatarRefs") ?? []
         avatars = Dictionary(uniqueKeysWithValues: refs.compactMap { ref in database.data(Self.avatarKey(ref)).map { (ref, $0) } })
         // A previous run may have ended mid-command: those are unconfirmed until the Mac says otherwise.
@@ -67,6 +71,13 @@ public final class MobileStore: ObservableObject {
         scheduleSave()
     }
 
+    // MARK: Replies
+
+    public func recordReply(_ command: UUID, quoting turnID: String) {
+        replyTo[command] = turnID
+        database.setValue(replyTo, "replyTo")
+    }
+
     // MARK: Unread
 
     public func markOpened(_ conversation: UUID, at date: Date = Date()) {
@@ -97,6 +108,7 @@ public final class MobileStore: ObservableObject {
         avatars = [:]
         lastOpened = [:]
         unreadSince = nil
+        replyTo = [:]
         database.removeAll()
     }
 

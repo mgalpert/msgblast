@@ -88,8 +88,27 @@ public struct ProjectionPresenter: Sendable {
     /// When each conversation was last opened on this phone, and when unread tracking began.
     public let lastOpened: [UUID: Date]
     public let unreadSince: Date?
-    public init(state: ProjectionState, commands: [UUID: CommandRecord] = [:], lastOpened: [UUID: Date] = [:], unreadSince: Date? = nil) {
-        self.state = state; self.commands = commands; self.lastOpened = lastOpened; self.unreadSince = unreadSince
+    /// Replies made from this phone: command id → quoted turn id.
+    public let replyTo: [UUID: String]
+    public init(state: ProjectionState, commands: [UUID: CommandRecord] = [:], lastOpened: [UUID: Date] = [:], unreadSince: Date? = nil, replyTo: [UUID: String] = [:]) {
+        self.state = state; self.commands = commands; self.lastOpened = lastOpened; self.unreadSince = unreadSince; self.replyTo = replyTo
+    }
+
+    /// The response one of your turns replied to: a reply is a private send to that agent,
+    /// so the turn is that agent's, with the reply's text, sent no earlier than the command.
+    /// Never another agent's turn.
+    public func quotedTurn(for turn: RemoteTurn) -> RemoteTurn? {
+        guard turn.role == .user, let agent = turn.agentID else { return nil }
+        let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for (command, quotedID) in replyTo.sorted(by: { $0.value < $1.value }) {
+            guard let record = commands[command], let quoted = state.turns[quotedID], quoted.agentID == agent,
+                  quoted.conversationID == turn.conversationID, record.agentIDs == [agent],
+                  record.conversationID == nil || record.conversationID == turn.conversationID,
+                  record.text?.trimmingCharacters(in: .whitespacesAndNewlines) == text else { continue }
+            if let created = turn.created, created < record.sentAt.addingTimeInterval(-300) { continue }
+            return quoted
+        }
+        return nil
     }
 
     public func name(_ agentID: String) -> String { state.agents[agentID]?.formLabel ?? agentID }
@@ -124,6 +143,16 @@ public struct ProjectionPresenter: Sendable {
             return all.filter { !($0.origin == .agentTranscript && $0.role == .user) }
         }
         return all.filter { $0.agentID == agentID || ($0.agentID == nil && $0.origin == .sharedPrompt) }
+    }
+
+    /// The prompt that formed a group, for the pinned row: the conversation's first turn
+    /// when it is the shared prompt. Nil for direct threads, for a filtered view that does
+    /// not start with it, and when there is no shared prompt.
+    public func pinnedPrompt(for conversation: UUID, agentID filter: String? = nil) -> RemoteTurn? {
+        guard (state.conversations[conversation]?.agentIDs.count ?? 0) > 1,
+              let first = turns(in: conversation, agentID: filter).first,
+              first.role == .user, first.origin == .sharedPrompt, !first.text.isEmpty else { return nil }
+        return first
     }
 
     /// Like Messages: a reply newer than the last time this phone opened the conversation
@@ -218,6 +247,61 @@ public struct ProjectionPresenter: Sendable {
         if let text = reason?.detail, !text.isEmpty, !details.contains(text) { details.append(text) }
         return IncompleteSummary(agentID: incomplete.agentID, running: running, title: running ? "Waiting for \(name)…" : "\(name) didn't reply",
                                  details: details, started: attempt?.created)
+    }
+
+    // MARK: Selection: the header cluster is both the thread's filter and its recipients.
+
+    /// Who a group's selection sends to and shows: empty means everyone.
+    public static func recipients(selection: Set<String>, members: [String]) -> [String] {
+        selection.isEmpty ? members : members.filter(selection.contains)
+    }
+
+    /// The send for these recipients: one agent of a group is private, everyone is a shared
+    /// send to all, a subset a shared send to those agents (as the recipient chips did).
+    public static func sendAction(conversationID: UUID?, members: [String], recipients: [String], text: String, attachmentIDs: [String]) -> RemoteAction {
+        guard let conversationID else {
+            return recipients.count == 1 ? .sendPrivate(conversationID: nil, agentID: recipients[0], text: text, attachmentIDs: attachmentIDs)
+                : .createConversation(text: text, agentIDs: recipients, attachmentIDs: attachmentIDs)
+        }
+        if recipients.count == 1 && members.count > 1 { return .sendPrivate(conversationID: conversationID, agentID: recipients[0], text: text, attachmentIDs: attachmentIDs) }
+        if Set(recipients) == Set(members) { return .sendShared(conversationID: conversationID, text: text, agentIDs: [], attachmentIDs: attachmentIDs) }
+        return .sendShared(conversationID: conversationID, text: text, agentIDs: recipients, attachmentIDs: attachmentIDs)
+    }
+
+    /// "Message Claude" for one recipient, else "Message".
+    public func placeholder(recipients: [String]) -> String { recipients.count == 1 ? "Message \(shortName(recipients[0]))" : "Message" }
+
+    /// The header pill: "3 Agents", "Claude", "Claude & Muse", "3 of 5".
+    public func selectionTitle(_ selection: Set<String>, members: [String]) -> String {
+        let chosen = members.filter(selection.contains)
+        switch chosen.count {
+        case 0, members.count: return "\(members.count) Agents"
+        case 1: return shortName(chosen[0])
+        case 2: return "\(shortName(chosen[0])) & \(shortName(chosen[1]))"
+        default: return "\(chosen.count) of \(members.count)"
+        }
+    }
+
+    /// The turns a selection shows: All, one agent's private view, or the union of several.
+    public func turns(in conversation: UUID, selection: Set<String>) -> [RemoteTurn] {
+        if selection.count == 1, let only = selection.first { return turns(in: conversation, agentID: only) }
+        let all = turns(in: conversation, agentID: nil)
+        return selection.isEmpty ? all : all.filter { $0.agentID.map(selection.contains) ?? true }
+    }
+    public func visibleChips(for turn: RemoteTurn, selection: Set<String>, isLatest: Bool, expanded: Bool) -> [StatusChip] {
+        let single = selection.count == 1 ? selection.first : nil
+        return visibleChips(for: turn, agentID: single, isLatest: isLatest, expanded: expanded).filter { selection.isEmpty || selection.contains($0.agentID) }
+    }
+    public func chips(for turn: RemoteTurn, selection: Set<String>) -> [StatusChip] {
+        chips(for: turn, agentID: selection.count == 1 ? selection.first : nil).filter { selection.isEmpty || selection.contains($0.agentID) }
+    }
+    public func typingAgents(in conversation: UUID, selection: Set<String>) -> [String] {
+        typingAgents(in: conversation).filter { selection.isEmpty || selection.contains($0) }
+    }
+    public func pinnedPrompt(for conversation: UUID, selection: Set<String>) -> RemoteTurn? {
+        guard (state.conversations[conversation]?.agentIDs.count ?? 0) > 1, let first = turns(in: conversation, selection: selection).first,
+              first.role == .user, first.origin == .sharedPrompt, !first.text.isEmpty else { return nil }
+        return first
     }
 
     /// "To everyone", "Only Muse", "To 2 agents".

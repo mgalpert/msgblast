@@ -4,13 +4,18 @@ import UniformTypeIdentifiers
 import msgblastMobileKit
 import msgblastRemoteProtocol
 
-/// Recipient chips (all members = shared, one = private), a per-device draft, attachments
-/// for Messages agents, and at most one status line: what blocks Send, then preparing,
+/// The compose bar. Recipients come from the conversation's header selection (all members =
+/// shared, one = private, several = a subset); a per-device draft, attachments for Messages
+/// agents, a quote bar while replying, and at most one status line: what blocks Send, then preparing,
 /// then the last result, then a launch note. A longer Mac reason is behind ⓘ.
 struct ComposeBar: View {
     @ObservedObject var app: MobileApp
     let conversationID: UUID?
     @Binding var recipients: [String]
+    /// The response being replied to; the conversation narrows recipients to its agent.
+    var replyTo: Binding<RemoteTurn?> = .constant(nil)
+    /// Focus requests from the conversation, such as starting a reply.
+    var focusRequest = 0
     var onSent: (UUID?) -> Void
     @State private var text = ""
     @State private var preparing = false
@@ -47,26 +52,17 @@ struct ComposeBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.gap) {
-            if conversationID != nil && members.count > 1 {
-                // Recipients wrap like Mail's, with the summary always the last item.
-                FlowLayout(spacing: Space.gap) {
-                    ForEach(members, id: \.self) { id in
-                        let on = recipients.contains(id)
-                        Button { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } } label: {
-                            HStack(spacing: Space.tight) {
-                                AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: Space.avatarChip)
-                                Text(presenter.shortName(id)).font(.subheadline)
-                                    .foregroundStyle(on ? Color.primary : Color.secondary)
-                            }
-                            .padding(.leading, Space.tight).padding(.trailing, Space.gap).padding(.vertical, Space.tight)
-                            .opacity(on ? 1 : 0.6)
-                        }
-                        .buttonStyle(.plain)
-                        // Liquid Glass chips; a chosen recipient takes the accent tint.
-                        .glassEffect(on ? .regular.tint(Color.accentColor.opacity(0.35)).interactive() : .regular.interactive(), in: .capsule)
-                        .accessibilityValue(on ? "Selected" : "Not selected")
+            if let quoted = replyTo.wrappedValue, let agent = quoted.agentID {
+                // Messages-style quote bar while replying to one response.
+                HStack(spacing: Space.gap) {
+                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarChip)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Replying to \(presenter.shortName(agent))").font(.caption.weight(.semibold))
+                        Text(quoted.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    Text(presenter.recipientSummary(recipients, members: members)).font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button { replyTo.wrappedValue = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                        .buttonStyle(.plain).accessibilityLabel("Cancel Reply")
                 }
             }
             if let status { statusLine(status) }
@@ -132,6 +128,7 @@ struct ComposeBar: View {
         .background(.bar)
         .sensoryFeedback(.success, trigger: sentCount)
         .sensoryFeedback(.error, trigger: refusedCount)
+        .onChange(of: focusRequest) { _, _ in fieldFocused = true }
         .onAppear {
             text = app.store.draft(draftKey); prepare()
             #if DEBUG
@@ -154,7 +151,7 @@ struct ComposeBar: View {
 
     private var hasContent: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty }
     /// "Message" for a group, "Message Muse" for one agent.
-    private var placeholder: String { recipients.count == 1 ? "Message \(presenter.shortName(recipients[0]))" : "Message" }
+    private var placeholder: String { presenter.placeholder(recipients: recipients) }
 
     private struct Status {
         var text: String
@@ -236,16 +233,8 @@ struct ComposeBar: View {
     private func submit() {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let files = attachments.map(\.id)
-        let action: RemoteAction
-        if let conversationID {
-            if recipients.count == 1 && members.count > 1 { action = .sendPrivate(conversationID: conversationID, agentID: recipients[0], text: body, attachmentIDs: files) }
-            else if Set(recipients) == Set(members) { action = .sendShared(conversationID: conversationID, text: body, agentIDs: [], attachmentIDs: files) }
-            else { action = .sendShared(conversationID: conversationID, text: body, agentIDs: recipients, attachmentIDs: files) }
-        } else if recipients.count == 1 {
-            action = .sendPrivate(conversationID: nil, agentID: recipients[0], text: body, attachmentIDs: files)
-        } else {
-            action = .createConversation(text: body, agentIDs: recipients, attachmentIDs: files)
-        }
+        let action = ProjectionPresenter.sendAction(conversationID: conversationID, members: conversationID == nil ? recipients : members,
+                                                    recipients: recipients, text: body, attachmentIDs: files)
         sending = true
         message = nil
         Task {
@@ -255,6 +244,8 @@ struct ComposeBar: View {
                 if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
                 sentCount += 1
                 text = ""; attachments = []
+                // The reply link stays on this phone; the Mac only gets a private send.
+                if let quoted = replyTo.wrappedValue { app.store.recordReply(result.clientCommandID, quoting: quoted.id); replyTo.wrappedValue = nil }
                 onSent(result.conversationID)
             } catch {
                 // Keep the text and files: the Mac may never have received them. An unconfirmed
@@ -283,46 +274,5 @@ struct ComposeBar: View {
         defer { uploading = false }
         do { attachments.append((try await app.upload(data, filename: name), name)); message = nil }
         catch { message = error.localizedDescription }
-    }
-}
-
-/// Lays out subviews left to right, wrapping onto new lines; each line is centered vertically.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = Space.gap
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = rows(width: proposal.width ?? .infinity, subviews: subviews)
-        let width = rows.map(\.width).max() ?? 0
-        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
-        return CGSize(width: proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(width: bounds.width, subviews: subviews) {
-            var x = bounds.minX
-            for index in row.indices {
-                let size = subviews[index].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
-                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(width: min(size.width, bounds.width), height: size.height))
-                x += size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-
-    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
-
-    private func rows(width: CGFloat, subviews: Subviews) -> [Row] {
-        var rows: [Row] = [Row()]
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil))
-            if !rows[rows.count - 1].indices.isEmpty && rows[rows.count - 1].width + spacing + size.width > width { rows.append(Row()) }
-            var row = rows[rows.count - 1]
-            row.width += (row.indices.isEmpty ? 0 : spacing) + min(size.width, width)
-            row.height = max(row.height, size.height)
-            row.indices.append(index)
-            rows[rows.count - 1] = row
-        }
-        return rows
     }
 }
