@@ -64,6 +64,26 @@ public enum RemoteProjectionBuilder {
     static func status(_ web: WebSendStatus) -> RemoteAttemptStatus { RemoteAttemptStatus(rawValue: web.rawValue) ?? .uncertain }
     static func role(_ role: String) -> RemoteTurnRole { role == "user" ? .user : role == "assistant" ? .assistant : .system }
 
+    /// The files recorded on each projected turn, by the same turn ids `state(from:)` uses.
+    /// `fetchAttachment` reads only these.
+    public static func attachmentFiles(from input: RemoteProjectionInput) -> [String: [MessageAttachment]] {
+        var files: [String: [MessageAttachment]] = [:]
+        for comparison in input.comparisons {
+            let cid = comparison.id
+            if let prompt = comparison.attachments, !prompt.isEmpty { files["p:\(cid.uuidString)"] = prompt }
+            for member in comparison.members {
+                for message in input.messagesTranscripts[cid]?[member.id] ?? [] where !message.outgoing && !message.attachments.isEmpty {
+                    files["m:\(message.guid)"] = message.attachments
+                }
+            }
+            for followUp in comparison.followUps {
+                let attached = followUp.payloads?.values.first?.parts.compactMap(\.attachment) ?? []
+                if !attached.isEmpty { files["f:\(followUp.id.uuidString)"] = attached }
+            }
+        }
+        return files
+    }
+
     public static func state(from input: RemoteProjectionInput) -> RemoteProjectionState {
         var conversations: [RemoteConversation] = [], turns: [RemoteTurn] = [], attempts: [RemoteAttempt] = []
         for comparison in input.comparisons {

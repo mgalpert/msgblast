@@ -41,6 +41,11 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     /// Names a conversation (Messages' "Change Name"). The Mac trims it and refuses an empty
     /// name or one over 80 characters. Older Macs answer `unsupported`.
     case renameConversation(conversationID: UUID, title: String)
+    /// Read-only: one attachment of a turn, on demand. Images come back as JPEG scaled to
+    /// fit `maxBytes` (320 px thumbnails up to 256 KB, else 1600 px); other files whole when
+    /// they fit `maxBytes` and `RemoteProtocol.maximumAttachmentFetchBytes`. Older Macs answer
+    /// `unsupported`.
+    case fetchAttachment(turnID: String, index: Int, maxBytes: Int)
     case unknown(kind: String)
 
     public var kind: String {
@@ -59,6 +64,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .queryCommand: "queryCommand"
         case .fetchAvatar: "fetchAvatar"
         case .renameConversation: "renameConversation"
+        case .fetchAttachment: "fetchAttachment"
         case .unknown(let kind): kind
         }
     }
@@ -73,7 +79,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID, ref, title
+        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID, ref, title, turnID, maxBytes
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -97,6 +103,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case "prepareConversation": self = .prepareConversation(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentIDs: try ids(.agentIDs))
         case "queryCommand": self = .queryCommand(clientCommandID: try c.decode(UUID.self, forKey: .clientCommandID))
         case "fetchAvatar": self = .fetchAvatar(ref: try c.decode(String.self, forKey: .ref))
+        case "fetchAttachment":
+            self = .fetchAttachment(turnID: try c.decode(String.self, forKey: .turnID), index: try c.decode(Int.self, forKey: .index), maxBytes: try c.decode(Int.self, forKey: .maxBytes))
         case "renameConversation": self = .renameConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID), title: try c.decode(String.self, forKey: .title))
         default: self = .unknown(kind: kind)
         }
@@ -126,6 +134,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .queryCommand(let id): try c.encode(id, forKey: .clientCommandID)
         case .fetchAvatar(let ref): try c.encode(ref, forKey: .ref)
         case .renameConversation(let id, let title): try c.encode(id, forKey: .conversationID); try c.encode(title, forKey: .title)
+        case .fetchAttachment(let turnID, let index, let maxBytes):
+            try c.encode(turnID, forKey: .turnID); try c.encode(index, forKey: .index); try c.encode(maxBytes, forKey: .maxBytes)
         case .unknown: break
         }
     }
@@ -156,6 +166,8 @@ public struct RemoteRejectionCode: RemoteOpenValue {
     public static let unknownCommand: Self = "unknownCommand"
     /// `fetchAvatar` named artwork this Mac does not have (any more).
     public static let unknownAvatar: Self = "unknownAvatar"
+    /// `fetchAttachment` named a file the Mac does not have, or one too large to send.
+    public static let attachmentUnavailable: Self = "attachmentUnavailable"
 }
 
 public struct RemoteCommandResult: Codable, Hashable, Sendable {
@@ -182,12 +194,15 @@ public struct RemoteCommandResult: Codable, Hashable, Sendable {
     public var replayed: Bool
     /// `fetchAvatar` only: the image bytes (PNG or JPEG, at most `RemoteProtocol.maximumAvatarBytes`).
     public var avatar: Data?
-    public init(clientCommandID: UUID, outcome: Outcome, code: RemoteRejectionCode? = nil, message: String? = nil, conversationID: UUID? = nil, attachmentID: String? = nil, agentStatuses: [String: RemoteAttemptStatus] = [:], agentReasons: [String: String] = [:], replayed: Bool = false, avatar: Data? = nil) {
+    /// `fetchAttachment` only: the file's bytes and its type (a MIME type such as `image/jpeg`).
+    public var attachment: Data?
+    public var attachmentType: String?
+    public init(clientCommandID: UUID, outcome: Outcome, code: RemoteRejectionCode? = nil, message: String? = nil, conversationID: UUID? = nil, attachmentID: String? = nil, agentStatuses: [String: RemoteAttemptStatus] = [:], agentReasons: [String: String] = [:], replayed: Bool = false, avatar: Data? = nil, attachment: Data? = nil, attachmentType: String? = nil) {
         self.clientCommandID = clientCommandID; self.outcome = outcome; self.code = code; self.message = message
         self.conversationID = conversationID; self.attachmentID = attachmentID; self.agentStatuses = agentStatuses; self.agentReasons = agentReasons; self.replayed = replayed
-        self.avatar = avatar
+        self.avatar = avatar; self.attachment = attachment; self.attachmentType = attachmentType
     }
-    private enum CodingKeys: String, CodingKey { case clientCommandID, outcome, code, message, conversationID, attachmentID, agentStatuses, agentReasons, replayed, avatar }
+    private enum CodingKeys: String, CodingKey { case clientCommandID, outcome, code, message, conversationID, attachmentID, agentStatuses, agentReasons, replayed, avatar, attachment, attachmentType }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         clientCommandID = try c.decode(UUID.self, forKey: .clientCommandID)
@@ -200,6 +215,8 @@ public struct RemoteCommandResult: Codable, Hashable, Sendable {
         agentReasons = try c.decodeIfPresent([String: String].self, forKey: .agentReasons) ?? [:]
         replayed = try c.decodeIfPresent(Bool.self, forKey: .replayed) ?? false
         avatar = try c.decodeIfPresent(Data.self, forKey: .avatar)
+        attachment = try c.decodeIfPresent(Data.self, forKey: .attachment)
+        attachmentType = try c.decodeIfPresent(String.self, forKey: .attachmentType)
     }
     public static func rejected(_ id: UUID, _ code: RemoteRejectionCode, _ message: String) -> Self {
         Self(clientCommandID: id, outcome: .rejected, code: code, message: message)

@@ -119,11 +119,21 @@ public protocol RemoteCommandHost: AnyObject {
     func avatar(_ ref: String) -> Data?
     /// Names a conversation through the Mac's model. The executor has checked the name.
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult
+    /// One attachment of a projected turn, prepared for the phone; only files recorded on
+    /// that turn are ever read.
+    func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch
+}
+
+/// What the Mac returns for `fetchAttachment`.
+public enum RemoteAttachmentFetch: Sendable, Equatable {
+    case data(Data, type: String)
+    case unavailable(String)
 }
 
 public extension RemoteCommandHost {
     func avatar(_ ref: String) -> Data? { nil }
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { .rejected(.unsupported, "Update msgblast on your Mac") }
+    func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch { .unavailable("This file is no longer on your Mac") }
 }
 
 /// Applies phone commands. Idempotent by `clientCommandID`: a replay returns the
@@ -155,6 +165,7 @@ public final class RemoteCommandExecutor {
         // Read-only and repeatable: answered at once, even while locked, and kept out of the
         // ledger so artwork bytes are not held for replay.
         if case .fetchAvatar(let ref) = command.action { reply(avatar(command, ref: ref)); return }
+        if case .fetchAttachment(let turnID, let index, let maxBytes) = command.action { reply(attachment(command, turnID: turnID, index: index, maxBytes: maxBytes)); return }
         if var stored = ledger[id] { stored.replayed = true; reply(stored); return }
         if inProgress.contains(id) { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Already running on your Mac", replayed: true)); return }
         if command.action.isSerial {
@@ -270,6 +281,19 @@ public final class RemoteCommandExecutor {
         return RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, avatar: data)
     }
 
+    /// Conversation content, so refused while locked; kept out of the ledger like artwork.
+    private func attachment(_ command: RemoteCommand, turnID: String, index: Int, maxBytes: Int) -> RemoteCommandResult {
+        guard let host else { return reject(command, .failed, "Remote control stopped on your Mac") }
+        guard !host.isLocked else { return reject(command, .macLocked, "Your Mac is locked") }
+        let limit = min(max(maxBytes, 1), RemoteProtocol.maximumAttachmentFetchBytes)
+        switch host.attachment(turnID: turnID, index: index, maxBytes: limit) {
+        case .data(let data, let type) where data.count <= limit:
+            return RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, attachment: data, attachmentType: type)
+        case .data: return reject(command, .attachmentUnavailable, "Too large to open on the phone")
+        case .unavailable(let message): return reject(command, .attachmentUnavailable, message)
+        }
+    }
+
     /// A stored, running, or unknown command. Read-only: never runs anything.
     public func status(of id: UUID) -> RemoteCommandResult {
         if var stored = ledger[id] { stored.replayed = true; return stored }
@@ -348,7 +372,7 @@ public final class RemoteCommandExecutor {
             guard Data(SHA256.hash(data: data)) == digest else { return reject(command, .attachmentRejected, "Upload failed. Add it again") }
             do { return outcome(command, .applied(), attachmentID: try host.stageAttachment(data, filename: upload.filename)) }
             catch { return reject(command, .attachmentRejected, error.localizedDescription) }
-        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand, .fetchAvatar: return reject(command, .invalidCommand, "Handled separately.")
+        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
         case .unknown(let kind): return reject(command, .unsupported, "Update msgblast on your Mac")
         }
     }

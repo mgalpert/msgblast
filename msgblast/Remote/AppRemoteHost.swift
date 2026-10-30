@@ -219,6 +219,15 @@ final class AppRemoteHost: RemoteCommandHost {
         return .applied()
     }
 
+    func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch {
+        // Only files recorded on that projected turn; never a path the phone names.
+        let input = model.remoteProjectionInput(settings: settings(), power: power, keepAwake: keepAwake, agents: availabilityModel.agents)
+        guard let files = RemoteProjectionBuilder.attachmentFiles(from: input)[turnID], files.indices.contains(index) else {
+            return .unavailable("This file is no longer on your Mac")
+        }
+        return RemoteAttachmentFiles.prepare(files[index], maxBytes: maxBytes)
+    }
+
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult {
         guard model.comparison(id) != nil else { return .rejected(.unknownConversation, "This conversation is gone from your Mac") }
         let capture = RemoteErrorCapture()

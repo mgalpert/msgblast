@@ -16,6 +16,8 @@ public enum RemoteProtocol {
     public static let maximumAttachmentBytes = 25 * 1024 * 1024
     /// Upper bound for one agent's artwork sent with `fetchAvatar` (256 × 256 PNG or JPEG).
     public static let maximumAvatarBytes = 64 * 1024
+    /// Upper bound for one fetched attachment, so its base64 form fits in one frame.
+    public static let maximumAttachmentFetchBytes = 5 * 1024 * 1024
     /// Bonjour service type advertised on the LAN listener only.
     public static let bonjourServiceType = "_msgblast._tcp"
     /// The one-time pairing code is valid for this long.

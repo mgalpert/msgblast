@@ -62,7 +62,7 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .uploadAttachmentChunk(uploadID: UUID(), filename: "a.txt", index: 0, count: 2, data: Data([1, 2, 3])),
             .attachStaged(uploadID: UUID(), sha256: Data(SHA256.hash(data: Data([1])))), .requestReport(conversationID: conversation),
             .prepareConversation(conversationID: nil, agentIDs: ["claude"]), .prepareConversation(conversationID: conversation, agentIDs: []), .queryCommand(clientCommandID: UUID()), .fetchAvatar(ref: "sha256:00ff"),
-            .renameConversation(conversationID: conversation, title: "Pesto")]
+            .renameConversation(conversationID: conversation, title: "Pesto"), .fetchAttachment(turnID: "m:guid-1", index: 1, maxBytes: 200_000)]
         for action in actions { try roundTrip(RemoteCommand(action: action)) }
         XCTAssertEqual(actions.filter(\.isSend).count, 3)
 
@@ -76,6 +76,9 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .commandResult(.rejected(UUID(), .macLocked, "Your Mac is locked.")),
             .commandResult(RemoteCommandResult(clientCommandID: UUID(), outcome: .applied, avatar: Data([0x89, 0x50, 0x4E, 0x47]))),
             .commandResult(.rejected(UUID(), .unknownAvatar, "No artwork for that agent")),
+            .commandResult(RemoteCommandResult(clientCommandID: UUID(), outcome: .applied, attachment: Data([0xFF, 0xD8]), attachmentType: "image/jpeg")),
+            .commandResult(.rejected(UUID(), .attachmentUnavailable, "This file is no longer on your Mac")),
+            .commandResult(.rejected(UUID(), .attachmentUnavailable, "Too large to open on the phone")),
             .commandResult(RemoteCommandResult(clientCommandID: UUID(), outcome: .rejected, code: .notReady, agentReasons: ["claude": "Sign in to Claude."])),
             .ping(nonce: 7), .pong(nonce: 7, seq: 10), .error(RemoteErrorMessage(code: .notPaired, message: "Pair first."))]
         for message in messages { try roundTrip(message) }

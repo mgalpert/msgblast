@@ -48,6 +48,18 @@ final class RemoteProjectionTests: XCTestCase {
         XCTAssertEqual(Set(state.attempts.map(\.status)), [.submitted, .uncertain, .waiting])
     }
 
+    func testAttachmentFilesAreKeyedByTheProjectedTurnIDs() throws {
+        var (input, comparison, _) = fixture()
+        let file = MessageAttachment(filename: "menu.jpg", path: "/tmp/menu.jpg", mimeType: "image/jpeg")
+        comparison.attachments = [file]
+        input.comparisons = [comparison]
+        let files = RemoteProjectionBuilder.attachmentFiles(from: input)
+        let state = RemoteProjectionBuilder.state(from: input)
+        XCTAssertEqual(files["p:\(comparison.id.uuidString)"], [file])
+        XCTAssertEqual(state.turns.first { $0.id == "p:\(comparison.id.uuidString)" }?.attachments.map(\.filename), ["menu.jpg"], "The same turn id carries the file in the projection")
+        XCTAssertEqual(files.count, 1, "Turns without files are not listed")
+    }
+
     func testARenamedConversationProjectsItsName() throws {
         var (input, comparison, _) = fixture()
         XCTAssertEqual(RemoteProjectionBuilder.state(from: input).conversations.first?.title, "Compare approaches")

@@ -45,6 +45,13 @@ final class FakeRemoteHost: RemoteCommandHost {
     var notReadyReason = "Sign in"
     var avatars: [String: Data] = [:]
     var renamed: [(UUID, String)] = []
+    var files: [String: [RemoteAttachmentFetch]] = [:]
+    var fileRequests: [(String, Int, Int)] = []
+    func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch {
+        fileRequests.append((turnID, index, maxBytes))
+        guard let list = files[turnID], list.indices.contains(index) else { return .unavailable("This file is no longer on your Mac") }
+        return list[index]
+    }
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { renamed.append((id, title)); return .applied(conversationID: id) }
     var avatarReads = 0
     func avatar(_ ref: String) -> Data? { avatarReads += 1; return avatars[ref] }
@@ -289,6 +296,26 @@ final class RemoteCommandExecutorTests: XCTestCase {
         host.avatars["sha256:big"] = Data(count: RemoteProtocol.maximumAvatarBytes + 1)
         let big = await executor.execute(RemoteCommand(action: .fetchAvatar(ref: "sha256:big")))
         XCTAssertEqual(big.code, .unknownAvatar, "Oversized artwork is never sent")
+    }
+
+    func testFetchAttachmentServesRecordedFilesWithinTheCap() async {
+        let host = host()
+        let photo = Data(repeating: 1, count: 1000)
+        host.files["m:1"] = [.data(photo, type: "image/jpeg"), .data(Data(count: RemoteProtocol.maximumAttachmentFetchBytes + 1), type: "application/pdf")]
+        let executor = RemoteCommandExecutor(host: host)
+        let command = RemoteCommand(action: .fetchAttachment(turnID: "m:1", index: 0, maxBytes: 200_000))
+        let first = await executor.execute(command)
+        XCTAssertEqual(first.outcome, .applied); XCTAssertEqual(first.attachment, photo); XCTAssertEqual(first.attachmentType, "image/jpeg")
+        let again = await executor.execute(command)
+        XCTAssertFalse(again.replayed, "Bytes stay out of the replay ledger"); XCTAssertEqual(again.attachment, photo)
+        let big = await executor.execute(RemoteCommand(action: .fetchAttachment(turnID: "m:1", index: 1, maxBytes: 50_000_000)))
+        XCTAssertEqual(big.code, .attachmentUnavailable); XCTAssertNil(big.attachment)
+        XCTAssertEqual(host.fileRequests.last?.2, RemoteProtocol.maximumAttachmentFetchBytes, "The phone's limit is capped")
+        let missing = await executor.execute(RemoteCommand(action: .fetchAttachment(turnID: "m:1", index: 5, maxBytes: 1000)))
+        XCTAssertEqual(missing.code, .attachmentUnavailable); XCTAssertEqual(missing.message, "This file is no longer on your Mac")
+        host.isLocked = true
+        let locked = await executor.execute(command)
+        XCTAssertEqual(locked.code, .macLocked, "Conversation content is not served while the Mac is locked")
     }
 
     func testRenameTrimsAndRefusesEmptyOrLongNames() async {
