@@ -29,6 +29,8 @@ VARIANTS = {
         "demo": False,
         "support_directory": "msgblast-Dev",
         "artifact_prefix": "msgblast-dev",
+        "development": True,
+        "in_all": True,
     },
     "demo": {
         "id": "demo",
@@ -44,8 +46,52 @@ VARIANTS = {
         "demo": True,
         "support_directory": "msgblast-Demo",
         "artifact_prefix": "msgblast-demo",
+        "development": False,
+        "in_all": True,
+    },
+    # A second live development identity for phone testing. Built only when asked for by name,
+    # so the "all" set that CI uploads stays msgblast Dev plus msgblast Demo.
+    "development-remote": {
+        "id": "development-remote",
+        "label": "blue-green development for remote phone testing",
+        "fixture": False,
+        "app_name": "msgblast Dev Remote.app",
+        "bundle_id": "com.msgblast.development.remote",
+        "bundle_name": "msgblast Dev Remote",
+        "display_name": "msgblast Dev Remote",
+        "icon_name": "AppIcon",
+        "icon_source": BLUE_GREEN,
+        "replace_app_icon": True,
+        "demo": False,
+        "support_directory": "msgblast-Dev-Remote",
+        "artifact_prefix": "msgblast-dev-remote",
+        "development": True,
+        "in_all": False,
     },
 }
+
+
+def selected_variants(choice):
+    """Return the variants one --variant choice builds. "all" keeps the CI pair."""
+    if choice == "all":
+        return [variant for variant in VARIANTS.values() if variant["in_all"]]
+    return [VARIANTS[choice]]
+
+
+def stamped(variant, stamp):
+    """Return a variant whose visible names include stamp.
+
+    bundle_id and support_directory stay as they are so saved state and TCC
+    grants remain keyed on them. None returns the original variant.
+    """
+    if stamp is None:
+        return variant
+    updated = dict(variant)
+    updated["bundle_name"] = f"{variant['bundle_name']} {stamp}"
+    updated["display_name"] = f"{variant['display_name']} {stamp}"
+    updated["app_name"] = f"{variant['bundle_name']} {stamp}.app"
+    updated["build_stamp"] = stamp
+    return updated
 
 
 def icon_fill(directory):
@@ -108,8 +154,12 @@ def configure_info(info, variant, source_revision):
         "msgblastPreviewVariant": variant["id"],
         "msgblastSourceRevision": source_revision,
     })
+    if variant.get("build_stamp"):
+        updated["msgblastBuildStamp"] = variant["build_stamp"]
     if variant["fixture"] and updated["msgblastDemo"] is not True:
         raise RuntimeError("Fixture mode requires msgblastDemo, not only a blue icon")
+    if variant["development"] and (variant["fixture"] or updated["msgblastDemo"] is not False):
+        raise RuntimeError("Development previews must stay out of fixture mode")
     if not variant["fixture"] and updated["msgblastDemo"] is True:
         raise RuntimeError("The development preview must stay out of fixture mode")
     return updated
@@ -138,7 +188,7 @@ def classify_icon_color(red, green, blue):
 
 
 def expected_icon_color(variant):
-    return "blue-green" if variant["id"] == "development" else "blue"
+    return "blue-green" if variant["development"] else "blue"
 
 
 def icon_filename(raw):

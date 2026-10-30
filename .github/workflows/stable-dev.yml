@@ -68,7 +68,8 @@ jobs:
             --signing-identity "$MSGBLAST_DEVELOPER_ID_IDENTITY" \
             --team-id "$MSGBLAST_APPLE_TEAM_ID" \
             --keychain "$MSGBLAST_NOTARY_KEYCHAIN" \
-            --notary-profile "$MSGBLAST_NOTARY_PROFILE"
+            --notary-profile "$MSGBLAST_NOTARY_PROFILE" \
+            --build-stamp none
 
       - name: Upload signed Dev without credentials
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

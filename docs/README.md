@@ -11,6 +11,8 @@ The public source repository is [mgalpert/msgblast](https://github.com/mgalpert/
 | [Contributing](../CONTRIBUTING.md) | Personal changes, forks, branches, review, and PR screenshots/video |
 | [Architecture](architecture.md) | Source map, data flow, providers, state, and generated files |
 | [Testing](testing.md) | Native tests, local fixtures, backend checks, evidence, and CI limits |
+| [TestFlight checklist](testflight-checklist.md) | Accounts, signing, missing store declarations, archive and upload commands, TestFlight setup, tester onboarding |
+| [iPhone design principles](mobile-design-principles.md) | What the phone app is, Messages as the reference, one control per concept, artwork, spacing, protocol discipline, and the build-capture-critique loop |
 | [Dedicated Mac permission testing](remote-permission-testing.md) | Stable signed Dev builds and unattended real permission checks in a privately configured persistent Space |
 | [Agent instructions](../AGENTS.md) | Coding-agent quickstart and maintainer constraints |
 
@@ -25,6 +27,8 @@ Local development does not need production release credentials.
   separate accounts, saved sessions, configuration, and report restrictions.
 - [Grok Bot](grokbot.md): webhook routines, callback tunnel, credential storage,
   and bundled helper.
+- [Remote control](remote-control.md): pairing one phone, bind policy, security
+  model, what the phone can do, Demo behavior, and the command-line client.
 - [Update recovery](update-recovery.md): preserving state when an older app cannot
   read state written by a newer one.
 

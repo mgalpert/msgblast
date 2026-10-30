@@ -748,6 +748,7 @@ struct AppSettingsView: View {
             Section("Grok Bot") {
                 GrokBotConnectionsView(model: model, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
             }
+            Section("Remote") { RemoteSettingsView(service: model.remote) }
             Section("Updates") {
                 Text(updater.version).foregroundStyle(.secondary)
                 if updater.configuration.isEnabled {

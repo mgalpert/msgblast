@@ -82,7 +82,8 @@ jobs:
         run: |
           python3 scripts/build_preview_apps.py --variant development --universal \
             --sha "$REVIEW_SHA" --output build/testing-preview \
-            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --build-stamp none
       - name: Pass only Dev ZIP and public metadata to signing
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

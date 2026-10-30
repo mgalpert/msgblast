@@ -18,6 +18,13 @@ final class MessagesSendScriptTests: XCTestCase {
         XCTAssertFalse(source.contains("make new"))
         XCTAssertFalse(source.contains("+1555"))
     }
+    func testEmojiReachTheScriptUnchanged() throws {
+        let chat = Chat(id: "any;-;person@example.com", handle: "person@example.com", lastActivity: 0)
+        for text in ["👩‍👩‍👧‍👦", "👍🏽 thanks", "🇵🇹🇮🇹", "❤️❤️❤️", "Café ☕️ e cappuccino", "🫶🏾✨"] {
+            let source = try MessagesSendScript.text(text, to: chat)
+            XCTAssertTrue(source.contains("send \"\(text)\" to targetChat"), "No normalization or escaping of \(text)")
+        }
+    }
     func testOrdinaryIMessageUsesItsSavedGUIDAndSameParticipantChecks() throws {
         let chat = Chat(id: "any;-;person@example.com", handle: "person@example.com", lastActivity: 0)
         let source = try MessagesSendScript.text("ordinary", to: chat)

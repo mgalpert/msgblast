@@ -78,6 +78,58 @@ final class DesktopAccessibilityTests: XCTestCase {
         }
     }
 
+    func testRejectedReadsNameTheGuardThatFired() throws {
+        let source = [0: Source(node: .init(role: "AXWindow"), children: [1, 2]),
+                      1: Source(node: .init(role: "AXTextArea", label: "Message", value: "")),
+                      2: Source(node: .init(role: "AXGroup"), children: [3]),
+                      3: Source(node: .init(role: ""))]
+        XCTAssertThrowsError(try read(source, app: .muse, limits: .init(maximumNodes: 2)))
+        XCTAssertEqual(DesktopAccessibilityDiagnostics.lastReason, "the window has more than 2 accessibility nodes")
+        XCTAssertThrowsError(try read(source, app: .muse, limits: .init(maximumDepth: 1)))
+        XCTAssertEqual(DesktopAccessibilityDiagnostics.lastReason, "the tree is deeper than 1 levels, under AXGroup")
+        XCTAssertThrowsError(try read(source, app: .muse))
+        XCTAssertEqual(DesktopAccessibilityDiagnostics.lastReason, "a node under AXGroup at depth 2 has no role")
+        var clock = 0.0
+        XCTAssertThrowsError(try read(source, app: .muse, now: { clock += 4; return clock }))
+        XCTAssertTrue(DesktopAccessibilityDiagnostics.lastReason?.hasPrefix("the read took longer than 3.0 s") == true)
+        var fine = source; fine[3] = Source(node: .init(role: "AXStaticText", value: "secret text"))
+        _ = try read(fine, app: .muse)
+        XCTAssertNil(DesktopAccessibilityDiagnostics.lastReason, "A successful read clears the reason")
+    }
+
+    func testChangingUnrelatedMuseContentDoesNotBlockAStableComposer() throws {
+        // A live timer and a streaming sidebar change between reads; the composer does not.
+        func tree(_ tick: Int) throws -> DesktopAccessibilityNode {
+            var composer = DesktopAccessibilityNode(role: "AXTextArea", label: "Message", value: "")
+            composer.editorText = ""
+            composer.identity = 42
+            let sidebar = DesktopAccessibilityNode(role: "AXGroup", label: "Side chats",
+                children: (0...tick).map { DesktopAccessibilityNode(role: "AXStaticText", value: "Streaming item \($0) at \(tick)s") })
+            let web = DesktopAccessibilityNode(role: "AXWebArea", url: URL(string: "https://muse.ai/")!, children: [
+                DesktopAccessibilityNode(role: "AXStaticText", value: "00:0\(tick)"),
+                sidebar,
+                DesktopAccessibilityNode(role: "AXGroup", label: "Chat messages"),
+                composer,
+            ])
+            var nodes: [Int: Source] = [:]
+            var next = 0
+            func flatten(_ node: DesktopAccessibilityNode) -> Int {
+                let id = next; next += 1
+                var copy = node; copy.children = []
+                nodes[id] = Source(node: copy)
+                nodes[id]!.children = node.children.map(flatten)
+                return id
+            }
+            _ = flatten(DesktopAccessibilityNode(role: "AXWindow", children: [web]))
+            return try read(nodes, app: .muse)
+        }
+        let first = try MuseAppProfile.parse(try tree(1))
+        let second = try MuseAppProfile.parse(try tree(5))
+        XCTAssertEqual(first.draft, ""); XCTAssertEqual(second.draft, "")
+        XCTAssertEqual(first.composerIdentity, second.composerIdentity, "The same composer is found in both reads")
+        XCTAssertEqual(first.url, second.url)
+    }
+
     func testOnlyGeminiVirtualizedSidebarReferencesCanBeSkipped() throws {
         let source = [0: Source(node: .init(role: "AXWindow"), children: [1]),
                       1: Source(node: .init(role: "AXOutline"), children: [2]),

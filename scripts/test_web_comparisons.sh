@@ -11,7 +11,7 @@ trap 'rm -rf "$web_tmp"' EXIT
 cp -R "$web_root/msgblast/Resources/WebAgentIcons" "$web_tmp/WebAgentIcons"
 web_flags=(-swift-version 6 -D DEBUG -parse-as-library -module-cache-path "$web_tmp/modules"
     -target "$(uname -m)-apple-macos15.0" -I "$web_frameworks" -F "$web_frameworks" -F "$web_sparkle"
-    -framework msgblastCore -framework Sparkle
+    -framework msgblastCore -framework msgblastRemoteProtocol -framework Sparkle
     -Xlinker -rpath -Xlinker "$web_frameworks" -Xlinker -rpath -Xlinker "$web_sparkle")
 web_sources=()
 while IFS= read -r source; do web_sources+=("$source"); done < <(python3 - "$web_root/msgblast" <<'PY_SOURCES'
@@ -19,7 +19,9 @@ from pathlib import Path
 import sys
 root = Path(sys.argv[1])
 for source in sorted(root.rglob("*.swift")):
-    if "Core" not in source.relative_to(root).parts and source.name != "msgblastApp.swift":
+    parts = source.relative_to(root).parts
+    # Framework sources (Core, RemoteProtocol) are linked below, not recompiled as app code.
+    if "Core" not in parts and "RemoteProtocol" not in parts and source.name != "msgblastApp.swift":
         print(source)
 PY_SOURCES
 )
@@ -34,8 +36,9 @@ end = source.index("\n@MainActor\nprivate final class AppStartup", start)
 Path(sys.argv[2]).write_text(source[:start] + source[end:])
 PY_SUPPORT
 web_sources+=("$web_tmp/app-support.swift")
-xcrun swiftc "${web_flags[@]}" "${web_sources[@]}" "$web_root/scripts/fixtures/web_comparison_model.swift" "$web_root/scripts/fixtures/permission_review_model.swift" -o "$web_tmp/model"
+xcrun swiftc "${web_flags[@]}" "${web_sources[@]}" "$web_root/scripts/fixtures/web_comparison_model.swift" "$web_root/scripts/fixtures/permission_review_model.swift" "$web_root/scripts/fixtures/remote_control_model.swift" -o "$web_tmp/model"
 "$web_tmp/model" --demo --isolated-demo
+"$web_tmp/model" --demo --isolated-demo --remote-control-fixture
 # Exercise the actual startup path twice against one app-owned fixture profile.
 python3 - "$web_tmp" <<'PY_REVIEW'
 from pathlib import Path

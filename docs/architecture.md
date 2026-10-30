@@ -26,6 +26,7 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Desktop app conversations | `msgblast/Core/EmbeddedCuaDriver.swift`, `DesktopAccessibility.swift`, `DesktopAppWorkflow.swift`, `DesktopAppConversation.swift`, and app profiles | Private embedded runtime, shared bounded native metadata capture and single-submit workflow, exact-window background input, and per-comparison destination/receipt checks |
 | Local CLI execution | `msgblast/Core/LocalPersonalAgent.swift`, `LocalAgentDetection.swift` | Executable/account detection, conversation adapters, restricted reports, and process cleanup |
 | Grok Bot | `msgblast/Core/GrokBot*.swift` | Webhook requests, secure storage, loopback replies, and bundled tunnel process |
+| Remote control | `msgblast/RemoteProtocol/`, `msgblast/Core/Remote/`, `msgblast/Remote/`, `Windows/RemoteSettingsView.swift`, `scripts/remote_client/` | Phone wire protocol framework, pairing, TLS/Tailscale/LAN listener, availability, projection, command execution through AppModel. See [Remote control](remote-control.md) |
 | Feedback | `Core/DiagnosticReport.swift`, `FeedbackSubmission.swift`, `Windows/FeedbackView.swift` under `msgblast/` | Explicit feedback note, allowed diagnostics, and private intake submission |
 | Download service | `download/` | Signed-feed verification and fixed latest.zip redirect |
 | Feedback handler | `feedback/` | Validated private R2 intake; template integrated into a separate production landing Worker |
@@ -67,6 +68,7 @@ Connections use separate transports:
 | Websites | Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, and Hark inside persistent WebKit stores |
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
+| Remote control (optional) | One paired phone over Tailscale or the LAN, encrypted end to end; the Mac executes every send |
 
 For an installed, enabled App Agent with a known destination, the first explicit
 send opens the app and checks its conversation without requiring a separate
@@ -131,7 +133,9 @@ sending into a different saved conversation.
 send attempts/anchors, window frames, and staged attachment references. It does
 not import the user's entire Messages history. Staged attachments live beneath
 the selected app support folder. Web/CLI providers additionally retain their
-per-provider session files and comparison/session identifiers.
+per-provider session files and comparison/session identifiers. Remote control
+adds only `remote-identity.json`, `remote-device.json`, and `remote-settings.json`
+(owner-only); its projection of conversations is derived and never persisted.
 
 | Build | App support folder |
 | --- | --- |
@@ -172,7 +176,8 @@ state with a fresh empty model. See [update recovery](update-recovery.md).
 
 `scripts/generate_project.py` is the source of the committed Xcode project and
 shared `msgblast` scheme. It enumerates app Swift files recursively and test files
-in the test directories, separates Core into a framework, registers icons and
+in the test directories, separates Core and the remote wire protocol
+(`msgblast/RemoteProtocol/`, also buildable for iOS) into frameworks, registers icons and
 resources, pins Sparkle, and adds the cloudflared build phase. Update the generator
 for build-setting/resource changes rather than only editing generated output.
 

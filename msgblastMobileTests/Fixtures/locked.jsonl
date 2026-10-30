@@ -1,0 +1,5 @@
+{"deviceID":"558283A5-2A76-4AA7-B6B1-6CDDC66BF8DB","kind":"authenticated"}
+{"events":[],"kind":"events","latestSeq":1836093532895267}
+{"error":{"code":"macLocked","message":"Disconnected: your Mac is locked."},"kind":"error"}
+{"events":[{"change":{"kind":"macStatus","payload":{"awake":true,"broadcastBusy":false,"databaseAvailable":true,"databaseStatus":"Simulated Messages · no real sends","keepAwakeEnabled":true,"keepAwakeHeld":false,"locked":true,"macName":"Demo Mac","messagesBusy":false,"messagesSendsAllowed":true,"observedAt":1793060100084.324,"running":true,"sendingAgentIDs":[],"variant":"demo"}},"seq":1836093532895268},{"change":{"kind":"macStatus","payload":{"awake":true,"broadcastBusy":false,"databaseAvailable":true,"databaseStatus":"Simulated Messages · no real sends","keepAwakeEnabled":true,"keepAwakeHeld":false,"locked":false,"macName":"Demo Mac","messagesBusy":false,"messagesSendsAllowed":true,"observedAt":1793060101509.625,"running":true,"sendingAgentIDs":[],"variant":"demo"}},"seq":1836093532895269}],"kind":"events","latestSeq":1836093532895269}
+{"events":[],"kind":"events","latestSeq":1836093532895269}

@@ -301,7 +301,7 @@ def verify_bundle(options):
             raise ReleaseError(f"Exported bundle {key} does not match release configuration")
     if info.get("msgblastDemo") or info.get("msgblastPermissionGuidePreview"):
         raise ReleaseError("A demo/permission-preview bundle cannot be released")
-    for name in ("msgblastCore", "Sparkle"):
+    for name in ("msgblastCore", "msgblastRemoteProtocol", "Sparkle"):
         if not (app / f"Contents/Frameworks/{name}.framework").is_dir():
             raise ReleaseError(f"Exported app is missing {name}.framework")
     if not (app / "Contents/Helpers/cloudflared").is_file():

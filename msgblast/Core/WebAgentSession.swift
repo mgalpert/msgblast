@@ -88,12 +88,21 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if !storageFailed && error != page.error { error = page.error }
         if avatar != page.avatar { avatar = page.avatar }
     }
-    @Published public private(set) var desktopReady = false
+    @Published public private(set) var desktopReady = false { didSet { if desktopReady { desktopCheckFailure = nil } } }
+    /// The last app connection check that failed (a refresh, Connect, or opening the app),
+    /// until a check succeeds. The pane then offers Reconnect, and remote availability
+    /// reports the agent as blocked instead of ready.
+    @Published public private(set) var desktopCheckFailure: String?
+    private func desktopCheckFailed(_ error: Error) {
+        desktopStatus = error.localizedDescription
+        desktopCheckFailure = error.localizedDescription
+    }
     public var desktopRecoveryMessage: String? {
         guard let app = provider.desktopApp, isEnabled, !desktopReady else { return nil }
         if !desktopInstallation.isInstalled { return "Install \(app.name) to continue." }
         if isAutomaticallyWaitingForNativeReply, error == latestComparisonAttempt?.detail { return nil }
         if let error, !error.isEmpty { return error }
+        if let desktopCheckFailure, !desktopCheckFailure.isEmpty { return desktopCheckFailure }
         // A saved chat reconnects during the next explicit send. Only an
         // observed failure needs a recovery action; stale readiness is normal.
         return nil
@@ -618,7 +627,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     catch {
                         state.desktopConversation = nil
                         desktopReady = false
-                        desktopStatus = error.localizedDescription
+                        desktopCheckFailed(error)
                         self.error = error.localizedDescription
                         updateNativeSnapshot()
                         return false
@@ -1240,7 +1249,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             try await waitForDesktopRefresh()
             try await prepareGemini(preferences)
             desktopReady = true; desktopStatus = "Gemini ready · \(geminiPreferences.mode.name) · background input"; error = nil
-        } catch { self.error = error.localizedDescription; desktopStatus = error.localizedDescription }
+        } catch { self.error = error.localizedDescription; desktopCheckFailed(error) }
     }
     private func prepareGemini(_ desired: GeminiPreferences? = nil) async throws {
         let comparison = state.comparisonID
@@ -1327,7 +1336,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 if desktopInstallation != installation, !shuttingDown, !Task.isCancelled { continue }
                 grokBotNames = []
                 desktopReady = false
-                desktopStatus = error.localizedDescription
+                desktopCheckFailed(error)
                 return
             }
         }
@@ -1361,7 +1370,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         loading = true
         defer { loading = false }
         do { try await desktopApps.open(url); refreshDesktopInstallation() }
-        catch { desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
+        catch { desktopCheckFailed(error); self.error = error.localizedDescription }
     }
 
     /// An explicit Connect may reopen a closed window; passive refreshes never do.
@@ -1372,7 +1381,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         } catch is CancellationError { return false }
         catch {
             desktopReady = false
-            desktopStatus = error.localizedDescription
+            desktopCheckFailed(error)
             self.error = error.localizedDescription
             updateNativeSnapshot()
             return false
@@ -1426,7 +1435,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             throw WebSessionFailure.notReady("\(app.name) opened, but its main window is not ready. Finish signing in or dismiss any dialogs, then try again.")
         } catch {
             try checkCurrent()
-            desktopStatus = error.localizedDescription
+            desktopCheckFailed(error)
             updateNativeSnapshot()
             throw error
         }
@@ -1467,7 +1476,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
         } catch {
             desktopReady = false
-            desktopStatus = error.localizedDescription
+            desktopCheckFailed(error)
             self.error = error.localizedDescription
         }
         updateNativeSnapshot()
@@ -1528,7 +1537,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             desktopReady = true
             desktopStatus = "Connected to \(binding.name)"
             error = nil
-        } catch { desktopReady = false; desktopStatus = error.localizedDescription; self.error = error.localizedDescription }
+        } catch { desktopReady = false; desktopCheckFailed(error); self.error = error.localizedDescription }
         updateNativeSnapshot()
     }
 
@@ -1652,7 +1661,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 desktopStatus = "Connected to \(binding.name)"
             } catch {
                 guard generation == comparisonGeneration, !shuttingDown else { return }
-                desktopStatus = error.localizedDescription
+                desktopCheckFailed(error)
             }
         } else { desktopStatus = app == .grokBot ? "Choose your bot in msgblast." : "Open the intended conversation in \(app.name), then connect it here." }
         updateNativeSnapshot()
@@ -2413,7 +2422,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             guard !shuttingDown, state.comparisonID == comparison,
                   provider != .grokBotApp || state.desktopConversation == grokBinding else { return }
             desktopReady = false
-            desktopStatus = error.localizedDescription
+            desktopCheckFailed(error)
         }
         updateNativeSnapshot()
     }

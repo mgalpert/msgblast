@@ -99,7 +99,10 @@ public actor EmbeddedCuaDriver {
         let socket = directory.appendingPathComponent("driver.sock")
         let process = Process(), liveness = Pipe()
         process.executableURL = executable
-        process.arguments = ["serve", "--embedded", "--socket", socket.path, "--parent-liveness-stdio"]
+        // --no-overlay: the driver's agent-cursor overlay is on by default and keeps a
+        // transparent full-screen window open for the daemon's lifetime. msgblast acts in
+        // the background and never shows an agent cursor.
+        process.arguments = ["serve", "--embedded", "--socket", socket.path, "--parent-liveness-stdio", "--no-overlay"]
         process.environment = environment
         process.standardInput = liveness
         process.standardOutput = FileHandle.nullDevice

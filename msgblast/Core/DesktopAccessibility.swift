@@ -1,5 +1,6 @@
 import ApplicationServices
 import Foundation
+import os
 
 /// Metadata Cua's action snapshots do not expose. One bounded reader serves
 /// every profile; app parsers never walk live Accessibility elements themselves.
@@ -36,6 +37,31 @@ enum DesktopAccessibilityError: LocalizedError {
     var errorDescription: String? { "The app is still updating its controls. No input was sent." }
 }
 
+/// Which guard rejected the last accessibility read. "Still updating its controls" covers
+/// several conditions; this names the one that fired. It never includes text from the app,
+/// only counts, depths, roles and Accessibility error numbers. Read it with
+/// `log stream --level info --predicate 'category == "desktop-accessibility"'`.
+enum DesktopAccessibilityDiagnostics {
+    private final class Box: @unchecked Sendable { let lock = NSLock(); var reason: String? }
+    private static let box = Box()
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "msgblast", category: "desktop-accessibility")
+    static var lastReason: String? { box.lock.withLock { box.reason } }
+    static func clear() { box.lock.withLock { box.reason = nil } }
+    static func record(_ app: DesktopAppProvider?, _ reason: String) {
+        box.lock.withLock { box.reason = reason }
+        logger.info("\(app?.name ?? "App", privacy: .public) accessibility read rejected: \(reason, privacy: .public)")
+    }
+    /// A driver tool exited with an error. The tool and status are public; the driver's own
+    /// message may name windows or controls, so it stays private in the log.
+    static func driverCallFailed(tool: String, status: Int32, stderr: String) {
+        logger.info("App control tool \(tool, privacy: .public) exited with status \(status, privacy: .public): \(String(stderr.prefix(400)), privacy: .private)")
+    }
+    static func incomplete(_ app: DesktopAppProvider?, _ reason: String) -> DesktopAccessibilityError {
+        record(app, reason)
+        return .incomplete
+    }
+}
+
 enum DesktopAccessibilityTree {
     struct Limits {
         var maximumNodes = 6_000
@@ -47,27 +73,47 @@ enum DesktopAccessibilityTree {
                              now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
                              focus: ((Handle) -> Bool?)? = nil,
                              attributes: (Handle) throws -> (DesktopAccessibilityNode, [Handle])) throws -> DesktopAccessibilityNode {
+        DesktopAccessibilityDiagnostics.clear()
         let deadline = now() + limits.timeout
         var count = 0
+        func checkDeadline() throws {
+            guard now() < deadline else {
+                throw DesktopAccessibilityDiagnostics.incomplete(app, "the read took longer than \(limits.timeout) s (\(count) nodes read)")
+            }
+        }
         func walk(_ handle: Handle, depth: Int, parentRole: String = "", insideWeb: Bool = false) throws -> DesktopAccessibilityNode {
             count += 1
-            guard count <= limits.maximumNodes, depth <= limits.maximumDepth, now() < deadline else { throw DesktopAccessibilityError.incomplete }
+            guard count <= limits.maximumNodes else {
+                throw DesktopAccessibilityDiagnostics.incomplete(app, "the window has more than \(limits.maximumNodes) accessibility nodes")
+            }
+            guard depth <= limits.maximumDepth else {
+                throw DesktopAccessibilityDiagnostics.incomplete(app, "the tree is deeper than \(limits.maximumDepth) levels, under \(parentRole)")
+            }
+            try checkDeadline()
             let captured: (DesktopAccessibilityNode, [Handle])
             do { captured = try attributes(handle) }
             catch DesktopAccessibilityError.invalidElement where app == .gemini && parentRole == "AXOutline" {
-                guard now() < deadline else { throw DesktopAccessibilityError.incomplete }
+                try checkDeadline()
                 return .init(role: "AXUnknown")
+            } catch DesktopAccessibilityError.invalidElement {
+                DesktopAccessibilityDiagnostics.record(app, "a node under \(parentRole) at depth \(depth) disappeared during the read")
+                throw DesktopAccessibilityError.invalidElement
+            } catch DesktopAccessibilityError.incomplete {
+                let detail = DesktopAccessibilityDiagnostics.lastReason ?? "its attributes were unavailable"
+                throw DesktopAccessibilityDiagnostics.incomplete(app, "a node under \(parentRole) at depth \(depth) could not be read: \(detail)")
             }
-            guard now() < deadline else { throw DesktopAccessibilityError.incomplete }
+            try checkDeadline()
             var (node, children) = captured
             if let focus, DesktopAccessibility.isComposer(node, app: app) { node.focused = focus(handle) == true }
             if node.role.isEmpty, app == .gemini, parentRole == "AXOutline" { return .init(role: "AXUnknown") }
-            guard !node.role.isEmpty else { throw DesktopAccessibilityError.incomplete }
+            guard !node.role.isEmpty else {
+                throw DesktopAccessibilityDiagnostics.incomplete(app, "a node under \(parentRole) at depth \(depth) has no role")
+            }
             // First-party ChatGPT can embed unrelated app surfaces. Those may
             // never supply the composer, controls or transcript of our chat.
             let nestedWeb = [.chatgpt, .dots].contains(app) && insideWeb && node.role == "AXWebArea"
             node.children = nestedWeb ? [] : try children.map { try walk($0, depth: depth + 1, parentRole: node.role, insideWeb: insideWeb || node.role == "AXWebArea") }
-            guard now() < deadline else { throw DesktopAccessibilityError.incomplete }
+            try checkDeadline()
             return node
         }
         return try walk(root, depth: 0)
@@ -77,12 +123,12 @@ enum DesktopAccessibilityTree {
 enum DesktopAccessibilityMetadata {
     static func check(_ status: AXError) throws {
         if status == .invalidUIElement { throw DesktopAccessibilityError.invalidElement }
-        guard status == .success else { throw DesktopAccessibilityError.incomplete }
+        guard status == .success else { throw DesktopAccessibilityDiagnostics.incomplete(nil, "Accessibility error \(status.rawValue)") }
     }
     static func address(_ value: Any?) throws -> String? {
         guard let value else { return nil }
         if let url = value as? URL { return url.absoluteString }
-        guard let string = value as? String, !string.isEmpty, URL(string: string) != nil else { throw DesktopAccessibilityError.incomplete }
+        guard let string = value as? String, !string.isEmpty, URL(string: string) != nil else { throw DesktopAccessibilityDiagnostics.incomplete(nil, "a web area has no valid address") }
         return string
     }
     static func values(_ values: [String: Any]) throws -> [String: Any] {
@@ -90,7 +136,7 @@ enum DesktopAccessibilityMetadata {
             let (key, value) = entry
             if CFGetTypeID(value as CFTypeRef) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
                 var error = AXError.success
-                guard AXValueGetValue(value as! AXValue, .axError, &error) else { throw DesktopAccessibilityError.incomplete }
+                guard AXValueGetValue(value as! AXValue, .axError, &error) else { throw DesktopAccessibilityDiagnostics.incomplete(nil, "an attribute error could not be decoded") }
                 if error == .attributeUnsupported || error == .noValue { return }
                 try check(error)
             } else { result[key] = value }
@@ -125,7 +171,7 @@ enum DesktopAccessibility {
     private static func attributes(_ element: AXUIElement) throws -> [String: Any] {
         var values: CFArray?
         try DesktopAccessibilityMetadata.check(AXUIElementCopyMultipleAttributeValues(element, keys as CFArray, [], &values))
-        guard let values = values as? [Any], values.count == keys.count else { throw DesktopAccessibilityError.incomplete }
+        guard let values = values as? [Any], values.count == keys.count else { throw DesktopAccessibilityDiagnostics.incomplete(nil, "Accessibility returned \((values as? [Any])?.count ?? 0) of \(keys.count) attributes") }
         return try DesktopAccessibilityMetadata.values(Dictionary(uniqueKeysWithValues: zip(keys, values)))
     }
 
@@ -159,7 +205,9 @@ enum DesktopAccessibility {
 
     static func capture(_ target: DesktopAppConversation.Target, app: DesktopAppProvider, readComposer: Bool = true) throws -> DesktopAccessibilityNode {
         guard AXIsProcessTrusted() else { throw DesktopAppError.unavailable("Allow msgblast Device Control and Data Access to connect your apps.") }
-        guard let window = DesktopNativeWindowLookup.resolve(target) else { throw DesktopAccessibilityError.incomplete }
+        guard let window = DesktopNativeWindowLookup.resolve(target) else {
+            throw DesktopAccessibilityDiagnostics.incomplete(app, "window \(target.window) of process \(target.pid) was not found through Accessibility")
+        }
         let initial = try attributes(window)
         var addresses: [(AXUIElement, String?)] = []
         let focus: ((AXUIElement) -> Bool?)? = readComposer ? { DesktopNativeFocus.capture(pid: target.pid, composer: $0) } : nil
@@ -171,8 +219,13 @@ enum DesktopAccessibility {
             return (node, values["AXChildren"] as? [AXUIElement] ?? [])
         }
         let final = try attributes(window)
-        guard root.role == "AXWindow", let initialFrame = DesktopAccessibilityMetadata.frame(initial), initialFrame == DesktopAccessibilityMetadata.frame(final),
-              try addresses.allSatisfy({ try DesktopAccessibilityMetadata.address(attribute($0.0, "AXURL")) == $0.1 }) else { throw DesktopAccessibilityError.incomplete }
+        guard root.role == "AXWindow" else { throw DesktopAccessibilityDiagnostics.incomplete(app, "the root element is \(root.role), not a window") }
+        guard let initialFrame = DesktopAccessibilityMetadata.frame(initial), initialFrame == DesktopAccessibilityMetadata.frame(final) else {
+            throw DesktopAccessibilityDiagnostics.incomplete(app, "the window frame changed or was unavailable during the read")
+        }
+        guard try addresses.allSatisfy({ try DesktopAccessibilityMetadata.address(attribute($0.0, "AXURL")) == $0.1 }) else {
+            throw DesktopAccessibilityDiagnostics.incomplete(app, "a web area changed its address during the read")
+        }
         return root
     }
 

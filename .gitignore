@@ -29,3 +29,6 @@ output/app-icons/*
 # Machine-specific permission-test configuration and raw proof stay private.
 permission-testing.local.json
 .permission-test-receipts/
+
+# msgblast-remote client state (holds a private device key) if written with --state here.
+remote-client-state.json

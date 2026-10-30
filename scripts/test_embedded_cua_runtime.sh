@@ -77,6 +77,7 @@ path = args[args.index('--socket') + 1]
 assert '--embedded' in args
 if args[0] == 'serve':
     assert '--parent-liveness-stdio' in args
+    assert '--no-overlay' in args
     server = socket.socket(socket.AF_UNIX)
     server.bind(path)
     server.listen()
