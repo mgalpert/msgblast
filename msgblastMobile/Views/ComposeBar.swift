@@ -35,16 +35,15 @@ struct ComposeBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if conversationID != nil && members.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(members, id: \.self) { id in
-                            let on = recipients.contains(id)
-                            Button(presenter.shortName(id)) { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } }
-                                .buttonStyle(.bordered).controlSize(.small).tint(on ? .accentColor : .secondary)
-                                .accessibilityValue(on ? "Selected" : "Not selected")
-                        }
-                        Text(presenter.recipientSummary(recipients, members: members)).font(.caption).foregroundStyle(.secondary).padding(.leading, 4)
+                // Recipients wrap like Mail's, with the summary always the last item.
+                FlowLayout(spacing: 6) {
+                    ForEach(members, id: \.self) { id in
+                        let on = recipients.contains(id)
+                        Button(presenter.shortName(id)) { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } }
+                            .buttonStyle(.bordered).controlSize(.small).tint(on ? .accentColor : .secondary)
+                            .accessibilityValue(on ? "Selected" : "Not selected")
                     }
+                    Text(presenter.recipientSummary(recipients, members: members)).font(.caption).foregroundStyle(.secondary).padding(.leading, 2)
                 }
             }
             if let status { statusLine(status) }
@@ -206,5 +205,46 @@ struct ComposeBar: View {
         defer { uploading = false }
         do { attachments.append((try await app.upload(data, filename: name), name)); message = nil }
         catch { message = error.localizedDescription }
+    }
+}
+
+/// Lays out subviews left to right, wrapping onto new lines; each line is centered vertically.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(width: min(size.width, bounds.width), height: size.height))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func rows(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = [Row()]
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil))
+            if !rows[rows.count - 1].indices.isEmpty && rows[rows.count - 1].width + spacing + size.width > width { rows.append(Row()) }
+            var row = rows[rows.count - 1]
+            row.width += (row.indices.isEmpty ? 0 : spacing) + min(size.width, width)
+            row.height = max(row.height, size.height)
+            row.indices.append(index)
+            rows[rows.count - 1] = row
+        }
+        return rows
     }
 }

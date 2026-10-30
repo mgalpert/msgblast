@@ -49,8 +49,9 @@ public struct StatusChip: Equatable, Identifiable, Sendable {
     public var agentName: String
     public var state: ChipState
     public var reason: String?
-    /// "Sent", or "Muse · Sent" when several agents' chips share a message.
-    public func label(showsName: Bool) -> String { showsName ? "\(agentName) · \(state.rawValue)" : state.rawValue }
+    /// "Sent", or "Muse · Sent" when several agents' chips share a message. The separator
+    /// is held by non-breaking spaces so a wrapped line never starts with it.
+    public func label(showsName: Bool) -> String { showsName ? "\(agentName)\u{00A0}·\u{00A0}\(state.rawValue)" : state.rawValue }
 }
 
 /// The compact notice for an app, CLI or bot request that has not finished.

@@ -43,6 +43,12 @@ struct ConversationView: View {
                 }.padding()
             }
             .onChange(of: turns.last?.id) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } }
+            // Open on the latest message, as Messages does.
+            .task {
+                // After the first layout, so lazily sized rows are measured.
+                try? await Task.sleep(for: .milliseconds(100))
+                if let id = turns.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if conversation.endedAt == nil {
@@ -177,9 +183,9 @@ struct ChipView: View {
     var chip: StatusChip
     var showsName: Bool
     @State private var showingReason = false
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        let label = Label(chip.label(showsName: showsName), systemImage: chip.state.symbol)
-            .font(.caption2).foregroundStyle(color)
+        let label = content.font(.caption2).foregroundStyle(color)
         if let reason = chip.reason, !reason.isEmpty {
             Button { showingReason = true } label: { label }
                 .buttonStyle(.plain)
@@ -187,6 +193,18 @@ struct ChipView: View {
                 .popover(isPresented: $showingReason) { DetailPopover(text: reason) }
         } else {
             label
+        }
+    }
+    /// One line, or at accessibility sizes the agent above its state, with no separator.
+    @ViewBuilder private var content: some View {
+        if showsName && typeSize.isAccessibilitySize {
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(chip.agentName)
+                Label(chip.state.rawValue, systemImage: chip.state.symbol)
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            Label(chip.label(showsName: showsName), systemImage: chip.state.symbol)
         }
     }
     private var color: Color {

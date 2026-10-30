@@ -138,7 +138,7 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(presenter.recipientSummary(["museApp"], members: ["claude", "museApp"]), "Only Muse")
         XCTAssertEqual(presenter.recipientSummary(["a", "b"], members: ["a", "b", "c"]), "To 2 agents")
         let chip = StatusChip(agentID: "museApp", agentName: "Muse", state: .sending, reason: nil)
-        XCTAssertEqual(chip.label(showsName: false), "Sending"); XCTAssertEqual(chip.label(showsName: true), "Muse · Sending")
+        XCTAssertEqual(chip.label(showsName: false), "Sending"); XCTAssertEqual(chip.label(showsName: true), "Muse\u{00A0}·\u{00A0}Sending", "The separator never starts a line")
 
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "UTC")!
         let locale = Locale(identifier: "en_US")
