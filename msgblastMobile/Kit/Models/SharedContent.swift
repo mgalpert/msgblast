@@ -44,6 +44,18 @@ public enum SharedContent {
         }
     }
 
+    /// Messages shows a message of one to three emoji, and nothing else, at a large size
+    /// without a bubble. ZWJ sequences, skin tones and flags count as one emoji each.
+    public static func isEmojiOnly(_ text: String) -> Bool {
+        let characters = text.filter { !$0.isWhitespace }
+        guard (1...3).contains(characters.count) else { return false }
+        return characters.allSatisfy { character in
+            guard let first = character.unicodeScalars.first, first.properties.isEmoji else { return false }
+            // A digit or # is "emoji" only with a presentation selector or keycap.
+            return first.properties.isEmojiPresentation || character.unicodeScalars.count > 1
+        }
+    }
+
     /// An image by MIME type, else by the filename's type.
     public static func isImage(filename: String, mimeType: String?) -> Bool {
         if let mimeType, mimeType.lowercased().hasPrefix("image/") { return true }

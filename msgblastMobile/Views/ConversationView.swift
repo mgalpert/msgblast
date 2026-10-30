@@ -263,6 +263,11 @@ struct ConversationView: View {
                 }
                 // Messages' Not Delivered mark sits at the bubble's leading edge.
                 if let notSent { ChipView(chip: notSent, showsName: false, iconOnly: true, retry: retry(turn, notSent)) }
+                if SharedContent.isEmojiOnly(text) {
+                    // Messages: one to three emoji, nothing else, large and without a bubble.
+                    Text(text).font(.largeTitle).textSelection(.enabled)
+                        .contextMenu { emojiMenu(turn: turn, mine: mine, text: text) }
+                } else {
                 MaxWidth(width: available * (mine ? Space.bubbleWidth : Space.bubbleIncoming)) {
                     Text(LinkedText.attributed(text, mine: mine))
                         .font(.body)
@@ -282,6 +287,7 @@ struct ConversationView: View {
                             guard mine else { return }
                             withAnimation(.snappy) { if expanded.contains(turn.id) { expanded.remove(turn.id) } else { expanded.insert(turn.id) } }
                         }
+                }
                 }
             }
             if !turn.attachments.isEmpty {
@@ -317,6 +323,14 @@ struct ConversationView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
+    }
+
+    /// The long-press menu for a large emoji message: Reply to a response, Copy.
+    @ViewBuilder private func emojiMenu(turn: RemoteTurn, mine: Bool, text: String) -> some View {
+        if !mine, turn.agentID != nil, app.store.projection.conversations[conversationID]?.endedAt == nil {
+            Button("Reply", systemImage: "arrowshape.turn.up.left") { replyTo = turn }
+        }
+        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
     }
 
     /// Try Again for a Not sent chip: a new private send of the same text to that agent.

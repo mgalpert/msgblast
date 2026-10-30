@@ -207,6 +207,42 @@ final class PresenterTests: XCTestCase {
         XCTAssertTrue(MobileStore(database: database).replyTo.isEmpty)
     }
 
+    @MainActor func testEmojiSurviveTheReducerStoreAndPresenterUnchanged() throws {
+        let samples = ["👩‍👩‍👧‍👦", "👍🏽 thanks", "🇵🇹🇮🇹", "❤️❤️❤️", "Café ☕️ e cappuccino", "🫶🏾✨"]
+        var state = ProjectionState()
+        let conversation = UUID()
+        state.conversations[conversation] = RemoteConversation(id: conversation, title: samples[0], prompt: samples[0], created: fixedNow, endedAt: nil, agentIDs: ["messages:x"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow)
+        let turns = samples.enumerated().map { index, text in
+            RemoteTurn(id: "t\(index)", conversationID: conversation, agentID: "messages:x", role: index.isMultiple(of: 2) ? .assistant : .user, origin: .messagesHistory,
+                       text: text, created: fixedNow.addingTimeInterval(Double(index)), ordinal: index, contentHash: "h\(index)")
+        }
+        let snapshot = RemoteSnapshot(seq: 1, macStatus: MacStatus(macName: "Mac", variant: .demo, locked: false, awake: true, databaseAvailable: true, databaseStatus: "ok", messagesBusy: false,
+            broadcastBusy: false, sendingAgentIDs: [], keepAwakeEnabled: false, keepAwakeHeld: false, messagesSendsAllowed: true, observedAt: fixedNow),
+            grid: RemoteGrid(visibleAgentIDs: []), agents: [], conversations: Array(state.conversations.values), turns: turns, attempts: [])
+        // Over the wire, through the reducer, into SQLite and back.
+        let wire = try RemoteProtocol.decoder().decode(RemoteMessage.self, from: RemoteProtocol.encoder().encode(RemoteMessage.snapshot(snapshot)))
+        guard case .snapshot(let received) = wire else { return XCTFail("Not a snapshot") }
+        let database = try LocalDatabase(url: nil)
+        let store = MobileStore(database: database)
+        store.handle(.snapshot(received))
+        store.saveNow()
+        let reloaded = MobileStore(database: database).projection
+        for (index, text) in samples.enumerated() {
+            XCTAssertEqual(reloaded.turns["t\(index)"]?.text, text)
+            XCTAssertEqual(reloaded.turns["t\(index)"]?.text.unicodeScalars.map(\.value), text.unicodeScalars.map(\.value), "No normalization or escaping")
+        }
+        XCTAssertEqual(reloaded.conversations[conversation]?.title, "👩‍👩‍👧‍👦")
+        XCTAssertEqual(ProjectionPresenter(state: reloaded).inbox.first?.preview, samples[4], "The latest reply previews exactly")
+        XCTAssertTrue(SharedContent.isEmojiOnly("👩‍👩‍👧‍👦"), "A ZWJ family is one emoji")
+        XCTAssertTrue(SharedContent.isEmojiOnly("🇵🇹🇮🇹"))
+        XCTAssertTrue(SharedContent.isEmojiOnly("❤️❤️❤️"))
+        XCTAssertTrue(SharedContent.isEmojiOnly(" 👍🏽 "))
+        XCTAssertFalse(SharedContent.isEmojiOnly("❤️❤️❤️❤️"), "Four is regular text")
+        XCTAssertFalse(SharedContent.isEmojiOnly("👍🏽 thanks"))
+        XCTAssertFalse(SharedContent.isEmojiOnly("123"), "Digits are not emoji")
+        XCTAssertFalse(SharedContent.isEmojiOnly(""))
+    }
+
     func testLinksAttachmentsAndSharedContent() throws {
         let text = "See https://en.wikipedia.org/wiki/Trofie and www.seriouseats.com/pesto, not mailto:a@b.c."
         let found = SharedContent.links(in: text)

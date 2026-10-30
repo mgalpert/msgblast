@@ -219,6 +219,15 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertEqual(messages[1].reactions.map(\.emoji), ["✅"])
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
+    func testEmojiTextIsReadExactly() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &writer), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(writer, "INSERT INTO message VALUES('emoji','👩‍👩‍👧‍👦 🇵🇹 👍🏽 ❤️',810000004000000000,0,NULL,0); INSERT INTO chat_message_join VALUES(1,last_insert_rowid());", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(writer)
+        let message = try XCTUnwrap(MessagesDatabase(path: url.path).messages(chatID: "A").first { $0.guid == "emoji" })
+        XCTAssertEqual(Array(message.text.utf8), Array("👩‍👩‍👧‍👦 🇵🇹 👍🏽 ❤️".utf8))
+    }
     func testUnsupportedSchemaBlocksCleanly() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("unsupported-\(UUID()).db")
         defer { try? FileManager.default.removeItem(at: url) }

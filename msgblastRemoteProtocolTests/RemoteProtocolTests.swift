@@ -84,6 +84,17 @@ final class RemoteProtocolCodingTests: XCTestCase {
         for message in messages { try roundTrip(message) }
     }
 
+    func testEmojiRoundTripByteForByte() throws {
+        for text in ["👩‍👩‍👧‍👦", "👍🏽 thanks", "🇵🇹🇮🇹", "❤️❤️❤️", "Café ☕️ e cappuccino", "🫶🏾✨"] {
+            let command = RemoteCommand(action: .sendPrivate(conversationID: UUID(), agentID: "messages:x", text: text, attachmentIDs: []))
+            let encoded = try RemoteProtocol.encoder().encode(command)
+            let decoded = try RemoteProtocol.decoder().decode(RemoteCommand.self, from: encoded)
+            guard case .sendPrivate(_, _, let received, _) = decoded.action else { return XCTFail("Not a private send") }
+            XCTAssertEqual(Array(received.utf8), Array(text.utf8), "Exact bytes for \(text)")
+            XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains(text), "Emoji are written as UTF-8, not escaped")
+        }
+    }
+
     func testSnapshotSplitsLargeTurnListsIntoOrderedParts() {
         let conversation = UUID()
         let turns = (0..<950).map { RemoteTurn(id: "\($0)", conversationID: conversation, agentID: nil, role: .user, origin: .followUp, text: "t", created: nil, ordinal: $0, contentHash: "h") }
