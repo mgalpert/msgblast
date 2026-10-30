@@ -268,6 +268,17 @@ public struct ProjectionPresenter: Sendable {
         return .sendShared(conversationID: conversationID, text: text, agentIDs: recipients, attachmentIDs: attachmentIDs)
     }
 
+    /// Whether Details checks an agent: everyone in All (an empty selection), else the chosen.
+    public static func isChecked(_ agent: String, selection: Set<String>) -> Bool { selection.isEmpty || selection.contains(agent) }
+
+    /// Details' checkmark toggle. From All, unchecking one leaves the others; unchecking the
+    /// last checked agent, or checking the last missing one, returns to All.
+    public static func toggling(_ agent: String, selection: Set<String>, members: [String]) -> Set<String> {
+        var next = selection.isEmpty ? Set(members) : selection
+        if next.contains(agent) { next.remove(agent) } else { next.insert(agent) }
+        return next.isEmpty || next == Set(members) ? [] : next
+    }
+
     /// "Message Claude" for one recipient, else "Message".
     public func placeholder(recipients: [String]) -> String { recipients.count == 1 ? "Message \(shortName(recipients[0]))" : "Message" }
 

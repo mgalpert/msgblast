@@ -179,6 +179,20 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(presenter.selectionTitle(["museApp", "claude"], members: three), "Claude & Muse")
         XCTAssertEqual(presenter.selectionTitle(["claude", "museApp", "grok"], members: five), "3 of 5")
         XCTAssertEqual(presenter.selectionTitle(Set(three), members: three), "3 Agents", "Everyone selected reads as All")
+
+        // Details' checkmarks: All checks everyone; unchecking walks down, the last returns to All.
+        XCTAssertTrue(three.allSatisfy { ProjectionPresenter.isChecked($0, selection: []) })
+        var selection = ProjectionPresenter.toggling("codexCLI", selection: [], members: three)
+        XCTAssertEqual(selection, ["claude", "museApp"]); XCTAssertEqual(presenter.selectionTitle(selection, members: three), "Claude & Muse")
+        XCTAssertFalse(ProjectionPresenter.isChecked("codexCLI", selection: selection))
+        selection = ProjectionPresenter.toggling("museApp", selection: selection, members: three)
+        XCTAssertEqual(selection, ["claude"])
+        selection = ProjectionPresenter.toggling("claude", selection: selection, members: three)
+        XCTAssertEqual(selection, [], "Unchecking the last returns to All")
+        XCTAssertTrue(three.allSatisfy { ProjectionPresenter.isChecked($0, selection: selection) })
+        selection = ProjectionPresenter.toggling("museApp", selection: ["claude"], members: three)
+        XCTAssertEqual(selection, ["claude", "museApp"], "Checking adds to a subset")
+        XCTAssertEqual(ProjectionPresenter.toggling("codexCLI", selection: selection, members: three), [], "Checking the last missing one is All")
     }
 
     func testAReplyQuotesTheRightResponseOnly() {

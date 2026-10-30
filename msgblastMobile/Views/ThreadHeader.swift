@@ -282,9 +282,10 @@ struct ThreadDetailsSheet: View {
                                 }
                                 Spacer(minLength: Space.gap)
                                 if conversation.agentIDs.count > 1 {
-                                    // Mirrors the header: a checkmark per chosen agent; All shows none.
-                                    Image(systemName: selection.contains(id) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(selection.contains(id) ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                                    // All means everyone: every row is checked until a subset is chosen.
+                                    let checked = ProjectionPresenter.isChecked(id, selection: selection)
+                                    Image(systemName: checked ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(checked ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
                                         .font(.title3)
                                 }
                             }
@@ -292,10 +293,9 @@ struct ThreadDetailsSheet: View {
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 guard conversation.agentIDs.count > 1 else { return }
-                                if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
-                                if selection.count == conversation.agentIDs.count { selection = [] }
+                                selection = ProjectionPresenter.toggling(id, selection: selection, members: conversation.agentIDs)
                             }
-                            .accessibilityAddTraits(selection.contains(id) ? [.isButton, .isSelected] : .isButton)
+                            .accessibilityAddTraits(ProjectionPresenter.isChecked(id, selection: selection) ? [.isButton, .isSelected] : .isButton)
                         }
                     }
                     sharedSections
