@@ -100,8 +100,8 @@ for name in products:
                          'INFOPLIST_KEY_NSCameraUsageDescription':'"msgblast uses the camera to scan the pairing code shown on your Mac."',
                          'INFOPLIST_KEY_NSLocalNetworkUsageDescription':'"msgblast connects to msgblast on your Mac over your local network or Tailscale."',
                          'INFOPLIST_KEY_NSPhotoLibraryUsageDescription':'"msgblast sends the photos you choose to your Messages agents through your Mac."',
-                         # The phone uses the canonical green live icon bundle, unmodified, and the accent color from its fill.
-                         'ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon', 'ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME':'AccentColor'})
+                         # The phone uses the canonical green live icon bundle, unmodified; the interface keeps the system blue tint, as Messages does.
+                         'ASSETCATALOG_COMPILER_APPICON_NAME':'AppIcon'})
     if name == 'msgblastMobileTests':
         settings.update({'PRODUCT_BUNDLE_IDENTIFIER':'com.msgblast.ios.tests'})
         fixture_build = obj('mobileFixturesBuild', '{isa = PBXBuildFile; fileRef = '+mobile_fixtures+';}')

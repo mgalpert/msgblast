@@ -65,7 +65,7 @@ struct InboxView: View {
         NavigationLink(value: row.id) {
             HStack(alignment: .top, spacing: 10) {
                 // Messages' unread dot, left of the avatar.
-                Circle().fill(row.unread ? Color.blue : Color.clear).frame(width: 10, height: 10).padding(.top, 15)
+                Circle().fill(row.unread ? Color.accentColor : Color.clear).frame(width: 10, height: 10).padding(.top, 15)
                     .accessibilityHidden(true)
                 RowAvatar(app: app, agentIDs: row.agentIDs, names: row.agentIDs.map(presenter.shortName))
                 VStack(alignment: .leading, spacing: 2) {
