@@ -278,7 +278,9 @@ final class PresenterTests: XCTestCase {
         // Renamed on the Mac or the phone: the name, not the prompt.
         state.conversations[gift] = RemoteConversation(id: gift, title: "Ana's birthday", prompt: "Gift ideas for Ana?", created: fixedNow, endedAt: nil,
                                                        agentIDs: ["museApp"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow)
-        state.turns["p"] = RemoteTurn(id: "p", conversationID: sunday, agentID: "museApp", role: .user, origin: .followUp, text: "Plan a quiet Sunday in Lisbon.", created: fixedNow, ordinal: 0, contentHash: "h")
+        // Before the renamed thread's activity, so the order never comes down to a tie.
+        state.turns["p"] = RemoteTurn(id: "p", conversationID: sunday, agentID: "museApp", role: .user, origin: .followUp, text: "Plan a quiet Sunday in Lisbon.",
+                                      created: fixedNow.addingTimeInterval(-60), ordinal: 0, contentHash: "h")
         let presenter = ProjectionPresenter(state: state)
         let rows = presenter.inbox
         XCTAssertEqual(rows.map(\.title), ["Ana's birthday", "Plan a quiet Sunday in Lisbon."], "Two threads with one agent: newest first, each with its own title")
@@ -643,11 +645,12 @@ final class MobileAppTests: XCTestCase {
 
         // Pairing again replaces the cache; the call waits for the new Mac's snapshot.
         mac.snapshotDelay = .milliseconds(200)
-        let started = ContinuousClock.now
+        let sentBefore = mac.snapshotsSent
         _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        // Order, not elapsed time: the call returned only after the new Mac's late snapshot arrived.
+        XCTAssertEqual(mac.snapshotsSent, sentBefore + 1, "Waited for the delayed snapshot")
         XCTAssertTrue(app.inboxReady, "Returns onto a filled inbox")
         XCTAssertEqual(app.store.projection.seq, 10)
-        XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .milliseconds(200))
 
         // A failed attempt throws and keeps the existing pairing, so a sheet can stay open.
         let before = app.connection.pairedMac

@@ -17,6 +17,8 @@ final class FakeMac {
     var avatars: [String: Data]? = [:]
     /// Holds the first snapshot back, like a Mac that takes a moment to build it.
     var snapshotDelay: Duration?
+    /// Snapshots actually delivered, so tests assert order rather than elapsed time.
+    var snapshotsSent = 0
     var lockedOnConnect = false
     var forgetOnResume = false
     private(set) var connections = 0
@@ -80,8 +82,8 @@ final class FakeMac {
                     if let since, since == mac.snapshot.seq { send(.events(events: [], latestSeq: since)) }
                     else if let delay = mac.snapshotDelay {
                         let snapshot = mac.snapshot
-                        Task { @MainActor [weak self] in try? await Task.sleep(for: delay); self?.send(.snapshot(snapshot)) }
-                    } else { send(.snapshot(mac.snapshot)) }
+                        Task { @MainActor [weak self] in try? await Task.sleep(for: delay); self?.mac?.snapshotsSent += 1; self?.send(.snapshot(snapshot)) }
+                    } else { mac.snapshotsSent += 1; send(.snapshot(mac.snapshot)) }
                 case .command(let command):
                     mac.commands.append(command)
                     if case .fetchAvatar(let ref) = command.action {

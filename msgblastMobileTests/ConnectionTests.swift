@@ -153,11 +153,11 @@ final class ConnectionTests: XCTestCase {
         let (connection, _, saved) = make(mac)
         connection.timing.raceTimeout = .milliseconds(100)
         var result: Result<PairedMac, Error>?
-        let started = Date()
         connection.pair(offer: mac.offer(), deviceName: "Phone") { result = $0 }
         XCTAssertEqual(connection.state, .pairing)
+        // The silent fake never answers or fails, so only the race deadline can end this;
+        // `timedOut` below proves it was the deadline. No wall-clock bound, so load cannot fail it.
         await settle { result != nil }
-        XCTAssertLessThan(Date().timeIntervalSince(started), 0.9, "The deadline ends the attempt, not a TCP timeout")
         guard case .failure(let error) = result else { return XCTFail("Pairing must fail, got \(String(describing: result))") }
         let failure = try XCTUnwrap(error as? RaceFailure)
         XCTAssertTrue(failure.timedOut)
