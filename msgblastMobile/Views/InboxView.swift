@@ -7,6 +7,7 @@ struct InboxView: View {
     @State private var composing = false
     @State private var settings = false
     @State private var query = ""
+    @FocusState private var searching: Bool
     var launchScreen: LaunchScreen = .inbox
 
     private var presenter: ProjectionPresenter {
@@ -19,7 +20,8 @@ struct InboxView: View {
     var body: some View {
         let all = presenter.inbox
         let needle = query.trimmingCharacters(in: .whitespaces)
-        let rows = needle.isEmpty ? all : all.filter { title($0).localizedStandardContains(needle) || $0.preview.localizedStandardContains(needle) }
+        let rows = needle.isEmpty ? all : all.filter { title($0).localizedStandardContains(needle) || $0.preview.localizedStandardContains(needle)
+            || $0.agentIDs.contains { presenter.name($0).localizedStandardContains(needle) } }
         // Messages' list: plain and full-bleed, one list newest first, separators from the text column.
         List {
             if let action = connectionAction {
@@ -45,9 +47,10 @@ struct InboxView: View {
         .navigationDestination(for: UUID.self) { ConversationView(app: app, conversationID: $0) }
         // Settings is a screen of its own, pushed from the gear; compose stays a sheet.
         .navigationDestination(isPresented: $settings) { SettingsView(app: app) }
-        // iOS 26: search and compose share the bottom toolbar, search minimized to a button.
+        // iOS 26, as Messages: the glass search field sits in the bottom toolbar with the round
+        // compose button to its right; it filters live and dismisses with the keyboard.
         .searchable(text: $query, prompt: "Search")
-        .searchToolbarBehavior(.minimize)
+        .searchFocused($searching)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings") }
             DefaultToolbarItem(kind: .search, placement: .bottomBar)
@@ -61,6 +64,13 @@ struct InboxView: View {
         .onAppear {
             if launchScreen == .newConversation { composing = true }
             if launchScreen == .settings { settings = true }
+            #if DEBUG
+            // Design review: `MSGBLAST_FIXTURE_SEARCH=<text>` types a query with the keyboard up.
+            if let text = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_SEARCH"] {
+                query = text
+                Task { try? await Task.sleep(for: .milliseconds(600)); searching = true }
+            }
+            #endif
         }
     }
 
