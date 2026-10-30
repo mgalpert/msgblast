@@ -53,24 +53,29 @@ struct ConversationView: View {
                         incompleteRow(incomplete).padding(.bottom, Space.gap)
                     }
                     Spacer(minLength: 0)
-                // Spacing is explicit per row: 2 pt within one sender's run, 8 pt between
-                // senders, a time header 24 pt above and 8 pt below (Messages' rhythm).
+                // Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs are
+                // 10 pt apart, and a time separator has 16 pt above and below.
                 LazyVStack(alignment: .leading, spacing: 0) {
                     let latestMine = turns.last { $0.role == .user }?.id
+                    let isGroup = conversation.agentIDs.count > 1 && filter == nil
                     ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                         let previous = index == 0 ? nil : turns[index - 1]
+                        let next = index + 1 < turns.count ? turns[index + 1] : nil
                         let header = turn.created.flatMap { ProjectionPresenter.timeHeader($0, previous: previous?.created) }
+                        let nextHeader = next?.created.flatMap { ProjectionPresenter.timeHeader($0, previous: turn.created) }
                         if let header {
                             Text(header).font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
-                                .padding(.top, index == 0 ? 0 : Space.section).padding(.bottom, Space.gap)
+                                .padding(.top, index == 0 ? 0 : Space.separator).padding(.bottom, Space.separator)
                         }
-                        let sameSender = previous.map { $0.role == turn.role && $0.agentID == turn.agentID } ?? false
-                        bubble(turn, showsName: turn.role != .user && !sameSender, isLatest: turn.id == latestMine)
-                            .padding(.top, header != nil || previous == nil ? 0 : sameSender ? Space.hairline : Space.gap)
+                        let continues = header == nil && previous.map { Self.sameSender($0, turn) } == true
+                        let endsRun = nextHeader != nil || next.map { Self.sameSender(turn, $0) } != true
+                        bubble(turn, firstOfRun: !continues, lastOfRun: endsRun, isGroup: isGroup, isLatest: turn.id == latestMine)
+                            .padding(.top, header != nil || previous == nil ? 0 : continues ? Space.run : Space.runGap)
                             .id(turn.id)
                     }
                     ForEach(presenter.typingAgents(in: conversationID, agentID: filter), id: \.self) { agent in
-                        TypingBubble(app: app, agentID: agent, name: presenter.shortName(agent)).padding(.top, Space.gap).id("typing-\(agent)")
+                        TypingBubble(app: app, agentID: agent, name: presenter.shortName(agent), showsAvatar: isGroup)
+                            .padding(.top, Space.runGap).id("typing-\(agent)")
                     }
                     if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap) }
                     if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section) }
@@ -143,36 +148,48 @@ struct ConversationView: View {
 
     private static let bottomID = "thread-bottom"
 
-    private func bubble(_ turn: RemoteTurn, showsName: Bool, isLatest: Bool) -> some View {
+    static func sameSender(_ a: RemoteTurn, _ b: RemoteTurn) -> Bool { a.role == b.role && (a.role == .user || a.agentID == b.agentID) }
+
+    /// One bubble in Messages' layout. In a group, replies are indented past a 30 pt avatar that
+    /// sits beside the last bubble of the run, and the run starts with the sender's name.
+    private func bubble(_ turn: RemoteTurn, firstOfRun: Bool, lastOfRun: Bool, isGroup: Bool, isLatest: Bool) -> some View {
         let mine = turn.role == .user
         let text = turn.text.isEmpty ? turn.attachments.map(\.filename).joined(separator: ", ") : turn.text
         let all = mine ? presenter.chips(for: turn, agentID: filter) : []
         let notSent = all.first { $0.state == .notSent }
+        let showsAvatar = isGroup && !mine
+        let available = width - 2 * Space.screen
         return VStack(alignment: mine ? .trailing : .leading, spacing: Space.tight) {
-            if showsName, let agent = turn.agentID {
-                HStack(spacing: Space.gap) {
-                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarInline)
-                    Text(presenter.name(agent)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                }
+            if showsAvatar && firstOfRun, let agent = turn.agentID {
+                Text(presenter.senderLabel(agent, in: conversationID)).font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, Space.avatarThread + Space.gap + Space.bubbleX)
             }
-            HStack(alignment: .center, spacing: Space.gap) {
+            HStack(alignment: mine ? .center : .bottom, spacing: Space.gap) {
+                if showsAvatar {
+                    if lastOfRun, let agent = turn.agentID {
+                        AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarThread)
+                    } else {
+                        Color.clear.frame(width: Space.avatarThread, height: 1)
+                    }
+                }
                 // Messages' Not Delivered mark sits at the bubble's leading edge.
                 if let notSent { ChipView(chip: notSent, showsName: false, iconOnly: true, retry: retry(turn, notSent)) }
-                MaxWidth(width: (width - 2 * Space.screen) * Space.bubbleWidth) {
-                Text(text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, Space.inset).padding(.vertical, Space.gap)
-                    .background(mine ? Color("Bubble") : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: Space.corner, style: .continuous))
-                    .foregroundStyle(mine ? .white : .primary)
-                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: Space.corner, style: .continuous))
-                    .contextMenu {
-                        // Copy only: resending your own message is never offered, so nothing is sent twice by accident.
-                        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
-                    }
-                    .onTapGesture {
-                        guard mine else { return }
-                        withAnimation(.snappy) { if expanded.contains(turn.id) { expanded.remove(turn.id) } else { expanded.insert(turn.id) } }
-                    }
+                MaxWidth(width: available * (mine ? Space.bubbleWidth : Space.bubbleIncoming)) {
+                    Text(text)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, Space.bubbleX).padding(.vertical, Space.bubbleY)
+                        .background(BubbleShape(mine: mine, tail: lastOfRun).fill(mine ? Color("Bubble") : Color(.secondarySystemBackground)))
+                        .foregroundStyle(mine ? .white : .primary)
+                        .contentShape(.contextMenuPreview, BubbleShape(mine: mine, tail: false))
+                        .contextMenu {
+                            // Copy only: resending your own message is never offered, so nothing is sent twice by accident.
+                            Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+                        }
+                        .onTapGesture {
+                            guard mine else { return }
+                            withAnimation(.snappy) { if expanded.contains(turn.id) { expanded.remove(turn.id) } else { expanded.insert(turn.id) } }
+                        }
                 }
             }
             if !turn.attachments.isEmpty && !turn.text.isEmpty {
@@ -396,10 +413,12 @@ struct TypingBubble: View {
     @ObservedObject var app: MobileApp
     var agentID: String
     var name: String
+    /// Groups show the 30 pt avatar beside it; direct threads show none.
+    var showsAvatar = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         HStack(alignment: .bottom, spacing: Space.gap) {
-            AgentAvatar(app: app, agentID: agentID, name: name, size: Space.avatarInline)
+            if showsAvatar { AgentAvatar(app: app, agentID: agentID, name: name, size: Space.avatarThread) }
             TimelineView(.animation(minimumInterval: 0.15, paused: reduceMotion)) { timeline in
                 let phase = reduceMotion ? -1 : Int(timeline.date.timeIntervalSinceReferenceDate / 0.3) % 3
                 HStack(spacing: Space.tight) {
@@ -407,8 +426,8 @@ struct TypingBubble: View {
                         Circle().fill(Color.secondary).frame(width: Space.dot, height: Space.dot).opacity(phase == dot ? 0.9 : 0.35)
                     }
                 }
-                .padding(.horizontal, Space.inset).padding(.vertical, Space.inset)
-                .background(Color(.secondarySystemBackground), in: Capsule())
+                .padding(.horizontal, Space.bubbleX).padding(.vertical, Space.bubbleY + Space.tight)
+                .background(BubbleShape(mine: false, tail: true).fill(Color(.secondarySystemBackground)))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

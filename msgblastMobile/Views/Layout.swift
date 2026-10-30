@@ -12,6 +12,29 @@ struct MaxWidth: Layout {
     }
 }
 
+/// Messages' bubble: an 18 pt rounded rectangle, with a tail at the bottom outer corner on
+/// the last bubble of a run (bottom right for yours, bottom left for replies).
+struct BubbleShape: Shape {
+    var mine: Bool
+    var tail: Bool
+    func path(in rect: CGRect) -> Path {
+        let path = Path(roundedRect: rect, cornerRadius: min(Space.cornerBubble, rect.height / 2), style: .continuous)
+        guard tail else { return path }
+        // Drawn for an outgoing bubble, then mirrored for a reply.
+        var wedge = Path()
+        let x = rect.maxX, y = rect.maxY
+        wedge.move(to: CGPoint(x: x - 18, y: y))
+        wedge.addLine(to: CGPoint(x: x - 4, y: y))
+        wedge.addQuadCurve(to: CGPoint(x: x + 5, y: y + 0.5), control: CGPoint(x: x + 1, y: y + 1))
+        wedge.addQuadCurve(to: CGPoint(x: x, y: y - 12), control: CGPoint(x: x - 1, y: y - 3))
+        wedge.addLine(to: CGPoint(x: x - 18, y: y - 12))
+        wedge.closeSubpath()
+        if !mine { wedge = wedge.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: rect.minX + rect.maxX, ty: 0)) }
+        // A union, not an added subpath: opposite windings would punch a hole at the corner.
+        return path.union(wedge)
+    }
+}
+
 /// One spacing system for every screen, on the 4/8 pt grid. Views use these names, never
 /// literal numbers, so margins, gaps and corners stay consistent.
 enum Space {
@@ -28,7 +51,18 @@ enum Space {
     /// Consecutive bubbles from one sender, as Messages groups them; also ring widths.
     static let hairline: CGFloat = 2
 
-    /// Bubbles and notices.
+    /// Messages' bubble metrics: 18 pt corners, 14 × 10 padding, 2 pt within a run,
+    /// 10 pt between runs, 16 pt around a time separator.
+    static let cornerBubble: CGFloat = 18
+    static let bubbleX: CGFloat = 14
+    static let bubbleY: CGFloat = 10
+    static let run: CGFloat = 2
+    static let runGap: CGFloat = 10
+    static let separator: CGFloat = 16
+    /// Incoming bubbles take at most 72 percent of the width, outgoing 78.
+    static let bubbleIncoming: CGFloat = 0.72
+
+    /// Notices.
     static let corner: CGFloat = 16
     static let cornerCard: CGFloat = 12
 
@@ -59,6 +93,6 @@ enum Space {
     static let hero: CGFloat = 96
     /// Popover text width.
     static let popoverWidth: CGFloat = 296
-    /// Bubbles take at most this share of the conversation's width.
+    /// Outgoing bubbles take at most this share of the conversation's width.
     static let bubbleWidth: CGFloat = 0.78
 }

@@ -93,6 +93,15 @@ public struct ProjectionPresenter: Sendable {
     }
 
     public func name(_ agentID: String) -> String { state.agents[agentID]?.formLabel ?? agentID }
+
+    /// The caption above an incoming run in a group: the agent's name, with its form
+    /// ("Claude · Web") only when another form of the same product is in the conversation.
+    public func senderLabel(_ agentID: String, in conversation: UUID) -> String {
+        guard let agent = state.agents[agentID] else { return agentID }
+        let members = state.conversations[conversation]?.agentIDs ?? []
+        let twin = members.contains { $0 != agentID && state.agents[$0]?.product == agent.product }
+        return twin ? agent.formLabel : agent.displayName
+    }
     public func shortName(_ agentID: String) -> String { state.agents[agentID]?.displayName ?? agentID }
 
     public var inbox: [InboxRow] {
@@ -144,8 +153,9 @@ public struct ProjectionPresenter: Sendable {
         }.map(\.agentID)).sorted()
     }
 
-    /// "Today 9:41 AM", "Yesterday 6:12 PM", "Mon, Oct 27 at 3:05 PM" above a turn that
-    /// starts the conversation or follows the previous one by more than an hour; else nil.
+    /// Messages' separators: "Today 10:54 AM", "Yesterday 7:34 PM", "Thu, Oct 22 at 7:34 PM",
+    /// and "Thu, Oct 22, 2025 at 7:34 PM" for another year. Shown above a turn that starts the
+    /// conversation or follows the previous one by more than an hour; else nil.
     public static func timeHeader(_ date: Date, previous: Date?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String? {
         if let previous, date.timeIntervalSince(previous) <= 3600 { return nil }
         var calendar = calendar
@@ -153,8 +163,9 @@ public struct ProjectionPresenter: Sendable {
         let time = date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).hour().minute())
         if calendar.isDate(date, inSameDayAs: now) { return "Today \(time)" }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Yesterday \(time)" }
-        let day = date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).weekday(.abbreviated).month(.abbreviated).day())
-        return "\(day) at \(time)"
+        var style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).weekday(.abbreviated).month(.abbreviated).day()
+        if calendar.component(.year, from: date) != calendar.component(.year, from: now) { style = style.year() }
+        return "\(date.formatted(style)) at \(time)"
     }
 
     /// Chips for one of your turns: the matching attempt for each agent.

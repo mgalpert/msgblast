@@ -135,6 +135,9 @@ final class PresenterTests: XCTestCase {
         XCTAssertNil(header(now, now.addingTimeInterval(-3600)), "An hour or less apart: no header")
         XCTAssertEqual(header(now.addingTimeInterval(-86_400 + 600), now.addingTimeInterval(-3 * 86_400)), "Yesterday 8:10 AM")
         XCTAssertEqual(header(now.addingTimeInterval(-4 * 86_400), nil), "Mon, Jan 11 at 8:00 AM")
+        XCTAssertEqual(header(now.addingTimeInterval(-84 * 86_400 - 3600 * 12 - 26 * 60), nil), "Thu, Oct 22, 2026 at 7:34 PM", "Another year shows the year")
+        XCTAssertEqual(header(now.addingTimeInterval(-2 * 86_400 + 3 * 3600), nil), "Wed, Jan 13 at 11:00 AM", "Older than yesterday: weekday, month, day, then at")
+        XCTAssertEqual(header(now.addingTimeInterval(2 * 3600 + 54 * 60), nil), "Today 10:54 AM")
 
         var state = ProjectionState()
         let read = UUID(), unread = UUID(), old = UUID()
@@ -147,6 +150,24 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(rows[read], false, "Opened after the reply")
         XCTAssertEqual(rows[unread], true, "A reply newer than the last opening")
         XCTAssertEqual(rows[old], false, "Replies from before this phone started tracking are not unread")
+    }
+
+    func testSenderLabelsNameTheFormOnlyWhenTwoFormsShareAConversation() {
+        var state = ProjectionState()
+        func agent(_ id: String, _ product: AgentProduct, _ form: AgentForm, _ name: String) -> AgentAvailability {
+            AgentAvailability(agentID: id, product: product, form: form, displayName: name, visibleInGrid: true, selectedForSharedSend: true,
+                              capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                              readiness: .ready, reasons: [], observedAt: Date(), source: .live)
+        }
+        for a in [agent("chatgpt", .chatgpt, .website, "ChatGPT"), agent("chatgptApp", .chatgpt, .macApp, "ChatGPT"), agent("claude", .claude, .website, "Claude")] { state.agents[a.agentID] = a }
+        let both = UUID(), one = UUID()
+        state.conversations[both] = RemoteConversation(id: both, title: "T", prompt: "P", created: Date(), endedAt: nil, agentIDs: ["chatgpt", "chatgptApp", "claude"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: Date())
+        state.conversations[one] = RemoteConversation(id: one, title: "T", prompt: "P", created: Date(), endedAt: nil, agentIDs: ["chatgptApp", "claude"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: Date())
+        let presenter = ProjectionPresenter(state: state)
+        XCTAssertEqual(presenter.senderLabel("chatgptApp", in: both), "ChatGPT · Mac app")
+        XCTAssertEqual(presenter.senderLabel("chatgpt", in: both), "ChatGPT · Web")
+        XCTAssertEqual(presenter.senderLabel("claude", in: both), "Claude")
+        XCTAssertEqual(presenter.senderLabel("chatgptApp", in: one), "ChatGPT", "One form: the name alone")
     }
 
     @MainActor func testOpeningAConversationIsRememberedAndForgotten() throws {

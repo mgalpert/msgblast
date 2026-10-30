@@ -105,6 +105,7 @@ enum DesignFixtures {
         attempt(&state, group, "museApp", "Best pasta shape for pesto? One answer each.", .notSent, at: t0,
                 detail: "App control could not complete this request. Review msgblast permissions; nothing will be retried automatically.")
         reply(&state, group, "claude", "r1", "Trofie. Its twists hold pesto better than anything else, and it is the Ligurian classic.", at: t0.addingTimeInterval(40))
+        reply(&state, group, "claude", "r1b", "Fusilli is a close second.", at: t0.addingTimeInterval(45))
         reply(&state, group, "chatgptApp", "r2", "Trofie or trenette. If you can't find those, use fusilli.", at: t0.addingTimeInterval(55))
         let t1 = now.addingTimeInterval(-4 * 60)
         user(&state, group, "p2", "What about gnocchi?", at: t1)
