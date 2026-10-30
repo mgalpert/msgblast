@@ -267,7 +267,7 @@ enum DesignRequest: Equatable {
         guard let window = targetWindow(model: model, comparisonID: comparisonID) else { throw Failure("no visible window to capture") }
         try await applyWindowSize(to: window)
         let title = comparisonID.flatMap { model.comparison($0)?.title } ?? "msgblast"
-        let image = try await ChatWindowCapture.capture(window, title: title, layout: nil)
+        let image = try await ChatWindowCapture.capture(window, title: title, layout: nil, includeChildWindows: true)
         guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
               let png = bitmap.representation(using: .png, properties: [:]) else { throw Failure("the capture could not be encoded as PNG") }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

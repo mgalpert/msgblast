@@ -16,7 +16,8 @@ import msgblastCore
 /// out-of-process website surfaces. Enumerate only content available to this
 /// process without screen-recording consent, then bind the exact app window.
 @MainActor enum ChatWindowCapture {
-    static func capture(_ window: NSWindow, title: String, layout: ChatCaptureLayout?) async throws -> NSImage {
+    /// `includeChildWindows` also captures attached popovers (design review only; shared images stay the window alone).
+    static func capture(_ window: NSWindow, title: String, layout: ChatCaptureLayout?, includeChildWindows: Bool = false) async throws -> NSImage {
         let sidebar = layout?.sidebarVisibility
         let originalFrame = window.frame
         let originalTitle = window.title
@@ -44,7 +45,7 @@ import msgblastCore
             let configuration = SCScreenshotConfiguration()
             configuration.showsCursor = false
             configuration.ignoreShadows = false
-            configuration.includeChildWindows = false
+            configuration.includeChildWindows = includeChildWindows
             configuration.dynamicRange = .sdr
             let output = try await SCScreenshotManager.captureScreenshot(contentFilter: filter, configuration: configuration)
             guard let image = output.sdrImage else { throw CaptureError.unavailable }
