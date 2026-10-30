@@ -94,7 +94,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             if let mac = app.connection.pairedMac {
-                Section("Mac") {
+                Section {
                     LabeledContent("Name", value: mac.macName)
                     LabeledContent("Key", value: mac.fingerprint).font(.callout.monospaced())
                     LabeledContent("Paired", value: mac.pairedAt.formatted(date: .abbreviated, time: .shortened))
@@ -105,6 +105,11 @@ struct SettingsView: View {
                         }
                     } label: { Text("Status") }
                     if let seconds = app.connection.lastConnectSeconds { LabeledContent("Connect time", value: String(format: "%.1f s", seconds)) }
+                } header: {
+                    HStack(spacing: 10) {
+                        AppIconImage(size: 28)
+                        Text("Mac")
+                    }
                 }
             }
             Section {

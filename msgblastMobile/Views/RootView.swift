@@ -67,6 +67,31 @@ extension View {
     func macStatusSubtitle(_ app: MobileApp) -> some View { modifier(MacStatusSubtitle(app: app)) }
 }
 
+/// The app's own icon, as the Home Screen shows it, for the pairing hero and Settings.
+/// Falls back to a symbol when the bundle has no compiled icon.
+struct AppIconImage: View {
+    var size: CGFloat = 96
+    static let image: UIImage? = {
+        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: Any]
+        let primary = icons?["CFBundlePrimaryIcon"] as? [String: Any]
+        // The icon files, largest last. The catalog's layered icon name is not a loadable image.
+        guard let name = (primary?["CFBundleIconFiles"] as? [String])?.last else { return nil }
+        return UIImage(named: name)
+    }()
+    var body: some View {
+        if let image = Self.image {
+            Image(uiImage: image)
+                .resizable()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 22 / 96, style: .continuous))
+                .shadow(color: .black.opacity(0.15), radius: size / 16, y: size / 32)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: "qrcode.viewfinder").font(.system(size: size * 0.66, weight: .light)).foregroundStyle(.tint)
+        }
+    }
+}
+
 /// A small ⓘ that shows the Mac's full reason in a popover, also on iPhone.
 struct DetailButton: View {
     var title: String = "Details"

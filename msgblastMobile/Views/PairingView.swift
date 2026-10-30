@@ -50,7 +50,7 @@ struct PairingView: View {
             } else {
                 Section {
                     VStack(spacing: 12) {
-                        Image(systemName: "qrcode.viewfinder").font(.system(size: 64, weight: .light)).foregroundStyle(.tint)
+                        AppIconImage(size: 96)
                         Text("Open msgblast › Settings › Remote on your Mac")
                             .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }

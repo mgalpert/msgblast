@@ -92,7 +92,7 @@ struct ConversationView: View {
             Text(turn.text.isEmpty ? turn.attachments.map(\.filename).joined(separator: ", ") : turn.text)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(mine ? Color.accentColor : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                .background(mine ? Color("Bubble") : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 .foregroundStyle(mine ? .white : .primary)
             if !turn.attachments.isEmpty && !turn.text.isEmpty {
                 Label(turn.attachments.map(\.filename).joined(separator: ", "), systemImage: "paperclip").font(.caption).foregroundStyle(.secondary).lineLimit(1)
