@@ -1,10 +1,10 @@
 # iOS controller phase 3: live Dev validation procedure
 
-Status: **pending the owner's run.** Phase 3 of
+Status: **run on 2026-10-28 and 2026-10-29.** Phase 3 of
 [the iOS controller plan](2026-10-24-ios-controller-architecture.md) checks the
 phone app against the owner's live **msgblast Dev** Mac over Tailscale with real
-agents. It needs the owner's iPhone and Mac, so it was prepared but not run. Phase 0
-results and the original lock-screen questions are in
+agents. Recorded values are in the results table. Steps that were not run say why.
+Phase 0 results and the original lock-screen questions are in
 [the spike record](2026-10-26-ios-controller-spike.md).
 
 ## Ground rules for this run
@@ -193,19 +193,71 @@ Record: how many single taps opened the conversation.
 Pass: all ten open on the first tap. (In the simulator the first tap sometimes did
 not navigate; this checks it on a real device.)
 
+## Findings from the 2026-10-28/29 run
+
+### Mac app agents fail without Accessibility and Screen Recording
+
+Muse refused every send with "App control could not complete this request. Review
+msgblast permissions" and, depending on the build, "The app is still updating its
+controls. No input was sent." or "Keep one main Muse window open and dismiss any
+dialogs before connecting." Cause: the Dev Remote copy had neither grant. Without
+Screen Recording, the window list the embedded driver returns has empty titles, so
+the one-main-window guard in `DesktopAppConversation.target()` finds no titled Muse
+window (with the grant, Muse's windows are titled "Muse" and "Log in"). Without
+Accessibility the control read fails. Check it read-only with the app's own helper:
+`"<app>/Contents/Helpers/cua-driver" call --socket /tmp/msgblast-cua-*/driver.sock check_permissions`
+(and `list_windows '{"pid":<Muse pid>}'`).
+
+### Ad-hoc rebuilds drop those grants
+
+Each ad-hoc build has a cdhash designated requirement, so macOS treats every
+rebuild as a new app and silently discards the previous grants. Three same-named
+copies (`msgblast Dev Remote.app` in different build folders) also let `open -b`
+and System Settings pick the wrong one. What was done: all other Dev and Demo
+bundles on the Mac were deleted; the kept preview was re-signed with the Apple
+Development identity for team C4XLZBEPK8 (`sign_bundle` from
+`scripts/build_preview_apps.py`), which gives an identity-based designated
+requirement that keeps grants across rebuilds signed the same way; and
+`build_preview_apps.py` now stamps local preview names with the build time
+(`--build-stamp`, commit d187f6c). Launch previews by explicit path. Re-signing
+is still a manual step after each packager run.
+
+### Launch Services resolved an older copy
+
+Launch Services resolved `open -b com.msgblast.development.remote` to an older
+copy (ef4943d) even though a newer build existed; this cost one retest. Same
+remedy: one stamped copy, launched by path.
+
+### Port and keep-awake fixes verified live
+
+Immediate relaunch kept port 50530 (ce91b7a). The assertion "msgblast remote
+control: a paired phone is connected or a send is running" was held while the
+phone was connected (60eb924).
+
+### Known gap, not fixed
+
+A pairing code shown while the Mac is on a temporary port carries that port.
+
+Related phase 3 commits on `ios-controller`: f501452, eefc00b, 9689df4, 090eb67,
+0b35159, ef4943d, c04d8a5, 4af78c6, c397e8e (merge of origin/main 08e29ee),
+11fe07e, ce91b7a, 60eb924, f6f7ae2, d187f6c.
+
 ## Results table
 
 | Step | Recorded values | Pass / finding |
 | --- | --- | --- |
-| 1 Install | | |
-| 2 Pair | | |
-| 3 Wi-Fi / cellular | | |
-| 4 Sends | | |
-| 5 Lock | | |
-| 6 Display sleep | | |
-| 7 Long desktop send | | |
-| 8 Forget / re-pair | | |
-| 9 Inbox taps | | |
+| 1 Install | iOS 27.2 on iPhone (`iphone181`), Xcode 27, team C4XLZBEPK8 with automatic Apple Development signing, installed with `xcrun devicectl device install app`; bundle id stayed `com.msgblast.ios` | Pass |
+| 2 Pair | First attempt hung on "Pairing…" because the phone's Tailscale reported "MagicSock ReceiveIPv4 not running"; a phone restart cleared it. Mac fingerprint shown under the QR matched the phone. | Pass after phone restart. Finding fixed in f501452 (15 s race deadline, named failure) and eefc00b (unreachable hint under Pair) |
+| 3 Wi-Fi / cellular | Wi-Fi over Tailscale: Route 100.68.57.78:50530, Connect time 0.1 s, traffic relayed through DERP sfo (no direct path). Reconnect after backgrounding the phone app: pass. | Partial: Wi-Fi pass; cellular and Tailscale-off not run |
+| 4 Sends | Mac app agent (Muse), 2026-10-29: phone sent "Reply with OK", phone showed Sent, Mac pane showed "You: Reply with OK" then "Muse: OK", phone showed Replied with Muse's "OK" and an unlocked composer. About 12 s after the send and before the reply, the phone showed "Muse did not finish a request here. Outgoing message observed in the app. Waiting for its reply." with Acknowledge and a locked composer; it cleared itself when the reply arrived. Website agent: not run (rabbit OS3 not signed in in Dev Remote; the phone relayed the reason text correctly). Private follow-up: not run. | Mac app send pass. Finding: the incomplete notice fires before a slow agent has replied, then self-clears |
+| 5 Lock | Phone banner "Disconnected: your Mac is locked", "Last heard now"; TLS session kept; keep-awake assertion held across the lock | Pass. Finding fixed in 60eb924 (setKeepAwake was refused while locked) |
+| 6 Display sleep | Standalone `/Applications/CuaDriver.app` holds a `PreventUserIdleDisplaySleep` assertion on this Mac | Not run (confounded by that assertion) |
+| 7 Long desktop send | | Not run |
+| 8 Forget / re-pair | 8a expired code: "This code expired. Show a new one on your Mac.", sheet stayed open, Cancel kept the existing pairing | Partial: 8a pass; forget-and-re-pair not run |
+| 9 Inbox taps | 10 of 10 first taps opened the conversation; Acknowledge from the phone cleared the notice twice | Pass |
 
-Also record: Mac model and macOS version, Dev source SHA, phone model, Tailscale
-variant on each device, and anything that did not match this procedure.
+Run record: Mac `macbook-pro-34`, macOS 27.2 (Darwin 27.2.0), Apple silicon;
+Dev Remote source SHA `f6f7ae22b622fc7a63abcb2ff19a03b1c76b3843` (phone app built
+from the same SHA); Dev Remote bundle `com.msgblast.development.remote`, listener
+port 50530; Tailscale via Tailscale.app, Mac 100.68.57.78, phone 100.79.250.25,
+relay DERP sfo; dates 2026-10-28 and 2026-10-29.

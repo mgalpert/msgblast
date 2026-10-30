@@ -88,6 +88,12 @@ phone app. It works like msgblast Dev but keeps its own permissions, preferences
 saved state, so it never touches an existing msgblast Dev. It is only built when you
 ask for it by name.
 
+Ad-hoc preview builds lose their Accessibility and Screen Recording grants on every
+rebuild, because their designated requirement is a code hash. Mac app agents such as
+Muse then report a permission error, or that the app is still updating its controls.
+Re-grant both after each rebuild, or re-sign the packaged preview with an Apple
+Development identity so the requirement stays stable across rebuilds signed the same way.
+
 | App | Icon / bundle ID | Behavior | Saved app state |
 | --- | --- | --- | --- |
 | `build/contributor-preview/msgblast Dev 20261029-1018.app` | Blue-green / `com.msgblast.development` | Live accounts and Messages; production updates disabled | `~/Library/Application Support/msgblast-Dev` |
