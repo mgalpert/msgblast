@@ -40,6 +40,8 @@ enum Space {
     static let control: CGFloat = 44
 
     static let avatarRow: CGFloat = 40
+    /// The avatar beside an incoming run and in a direct thread's header.
+    static let avatarThread: CGFloat = 30
     /// The two circles of a group avatar inside `avatarRow` (the owner's Messages spec: 26 pt).
     static let avatarGroup: CGFloat = 26
     static let avatarInline: CGFloat = 22

@@ -9,7 +9,7 @@ struct ConversationView: View {
     @State private var filter: String?
     @State private var recipients: [String] = []
     @State private var actionError: String?
-    @State private var confirmEnd = false
+    @State private var showingDetails = false
     @State private var details: IncompleteSummary?
     /// Your messages whose full chip row was revealed by a tap, as Messages reveals times.
     @State private var expanded: Set<String> = []
@@ -123,26 +123,21 @@ struct ConversationView: View {
         }
         .navigationTitle(filter.map(presenter.name) ?? conversation.title)
         .navigationBarTitleDisplayMode(.inline)
-        .macStatusSubtitle(app)
-        .onAppear { recipients = filter.map { [$0] } ?? conversation.agentIDs; app.store.markOpened(conversationID) }
+        .onAppear {
+            recipients = filter.map { [$0] } ?? conversation.agentIDs; app.store.markOpened(conversationID)
+            #if DEBUG
+            // Design review: `MSGBLAST_FIXTURE_DETAILS` opens the Details sheet.
+            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DETAILS"] != nil { showingDetails = true }
+            #endif
+        }
         .onChange(of: filter) { _, value in recipients = value.map { [$0] } ?? conversation.agentIDs }
         .toolbar {
-            Menu {
-                Button("End Conversation", systemImage: "xmark.circle", role: .destructive) { confirmEnd = true }.disabled(conversation.endedAt != nil)
-                Button("Request Report", systemImage: "doc.text.magnifyingglass") { run(.requestReport(conversationID: conversationID)) }
-            } label: { Image(systemName: "ellipsis.circle") }
-            .accessibilityLabel("More")
-        }
-        .confirmationDialog(conversation.canEnd ? "End This Conversation?" : "Can't End Yet", isPresented: $confirmEnd, titleVisibility: .visible) {
-            if conversation.canEnd {
-                Button("End Conversation", role: .destructive) { run(.endConversation(conversationID: conversationID)) }
-                Button("Keep Active", role: .cancel) {}
-            } else {
-                Button("OK", role: .cancel) {}
+            // Messages' header: avatars over a pill that opens Details (agents, report, end).
+            ToolbarItem(placement: .principal) {
+                ThreadHeader(app: app, agentIDs: conversation.agentIDs) { showingDetails = true }
             }
-        } message: {
-            Text(conversation.canEnd ? "Later replies won't be added" : "Open it on your Mac first so its history loads")
         }
+        .sheet(isPresented: $showingDetails) { ThreadDetailsSheet(app: app, conversationID: conversationID, run: run) }
         .sheet(item: $details) { summary in RequestDetailsSheet(summary: summary, name: presenter.name(summary.agentID)) }
     }
 
