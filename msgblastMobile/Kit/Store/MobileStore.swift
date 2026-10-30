@@ -9,6 +9,9 @@ public final class MobileStore: ObservableObject {
     @Published public private(set) var projection: ProjectionState
     @Published public private(set) var commands: [UUID: CommandRecord]
     @Published public private(set) var drafts: [String: String]
+    /// Agent artwork from the paired Mac, by content reference (`sha256:<hex>`). Each image
+    /// is its own row in the cache database, which is excluded from backups.
+    @Published public private(set) var avatars: [String: Data]
     private let database: LocalDatabase
     private var saveTask: Task<Void, Never>?
 
@@ -17,6 +20,8 @@ public final class MobileStore: ObservableObject {
         projection = database.value(ProjectionState.self, "projection") ?? ProjectionState()
         commands = database.value([UUID: CommandRecord].self, "commands") ?? [:]
         drafts = database.value([String: String].self, "drafts") ?? [:]
+        let refs = database.value([String].self, "avatarRefs") ?? []
+        avatars = Dictionary(uniqueKeysWithValues: refs.compactMap { ref in database.data(Self.avatarKey(ref)).map { (ref, $0) } })
         // A previous run may have ended mid-command: those are unconfirmed until the Mac says otherwise.
         CommandLedger.connectionLost(&commands)
     }
@@ -55,10 +60,26 @@ public final class MobileStore: ObservableObject {
         scheduleSave()
     }
 
+    // MARK: Avatars
+
+    static func avatarKey(_ ref: String) -> String { "avatar:\(ref)" }
+    public func avatar(_ ref: String?) -> Data? { ref.flatMap { avatars[$0] } }
+    public func storeAvatar(_ data: Data, for ref: String) {
+        guard avatars[ref] != data else { return }
+        avatars[ref] = data
+        database.set(data, for: Self.avatarKey(ref))
+        database.setValue(avatars.keys.sorted(), "avatarRefs")
+    }
+    /// Content references the projection names that are not cached yet.
+    public var missingAvatarRefs: [String] {
+        Set(projection.agents.values.compactMap(\.avatarRef)).filter { $0.hasPrefix("sha256:") && avatars[$0] == nil }.sorted()
+    }
+
     public func forgetMac() {
         projection = ProjectionState()
         commands = [:]
         drafts = [:]
+        avatars = [:]
         database.removeAll()
     }
 

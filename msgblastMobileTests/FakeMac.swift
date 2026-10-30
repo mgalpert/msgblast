@@ -13,6 +13,8 @@ final class FakeMac {
     var snapshot: RemoteSnapshot
     var commands: [RemoteCommand] = []
     var answerCommands = true
+    /// Artwork by reference. Nil models an older Mac without `fetchAvatar` (it answers `unsupported`).
+    var avatars: [String: Data]? = [:]
     /// Holds the first snapshot back, like a Mac that takes a moment to build it.
     var snapshotDelay: Duration?
     var lockedOnConnect = false
@@ -82,6 +84,12 @@ final class FakeMac {
                     } else { send(.snapshot(mac.snapshot)) }
                 case .command(let command):
                     mac.commands.append(command)
+                    if case .fetchAvatar(let ref) = command.action {
+                        guard let avatars = mac.avatars else { send(.commandResult(.rejected(command.clientCommandID, .unsupported, "Update msgblast on your Mac"))); continue }
+                        send(.commandResult(avatars[ref].map { RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, avatar: $0) }
+                                            ?? .rejected(command.clientCommandID, .unknownAvatar, "No artwork for that agent")))
+                        continue
+                    }
                     if mac.answerCommands { send(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied))) }
                 case .ping(let nonce): send(.pong(nonce: nonce, seq: mac.snapshot.seq))
                 default: break

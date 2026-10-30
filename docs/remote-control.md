@@ -192,6 +192,14 @@ than projected replies in a conversation's range, Contacts data, macOS
 permissions, and the Mac's composer drafts. Sign-in, permissions, and keys are set
 up on the Mac; the phone shows the blocked state and where to fix it.
 
+Agent artwork is the one image the phone receives unasked. Each agent's
+`avatarRef` is `sha256:<hex>` of the picture the Mac shows for it (normalized to
+256 × 256, at most 64 KB). The phone fetches each reference once with
+`fetchAvatar`, only over the paired, encrypted channel, checks the bytes against
+the reference, and caches them in its local database, which Forget This Mac
+clears. A Mac without `fetchAvatar` answers `unsupported` and the phone keeps
+initials.
+
 ## Demo behavior
 
 The blue Demo app serves the same protocol with simulated agents, Messages, and

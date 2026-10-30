@@ -67,6 +67,19 @@ extension View {
     func macStatusSubtitle(_ app: MobileApp) -> some View { modifier(MacStatusSubtitle(app: app)) }
 }
 
+/// Decoded artwork, by content reference, so rows do not decode the same bytes again.
+@MainActor
+enum AvatarImages {
+    private static let cache = NSCache<NSString, UIImage>()
+    static func image(_ ref: String?, store: MobileStore) -> UIImage? {
+        guard let ref, let data = store.avatar(ref) else { return nil }
+        if let image = cache.object(forKey: ref as NSString) { return image }
+        guard let image = UIImage(data: data) else { return nil }
+        cache.setObject(image, forKey: ref as NSString)
+        return image
+    }
+}
+
 /// The app's mark for the pairing hero and Settings: `BrandMark`, a flat export of the
 /// production icon. The layered app icon itself is never loaded as an image (UIKit
 /// asserts on it). Falls back to a symbol when the asset is missing.
@@ -113,17 +126,37 @@ struct DetailPopover: View {
 }
 
 /// Initials in a circle, tinted by product so forms of one product read as related.
+/// The Mac's artwork for the agent when the phone has it cached, else initials.
 struct AgentAvatar: View {
     var name: String
     var product: String
     var size: CGFloat = 28
+    var image: UIImage? = nil
+
+    /// The agent's name, product color and cached artwork from the projection.
+    init(app: MobileApp, agentID: String, name: String, size: CGFloat = 28) {
+        let agent = app.store.projection.agents[agentID]
+        self.init(name: name, product: agent?.product.rawValue ?? agentID, size: size, image: AvatarImages.image(agent?.avatarRef, store: app.store))
+    }
+    init(name: String, product: String, size: CGFloat = 28, image: UIImage? = nil) {
+        self.name = name; self.product = product; self.size = size; self.image = image
+    }
+
     var body: some View {
-        Text(String(name.prefix(1)).uppercased())
-            .font(.system(size: size * 0.45, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(Circle().fill(Self.color(product)))
-            .accessibilityHidden(true)
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.system(size: size * 0.45, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: size, height: size)
+                    .background(Self.color(product))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .accessibilityHidden(true)
     }
     static func color(_ product: String) -> Color {
         let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal, .indigo, .brown, .cyan, .mint]

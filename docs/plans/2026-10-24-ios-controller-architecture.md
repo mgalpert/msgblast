@@ -207,6 +207,10 @@ Native messenger feel, not a remote desktop:
   running, with the last known seq so stale content is labelled.
 - **Cache:** SQLite (GRDB or SwiftData) holding the projection and last seq;
   full offline read. No offline send queue.
+- **Avatars (added in the design pass):** `AgentAvailability.avatarRef` carries a
+  content reference (`sha256:<hex>`) to the artwork the Mac shows; the phone
+  fetches each one once with `fetchAvatar` over the paired channel only, caches
+  it next to the projection, and drops it with Forget This Mac.
 
 ### 2.6 Availability on the Mac
 

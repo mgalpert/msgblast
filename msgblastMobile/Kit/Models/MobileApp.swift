@@ -15,6 +15,10 @@ public final class MobileApp: ObservableObject {
     private var subscriptions: Set<AnyCancellable> = []
     public var commandTimeout: Duration = .seconds(90)
     private var snapshotRequested = false
+    /// `fetchAvatar` commands in flight, by command id. Never recorded in the command ledger.
+    private var avatarRequests: [UUID: String] = [:]
+    /// References the Mac could not serve this session (for example an older Mac); not asked again.
+    private var avatarsUnavailable: Set<String> = []
 
     public init(database: LocalDatabase, keys: DeviceKeyStore, defaults: UserDefaults = .standard,
                 makeTransport: ((MacEndpoint, Data) -> ClientTransport)? = nil) {
@@ -39,18 +43,48 @@ public final class MobileApp: ObservableObject {
             // These commands were sent; the connection ended before their result.
             for (_, continuation) in self.waiting { continuation.resume(throwing: MobileConnectionError.unconfirmed) }
             self.waiting = [:]
+            // Artwork requests that got no answer are asked again after reconnecting.
+            self.avatarRequests = [:]
         }.store(in: &subscriptions)
         connection.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
     }
 
     private func handle(_ event: RemoteClientDriver.Event) {
+        if case .commandResult(let result) = event, let ref = avatarRequests.removeValue(forKey: result.clientCommandID) {
+            receiveAvatar(result, ref: ref)
+            return
+        }
         store.handle(event)
         if case .commandResult(let result) = event, result.outcome != .accepted, let continuation = waiting.removeValue(forKey: result.clientCommandID) {
             continuation.resume(returning: result)
         }
         if store.projection.needsSnapshot && !snapshotRequested { snapshotRequested = true; connection.requestSnapshot() }
         if case .snapshot = event { snapshotRequested = false }
+        switch event { case .snapshot, .events: requestAvatars(); default: break }
+    }
+
+    /// Asks the Mac once for each artwork reference the projection names and the cache
+    /// lacks: one request per reference in flight, none repeated after a refusal.
+    public func requestAvatars() {
+        guard connection.state.canSend else { return }
+        let pending = Set(avatarRequests.values)
+        for ref in store.missingAvatarRefs where !pending.contains(ref) && !avatarsUnavailable.contains(ref) {
+            let command = RemoteCommand(action: .fetchAvatar(ref: ref))
+            guard (try? connection.send(command)) != nil else { return }
+            avatarRequests[command.clientCommandID] = ref
+        }
+    }
+
+    /// Keeps the bytes only when they are what the reference names. An older Mac answers
+    /// `unsupported`, and any refusal leaves the agent on initials.
+    private func receiveAvatar(_ result: RemoteCommandResult, ref: String) {
+        guard result.outcome == .applied, let data = result.avatar, data.count <= RemoteProtocol.maximumAvatarBytes,
+              ref == "sha256:" + SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() else {
+            if result.outcome != .accepted { avatarsUnavailable.insert(ref) }
+            return
+        }
+        store.storeAvatar(data, for: ref)
     }
 
     /// Sends now and records it, or throws without queueing when disconnected.
@@ -111,6 +145,8 @@ public final class MobileApp: ObservableObject {
     }
 
     public func forgetMac() {
+        avatarRequests = [:]
+        avatarsUnavailable = []
         connection.forget()
         store.forgetMac()
     }

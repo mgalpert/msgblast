@@ -85,7 +85,7 @@ struct ConversationView: View {
         return VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
             if showsName, let agent = turn.agentID {
                 HStack(spacing: 6) {
-                    AgentAvatar(name: presenter.shortName(agent), product: app.store.projection.agents[agent]?.product.rawValue ?? agent, size: 22)
+                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: 22)
                     Text(presenter.name(agent)).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 }
             }

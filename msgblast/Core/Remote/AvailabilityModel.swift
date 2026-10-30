@@ -244,7 +244,7 @@ public enum AvailabilityCalculator {
             }
         }
         let shared = provider.supportsSharedSubmissions && provider.isAvailableInBuild
-        return AgentAvailability(agentID: s.agentID, product: product(provider), form: form, displayName: s.name, avatarRef: "provider:\(provider.rawValue)",
+        return AgentAvailability(agentID: s.agentID, product: product(provider), form: form, displayName: s.name, avatarRef: nil,
             visibleInGrid: m.visibleGridIDs.contains(s.gridID), selectedForSharedSend: s.isEnabled && s.selected && shared,
             capabilities: AgentCapabilities(sharedSend: shared, privateSend: shared, attachments: false, namedCopies: provider.supportsCopies,
                                             endConversation: true, sharesOneConversation: provider.sharesOneConversation),
@@ -282,7 +282,7 @@ public enum AvailabilityCalculator {
             readiness = .busy(detail: "Sending in Messages…")
             reasons.append(AvailabilityReason(code: .sendInFlight, userText: "Messages is sending on your Mac", fixOn: .none))
         }
-        return AgentAvailability(agentID: agent.remoteID, product: .messages, form: .messages, displayName: agent.name, avatarRef: "contact:\(agent.agentID.uuidString)",
+        return AgentAvailability(agentID: agent.remoteID, product: .messages, form: .messages, displayName: agent.name, avatarRef: nil,
             visibleInGrid: m.visibleGridIDs.contains(agent.gridID), selectedForSharedSend: agent.selected,
             capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: true, namedCopies: false, endConversation: true, sharesOneConversation: false),
             readiness: readiness, reasons: reasons, observedAt: now, source: .live)
@@ -301,6 +301,9 @@ public final class AvailabilityModel: ObservableObject {
     private let probe: @MainActor (_ slow: Bool) async -> Void
     private let now: () -> Date
     private var loop: Task<Void, Never>?
+    /// The content reference (`sha256:<hex>`) of the artwork the Mac shows for an agent;
+    /// the app fills it from its own artwork. Nil leaves the phone on initials.
+    public var avatarRef: @MainActor (String) -> String? = { _ in nil }
 
     /// `probe` refreshes Mac signals without side effects (permission preflights,
     /// `refreshDesktopInstallation`, account status at the slow cadence).
@@ -327,6 +330,7 @@ public final class AvailabilityModel: ObservableObject {
             AvailabilityCalculator.availability(s, inputs: inputs, otherDesktopSending: !sendingDesktop.subtracting([s.agentID]).isEmpty, now: now)
         }
         result += inputs.messagesAgents.map { AvailabilityCalculator.availability($0, inputs: inputs, now: now) }
+        for index in result.indices { result[index].avatarRef = avatarRef(result[index].agentID) }
         let changed = result.count != agents.count || zip(result, agents).contains { !$0.sameContent(as: $1) }
         if changed { agents = result }
         return agents

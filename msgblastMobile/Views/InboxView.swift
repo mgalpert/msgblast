@@ -64,7 +64,7 @@ struct InboxView: View {
             HStack(alignment: .top, spacing: 12) {
                 HStack(spacing: -12) {
                     ForEach(Array(row.agentIDs.prefix(3).enumerated()), id: \.offset) { index, id in
-                        AgentAvatar(name: presenter.shortName(id), product: app.store.projection.agents[id]?.product.rawValue ?? id, size: 30)
+                        AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: 30)
                             .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
                             .zIndex(Double(3 - index))
                     }

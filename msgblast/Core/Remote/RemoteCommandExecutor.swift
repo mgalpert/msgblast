@@ -115,6 +115,12 @@ public protocol RemoteCommandHost: AnyObject {
     func stageAttachment(_ data: Data, filename: String) throws -> String
     func hasStagedAttachment(_ id: String) -> Bool
     func requestReport(_ id: UUID) async -> RemoteHostResult
+    /// The normalized artwork an agent's `avatarRef` names, or nil when the Mac has none.
+    func avatar(_ ref: String) -> Data?
+}
+
+public extension RemoteCommandHost {
+    func avatar(_ ref: String) -> Data? { nil }
 }
 
 /// Applies phone commands. Idempotent by `clientCommandID`: a replay returns the
@@ -143,6 +149,9 @@ public final class RemoteCommandExecutor {
     public func submit(_ command: RemoteCommand, reply: @escaping (RemoteCommandResult) -> Void) {
         let id = command.clientCommandID
         if case .queryCommand(let target) = command.action { reply(status(of: target)); return }
+        // Read-only and repeatable: answered at once, even while locked, and kept out of the
+        // ledger so artwork bytes are not held for replay.
+        if case .fetchAvatar(let ref) = command.action { reply(avatar(command, ref: ref)); return }
         if var stored = ledger[id] { stored.replayed = true; reply(stored); return }
         if inProgress.contains(id) { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Already running on your Mac", replayed: true)); return }
         if command.action.isSerial {
@@ -251,6 +260,13 @@ public final class RemoteCommandExecutor {
         return nil
     }
 
+    private func avatar(_ command: RemoteCommand, ref: String) -> RemoteCommandResult {
+        guard ref.hasPrefix("sha256:"), let data = host?.avatar(ref), data.count <= RemoteProtocol.maximumAvatarBytes else {
+            return reject(command, .unknownAvatar, "No artwork for that agent")
+        }
+        return RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, avatar: data)
+    }
+
     /// A stored, running, or unknown command. Read-only: never runs anything.
     public func status(of id: UUID) -> RemoteCommandResult {
         if var stored = ledger[id] { stored.replayed = true; return stored }
@@ -323,7 +339,7 @@ public final class RemoteCommandExecutor {
             guard Data(SHA256.hash(data: data)) == digest else { return reject(command, .attachmentRejected, "Upload failed. Add it again") }
             do { return outcome(command, .applied(), attachmentID: try host.stageAttachment(data, filename: upload.filename)) }
             catch { return reject(command, .attachmentRejected, error.localizedDescription) }
-        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand: return reject(command, .invalidCommand, "Handled separately.")
+        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand, .fetchAvatar: return reject(command, .invalidCommand, "Handled separately.")
         case .unknown(let kind): return reject(command, .unsupported, "Update msgblast on your Mac")
         }
     }

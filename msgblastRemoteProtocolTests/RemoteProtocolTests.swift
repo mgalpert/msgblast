@@ -61,7 +61,7 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .cancelNative(agentID: "claudeApp"), .setKeepAwake(enabled: true),
             .uploadAttachmentChunk(uploadID: UUID(), filename: "a.txt", index: 0, count: 2, data: Data([1, 2, 3])),
             .attachStaged(uploadID: UUID(), sha256: Data(SHA256.hash(data: Data([1])))), .requestReport(conversationID: conversation),
-            .prepareConversation(conversationID: nil, agentIDs: ["claude"]), .prepareConversation(conversationID: conversation, agentIDs: []), .queryCommand(clientCommandID: UUID())]
+            .prepareConversation(conversationID: nil, agentIDs: ["claude"]), .prepareConversation(conversationID: conversation, agentIDs: []), .queryCommand(clientCommandID: UUID()), .fetchAvatar(ref: "sha256:00ff")]
         for action in actions { try roundTrip(RemoteCommand(action: action)) }
         XCTAssertEqual(actions.filter(\.isSend).count, 3)
 
@@ -73,6 +73,8 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .events(events: [RemoteEvent(seq: 10, change: .turnRemove(id: "t"))], latestSeq: 10), .command(RemoteCommand(action: .setKeepAwake(enabled: false))),
             .commandResult(RemoteCommandResult(clientCommandID: UUID(), outcome: .applied, conversationID: conversation, agentStatuses: ["claude": .observed], replayed: true)),
             .commandResult(.rejected(UUID(), .macLocked, "Your Mac is locked.")),
+            .commandResult(RemoteCommandResult(clientCommandID: UUID(), outcome: .applied, avatar: Data([0x89, 0x50, 0x4E, 0x47]))),
+            .commandResult(.rejected(UUID(), .unknownAvatar, "No artwork for that agent")),
             .commandResult(RemoteCommandResult(clientCommandID: UUID(), outcome: .rejected, code: .notReady, agentReasons: ["claude": "Sign in to Claude."])),
             .ping(nonce: 7), .pong(nonce: 7, seq: 10), .error(RemoteErrorMessage(code: .notPaired, message: "Pair first."))]
         for message in messages { try roundTrip(message) }

@@ -13,10 +13,13 @@ final class AppRemoteHost: RemoteCommandHost {
     let power: MacPowerState
     private let settings: () -> RemoteSettings
     private var staged: [String: MessageAttachment] = [:]
+    private let avatars: RemoteAvatars
 
-    init(model: AppModel, availability: AvailabilityModel, keepAwake: RemoteKeepAwake, power: MacPowerState, settings: @escaping () -> RemoteSettings) {
-        self.model = model; availabilityModel = availability; self.keepAwake = keepAwake; self.power = power; self.settings = settings
+    init(model: AppModel, availability: AvailabilityModel, avatars: RemoteAvatars, keepAwake: RemoteKeepAwake, power: MacPowerState, settings: @escaping () -> RemoteSettings) {
+        self.model = model; availabilityModel = availability; self.avatars = avatars; self.keepAwake = keepAwake; self.power = power; self.settings = settings
     }
+
+    func avatar(_ ref: String) -> Data? { avatars.data(for: ref) }
 
     var isLocked: Bool { power.locked }
     var messagesSendsAllowed: Bool { settings().allowMessagesSends }

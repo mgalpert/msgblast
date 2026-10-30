@@ -43,6 +43,9 @@ final class FakeRemoteHost: RemoteCommandHost {
     var prepared: [[String]] = []
     /// The reason the Mac's session reports for an agent that is not ready.
     var notReadyReason = "Sign in"
+    var avatars: [String: Data] = [:]
+    var avatarReads = 0
+    func avatar(_ ref: String) -> Data? { avatarReads += 1; return avatars[ref] }
     func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult {
         prepared.append(agentIDs)
         let waiting = agentIDs.filter { agents[$0]?.readiness.acceptsSend == false }
@@ -262,6 +265,28 @@ final class RemoteCommandExecutorTests: XCTestCase {
                        "App control could not complete this request. Review msgblast permissions.")
         let plain = RemotePhoneText.split("Sign in to Claude on your Mac")
         XCTAssertEqual(plain.text, "Sign in to Claude on your Mac"); XCTAssertNil(plain.detail, "Short text has no separate detail")
+    }
+
+    func testFetchAvatarReturnsTheBytesAndRejectsUnknownRefs() async {
+        let host = host()
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47, 1, 2, 3])
+        host.avatars["sha256:abc"] = bytes
+        host.isLocked = true
+        let executor = RemoteCommandExecutor(host: host)
+        let command = RemoteCommand(action: .fetchAvatar(ref: "sha256:abc"))
+        let first = await executor.execute(command)
+        XCTAssertEqual(first.outcome, .applied, "Read-only artwork is served even while locked"); XCTAssertEqual(first.avatar, bytes)
+        let again = await executor.execute(command)
+        XCTAssertEqual(again.avatar, bytes, "Repeating the same command gives the same bytes")
+        XCTAssertFalse(again.replayed, "Artwork is not kept in the ledger")
+        let unknown = await executor.execute(RemoteCommand(action: .fetchAvatar(ref: "sha256:missing")))
+        XCTAssertEqual(unknown.outcome, .rejected); XCTAssertEqual(unknown.code, .unknownAvatar); XCTAssertNil(unknown.avatar)
+        XCTAssertEqual(unknown.message, "No artwork for that agent")
+        let foreign = await executor.execute(RemoteCommand(action: .fetchAvatar(ref: "provider:claude")))
+        XCTAssertEqual(foreign.code, .unknownAvatar, "Only content references are served")
+        host.avatars["sha256:big"] = Data(count: RemoteProtocol.maximumAvatarBytes + 1)
+        let big = await executor.execute(RemoteCommand(action: .fetchAvatar(ref: "sha256:big")))
+        XCTAssertEqual(big.code, .unknownAvatar, "Oversized artwork is never sent")
     }
 
     func testNonSendCommandsReachTheHost() async {

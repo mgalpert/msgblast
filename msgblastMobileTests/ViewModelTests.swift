@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 import msgblastRemoteProtocol
 @testable import msgblastMobileKit
@@ -177,6 +178,56 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(mac.commands.filter { $0.clientCommandID == pending.clientCommandID }.count, 1, "Not resent")
         app.forgetMac()
         XCTAssertEqual(app.connection.state, .unpaired)
+    }
+
+    func testAvatarsAreFetchedOnceCachedAndClearedByForget() async throws {
+        let mac = FakeMac()
+        let image = Data("png-bytes".utf8)
+        let ref = "sha256:" + SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
+        let lying = "sha256:" + String(repeating: "0", count: 64)
+        mac.avatars = [ref: image, lying: Data("other".utf8)]
+        func agent(_ id: String, _ avatarRef: String?) -> AgentAvailability {
+            AgentAvailability(agentID: id, product: .claude, form: .website, displayName: id, avatarRef: avatarRef, visibleInGrid: true, selectedForSharedSend: true,
+                              capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                              readiness: .ready, reasons: [], observedAt: Date(), source: .live)
+        }
+        mac.snapshot.agents = [agent("claude", ref), agent("copy", ref), agent("liar", lying), agent("old", "provider:grok"), agent("none", nil)]
+        let database = try LocalDatabase(url: nil)
+        let app = MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                            makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        for _ in 0..<200 where app.store.avatar(ref) == nil { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(app.store.avatar(ref), image)
+        XCTAssertNil(app.store.avatar(lying), "Bytes that do not match their reference are dropped")
+        let fetches = mac.commands.compactMap { if case .fetchAvatar(let ref) = $0.action { ref } else { nil } }
+        XCTAssertEqual(fetches.sorted(), [ref, lying].sorted(), "One request per content reference; other strings are never fetched")
+        XCTAssertTrue(app.store.commands.isEmpty, "Artwork requests stay out of the command ledger")
+
+        app.requestAvatars()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(mac.commands.filter { if case .fetchAvatar = $0.action { true } else { false } }.count, 2, "No retry storm")
+        XCTAssertEqual(MobileStore(database: database).avatar(ref), image, "Cached across launches")
+        app.forgetMac()
+        XCTAssertTrue(app.store.avatars.isEmpty)
+        XCTAssertNil(MobileStore(database: database).avatar(ref), "Forget This Mac clears the cache")
+    }
+
+    func testAnOlderMacLeavesInitials() async throws {
+        let mac = FakeMac()
+        mac.avatars = nil
+        mac.snapshot.agents = [AgentAvailability(agentID: "claude", product: .claude, form: .website, displayName: "Claude", avatarRef: "sha256:" + String(repeating: "a", count: 64),
+            visibleInGrid: true, selectedForSharedSend: true, capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+            readiness: .ready, reasons: [], observedAt: Date(), source: .live)]
+        let app = MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                            makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        for _ in 0..<100 where !mac.commands.contains(where: { if case .fetchAvatar = $0.action { true } else { false } }) { try await Task.sleep(for: .milliseconds(5)) }
+        try await Task.sleep(for: .milliseconds(30))
+        app.requestAvatars()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(app.store.avatars.isEmpty)
+        XCTAssertEqual(mac.commands.filter { if case .fetchAvatar = $0.action { true } else { false } }.count, 1, "An unsupported answer is not repeated")
+        XCTAssertEqual(app.connection.state, .connected, "No artwork is not an error")
     }
 
     func testRepairingReturnsOnlyOnceTheNewInboxIsReady() async throws {

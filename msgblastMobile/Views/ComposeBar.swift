@@ -39,7 +39,12 @@ struct ComposeBar: View {
                 FlowLayout(spacing: 6) {
                     ForEach(members, id: \.self) { id in
                         let on = recipients.contains(id)
-                        Button(presenter.shortName(id)) { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } }
+                        Button { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } } label: {
+                            HStack(spacing: 5) {
+                                AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: 16)
+                                Text(presenter.shortName(id))
+                            }
+                        }
                             .buttonStyle(.bordered).controlSize(.small).tint(on ? .accentColor : .secondary)
                             .accessibilityValue(on ? "Selected" : "Not selected")
                     }

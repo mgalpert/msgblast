@@ -33,7 +33,7 @@ struct NewBlastView: View {
             if isSelected { selected.removeAll { $0 == agent.agentID } } else { selected.append(agent.agentID) }
         } label: {
             HStack(spacing: 12) {
-                AgentAvatar(name: agent.displayName, product: agent.product.rawValue)
+                AgentAvatar(app: app, agentID: agent.agentID, name: agent.displayName, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(agent.displayName).foregroundStyle(sendable ? .primary : .secondary)
                     // Messages rows sit under a Messages header; they need no form label.

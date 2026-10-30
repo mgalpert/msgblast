@@ -20,6 +20,7 @@ final class RemoteService: ObservableObject {
     let keepAwake: RemoteKeepAwake
     let power: MacPowerState
     let availability: AvailabilityModel
+    let avatars: RemoteAvatars
     private(set) var server: RemoteServer?
     private(set) var listener: RemoteListener?
     private var projection: RemoteProjection?
@@ -43,8 +44,12 @@ final class RemoteService: ObservableObject {
         availability = AvailabilityModel(sessions: { [unowned model] in model.webAgents.sessions },
                                          inputs: { [unowned model] in model.remoteAvailabilityInputs(settings: settingsBox.value) },
                                          probe: { [unowned model] slow in await model.remoteAvailabilityProbe(slow: slow) })
+        let avatars = RemoteAvatars(model: model)
+        self.avatars = avatars
         settingsReader = settingsBox
         settingsBox.value = loaded
+        // Agents carry a content reference to the artwork the Mac shows for them.
+        availability.avatarRef = { id in avatars.ref(for: id) }
         power.$locked.removeDuplicates().dropFirst().sink { [weak self] _ in
             Task { @MainActor in self?.projection?.refreshNow(); self?.server?.lockStateChanged() }
         }.store(in: &subscriptions)
@@ -104,7 +109,7 @@ final class RemoteService: ObservableObject {
             self.identity = identity
             identityStorage = identity.storage
             identityFingerprint = RemoteHandshake.fingerprint(identity.identityKeySHA256)
-            let host = AppRemoteHost(model: model, availability: availability, keepAwake: keepAwake, power: power, settings: { [settingsReader] in settingsReader.value })
+            let host = AppRemoteHost(model: model, availability: availability, avatars: avatars, keepAwake: keepAwake, power: power, settings: { [settingsReader] in settingsReader.value })
             let executor = RemoteCommandExecutor(host: host)
             let journal = RemoteChangeJournal()
             let model = model, power = power, keepAwake = keepAwake, availability = availability, reader = settingsReader

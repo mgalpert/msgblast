@@ -35,6 +35,9 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     /// Asks for the result of an earlier command without running anything. After a Mac
     /// restart an unknown id is answered with `unknownCommand`: show it as unconfirmed.
     case queryCommand(clientCommandID: UUID)
+    /// Read-only: the artwork an agent's `avatarRef` (`sha256:<hex>`) names. The result's
+    /// `avatar` carries the bytes. A Mac without it answers `unsupported`: show initials.
+    case fetchAvatar(ref: String)
     case unknown(kind: String)
 
     public var kind: String {
@@ -51,6 +54,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .requestReport: "requestReport"
         case .prepareConversation: "prepareConversation"
         case .queryCommand: "queryCommand"
+        case .fetchAvatar: "fetchAvatar"
         case .unknown(let kind): kind
         }
     }
@@ -65,7 +69,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID
+        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID, ref
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -88,6 +92,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case "requestReport": self = .requestReport(conversationID: try c.decode(UUID.self, forKey: .conversationID))
         case "prepareConversation": self = .prepareConversation(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentIDs: try ids(.agentIDs))
         case "queryCommand": self = .queryCommand(clientCommandID: try c.decode(UUID.self, forKey: .clientCommandID))
+        case "fetchAvatar": self = .fetchAvatar(ref: try c.decode(String.self, forKey: .ref))
         default: self = .unknown(kind: kind)
         }
     }
@@ -114,6 +119,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .requestReport(let id): try c.encode(id, forKey: .conversationID)
         case .prepareConversation(let id, let agents): try c.encodeIfPresent(id, forKey: .conversationID); try c.encode(agents, forKey: .agentIDs)
         case .queryCommand(let id): try c.encode(id, forKey: .clientCommandID)
+        case .fetchAvatar(let ref): try c.encode(ref, forKey: .ref)
         case .unknown: break
         }
     }
@@ -142,6 +148,8 @@ public struct RemoteRejectionCode: RemoteOpenValue {
     public static let notReady: Self = "notReady"
     /// The Mac has no record of this command id (for example after it restarted). Unconfirmed.
     public static let unknownCommand: Self = "unknownCommand"
+    /// `fetchAvatar` named artwork this Mac does not have (any more).
+    public static let unknownAvatar: Self = "unknownAvatar"
 }
 
 public struct RemoteCommandResult: Codable, Hashable, Sendable {
@@ -166,11 +174,14 @@ public struct RemoteCommandResult: Codable, Hashable, Sendable {
     public var agentReasons: [String: String]
     /// True when the Mac returned the stored result for a replayed `clientCommandID`.
     public var replayed: Bool
-    public init(clientCommandID: UUID, outcome: Outcome, code: RemoteRejectionCode? = nil, message: String? = nil, conversationID: UUID? = nil, attachmentID: String? = nil, agentStatuses: [String: RemoteAttemptStatus] = [:], agentReasons: [String: String] = [:], replayed: Bool = false) {
+    /// `fetchAvatar` only: the image bytes (PNG or JPEG, at most `RemoteProtocol.maximumAvatarBytes`).
+    public var avatar: Data?
+    public init(clientCommandID: UUID, outcome: Outcome, code: RemoteRejectionCode? = nil, message: String? = nil, conversationID: UUID? = nil, attachmentID: String? = nil, agentStatuses: [String: RemoteAttemptStatus] = [:], agentReasons: [String: String] = [:], replayed: Bool = false, avatar: Data? = nil) {
         self.clientCommandID = clientCommandID; self.outcome = outcome; self.code = code; self.message = message
         self.conversationID = conversationID; self.attachmentID = attachmentID; self.agentStatuses = agentStatuses; self.agentReasons = agentReasons; self.replayed = replayed
+        self.avatar = avatar
     }
-    private enum CodingKeys: String, CodingKey { case clientCommandID, outcome, code, message, conversationID, attachmentID, agentStatuses, agentReasons, replayed }
+    private enum CodingKeys: String, CodingKey { case clientCommandID, outcome, code, message, conversationID, attachmentID, agentStatuses, agentReasons, replayed, avatar }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         clientCommandID = try c.decode(UUID.self, forKey: .clientCommandID)
@@ -182,6 +193,7 @@ public struct RemoteCommandResult: Codable, Hashable, Sendable {
         agentStatuses = try c.decodeIfPresent([String: RemoteAttemptStatus].self, forKey: .agentStatuses) ?? [:]
         agentReasons = try c.decodeIfPresent([String: String].self, forKey: .agentReasons) ?? [:]
         replayed = try c.decodeIfPresent(Bool.self, forKey: .replayed) ?? false
+        avatar = try c.decodeIfPresent(Data.self, forKey: .avatar)
     }
     public static func rejected(_ id: UUID, _ code: RemoteRejectionCode, _ message: String) -> Self {
         Self(clientCommandID: id, outcome: .rejected, code: code, message: message)

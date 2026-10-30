@@ -1,5 +1,7 @@
 #if DEBUG
+import CryptoKit
 import Foundation
+import UIKit
 import msgblastMobileKit
 import msgblastRemoteProtocol
 
@@ -48,6 +50,7 @@ enum DesignFixtures {
         case .locked: app.connection.showDesignFixture(.macLocked, lastHeard: now.addingTimeInterval(-40))
         default: app.connection.showDesignFixture(.connected, lastHeard: now, connectedVia: "100.101.102.103:52000", connectSeconds: 0.4)
         }
+        if name != .pairing { for (_, avatar) in avatars { app.store.storeAvatar(avatar.data, for: avatar.ref) } }
         return app
     }
 
@@ -76,7 +79,11 @@ enum DesignFixtures {
                                                                                   detail: "Gemini is not offered in this version of msgblast.")]),
             agent(cedar, .messages, .messages, "Cedar", .ready, []),
         ]
-        for agent in agents { state.agents[agent.agentID] = agent; state.agentOrder.append(agent.agentID) }
+        for var agent in agents {
+            // Cedar keeps initials, so both the artwork and the fallback are on screen.
+            agent.avatarRef = avatars[agent.agentID]?.ref
+            state.agents[agent.agentID] = agent; state.agentOrder.append(agent.agentID)
+        }
         state.grid = ["claude", "chatgptApp", "museApp", "codexCLI", "dotsApp", "grok", "geminiApp", cedar]
 
         // A group of three: every chip state across two of your messages, replies, one Mac app failure.
@@ -131,6 +138,35 @@ enum DesignFixtures {
         }
         return state
     }
+
+    /// Generated artwork: a 256-pt squircle with the agent's letter (no third-party art).
+    static let avatars: [String: (ref: String, data: Data)] = {
+        let looks: [(String, String, UIColor, UIColor)] = [
+            ("claude", "C", UIColor(red: 0.85, green: 0.47, blue: 0.34, alpha: 1), UIColor(red: 0.70, green: 0.33, blue: 0.22, alpha: 1)),
+            ("chatgptApp", "G", UIColor(red: 0.10, green: 0.10, blue: 0.10, alpha: 1), UIColor(red: 0.30, green: 0.30, blue: 0.30, alpha: 1)),
+            ("museApp", "M", UIColor(red: 0.55, green: 0.36, blue: 0.96, alpha: 1), UIColor(red: 0.36, green: 0.20, blue: 0.80, alpha: 1)),
+            ("codexCLI", ">", UIColor(red: 0.16, green: 0.20, blue: 0.27, alpha: 1), UIColor(red: 0.05, green: 0.07, blue: 0.10, alpha: 1)),
+            ("dotsApp", "D", UIColor(red: 0.20, green: 0.55, blue: 0.98, alpha: 1), UIColor(red: 0.10, green: 0.35, blue: 0.85, alpha: 1)),
+            ("grok", "X", UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1), UIColor(red: 0.62, green: 0.62, blue: 0.66, alpha: 1)),
+            ("geminiApp", "✦", UIColor(red: 0.27, green: 0.52, blue: 0.96, alpha: 1), UIColor(red: 0.62, green: 0.38, blue: 0.95, alpha: 1)),
+        ]
+        var result: [String: (ref: String, data: Data)] = [:]
+        for (id, letter, top, bottom) in looks {
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            let data = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format).pngData { context in
+                let rect = CGRect(x: 0, y: 0, width: 256, height: 256)
+                UIBezierPath(roundedRect: rect, cornerRadius: 58).addClip()
+                let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [top.cgColor, bottom.cgColor] as CFArray, locations: [0, 1])!
+                context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: 256), options: [])
+                let dark = id == "grok"
+                let text = NSAttributedString(string: letter, attributes: [.font: UIFont.systemFont(ofSize: 132, weight: .bold), .foregroundColor: dark ? UIColor.black : UIColor.white])
+                let size = text.size()
+                text.draw(at: CGPoint(x: (256 - size.width) / 2, y: (256 - size.height) / 2))
+            }
+            result[id] = ("sha256:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(), data)
+        }
+        return result
+    }()
 
     private static func agent(_ id: String, _ product: AgentProduct, _ form: AgentForm, _ name: String, _ readiness: AgentReadiness, _ reasons: [AvailabilityReason]) -> AgentAvailability {
         AgentAvailability(agentID: id, product: product, form: form, displayName: name, visibleInGrid: true, selectedForSharedSend: readiness.acceptsSend,
