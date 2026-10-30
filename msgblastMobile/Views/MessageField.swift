@@ -97,13 +97,14 @@ final class Dictation: ObservableObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var silence: Task<Void, Never>?
+    private var interruption: NSObjectProtocol?
     private var notedServer = false
     static let silenceLimit: Duration = .seconds(60)
 
     /// The simulator, and a phone with no microphone, have no input: the glyph hides.
     static var hasInput: Bool { AVAudioSession.sharedInstance().isInputAvailable }
 
-    func toggle(base: String, onText: @escaping (String) -> Void) {
+    func toggle(base: String, onText: @escaping @MainActor (String) -> Void) {
         switch state {
         case .listening: stop()
         case .denied: if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
@@ -111,8 +112,8 @@ final class Dictation: ObservableObject {
         }
     }
 
-    private func start(base: String, onText: @escaping (String) -> Void) async {
-        let speech = await withCheckedContinuation { continuation in SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) } }
+    private func start(base: String, onText: @escaping @MainActor (String) -> Void) async {
+        let speech = await Self.speechAuthorization()
         let microphone = await AVAudioApplication.requestRecordPermission()
         guard speech == .authorized, microphone else {
             state = .denied
@@ -133,7 +134,7 @@ final class Dictation: ObservableObject {
             try session.setCategory(.record, mode: .measurement, options: .duckOthers)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
             let input = engine.inputNode
-            input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in request.append(buffer) }
+            Self.installTap(on: input, feeding: request)
             engine.prepare()
             try engine.start()
         } catch {
@@ -143,9 +144,8 @@ final class Dictation: ObservableObject {
         }
         self.request = request
         let prefix = base.isEmpty || base.hasSuffix(" ") ? base : base + " "
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            let text = result?.bestTranscription.formattedString
-            let done = error != nil || result?.isFinal == true
+        task = Self.recognize(with: recognizer, request: request) { [weak self] text, done in
+            // Results arrive off the main actor: hop before touching any state.
             Task { @MainActor in
                 guard let self else { return }
                 if let text { onText(prefix + text); self.resetSilence() }
@@ -153,12 +153,41 @@ final class Dictation: ObservableObject {
             }
         }
         state = .listening
+        interruption = Self.observeInterruptions { [weak self] in Task { @MainActor in self?.stop() } }
         resetSilence()
+    }
+
+    // MARK: System callbacks. These run on queues the system picks (TCC, the audio thread,
+    // Speech), so their closures are built in nonisolated code and never inherit the main
+    // actor; they only hand plain values back through `@Sendable` closures.
+
+    /// A phone call or another app taking the audio session stops dictation.
+    nonisolated private static func observeInterruptions(_ interrupted: @escaping @Sendable () -> Void) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { _ in interrupted() }
+    }
+
+    nonisolated private static func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in continuation.resume(returning: status) }
+        }
+    }
+
+    /// The tap runs on the audio thread and only appends buffers to the request.
+    nonisolated private static func installTap(on input: AVAudioInputNode, feeding request: SFSpeechAudioBufferRecognitionRequest) {
+        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in request.append(buffer) }
+    }
+
+    nonisolated private static func recognize(with recognizer: SFSpeechRecognizer, request: SFSpeechAudioBufferRecognitionRequest,
+                                              update: @escaping @Sendable (String?, Bool) -> Void) -> SFSpeechRecognitionTask {
+        recognizer.recognitionTask(with: request) { result, error in
+            update(result?.bestTranscription.formattedString, error != nil || result?.isFinal == true)
+        }
     }
 
     /// Stops listening; called by the glyph, by Send, and after a minute of silence.
     func stop() {
         silence?.cancel(); silence = nil
+        if let interruption { NotificationCenter.default.removeObserver(interruption); self.interruption = nil }
         if engine.isRunning { engine.stop(); engine.inputNode.removeTap(onBus: 0) }
         request?.endAudio(); request = nil
         task?.cancel(); task = nil
