@@ -74,6 +74,8 @@ enum Space {
     static let quoteText: CGFloat = 10
     static let pinnedText: CGFloat = 15
     static let pinnedV: CGFloat = 10
+    /// A tapback pill's height at the default size; all but the bubble's top inset rises above it.
+    static let reactionPill: CGFloat = 26
     /// The red Not sent mark beside a bubble.
     static let notSentMark: CGFloat = 20
     /// Typing bubble: 7 pt dots 4 pt apart, 36 pt tall.

@@ -134,10 +134,11 @@ enum DesignFixtures {
         attempt(&state, group, "claude", Self.replyText, .observed, at: t0.addingTimeInterval(120))
         reply(&state, group, "claude", "r3", "Its tight twists trap the sauce in every bite. Serious Eats agrees: https://www.seriouseats.com/pesto-sauce-recipe", at: t0.addingTimeInterval(150),
               reactions: [RemoteReaction(emoji: "❤️", agentID: nil)])
-        reply(&state, group, "claude", "r4", "🍝👌", at: t0.addingTimeInterval(160))
+        // `typing` drops the latest reply and has Claude working too, so typing is the newest thing.
+        if name != .typing { reply(&state, group, "claude", "r4", "🍝👌", at: t0.addingTimeInterval(160)) }
         let t1 = now.addingTimeInterval(-4 * 60)
         user(&state, group, "p2", "What about gnocchi?", at: t1)
-        attempt(&state, group, "claude", "What about gnocchi?", .sending, at: t1)
+        attempt(&state, group, "claude", "What about gnocchi?", name == .typing ? .submitted : .sending, at: t1)
         attempt(&state, group, "chatgptApp", "What about gnocchi?", .submitted, at: t1)
         attempt(&state, group, "museApp", "What about gnocchi?", .uncertain, at: t1, detail: "Outgoing message observed in the app. Waiting for its reply.")
 

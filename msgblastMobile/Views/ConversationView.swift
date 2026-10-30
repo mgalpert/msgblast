@@ -45,6 +45,8 @@ struct ConversationView: View {
     /// Within 40 pt of the newest message; only then does the thread follow new content.
     @State private var atBottom = true
     @State private var openedAtBottom = false
+    /// A tapback pill's height, scaled with the caption like the pill itself.
+    @ScaledMetric(relativeTo: .caption) private var reactionPill: CGFloat = Space.reactionPill
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var conversation: RemoteConversation? { app.store.projection.conversations[conversationID] }
@@ -306,11 +308,16 @@ struct ConversationView: View {
                 // top-right on a reply. They are never messages of their own.
                 .overlay(alignment: mine ? .topLeading : .topTrailing) {
                     if let reactions = presenter.reactionSummary(for: turn) {
-                        ReactionStack(summary: reactions).offset(x: mine ? -Space.gap : Space.gap, y: -Space.inset - Space.tight)
+                        // It dips only into the bubble's top inset, so it never covers the
+                        // first line, however large the text.
+                        ReactionStack(summary: reactions)
+                            .offset(x: mine ? -Space.gap : Space.gap, y: -(reactionPill - Space.bubbleV))
                     }
                 }
                 }
             }
+            // Room for the part of a tapback pill above the bubble, at every size.
+            .padding(.top, turn.reactions?.isEmpty == false ? reactionPill - Space.bubbleV : 0)
             if !turn.attachments.isEmpty {
                 // Photos inline (up to 240 pt), other files as a row; both open on tap.
                 let files = turn.attachments.enumerated().map { index, file in
@@ -345,7 +352,6 @@ struct ConversationView: View {
                 }
             }
         }
-        .padding(.top, turn.reactions?.isEmpty == false ? Space.inset + Space.tight : 0)
         .padding(.leading, showsAvatar ? Space.threadAvatarEdge : Space.screen)
         .padding(.trailing, Space.screen)
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
@@ -429,12 +435,15 @@ struct PinnedPromptRow: View {
 /// color, with a count when more reactions were made than it shows.
 struct ReactionStack: View {
     var summary: ReactionSummary
+    /// A fixed height that scales with the caption, so the thread can reserve half of it.
+    @ScaledMetric(relativeTo: .caption) private var height: CGFloat = Space.reactionPill
     var body: some View {
         HStack(spacing: -Space.tight) {
-            ForEach(Array(summary.emoji.enumerated()), id: \.offset) { _, emoji in Text(emoji).font(.callout) }
-            if let count = summary.countLabel { Text(count).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.leading, Space.tight + Space.hairline) }
+            ForEach(Array(summary.emoji.enumerated()), id: \.offset) { _, emoji in Text(emoji).font(.system(size: height * 0.6)) }
+            if let count = summary.countLabel { Text(count).font(.system(size: height * 0.45, weight: .semibold)).foregroundStyle(.secondary).padding(.leading, Space.tight + Space.hairline) }
         }
-        .padding(.horizontal, Space.gap).padding(.vertical, Space.tight)
+        .padding(.horizontal, Space.gap)
+        .frame(height: height)
         .background(Capsule().fill(Color(.secondarySystemBackground)))
         .background(Capsule().stroke(Color(.systemBackground), lineWidth: Space.hairline))
         .accessibilityElement(children: .ignore)
