@@ -6,11 +6,11 @@ import msgblastMobileKit
 import msgblastRemoteProtocol
 
 /// Debug-only screens for design review without pairing or a network. Launch with
-/// `MSGBLAST_FIXTURE` set to inbox, conversation, incomplete, blocked, new, settings,
+/// `MSGBLAST_FIXTURE` set to inbox, conversation, typing, incomplete, blocked, new, settings,
 /// reconnecting, locked or pairing (and optionally `MSGBLAST_FIXTURE_CONVERSATION=<uuid>`).
 /// Everything here is simulated; nothing is read from or sent to a Mac.
 enum DesignFixtures {
-    enum Name: String, CaseIterable { case inbox, conversation, incomplete, blocked, new, settings, reconnecting, locked, pairing }
+    enum Name: String, CaseIterable { case inbox, conversation, typing, incomplete, blocked, new, settings, reconnecting, locked, pairing }
 
     static var current: Name? { ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE"].flatMap(Name.init(rawValue:)) }
 
@@ -26,7 +26,7 @@ enum DesignFixtures {
     static func screen(_ name: Name) -> LaunchScreen {
         let requested = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_CONVERSATION"].flatMap(UUID.init(uuidString:))
         switch name {
-        case .conversation: return .conversation(requested ?? group)
+        case .conversation, .typing: return .conversation(requested ?? group)
         case .incomplete: return .conversation(requested ?? unfinished)
         case .blocked: return .conversation(requested ?? blockedConversation)
         case .new: return .newConversation
@@ -51,6 +51,8 @@ enum DesignFixtures {
         default: app.connection.showDesignFixture(.connected, lastHeard: now, connectedVia: "100.101.102.103:52000", connectSeconds: 0.4)
         }
         if name != .pairing { for (_, avatar) in avatars { app.store.storeAvatar(avatar.data, for: avatar.ref) } }
+        // Every row but the group has been read on this phone, so the inbox shows one unread dot.
+        for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
         return app
     }
 

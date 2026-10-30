@@ -147,7 +147,8 @@ struct AgentAvatar: View {
             if let image {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
-                Text(String(name.prefix(1)).uppercased())
+                // No letter below 11 pt: small avatars are a plain color.
+                Text(size * 0.45 >= 11 ? String(name.prefix(1)).uppercased() : "")
                     .font(.system(size: size * 0.45, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: size, height: size)

@@ -75,6 +75,8 @@ public struct InboxRow: Equatable, Identifiable, Sendable {
     public var lastActivity: Date
     public var unconfirmed: Int
     public var ended: Bool
+    /// A reply arrived after the conversation was last opened on this phone.
+    public var unread: Bool = false
     public var isDirect: Bool { agentIDs.count == 1 }
 }
 
@@ -83,7 +85,12 @@ public struct InboxRow: Equatable, Identifiable, Sendable {
 public struct ProjectionPresenter: Sendable {
     public let state: ProjectionState
     public let commands: [UUID: CommandRecord]
-    public init(state: ProjectionState, commands: [UUID: CommandRecord] = [:]) { self.state = state; self.commands = commands }
+    /// When each conversation was last opened on this phone, and when unread tracking began.
+    public let lastOpened: [UUID: Date]
+    public let unreadSince: Date?
+    public init(state: ProjectionState, commands: [UUID: CommandRecord] = [:], lastOpened: [UUID: Date] = [:], unreadSince: Date? = nil) {
+        self.state = state; self.commands = commands; self.lastOpened = lastOpened; self.unreadSince = unreadSince
+    }
 
     public func name(_ agentID: String) -> String { state.agents[agentID]?.formLabel ?? agentID }
     public func shortName(_ agentID: String) -> String { state.agents[agentID]?.displayName ?? agentID }
@@ -95,7 +102,8 @@ public struct ProjectionPresenter: Sendable {
             return InboxRow(id: conversation.id, title: conversation.title, agentNames: conversation.agentIDs.map(shortName), agentIDs: conversation.agentIDs,
                             // A direct row already shows the agent; only group previews name who replied.
                             preview: reply.map { conversation.agentIDs.count == 1 ? $0.text : "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: conversation.lastActivity,
-                            unconfirmed: conversation.unresolvedAttemptCount + unconfirmedCommands, ended: conversation.endedAt != nil)
+                            unconfirmed: conversation.unresolvedAttemptCount + unconfirmedCommands, ended: conversation.endedAt != nil,
+                            unread: isUnread(conversation.id, latestReply: reply?.created))
         }
     }
 
@@ -107,6 +115,46 @@ public struct ProjectionPresenter: Sendable {
             return all.filter { !($0.origin == .agentTranscript && $0.role == .user) }
         }
         return all.filter { $0.agentID == agentID || ($0.agentID == nil && $0.origin == .sharedPrompt) }
+    }
+
+    /// Like Messages: a reply newer than the last time this phone opened the conversation
+    /// (or than when tracking began, so a fresh pairing does not mark everything unread).
+    public func isUnread(_ conversation: UUID, latestReply: Date?) -> Bool {
+        guard let latestReply else { return false }
+        let seen = [lastOpened[conversation], unreadSince].compactMap { $0 }.max() ?? .distantPast
+        return latestReply > seen
+    }
+
+    /// Which chips a turn shows, as Messages shows delivery only where it matters: all of
+    /// them under your latest message or one you tapped, else only Not sent and Unconfirmed.
+    public func visibleChips(for turn: RemoteTurn, agentID filter: String? = nil, isLatest: Bool, expanded: Bool) -> [StatusChip] {
+        let all = chips(for: turn, agentID: filter)
+        return isLatest || expanded ? all : all.filter { $0.state == .notSent || $0.state == .unconfirmed }
+    }
+
+    /// Agents whose request was submitted and has no reply yet: the conversation shows them
+    /// typing. `filter` limits it to one agent's thread.
+    public func typingAgents(in conversation: UUID, agentID filter: String? = nil) -> [String] {
+        let replies = state.turns(in: conversation).filter { $0.role == .assistant }
+        let waiting = state.attempts(in: conversation).filter { [.waiting, .submitted].contains($0.status) && (filter == nil || $0.agentID == filter) }
+        let latest = Dictionary(grouping: state.attempts(in: conversation), by: \.agentID).compactMapValues { $0.max { ($0.created ?? .distantPast) < ($1.created ?? .distantPast) } }
+        return Set(waiting.filter { attempt in
+            latest[attempt.agentID]?.id == attempt.id &&
+                !replies.contains { $0.agentID == attempt.agentID && ($0.created ?? .distantPast) >= (attempt.created ?? .distantFuture) }
+        }.map(\.agentID)).sorted()
+    }
+
+    /// "Today 9:41 AM", "Yesterday 6:12 PM", "Mon, Oct 27 at 3:05 PM" above a turn that
+    /// starts the conversation or follows the previous one by more than an hour; else nil.
+    public static func timeHeader(_ date: Date, previous: Date?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String? {
+        if let previous, date.timeIntervalSince(previous) <= 3600 { return nil }
+        var calendar = calendar
+        calendar.locale = locale
+        let time = date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).hour().minute())
+        if calendar.isDate(date, inSameDayAs: now) { return "Today \(time)" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Yesterday \(time)" }
+        let day = date.formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).weekday(.abbreviated).month(.abbreviated).day())
+        return "\(day) at \(time)"
     }
 
     /// Chips for one of your turns: the matching attempt for each agent.

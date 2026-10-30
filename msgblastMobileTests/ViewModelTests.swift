@@ -105,6 +105,61 @@ final class PresenterTests: XCTestCase {
         XCTAssertNotEqual(busy.readiness(agentIDs: ["chatgptApp"]), ready.readiness(agentIDs: ["chatgptApp"]), "The view notices the change")
     }
 
+    func testChipsShowOnlyWhereTheyMatterAndTypingFollowsSubmittedRequests() {
+        var state = ProjectionState()
+        let conversation = UUID(), start = Date(timeIntervalSince1970: 1_800_000_000)
+        let old = RemoteTurn(id: "old", conversationID: conversation, agentID: nil, role: .user, origin: .sharedPrompt, text: "First", created: start, ordinal: 0, contentHash: "a")
+        let latest = RemoteTurn(id: "new", conversationID: conversation, agentID: nil, role: .user, origin: .followUp, text: "Second", created: start.addingTimeInterval(60), ordinal: 1, contentHash: "b")
+        state.turns = [old.id: old, latest.id: latest]
+        for (id, agent, text, status, offset) in [("1", "claude", "First", RemoteAttemptStatus.observed, 0.0), ("2", "museApp", "First", .notSent, 0), ("3", "codexCLI", "First", .uncertain, 0),
+                                                  ("4", "claude", "Second", .submitted, 60), ("5", "museApp", "Second", .waiting, 60), ("6", "codexCLI", "Second", .observed, 60)] {
+            state.attempts[id] = RemoteAttempt(id: id, conversationID: conversation, agentID: agent, text: text, status: status, detail: nil, created: start.addingTimeInterval(offset))
+        }
+        state.turns["r"] = RemoteTurn(id: "r", conversationID: conversation, agentID: "museApp", role: .assistant, origin: .agentTranscript, text: "Hi", created: start.addingTimeInterval(90), ordinal: 2, contentHash: "c")
+        let presenter = ProjectionPresenter(state: state)
+        XCTAssertEqual(presenter.visibleChips(for: old, isLatest: false, expanded: false).map(\.state), [.unconfirmed, .notSent], "An older message shows only its exceptions")
+        XCTAssertEqual(presenter.visibleChips(for: old, isLatest: false, expanded: true).count, 3, "Tapping reveals every chip")
+        XCTAssertEqual(presenter.visibleChips(for: latest, isLatest: true, expanded: false).count, 3, "The latest message shows every chip")
+        XCTAssertEqual(presenter.typingAgents(in: conversation), ["claude"], "Muse replied after its request; Codex finished")
+        XCTAssertEqual(presenter.typingAgents(in: conversation, agentID: "museApp"), [])
+    }
+
+    func testTimeHeadersAndUnread() {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "UTC")!
+        let locale = Locale(identifier: "en_US")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)  // Friday 15 January 2027, 08:00 UTC
+        func header(_ date: Date, _ previous: Date?) -> String? {
+            ProjectionPresenter.timeHeader(date, previous: previous, now: now, calendar: calendar, locale: locale)?.replacingOccurrences(of: "\u{202F}", with: " ")
+        }
+        XCTAssertEqual(header(now.addingTimeInterval(-600), nil), "Today 7:50 AM", "The first turn always has a header")
+        XCTAssertNil(header(now, now.addingTimeInterval(-3600)), "An hour or less apart: no header")
+        XCTAssertEqual(header(now.addingTimeInterval(-86_400 + 600), now.addingTimeInterval(-3 * 86_400)), "Yesterday 8:10 AM")
+        XCTAssertEqual(header(now.addingTimeInterval(-4 * 86_400), nil), "Mon, Jan 11 at 8:00 AM")
+
+        var state = ProjectionState()
+        let read = UUID(), unread = UUID(), old = UUID()
+        for (id, replyAt) in [(read, now), (unread, now), (old, now.addingTimeInterval(-7200))] {
+            state.conversations[id] = RemoteConversation(id: id, title: "T", prompt: "P", created: replyAt, endedAt: nil, agentIDs: ["claude"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: replyAt)
+            state.turns["\(id)"] = RemoteTurn(id: "\(id)", conversationID: id, agentID: "claude", role: .assistant, origin: .agentTranscript, text: "R", created: replyAt, ordinal: 0, contentHash: "h")
+        }
+        let presenter = ProjectionPresenter(state: state, lastOpened: [read: now.addingTimeInterval(1)], unreadSince: now.addingTimeInterval(-3600))
+        let rows = Dictionary(uniqueKeysWithValues: presenter.inbox.map { ($0.id, $0.unread) })
+        XCTAssertEqual(rows[read], false, "Opened after the reply")
+        XCTAssertEqual(rows[unread], true, "A reply newer than the last opening")
+        XCTAssertEqual(rows[old], false, "Replies from before this phone started tracking are not unread")
+    }
+
+    @MainActor func testOpeningAConversationIsRememberedAndForgotten() throws {
+        let database = try LocalDatabase(url: nil)
+        let store = MobileStore(database: database)
+        let id = UUID(), opened = Date(timeIntervalSince1970: 1_800_000_000)
+        store.markOpened(id, at: opened)
+        store.markOpened(id, at: opened.addingTimeInterval(-10))
+        XCTAssertEqual(MobileStore(database: database).lastOpened[id], opened, "Kept across launches; never moves back")
+        store.forgetMac()
+        XCTAssertNil(MobileStore(database: database).lastOpened[id])
+    }
+
     func testBlockedLinesKeepTheMacsLongerReasonAsDetail() throws {
         var state = try RecordedFixtures.reduce(["snapshot"])
         var app = try XCTUnwrap(state.agents["chatgptApp"])

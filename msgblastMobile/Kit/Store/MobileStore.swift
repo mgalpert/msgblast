@@ -12,6 +12,10 @@ public final class MobileStore: ObservableObject {
     /// Agent artwork from the paired Mac, by content reference (`sha256:<hex>`). Each image
     /// is its own row in the cache database, which is excluded from backups.
     @Published public private(set) var avatars: [String: Data]
+    /// When each conversation was last opened on this phone, for the unread dot.
+    @Published public private(set) var lastOpened: [UUID: Date]
+    /// When this phone first heard from the paired Mac; older replies are not unread.
+    public private(set) var unreadSince: Date?
     private let database: LocalDatabase
     private var saveTask: Task<Void, Never>?
 
@@ -20,6 +24,8 @@ public final class MobileStore: ObservableObject {
         projection = database.value(ProjectionState.self, "projection") ?? ProjectionState()
         commands = database.value([UUID: CommandRecord].self, "commands") ?? [:]
         drafts = database.value([String: String].self, "drafts") ?? [:]
+        lastOpened = database.value([UUID: Date].self, "lastOpened") ?? [:]
+        unreadSince = database.value(Date.self, "unreadSince")
         let refs = database.value([String].self, "avatarRefs") ?? []
         avatars = Dictionary(uniqueKeysWithValues: refs.compactMap { ref in database.data(Self.avatarKey(ref)).map { (ref, $0) } })
         // A previous run may have ended mid-command: those are unconfirmed until the Mac says otherwise.
@@ -31,6 +37,7 @@ public final class MobileStore: ObservableObject {
             CommandLedger.apply(result, to: &commands)
         } else {
             projection = ProjectionReducer.reduce(projection, event)
+            if case .snapshot = event, unreadSince == nil { unreadSince = Date(); database.setValue(unreadSince, "unreadSince") }
         }
         scheduleSave()
     }
@@ -60,6 +67,14 @@ public final class MobileStore: ObservableObject {
         scheduleSave()
     }
 
+    // MARK: Unread
+
+    public func markOpened(_ conversation: UUID, at date: Date = Date()) {
+        guard (lastOpened[conversation] ?? .distantPast) < date else { return }
+        lastOpened[conversation] = date
+        database.setValue(lastOpened, "lastOpened")
+    }
+
     // MARK: Avatars
 
     static func avatarKey(_ ref: String) -> String { "avatar:\(ref)" }
@@ -80,6 +95,8 @@ public final class MobileStore: ObservableObject {
         commands = [:]
         drafts = [:]
         avatars = [:]
+        lastOpened = [:]
+        unreadSince = nil
         database.removeAll()
     }
 

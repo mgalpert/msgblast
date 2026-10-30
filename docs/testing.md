@@ -171,7 +171,7 @@ manual simulator check.
 #### Design review fixtures
 
 Debug builds of the phone app open on simulated screens without pairing or any
-network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `incomplete`,
+network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `typing`, `incomplete`,
 `blocked`, `new`, `settings`, `reconnecting`, `locked` or `pairing`. The fake Mac is
 named "Studio Mac"; the data is built in `msgblastMobile/Debug/DesignFixtures.swift`
 and compiles out of Release. `MSGBLAST_FIXTURE_CONVERSATION=<uuid>` opens a

@@ -8,7 +8,9 @@ struct InboxView: View {
     @State private var settings = false
     var launchScreen: LaunchScreen = .inbox
 
-    private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
+    private var presenter: ProjectionPresenter {
+        ProjectionPresenter(state: app.store.projection, commands: app.store.commands, lastOpened: app.store.lastOpened, unreadSince: app.store.unreadSince)
+    }
 
     var body: some View {
         let rows = presenter.inbox
@@ -61,22 +63,30 @@ struct InboxView: View {
 
     private func link(_ row: InboxRow) -> some View {
         NavigationLink(value: row.id) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                // Messages' unread dot, left of the avatar.
+                Circle().fill(row.unread ? Color.blue : Color.clear).frame(width: 10, height: 10).padding(.top, 15)
+                    .accessibilityHidden(true)
                 RowAvatar(app: app, agentIDs: row.agentIDs, names: row.agentIDs.map(presenter.shortName))
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(row.isDirect ? presenter.name(row.agentIDs[0]) : row.title).font(.headline).lineLimit(1)
+                        Text(row.isDirect ? presenter.name(row.agentIDs[0]) : row.title).font(.headline.weight(row.unread ? .bold : .semibold)).lineLimit(1)
                         Spacer(minLength: 8)
                         Text(ProjectionPresenter.inboxTimestamp(row.lastActivity)).font(.subheadline).foregroundStyle(.secondary)
                     }
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
-                        Spacer(minLength: 0)
-                        if row.unconfirmed > 0 { UnconfirmedBadge(count: row.unconfirmed).padding(.top, 2) }
+                    Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    // The meta line sits right under the preview: Ended, then the unconfirmed badge.
+                    if row.ended || row.unconfirmed > 0 {
+                        HStack(spacing: 6) {
+                            if row.ended { Text("Ended").font(.caption).foregroundStyle(.secondary) }
+                            Spacer(minLength: 0)
+                            if row.unconfirmed > 0 { UnconfirmedBadge(count: row.unconfirmed) }
+                        }
                     }
-                    if row.ended { Text("Ended").font(.caption).foregroundStyle(.tertiary) }
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(row.unread ? "Unread" : "")
         }
     }
 }
@@ -158,18 +168,16 @@ struct RowAvatar: View {
         if agentIDs.count == 1 {
             AgentAvatar(app: app, agentID: agentIDs[0], name: names[0], size: Self.side)
         } else {
-            // Two across the top, one centered below; later ones sit on top, each in a 2 pt ring.
-            let small: CGFloat = 22
-            let centers = [CGPoint(x: 11, y: 11), CGPoint(x: 29, y: 11), CGPoint(x: 20, y: 28)]
+            // Messages' group avatar: the first member top-left behind, the second
+            // bottom-right in front with a 2 pt ring in the row color.
             ZStack(alignment: .topLeading) {
-                ForEach(Array(agentIDs.prefix(3).enumerated()), id: \.offset) { index, id in
-                    AgentAvatar(app: app, agentID: id, name: names[index], size: small)
-                        .padding(2)
-                        .background(Circle().fill(Color(.secondarySystemGroupedBackground)))
-                        .position(centers[agentIDs.count == 2 && index == 1 ? 2 : index])
-                }
+                AgentAvatar(app: app, agentID: agentIDs[0], name: names[0], size: 26)
+                AgentAvatar(app: app, agentID: agentIDs[1], name: names[1], size: 26)
+                    .padding(2)
+                    .background(Circle().fill(Color(.secondarySystemGroupedBackground)))
+                    .offset(x: Self.side - 26 - 2, y: Self.side - 26 - 2)
             }
-            .frame(width: Self.side, height: Self.side)
+            .frame(width: Self.side, height: Self.side, alignment: .topLeading)
         }
     }
 }
