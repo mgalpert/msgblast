@@ -183,8 +183,9 @@ keyboard opens, `MSGBLAST_FIXTURE_DICTATION=1` shows the dictation glyph even wi
 `MSGBLAST_FIXTURE_RECIPIENTS=1` opens the recipient strip above the field with the keyboard up,
 `MSGBLAST_FIXTURE_SCROLL=photo` scrolls the thread's first photo message up under the header,
 `MSGBLAST_FIXTURE_SEARCH=<text>` types a query into the inbox's search field with the keyboard up,
-`MSGBLAST_FIXTURE_FILTER=claude,museApp` selects agents in the header (with `new`, it checks them in
-the new thread's strip, which opens pushed with the field focused), and
+`MSGBLAST_FIXTURE_FILTER=claude,museApp` selects agents in the header (with `new`, which opens the
+pushed new thread with the field focused and every agent that can take a send checked, it checks
+exactly these instead), and
 `MSGBLAST_FIXTURE_REPLY=1` starts a reply, and `MSGBLAST_FIXTURE_PHOTO=1` opens the first
 shared photo in the viewer. Further fixtures: `conversation-pinned` (the
 pinned prompt row) and `conversation-many` (six agents). Build the Debug app for a simulator, install it, then:

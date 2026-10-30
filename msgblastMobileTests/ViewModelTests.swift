@@ -288,6 +288,26 @@ final class PresenterTests: XCTestCase {
         XCTAssertNil(ProjectionPresenter(state: state).pinnedPrompt(for: sunday, selection: []), "An older Messages chat has no prompt to pin")
     }
 
+    func testNewConversationStartsWithEveryAgentThatCanTakeASend() {
+        var state = ProjectionState()
+        func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, selected: Bool = false) {
+            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: true, selectedForSharedSend: selected,
+                capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: form == .messages, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                readiness: readiness, reasons: [], observedAt: fixedNow, source: .live)
+        }
+        agent("claude", .website, .ready)
+        agent("muse", .macApp, .readyWillLaunch)
+        agent("codex", .cli, .busy(detail: "Working"))
+        agent("dots", .macApp, .blocked)
+        agent("gemini", .macApp, .unavailable)
+        agent("messages:ana", .messages, .ready, selected: true)
+        agent("messages:bo", .messages, .ready)
+        state.grid = ["claude", "muse", "codex", "dots", "gemini", "messages:ana", "messages:bo"]
+        let chosen = ProjectionPresenter(state: state).defaultNewSelection
+        XCTAssertEqual(Set(chosen), ["claude", "muse", "codex", "messages:ana"], "Ready and busy in; blocked and unavailable out; a contact only when the Mac selected it")
+        XCTAssertEqual(ProjectionPresenter.togglingNew("claude", chosen: chosen).contains("claude"), false, "A tap still removes")
+    }
+
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
         var state = ProjectionState()
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {

@@ -7,9 +7,11 @@ import msgblastRemoteProtocol
 /// the conversation, this same screen becomes its thread in place.
 struct NewConversationView: View {
     @ObservedObject var app: MobileApp
-    /// The checked agents, in the order checked. Starts empty: nothing is pre-checked, not
-    /// even the Mac's own composer selection.
+    /// The checked agents. Starts with every agent that can take a send (and Messages contacts
+    /// the Mac has selected); taps add and remove, and none checked means no one.
     @State private var selected: [String] = []
+    /// After the initial fill, so only later taps spring into the header.
+    @State private var settled = false
     /// The strip's order, fixed when the screen opens so icons never move under a finger
     /// while readiness changes.
     @State private var order: (agents: [String], messages: [String])?
@@ -49,12 +51,16 @@ struct NewConversationView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) { NewThreadHeader(app: app, agentIDs: selected) }
+                ToolbarItem(placement: .principal) { NewThreadHeader(app: app, agentIDs: selected, animates: settled) }
                     .sharedBackgroundVisibility(.hidden)
             }
             .sensoryFeedback(.selection, trigger: selected)
             .onAppear {
-                if order == nil { order = Self.order(presenter.newConversationAgents) }
+                if order == nil {
+                    order = Self.order(presenter.newConversationAgents)
+                    selected = presenter.defaultNewSelection
+                    Task { settled = true }
+                }
                 // The keyboard comes up with the screen.
                 Task { focusRequest += 1 }
                 #if DEBUG
@@ -99,7 +105,10 @@ struct NewConversationView: View {
 struct NewThreadHeader: View {
     @ObservedObject var app: MobileApp
     var agentIDs: [String]
+    /// False for the first fill, so the default agents appear at once rather than cascading.
+    var animates = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var springs: Bool { animates && !reduceMotion }
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
 
     var body: some View {
@@ -117,7 +126,7 @@ struct NewThreadHeader: View {
                             .padding(Space.hairline)
                             .background(Circle().fill(Color(.systemBackground)))
                             .zIndex(Double(3 - index))
-                            .transition(reduceMotion ? .identity : .scale(scale: 0.6).combined(with: .opacity)
+                            .transition(!springs ? .identity : .scale(scale: 0.6).combined(with: .opacity)
                                 .animation(.spring(duration: 0.35).delay(Double(index) * 0.04)))
                     }
                     if agentIDs.count > 3 {
@@ -130,7 +139,7 @@ struct NewThreadHeader: View {
                 }
             }
             .frame(height: Space.control)
-            .animation(reduceMotion ? nil : .spring(duration: 0.35), value: agentIDs)
+            .animation(springs ? .spring(duration: 0.35) : nil, value: agentIDs)
             Text(title).lineLimit(1)
                 .font(.caption.weight(.medium))
                 .padding(.horizontal, Space.gap).padding(.vertical, Space.hairline)
