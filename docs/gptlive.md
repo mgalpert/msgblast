@@ -162,8 +162,11 @@ Current local checks (October 29, 2026):
   The production controller ran `get_app_state`, `navigate_app`, `list_agents`
   and `prepare_message`, returned 763,200 bytes of reply audio, and staged
   “Can you share the pilot results?” without sending. Final usage reported 16.0
-  voice seconds and 12,452 backend tokens. This proves the API/audio/tool path;
-  physical microphone capture still awaits macOS permission on the current build.
+  voice seconds and 12,452 backend tokens. This proves the API/audio/tool path.
+- After macOS approval, the final 21-40-59 PDT Dev build reached Listening and
+  logged microphone audio streaming and returned output. Hardware mute/unmute,
+  End and one-click restart passed; Debug remained off. Physical speech
+  recognition accuracy and acoustic echo quality were not evaluated.
 
 
 The packaging regression checks use temporary fixtures and do not build an app:

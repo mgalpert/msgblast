@@ -3,7 +3,7 @@
 Captured October 29, 2026 from **gptlive Demo - 2026-10-29 21-40-58 PDT**
 (`com.msgblast.gptlive-demo`), built from source commit
 `741f8709f0c04fc944f684b532c8324d7c659805` with Xcode 27.
-The subsequent evidence commit changes only these media and this explanation;
+Subsequent evidence and validation commits change only documentation/media;
 application code is identical to the reviewed and tested source.
 
 The app ran with `--demo --isolated-demo`. All agents and conversations are
@@ -24,9 +24,12 @@ visually inspected. Screenshots contain no real conversations or credentials.
 
 The exact-source Dev build **dev - gptlive - 2026-10-29 21-40-59 PDT** is installed
 locally. Both packages passed build, ad-hoc signature, helper and archive checks.
-The earlier approved build reached Listening on the hardware route; the final
-rebuild is awaiting its own macOS microphone approval before the API connects.
-Final-build hardware mute/unmute and physical speech remain unverified.
+After the user approved macOS microphone access, the final build reached Listening.
+Activity confirmed microphone audio streaming and returned output. Mute changed
+it to Microphone muted, unmute restored Listening, End closed voice, and a single
+toolbar click restarted capture. Debug stayed off. Voice was ended after the check;
+the app remains running. These checks establish hardware capture/lifecycle, not
+physical speech recognition accuracy or acoustic echo quality.
 
 Separate live API validation used the production controller and synthetic speech
 with isolated Demo data. It ran get_app_state, navigate_app, list_agents and
