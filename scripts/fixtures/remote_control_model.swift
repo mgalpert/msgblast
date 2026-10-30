@@ -20,7 +20,7 @@ extension SideChatModelCheck {
         let keepAwake = RemoteKeepAwake(settingEnabled: true, assertions: .init(create: { _ in 1 }, release: { _ in }))
         let availability = AvailabilityModel(sessions: { model.webAgents.sessions }, inputs: { model.remoteAvailabilityInputs(settings: settings.value) })
         await model.remoteAvailabilityProbe(slow: false)
-        let host = AppRemoteHost(model: model, availability: availability, keepAwake: keepAwake, power: power, settings: { settings.value })
+        let host = AppRemoteHost(model: model, availability: availability, avatars: RemoteAvatars(model: model), keepAwake: keepAwake, power: power, settings: { settings.value })
         let executor = RemoteCommandExecutor(host: host)
         let cedar = model.state.agents[0], lumen = model.state.agents[1]
         let cedarID = RemoteAgentIDs.messages(cedar.id)
