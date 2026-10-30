@@ -4,6 +4,7 @@ import AppKit
 import msgblastCore
 
 enum MessageAppearance {
+    static let outgoingBubbleColor = Color(nsColor: .systemBlue)
     static let incomingBubbleColor = Color(nsColor: NSColor(name: nil) { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
             return NSColor(srgbRed: 59 / 255, green: 59 / 255, blue: 61 / 255, alpha: 1)

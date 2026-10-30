@@ -11,6 +11,7 @@ The public source repository is [mgalpert/msgblast](https://github.com/mgalpert/
 | [Contributing](../CONTRIBUTING.md) | Personal changes, forks, branches, review, and PR screenshots/video |
 | [Architecture](architecture.md) | Source map, data flow, providers, state, and generated files |
 | [Testing](testing.md) | Native tests, local fixtures, backend checks, evidence, and CI limits |
+| [Conversation window design](mac-conversation-design.md) | Messages as the reference: header cluster, one compose bar, thread metrics, design fixtures and captures |
 | [Dedicated Mac permission testing](remote-permission-testing.md) | Stable signed Dev builds and unattended real permission checks in a privately configured persistent Space |
 | [Agent instructions](../AGENTS.md) | Coding-agent quickstart and maintainer constraints |
 
