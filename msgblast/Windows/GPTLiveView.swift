@@ -8,7 +8,6 @@ struct GPTLiveView: View {
     @ObservedObject private var audio: GPTLiveAudio
     @ObservedObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var showTranscript = false
     @State private var showDebug = false
     @State private var showContext = false
     @State private var contextPreview = ""
@@ -23,9 +22,10 @@ struct GPTLiveView: View {
     private var speaking: Bool { controller.connected && controller.speaker && audio.outputLevel > 0.08 }
     private var voiceTitle: String {
         if session.state == .closing { return "Ending voice…" }
-        if controller.microphoneStarting { return "Starting your microphone…" }
+        if controller.microphoneStarting { return controller.connected ? "Starting your microphone…" : "Allow microphone access" }
         if preparing { return "Connecting…" }
-        if failure != nil { return "Let’s get you connected" }
+        if failure != nil { return audio.permissionDenied ? "Microphone access needed" : "Voice paused" }
+        if controller.sending { return "Sending your message…" }
         if hasReview { return "Ready for your review" }
         if controller.simulate && controller.connected { return "Demo conversation" }
         if speaking { return "Speaking" }
@@ -35,7 +35,7 @@ struct GPTLiveView: View {
         return "Ready when you are"
     }
     private var voiceHint: String {
-        if controller.microphoneStarting { return "Allow microphone access if macOS asks." }
+        if controller.microphoneStarting { return "Approve the macOS prompt to start voice." }
         if preparing { return "Getting voice ready." }
         if hasReview { return "Check the message below before sending." }
         if controller.simulate { return "Sample replies and simulated sends. No microphone or API use." }
@@ -52,9 +52,9 @@ struct GPTLiveView: View {
                     VStack(spacing: 20) {
                         voiceStage
                         if let failure { errorCard(failure) }
-                        if controller.pendingDraft != nil { draft.id("review") }
+                        if let reviewed = controller.pendingDraft { draft(reviewed).id("review") }
                         if controller.pendingEndConversationID != nil { endConversationReview.id("end-review") }
-                        if showTranscript { transcript }
+                        if controller.showTranscript { transcript }
                         if !controller.status.isEmpty && !controller.status.hasPrefix("Connected") && !controller.status.hasPrefix("Demo session") && controller.status != "Session ended" {
                             Text(controller.status).font(.callout).foregroundStyle(.secondary)
                                 .textSelection(.enabled).accessibilityIdentifier("GPTLive status")
@@ -69,7 +69,7 @@ struct GPTLiveView: View {
                 .onChange(of: controller.pendingEndConversationID) { _, id in
                     if id != nil { proxy.scrollTo("end-review", anchor: .top) }
                 }
-                .onChange(of: session.transcript.last?.text) { if showTranscript { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onChange(of: session.transcript.last?.text) { if controller.showTranscript { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
             Divider()
             voiceControls.padding(.horizontal, 18).padding(.vertical, 18)
@@ -92,7 +92,8 @@ struct GPTLiveView: View {
             Spacer()
             Menu {
                 Button("Voice settings…", systemImage: "slider.horizontal.3") { controller.showSettings = true }
-                Toggle("Show transcript", isOn: $showTranscript)
+                Toggle("Show transcript", isOn: $controller.showTranscript)
+                    .accessibilityIdentifier("GPTLive transcript toggle")
                 Divider()
                 Button("Activity…", systemImage: "list.bullet.rectangle") { showDebug = true }
                     .accessibilityIdentifier("GPTLive debug")
@@ -106,7 +107,7 @@ struct GPTLiveView: View {
         VStack(spacing: 18) {
             GPTLiveVoiceMark(level: max(audio.inputLevel, audio.outputLevel),
                              active: controller.microphone || speaking, preparing: preparing,
-                             compact: hasReview || showTranscript)
+                             compact: hasReview || controller.showTranscript)
                 .accessibilityHidden(true)
             VStack(spacing: 7) {
                 Text(voiceTitle).font(.system(size: 21, weight: .semibold))
@@ -120,7 +121,7 @@ struct GPTLiveView: View {
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     .accessibilityIdentifier("GPTLive connect")
             }
-        }.frame(maxWidth: .infinity).padding(.top, hasReview || showTranscript ? 24 : 46)
+        }.frame(maxWidth: .infinity).padding(.top, hasReview || controller.showTranscript ? 24 : 46)
             .padding(.bottom, 12)
     }
     private func errorCard(_ message: String) -> some View {
@@ -129,7 +130,11 @@ struct GPTLiveView: View {
                 .font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("GPTLive error")
             HStack {
-                Button("Voice settings") { controller.showSettings = true }
+                if audio.permissionDenied {
+                    Button("Microphone settings") { model.setting("Privacy_Microphone") }
+                } else {
+                    Button("Voice settings") { controller.showSettings = true }
+                }
                 Spacer()
                 Button("Try again") {
                     if controller.connected { Task { await controller.setMicrophone(true) } }
@@ -139,18 +144,14 @@ struct GPTLiveView: View {
         }.padding(16).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
     }
     private var voiceControls: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 36) {
             voiceButton(controller.microphone ? "Mute" : "Unmute",
                         help: controller.microphone ? "Mute microphone" : "Unmute microphone",
                         icon: controller.microphone ? "mic.fill" : "mic.slash.fill",
                         selected: controller.microphone) {
-                Task { await controller.setMicrophone(!controller.microphone) }
-            }.disabled(!controller.connected || controller.simulate || controller.microphoneStarting)
+                controller.toggleMicrophone()
+            }.disabled(!controller.canToggleMicrophone)
                 .accessibilityIdentifier("GPTLive microphone")
-            voiceButton("Transcript", help: showTranscript ? "Hide transcript" : "Show transcript",
-                        icon: "captions.bubble", selected: showTranscript) {
-                showTranscript.toggle()
-            }.accessibilityIdentifier("GPTLive transcript toggle")
             voiceButton("End", help: "End voice", icon: "xmark", endsVoice: true) { controller.dismiss() }
                 .disabled(controller.sending).accessibilityIdentifier("GPTLive end")
         }.frame(maxWidth: .infinity)
@@ -247,13 +248,13 @@ struct GPTLiveView: View {
             }
         }.padding(24).frame(width: 470, height: 590)
     }
-    private var draft: some View {
+    private func draft(_ reviewed: GPTLiveDraft) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Review message", systemImage: "square.and.pencil").font(.headline)
             Text("Conversation: " + controller.draftConversationTitle).font(.subheadline)
             Text("To: " + controller.draftRecipientName).font(.subheadline.bold())
                 .fixedSize(horizontal: false, vertical: true)
-            Text(controller.pendingDraft?.text ?? "")
+            Text(reviewed.text)
                 .font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12).background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -265,7 +266,7 @@ struct GPTLiveView: View {
                     Spacer()
                     Button("Discard") { controller.discardDraft() }.disabled(controller.sending)
                     Button(model.demo ? "Send (simulated)" : "Send message") {
-                        Task { await controller.sendDraft() }
+                        Task { await controller.sendDraft(reviewed) }
                     }.buttonStyle(.borderedProminent).disabled(!controller.canSendDraft)
                         .accessibilityIdentifier("GPTLive send draft")
                 }

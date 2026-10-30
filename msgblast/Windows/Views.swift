@@ -306,9 +306,10 @@ struct MainView: View {
         } message: { Text(model.error ?? "") }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { voice.present(comparisonID: selectedComparisonID) } label: {
-                    Label("GPT-Live", systemImage: "waveform")
-                }.help("Start voice with GPT-Live").accessibilityIdentifier("Open GPTLive")
+                Button { voice.toggleVoice(comparisonID: selectedComparisonID) } label: {
+                    Label("GPT-Live", systemImage: voice.isPresented ? "waveform.circle.fill" : "waveform")
+                }.help(voice.isPresented ? "End voice (⇧⌘L)" : "Start voice (⇧⌘L)")
+                    .disabled(voice.sending).accessibilityIdentifier("Open GPTLive")
             }
             if selection == .discover {
                 ToolbarItem(placement: .navigation) {

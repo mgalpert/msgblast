@@ -28,6 +28,7 @@ final class GPTLiveController: ObservableObject {
     @Published private(set) var microphoneStarting = false
     @Published private(set) var startingVoice = false
     @Published var showSettings = false
+    @Published var showTranscript = false
     @Published private(set) var isPresented = false
     @Published private(set) var voiceNeedsKey = false
     @Published var speaker = true
@@ -78,6 +79,7 @@ final class GPTLiveController: ObservableObject {
 
     var connected: Bool { fixtureConnected || session.state == .connected }
     var active: Bool { fixtureConnected || [.connecting, .connected, .closing].contains(session.state) }
+    var canToggleMicrophone: Bool { connected && !simulate && !startingVoice && !microphoneStarting && !closing }
     var destinations: [Destination] { destinations(for: selectedComparisonID) }
     var appDestinations: [Destination] {
         model.state.agents.map { .init(id: "messages:" + $0.id.uuidString, name: $0.name, memberID: $0.id, webID: nil) }
@@ -117,7 +119,10 @@ final class GPTLiveController: ObservableObject {
             if rememberKey { try GPTLiveCredentials.save(apiKey); keyStatus = "Key saved in macOS Keychain" }
             else { keyStatus = "Key is available for this session only; any previously saved key is unchanged" }
             activity.record(category: "credentials", summary: rememberKey ? "Key saved in Keychain" : "Session-only key selected")
-        } catch { self.error = "Could not update Keychain. Your key can still be used for this session." }
+        } catch {
+            keyStatus = "Could not save to Keychain. Your key is available for this session only."
+            rememberKey = false
+        }
     }
     func forgetKey() {
         do { try GPTLiveCredentials.delete(); apiKey = ""; keyStatus = "Saved key removed"; activity.record(category: "credentials", summary: "Saved key removed") }
@@ -166,6 +171,16 @@ final class GPTLiveController: ObservableObject {
         isPresented = true
         beginVoice()
     }
+    func toggleVoice(comparisonID: UUID? = nil) {
+        if isPresented { dismiss() }
+        else { present(comparisonID: comparisonID) }
+    }
+    func toggleMicrophone() {
+        Task {
+            guard canToggleMicrophone else { return }
+            await setMicrophone(!microphone)
+        }
+    }
     @discardableResult
     func dismiss() -> Bool {
         guard !sending else { return false }
@@ -175,7 +190,14 @@ final class GPTLiveController: ObservableObject {
     func leaveWorkspace() {
         isPresented = false
         showSettings = false
-        Task { await disconnect() }
+        // Invalidate queued startup synchronously, before SwiftUI removes us.
+        let requestID = UUID(); voiceRequestID = requestID
+        microphoneRequestID = UUID(); startingVoice = false; microphoneStarting = false
+        closing = true; audio.stop(); microphone = false
+        Task {
+            guard voiceRequestID == requestID else { return }
+            await disconnect()
+        }
     }
     func beginVoice() {
         guard !startingVoice, !active || session.state == .closing else { return }
@@ -196,8 +218,24 @@ final class GPTLiveController: ObservableObject {
         let requestID = UUID(); voiceRequestID = requestID
         startingVoice = true
         defer { if voiceRequestID == requestID { startingVoice = false } }
-        if session.state == .closing { await session.close() }
+        if closing || session.state == .closing {
+            await session.close()
+            fixtureConnected = false
+        }
         guard voiceRequestID == requestID else { return }
+        if !simulate {
+            error = nil
+            microphoneStarting = true
+            do { try await audio.requestMicrophoneAccess() }
+            catch {
+                guard voiceRequestID == requestID else { return }
+                microphoneStarting = false
+                if !(error is CancellationError) { self.error = error.localizedDescription }
+                return
+            }
+            guard voiceRequestID == requestID else { return }
+            microphoneStarting = false
+        }
         if !connected { await connect() }
         guard voiceRequestID == requestID, connected, !closing, !simulate else { return }
         await setMicrophone(true)
@@ -215,7 +253,7 @@ final class GPTLiveController: ObservableObject {
         let requestID = UUID(); microphoneRequestID = requestID
         microphoneStarting = enabled
         defer { if microphoneRequestID == requestID { microphoneStarting = false } }
-        if !enabled { microphone = false; audio.stop(); await session.setInputMuted(true); activity.record(category: "audio", summary: "Microphone muted"); return }
+        if !enabled { microphone = false; audio.setMuted(true); await session.setInputMuted(true); activity.record(category: "audio", summary: "Microphone muted"); return }
         do {
             await session.setInputMuted(false)
             guard requestID == microphoneRequestID, connected, !closing else { return }
@@ -244,8 +282,8 @@ final class GPTLiveController: ObservableObject {
         activity.record(category: "tool_result", summary: "\(call.name) finished in \(Int(Date().timeIntervalSince(started) * 1000)) ms", detail: result, callID: call.callID)
         return result
     }
-    func sendDraft() async {
-        guard canSendDraft, let draft = pendingDraft else { error = "This reviewed message is unavailable. Nothing was sent."; return }
+    func sendDraft(_ approved: GPTLiveDraft?) async {
+        guard let draft = approved, pendingDraft == draft, canSendDraft else { error = "This reviewed message is unavailable. Nothing was sent."; return }
         sending = true; error = nil
         defer { sending = false }
         attemptedDraftIDs.insert(draft.id)

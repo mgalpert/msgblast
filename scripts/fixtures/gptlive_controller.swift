@@ -68,6 +68,33 @@ import AppKit
     }
 
     @MainActor static func voiceLifecycleChecks(_ model: AppModel) async throws {
+        // Permission must resolve before opening a billable remote session.
+        let preflightWire = VoiceUXTransport()
+        let preflightSession = GPTLiveSession(transportFactory: { preflightWire })
+        var preflightPermission: CheckedContinuation<Bool, Never>?
+        let preflight = GPTLiveController(model: model, session: preflightSession,
+            audio: GPTLiveAudio(requestPermission: { await withCheckedContinuation { preflightPermission = $0 } }))
+        preflight.simulate = false; preflight.apiKey = "sk-fixture-only"; preflight.rememberKey = false
+        let preflighting = Task { await preflight.startVoice() }
+        try await waitUntil("Expected voice startup") { preflightPermission != nil || !preflightWire.types.isEmpty }
+        precondition(preflightPermission != nil && preflightWire.types.isEmpty,
+                     "Microphone permission must precede every remote session start")
+        await preflight.disconnect()
+        preflightPermission?.resume(returning: true)
+        await preflighting.value
+        precondition(preflightWire.types.isEmpty && !preflight.startingVoice && !preflight.audio.isCapturing,
+                     "Late permission after cancellation must not open a connection or microphone")
+
+        let deniedWire = VoiceUXTransport()
+        let denied = GPTLiveController(model: model,
+            session: GPTLiveSession(transportFactory: { deniedWire }),
+            audio: GPTLiveAudio(requestPermission: { false }))
+        denied.simulate = false; denied.apiKey = "sk-fixture-only"; denied.rememberKey = false
+        await denied.startVoice()
+        precondition(deniedWire.types.isEmpty && denied.audio.permissionDenied && denied.error != nil
+                     && !denied.active && !denied.startingVoice && !denied.microphoneStarting,
+                     "Denied permission must stay local and leave retry available")
+
         let sidebar = GPTLiveController(model: model)
         sidebar.present()
         try await waitUntil("Toolbar presentation must start voice") { sidebar.connected }
@@ -76,6 +103,7 @@ import AppKit
         precondition(!sidebar.dismiss() && sidebar.isPresented && sidebar.connected,
                      "A send in progress must keep its review visible")
         sidebar.sending = false
+        sidebar.showTranscript = true
         let coordinator = WindowCoordinator(model: model)
         let workspace = NSWindow(contentRect: .init(x: 0, y: 0, width: 800, height: 600),
                                  styleMask: [.titled], backing: .buffered, defer: false)
@@ -86,7 +114,7 @@ import AppKit
         try await waitUntil("Closing the workspace must disconnect voice") { !sidebar.active }
         sidebar.present()
         try await waitUntil("Sidebar must reopen with one action") { sidebar.connected }
-        precondition(sidebar.isPresented)
+        precondition(sidebar.isPresented && sidebar.showTranscript)
         sidebar.leaveWorkspace()
         precondition(!sidebar.isPresented)
         try await waitUntil("Leaving for onboarding must disconnect") { !sidebar.active }
@@ -95,14 +123,14 @@ import AppKit
         let waitingWire = VoiceUXTransport()
         let waitingSession = GPTLiveSession(transportFactory: { waitingWire })
         var permissionRequests = 0
-        let waitingAudio = GPTLiveAudio(requestPermission: { permissionRequests += 1; return false })
+        let waitingAudio = GPTLiveAudio(requestPermission: { permissionRequests += 1; return true })
         let waiting = GPTLiveController(model: model, session: waitingSession, audio: waitingAudio)
         waiting.simulate = false; waiting.apiKey = "sk-fixture-only"; waiting.rememberKey = false
         let connection = Task { await waiting.startVoice() }
         try await waitUntil("Expected connecting state") { waitingWire.types.contains("session.start") }
         await waiting.disconnect()
         await connection.value
-        precondition(permissionRequests == 0 && !waiting.startingVoice && !waiting.microphone)
+        precondition(permissionRequests == 1 && !waiting.startingVoice && !waiting.microphone)
 
         // Cancel while the real audio class awaits an injected permission answer.
         let permissionWire = VoiceUXTransport()
@@ -111,9 +139,11 @@ import AppKit
         let permissionAudio = GPTLiveAudio(requestPermission: { await withCheckedContinuation { permission = $0 } })
         let pending = GPTLiveController(model: model, session: permissionSession, audio: permissionAudio)
         pending.simulate = false; pending.apiKey = "sk-fixture-only"; pending.rememberKey = false
-        let starting = Task { await pending.startVoice() }
+        let permissionConnection = Task { await pending.connect() }
         try await waitUntil("Expected pending session") { permissionWire.types.contains("session.start") }
         permissionWire.push("session.started")
+        await permissionConnection.value
+        let starting = Task { await pending.setMicrophone(true) }
         try await waitUntil("Expected permission request") { permission != nil }
         let closing = Task { await pending.disconnect() }
         try await waitUntil("Expected close") { permissionWire.types.contains("session.close") }
@@ -132,9 +162,11 @@ import AppKit
         let expired = GPTLiveController(model: model, session: expiredSession,
             audio: GPTLiveAudio(requestPermission: { await withCheckedContinuation { expiredPermission = $0 } }))
         expired.simulate = false; expired.apiKey = "sk-fixture-only"; expired.rememberKey = false
-        let expiring = Task { await expired.startVoice() }
+        let expiredConnection = Task { await expired.connect() }
         try await waitUntil("Expected expiring session") { expiredWire.types.contains("session.start") }
         expiredWire.push("session.started")
+        await expiredConnection.value
+        let expiring = Task { await expired.setMicrophone(true) }
         try await waitUntil("Expected expiring permission request") { expiredPermission != nil }
         expiredWire.push("session.closed")
         try await waitUntil("Remote closure must release pending startup") {
@@ -149,9 +181,15 @@ import AppKit
         for closeFails in [false, true] {
             let first = VoiceUXTransport(), second = VoiceUXTransport()
             var starts = 0
+            var accessChecks = 0
             let restartingSession = GPTLiveSession(transportFactory: { starts += 1; return starts == 1 ? first : second })
             let restarting = GPTLiveController(model: model, session: restartingSession,
-                                              audio: GPTLiveAudio(requestPermission: { false }))
+                                              audio: GPTLiveAudio(requestPermission: {
+                accessChecks += 1
+                // Preflight succeeds; the capture-time recheck fails without
+                // opening hardware, as if access changed during connection.
+                return accessChecks.isMultiple(of: 2) == false
+            }))
             restarting.simulate = false; restarting.apiKey = "sk-fixture-only"; restarting.rememberKey = false
             let initial = Task { await restarting.startVoice() }
             try await waitUntil("Expected initial voice start") { first.types.contains("session.start") }
@@ -173,7 +211,7 @@ import AppKit
             second.push("session.closed")
             await finalClose.value
         }
-        print("PASS: one-action voice cancellation during connection and permission, remote closure during permission, late approval rejection, and automatic restart after successful or failed close. No OS prompt or audio device opened.")
+        print("PASS: permission before connection, local denial, cancellation during permission/connection, late approval rejection, remote closure, transcript retention and restart after successful or failed close. No OS prompt or audio device opened.")
     }
 
     @MainActor static func checks() async throws {
@@ -259,16 +297,19 @@ import AppKit
         _ = try await call(controller, "update_prepared_message", ["draft_id": prepared.id.uuidString, "expected_revision": 1, "text": "Stale overwrite"], fails: true)
         _ = try await call(controller, "discard_prepared_message", ["draft_id": prepared.id.uuidString, "expected_revision": 1], fails: true)
         precondition(controller.pendingDraft?.text == "Human revision" && controller.pendingDraft?.revision == 2)
+        await controller.sendDraft(prepared)
+        precondition(outgoingCount(model) == beforeTools && controller.pendingDraft?.revision == 2,
+                     "Approval of an older rendered revision must never send a later revision")
         let initialText = "Compare a five-person pilot with a larger trial."
         _ = try await call(controller, "update_prepared_message", ["draft_id": prepared.id.uuidString, "expected_revision": 2, "text": initialText])
         precondition(outgoingCount(model) == beforeTools && model.state.comparisons.count == conversationCount, "Preparation and revisions must not create conversations or send")
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         guard let firstID = controller.selectedComparisonID, let first = model.comparison(firstID) else { fatalError(controller.status) }
         precondition(controller.pendingDraft == nil && first.prompt == initialText && first.members.count == 2, controller.status)
         precondition(first.members.allSatisfy { $0.submission == .submitted && $0.anchor != nil && $0.payload == nil })
         precondition(outgoingCount(model) == beforeTools + 2 && model.state.draft == originalDraft && model.state.attachmentsDraft == [attachment])
         precondition(FileManager.default.fileExists(atPath: attachment.path))
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         precondition(outgoingCount(model) == beforeTools + 2 && model.state.comparisons.count == conversationCount + 1, "A repeated click must not duplicate a send")
         precondition(controller.activity.entries.contains { $0.category == "approval" } && controller.activity.entries.contains { $0.category == "receipt" })
         print("PASS: audited app tools, strict schemas, navigation/selection, conflicting-app guard, optimistic revisions, explicit multi-recipient new send, duplicate-click protection and main draft/attachment preservation.")
@@ -278,25 +319,25 @@ import AppKit
         let firstIndex = model.index(firstID)!
         model.state.comparisons[firstIndex].allDraft = "Existing shared draft"
         model.state.comparisons[firstIndex].allAttachmentsDraft = [attachment]
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         precondition(model.comparison(firstID)!.followUps.isEmpty && controller.pendingDraft != nil)
         precondition(model.comparison(firstID)!.allDraft == "Existing shared draft" && model.comparison(firstID)!.allAttachmentsDraft == [attachment])
         model.state.comparisons[firstIndex].allDraft = ""
         model.state.comparisons[firstIndex].allAttachmentsDraft = nil
         model.state.comparisons[firstIndex].privateDrafts[agents[0].id.uuidString] = "Existing private draft"
         model.state.comparisons[firstIndex].privateAttachmentDrafts = [agents[0].id.uuidString: [attachment]]
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         precondition(model.comparison(firstID)!.followUps.isEmpty && controller.pendingDraft != nil)
         precondition(model.comparison(firstID)!.privateDrafts[agents[0].id.uuidString] == "Existing private draft" && model.attachmentDraft(comparisonID: firstID, memberID: agents[0].id) == [attachment])
         model.state.comparisons[firstIndex].privateDrafts[agents[0].id.uuidString] = ""
         model.state.comparisons[firstIndex].privateAttachmentDrafts = nil
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         precondition(controller.pendingDraft == nil, controller.status)
         let followUp = model.comparison(firstID)!.followUps.last!
         precondition(followUp.text == followUpText && Set(followUp.memberIDs) == Set(agents.prefix(2).map(\.id)))
         precondition(followUp.states.values.allSatisfy { $0 == .submitted } && followUp.sharedWithAll == true)
         precondition(model.state.draft == originalDraft && model.state.attachmentsDraft == [attachment])
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         precondition(model.comparison(firstID)!.followUps.count == 1)
         let nonmember = await model.submitGPTLiveMessage(text: "Must reject a nonmember", comparisonID: firstID, recipientIDs: [targets[2]])
         precondition(!nonmember.attempted && model.comparison(firstID)!.members.count == 2)
@@ -313,12 +354,19 @@ import AppKit
         let page = try await call(controller, "list_conversations", ["query": "", "include_ended": true, "offset": 0, "limit": 1])
         precondition((page["conversations"] as! [[String: Any]]).count == 1 && page["next_offset"] as? Int == 1)
         _ = try await call(controller, "read_conversation", ["conversation_id": UUID().uuidString, "recipient_id": "all"], fails: true)
+        controller.selectedComparisonID = firstID
         model.selectWorkspace(firstID); model.setSharedDraft("Identical workspace text")
         let oldWorkspace = try await call(controller, "get_app_state")
+        precondition(oldWorkspace["active_workspace_conversation_id"] as? String == firstID.uuidString)
         model.selectWorkspace(secondID); model.setSharedDraft("Identical workspace text")
+        let newWorkspace = try await call(controller, "get_app_state")
+        precondition(newWorkspace["active_workspace_conversation_id"] as? String == secondID.uuidString && newWorkspace["focused_conversation_id"] == nil,
+                     "Navigation must not advertise a stale cached conversation as focused")
         _ = try await call(controller, "set_workspace_draft", editArguments(oldWorkspace, text: "Wrong workspace edit"), fails: true)
         precondition(model.state.draft == "Identical workspace text")
         model.selectWorkspace(nil); model.setSharedDraft(originalDraft)
+        let blankWorkspace = try await call(controller, "get_app_state")
+        precondition(blankWorkspace["active_workspace_conversation_id"] is NSNull && blankWorkspace["focused_conversation_id"] == nil)
         _ = try await call(controller, "request_end_conversation", ["conversation_id": firstID.uuidString])
         precondition(model.comparison(firstID)?.endedAt == nil, "Closure requires native confirmation")
         controller.confirmEndConversation()
@@ -352,7 +400,7 @@ import AppKit
         let mixedTargets = [targets[3], "agent:" + native.id.id, "agent:" + browser.id.id]
         _ = try await call(controller, "prepare_message", ["conversation_id": NSNull(), "recipient_ids": mixedTargets, "text": "Compare two approaches using the same evaluation criteria."])
         precondition(native.state.attempts.isEmpty && browser.state.attempts.isEmpty)
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         guard controller.pendingDraft == nil, let mixedID = controller.selectedComparisonID, let mixed = model.comparison(mixedID) else { fatalError(controller.status) }
         precondition(mixed.members.count == 1 && mixed.members[0].submission == .submitted, controller.status)
         precondition(Set(mixed.resolvedWebAgentIDs) == [native.id, browser.id])
@@ -361,7 +409,7 @@ import AppKit
         precondition(unselected.state.attempts.isEmpty && model.state.workspaceDrafts?["new"] == originalDraft)
         precondition(model.state.attachmentsDraft == [attachment] && FileManager.default.fileExists(atPath: attachment.path))
         _ = try await call(controller, "prepare_message", ["conversation_id": mixedID.uuidString, "recipient_ids": mixedTargets, "text": "Which approach has the lowest execution risk?"])
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         precondition(controller.pendingDraft == nil, controller.status)
         precondition(model.comparison(mixedID)!.followUps.last?.states[agents[3].id.uuidString] == .submitted && model.comparison(mixedID)!.followUps.last?.sharedWithAll == true)
         precondition(native.state.attempts.count == 2 && browser.state.attempts.count == 2)
@@ -380,7 +428,7 @@ import AppKit
         let desktopTargets = ["agent:" + appChat.id.id, "agent:" + appClaude.id.id]
         _ = try await call(controller, "prepare_message", ["conversation_id": NSNull(), "recipient_ids": desktopTargets, "text": "Give two independent reviews of this pilot plan."])
         precondition(appChat.state.attempts.isEmpty && appClaude.state.attempts.isEmpty)
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         guard controller.pendingDraft == nil, let desktopID = controller.selectedComparisonID else { fatalError(controller.status) }
         precondition(model.comparison(desktopID)?.members.isEmpty == true)
         precondition(Set(model.comparison(desktopID)!.resolvedWebAgentIDs) == [appChat.id, appClaude.id])
@@ -389,7 +437,7 @@ import AppKit
             precondition(session.state.attempts[0].comparisonID == desktopID)
         }
         _ = try await call(controller, "prepare_message", ["conversation_id": desktopID.uuidString, "recipient_ids": desktopTargets, "text": "Identify one remaining risk in the plan."])
-        await controller.sendDraft()
+        await controller.sendDraft(controller.pendingDraft)
         precondition(controller.pendingDraft == nil, controller.status)
         for session in [appChat, appClaude] {
             precondition(session.state.attempts.count == 2 && session.state.attempts.allSatisfy { $0.status == .observed }, controller.status)
@@ -399,9 +447,15 @@ import AppKit
         print("PASS: native-desktop ChatGPT + Claude fixture planned new broadcast and follow-up, durable observed receipts, shared history and broadcast cleanup. No native application was contacted.")
 
         _ = try await call(controller, "prepare_message", ["conversation_id": NSNull(), "recipient_ids": [targets[0]], "text": "Draft to discard"])
+        let beforeReplacement = outgoingCount(model)
         let discard = controller.pendingDraft!
         _ = try await call(controller, "discard_prepared_message", ["draft_id": discard.id.uuidString, "expected_revision": discard.revision])
         precondition(controller.pendingDraft == nil)
+        _ = try await call(controller, "prepare_message", ["conversation_id": NSNull(), "recipient_ids": [targets[0]], "text": discard.text])
+        await controller.sendDraft(discard)
+        precondition(controller.pendingDraft != nil && outgoingCount(model) == beforeReplacement,
+                     "Approval must not transfer to a replacement draft")
+        controller.discardDraft()
         let exported = String(decoding: try controller.activity.jsonExportData(), as: UTF8.self)
         precondition(exported.contains("prepare_message") && exported.contains("tool_result") && exported.contains("recipient_ids") && exported.contains("approval"))
         controller.activity.enabled = false

@@ -16,7 +16,7 @@ dependencies. No API key or Apple signing credential is needed to build.
 From the checkout, run:
 
 ```sh
-DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   python3 scripts/build_gptlive.py --variant development --output ..
 # Open the timestamped .app path printed by the command.
 ```
@@ -51,17 +51,19 @@ approval after an ad-hoc rebuild.
 For fixture interaction and simulated-send checks:
 
 ```sh
-DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   python3 scripts/build_gptlive.py --variant demo --output ..
 # Open the timestamped Demo .app path printed by the command.
 ```
 
 ## Use GPTLive
 
-Click the toolbar voice icon or choose **GPT-Live** from the app menu (⌘⇧L).
-That action connects and starts listening immediately when a key is available.
+Click the toolbar voice icon or choose **Voice → Start Voice** (⌘⇧L).
+That action starts listening when a key and microphone access are available.
 On first use, the voice settings sheet asks for your OpenAI key; choose **Start
-voice** to continue. macOS may also ask for microphone access. The live and
+voice** to continue. Microphone permission is checked before opening the OpenAI
+session, so waiting for macOS approval does not consume session time. Denied
+access offers a direct **Microphone settings** action and a retry. The live and
 Demo variants have separate Keychain services; timestamped rebuilds reuse their
 variant’s service. macOS can deny an ad-hoc rebuild access to the previous
 credential; the panel stays usable and accepts a session-only key in that case.
@@ -73,15 +75,23 @@ usage is billed to the key's account independently of any ChatGPT subscription.
 The voice sidebar stays attached to the workspace as you move between Agents,
 Discover, and conversations. It shows listening, speaking, working, and muted states. Its visual
 meter follows measured input/output audio; silent packets do not count as speech.
-The microphone button mutes or resumes input. **End voice** closes the sidebar and
+The two main controls are **Mic** and **End**. The microphone button drops or resumes input without interrupting assistant playback.
+The audio device stays open while muted; **End** releases it.
+**End voice** closes the sidebar and
 releases the session and microphone; closing the workspace does the same. Closing
 during startup prevents a late permission response from enabling capture.
-The captions button reveals a read-only transcript. Voice has no keyboard composer
+Choose **… → Show transcript** or press ⌘⇧T for read-only captions; that choice
+survives closing and reopening voice during the app session. Transcript content starts fresh for each new session. Voice has no keyboard composer
 or editable message field. Prepared messages appear as read-only review cards;
 ask for changes by voice, then approve with **Send** or choose **Discard**.
 The app’s ordinary conversation composers are unchanged.
 The **…** menu contains **Voice settings…**, the transcript option, and **Activity…**.
 Key management, speaker output, usage, and app-state preview live in settings.
+
+The **Voice** menu exposes keyboard controls: ⌘⇧L starts or ends voice,
+⌘⇧M mutes or unmutes, and ⌘⇧T toggles the transcript. Clicking the toolbar
+voice icon again also ends voice. Send remains an explicit approval of the
+visible message and recipients; a later draft revision invalidates that approval. Voice shortcuts never send a message.
 
 No conversation needs to be selected. **Preview app state** in settings
 shows the current workspace, selected agents and draft state. Once listening,
@@ -139,6 +149,23 @@ Messages permissions determine which destinations can actually receive it.
 
 ## Validation
 
+Current local checks (October 29, 2026):
+
+- 26 focused native core tests passed for protocol lifecycle, tool schemas,
+  debug redaction and verified conversation exports.
+- The actual-app controller fixture passed all six sections, including permission
+  before connection, cancellation/restart, app-wide tools, unchanged private
+  drafts/attachments, stale or duplicate approval rejection and optional debug.
+- Audio conversion, bounded buffering and mute/playback preservation passed.
+- Tooling ran 127 tests: 126 passed and one platform-specific check skipped.
+- A fresh real OpenAI session used synthesized speech with isolated sample data.
+  The production controller ran `get_app_state`, `navigate_app`, `list_agents`
+  and `prepare_message`, returned 763,200 bytes of reply audio, and staged
+  “Can you share the pilot results?” without sending. Final usage reported 16.0
+  voice seconds and 12,452 backend tokens. This proves the API/audio/tool path;
+  physical microphone capture still awaits macOS permission on the current build.
+
+
 The packaging regression checks use temporary fixtures and do not build an app:
 
 ```sh
@@ -149,11 +176,11 @@ The controller integration fixture compiles the actual app sources and uses only
 sample data:
 
 ```sh
-DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   bash scripts/test_gptlive.sh /absolute/path/to/DerivedData
 ```
 
-Verification on this Mac:
+Earlier local validation (October 28–29, 2026; see PR evidence for the submitted revision):
 
 - Native Xcode 27 build and 26 focused XCTest cases passed: Live protocol,
   tool continuations, redacted errors, audio framing, context limits, revision

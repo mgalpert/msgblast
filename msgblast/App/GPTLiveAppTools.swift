@@ -162,7 +162,6 @@ extension GPTLiveController {
             "scope": "app_wide", "demo": model.demo, "conversation_count": model.state.comparisons.count,
             "agent_count": appDestinations.count, "needs_setup": model.needsOnboarding || model.needsSharingChoice,
             "active_workspace_conversation_id": model.webAgents.comparisonID?.uuidString as Any? ?? NSNull(),
-            "focused_conversation_id": selectedComparisonID?.uuidString as Any? ?? model.webAgents.comparisonID?.uuidString as Any? ?? NSNull(),
             "selected_recipient_ids": selected, "submission_busy": sending || model.busy || model.webBroadcastBusy,
             "workspace_draft_text": draftFits ? model.state.draft as Any : NSNull(), "workspace_draft_too_large": !draftFits,
             "workspace_draft_revision": model.sharedDraftRevision.value.uuidString,

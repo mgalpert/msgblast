@@ -23,7 +23,8 @@ final class GPTLiveWorkflowTests: XCTestCase {
         XCTAssertFalse(app.textFields["GPTLive request"].exists)
         XCTAssertFalse(app.textViews["GPTLive reviewed draft"].exists)
         XCTAssertTrue(app.buttons["GPTLive microphone"].exists)
-        app.buttons["GPTLive transcript toggle"].click()
+        XCTAssertFalse(app.buttons["GPTLive transcript toggle"].exists, "Only microphone and End belong in the main controls")
+        app.typeKey("t", modifierFlags: [.command, .shift])
         XCTAssertTrue(app.staticTexts["Your conversation will appear here."].waitForExistence(timeout: 5))
         app.buttons["Discover"].click()
         XCTAssertTrue(app.buttons["GPTLive end"].exists, "Voice stays available across the app")
@@ -31,6 +32,11 @@ final class GPTLiveWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["GPTLive end"].exists)
         XCTAssertFalse(app.windows["GPT-Live"].exists, "Voice is integrated in the workspace")
         launch.click()
+        XCTAssertTrue(app.staticTexts["Demo conversation"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Your conversation will appear here."].exists, "Transcript choice survives reconnecting")
+        app.typeKey("l", modifierFlags: [.command, .shift])
+        XCTAssertFalse(app.buttons["GPTLive end"].exists)
+        app.typeKey("l", modifierFlags: [.command, .shift])
         XCTAssertTrue(app.staticTexts["Demo conversation"].waitForExistence(timeout: 5))
     }
 }

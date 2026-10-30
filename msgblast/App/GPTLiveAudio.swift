@@ -9,6 +9,7 @@ import Foundation
 final class GPTLiveAudio: ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var error: String?
+    @Published private(set) var permissionDenied = false
     @Published private(set) var inputLevel = 0.0
     @Published private(set) var outputLevel = 0.0
 
@@ -25,6 +26,7 @@ final class GPTLiveAudio: ObservableObject {
     private var queuedFrames = 0
     private var trailingOutputByte: UInt8?
     private var isMuted = false
+    private var onPCM: (@MainActor (Data) -> Void)?
     private var lastInputMeterUpdate = 0.0
     private var lastOutputMeterUpdate = 0.0
     private let requestPermission: @MainActor () async -> Bool
@@ -42,23 +44,37 @@ final class GPTLiveAudio: ObservableObject {
         }
     }
 
+    /// Check consent without opening a device or starting a remote session.
+    func requestMicrophoneAccess() async throws {
+        try Task.checkCancellation()
+        let permitted = await requestPermission()
+        try Task.checkCancellation()
+        permissionDenied = !permitted
+        guard permitted else {
+            throw GPTLiveAudioError("Microphone access is off. Allow this app in System Settings → Privacy & Security → Microphone, then try again.")
+        }
+    }
+
     func start(onPCM: @escaping @MainActor (Data) -> Void) async throws {
+        if engine?.isRunning == true, capturePipeline != nil {
+            let requestID = lifecycleID
+            try await requestMicrophoneAccess()
+            guard lifecycleID == requestID else { throw CancellationError() }
+            self.onPCM = onPCM
+            setMuted(false)
+            return
+        }
         stop()
         error = nil
         let requestID = lifecycleID
 
         do {
-            try Task.checkCancellation()
-            let permitted = await requestPermission()
+            try await requestMicrophoneAccess()
 
             // Stop, a newer start, or cancellation while the permission dialog is
             // open must never turn the microphone on when that dialog finishes.
             try Task.checkCancellation()
             guard lifecycleID == requestID else { throw CancellationError() }
-            guard permitted else {
-                throw GPTLiveAudioError("Microphone access is off. Allow this app in System Settings → Privacy & Security → Microphone, then start listening again.")
-            }
-
             releaseEngine()
             let newEngine = AVAudioEngine()
             let newPlayer = AVAudioPlayerNode()
@@ -74,6 +90,8 @@ final class GPTLiveAudio: ObservableObject {
                 throw GPTLiveAudioError("No microphone is available. Connect an input device and start listening again.")
             }
 
+            self.onPCM = onPCM
+            isMuted = false
             let pipeline = try GPTLiveCapturePipeline(inputFormat: inputFormat) { [weak self] pipeline in
                 Task { @MainActor [weak self] in
                     let delivery = pipeline.takeDelivery()
@@ -89,7 +107,7 @@ final class GPTLiveAudio: ObservableObject {
                             if self.inputLevel != level { self.inputLevel = level }
                             self.lastInputMeterUpdate = now
                         }
-                        onPCM(delivery.pcm)
+                        self.onPCM?(delivery.pcm)
                     }
                 }
             }
@@ -319,6 +337,7 @@ final class GPTLiveAudio: ObservableObject {
         if let inputNode { inputNode.removeTap(onBus: 0) }
         inputNode = nil
         capturePipeline = nil
+        onPCM = nil
         isCapturing = false
         if inputLevel != 0 { inputLevel = 0 }
         lastInputMeterUpdate = 0

@@ -50,13 +50,11 @@ struct msgblastApp: App {
         }.defaultSize(width: initialWindowSize.width, height: initialWindowSize.height).windowToolbarStyle(.unified)
         .commands {
             BlastCommands()
+            if let voice = startup.voice {
+                GPTLiveCommands(controller: voice, showWorkspace: showWorkspace,
+                                available: model?.needsOnboarding == false && model?.needsSharingChoice == false)
+            }
             CommandGroup(after: .appInfo) {
-                Button("GPT-Live…") {
-                    showWorkspace()
-                    startup.voice?.present()
-                }
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
-                    .disabled(model == nil || model?.needsOnboarding == true || model?.needsSharingChoice == true)
                 Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
                 Button("Review Crash Reports…") { CrashReporting.shared.show() }
                 Button("Build a New Feature…") { BuildFeatureWindowController.show() }
@@ -97,6 +95,29 @@ struct msgblastApp: App {
     private func startNewBlast() {
         guard model?.requestNewBlast() == true else { return }
         showWorkspace()
+    }
+}
+
+private struct GPTLiveCommands: Commands {
+    @ObservedObject var controller: GPTLiveController
+    let showWorkspace: () -> Void
+    let available: Bool
+
+    var body: some Commands {
+        CommandMenu("Voice") {
+            Button(controller.isPresented ? "End Voice" : "Start Voice") {
+                if !controller.isPresented { showWorkspace() }
+                controller.toggleVoice()
+            }.keyboardShortcut("l", modifiers: [.command, .shift])
+                .disabled(!available || controller.sending)
+            Button(controller.microphone ? "Mute Microphone" : "Unmute Microphone") {
+                controller.toggleMicrophone()
+            }.keyboardShortcut("m", modifiers: [.command, .shift])
+                .disabled(!controller.canToggleMicrophone)
+            Toggle("Show Transcript", isOn: $controller.showTranscript)
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(!controller.isPresented)
+        }
     }
 }
 

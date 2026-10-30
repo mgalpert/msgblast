@@ -21,6 +21,7 @@
         permission?.resume(returning: true)
         try await pendingStart.value
         precondition(!waitingAudio.isCapturing && waitingAudio.inputLevel == 0 && waitingAudio.outputLevel == 0)
+        GPTLiveAudio.checkMutePreservesPlayback()
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_800)!
         buffer.frameLength = 4_800
@@ -72,6 +73,14 @@
             audio.play(Data(repeating: 0, count: 4800))
             try await Task.sleep(for: .milliseconds(200))
             precondition(audio.error == nil, "Silent playback must not report an error")
+            let playbackEngine = audio.testEngine
+            audio.setMuted(true)
+            let mutedBytes = bytes
+            try await Task.sleep(for: .milliseconds(150))
+            precondition(bytes == mutedBytes && audio.testEngine === playbackEngine)
+            try await audio.start { bytes += $0.count }
+            try await Task.sleep(for: .milliseconds(150))
+            precondition(bytes > mutedBytes && audio.testEngine === playbackEngine, "Unmute must reuse the running audio graph")
             audio.stop()
             let stoppedBytes = bytes
             try await Task.sleep(for: .milliseconds(150))
@@ -86,4 +95,20 @@
         }
         print("PASS: production audio conversion — stereo 48 kHz to mono PCM16 24 kHz, byte order, mute, shutdown and bounded capture queue.")
     }
+}
+
+private extension GPTLiveAudio {
+    static func checkMutePreservesPlayback() {
+        let mutedAudio = GPTLiveAudio(requestPermission: { true })
+        mutedAudio.queuedFrames = 1200
+        let playbackID = mutedAudio.playbackID
+        mutedAudio.setMuted(true)
+        precondition(mutedAudio.queuedFrames == 1200 && mutedAudio.playbackID == playbackID,
+                     "Muting input must preserve queued assistant speech")
+        mutedAudio.setMuted(false)
+        precondition(mutedAudio.queuedFrames == 1200 && mutedAudio.playbackID == playbackID)
+        mutedAudio.stop()
+        precondition(mutedAudio.queuedFrames == 0 && mutedAudio.playbackID != playbackID)
+    }
+    var testEngine: AVAudioEngine? { engine }
 }
