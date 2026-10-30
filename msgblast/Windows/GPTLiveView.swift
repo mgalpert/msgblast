@@ -2,52 +2,6 @@ import AppKit
 import SwiftUI
 import msgblastCore
 
-@MainActor
-final class GPTLiveWindowController: NSObject, NSWindowDelegate {
-    private static var current: GPTLiveWindowController?
-    private var hostedWindow: NSWindow?
-    private let controller: GPTLiveController
-
-    static func show(model: AppModel, comparisonID: UUID? = nil) {
-        if let current, let window = current.hostedWindow {
-            if let comparisonID { current.controller.selectedComparisonID = comparisonID }
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            current.controller.beginVoice()
-            return
-        }
-        let owner = GPTLiveWindowController(model: model, comparisonID: comparisonID)
-        current = owner
-        owner.hostedWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        owner.controller.beginVoice()
-    }
-    static func shutdown() async { await current?.controller.disconnect() }
-    static func close() { current?.hostedWindow?.performClose(nil) }
-
-    init(model: AppModel, comparisonID: UUID?) {
-        controller = GPTLiveController(model: model, comparisonID: comparisonID)
-        super.init()
-        let host = NSHostingView(rootView: GPTLiveView(controller: controller))
-        host.sizingOptions = []
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 680),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "GPT-Live"
-        window.contentView = host
-        window.minSize = NSSize(width: 480, height: 560)
-        if let screen = NSScreen.main {
-            window.setContentSize(NSSize(width: min(560, screen.visibleFrame.width), height: min(680, screen.visibleFrame.height - 40)))
-        }
-        window.center(); window.isReleasedWhenClosed = false; window.delegate = self
-        hostedWindow = window
-    }
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard !controller.sending else { NSSound.beep(); return false }
-        Task { await controller.disconnect() }
-        return true
-    }
-}
-
 struct GPTLiveView: View {
     @ObservedObject var controller: GPTLiveController
     @ObservedObject private var session: GPTLiveSession
@@ -55,11 +9,9 @@ struct GPTLiveView: View {
     @ObservedObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showTranscript = false
-    @State private var showText = false
     @State private var showDebug = false
     @State private var showContext = false
     @State private var contextPreview = ""
-    @FocusState private var textFocused: Bool
 
     init(controller: GPTLiveController) {
         self.controller = controller
@@ -88,16 +40,16 @@ struct GPTLiveView: View {
         if hasReview { return "Check the message below before sending." }
         if controller.simulate { return "Sample replies and simulated sends. No microphone or API use." }
         if controller.microphone { return "Talk naturally. You can interrupt at any time." }
-        if controller.connected { return "Turn on your mic to keep talking, or type a message." }
+        if controller.connected { return "Turn on your mic to keep talking." }
         if controller.voiceNeedsKey { return "Add your OpenAI key in settings to get started." }
-        return "Your voice, across msgblast."
+        return "Across msgblast"
     }
     var body: some View {
         VStack(spacing: 0) {
             header
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 20) {
                         voiceStage
                         if let failure { errorCard(failure) }
                         if controller.pendingDraft != nil { draft.id("review") }
@@ -108,7 +60,7 @@ struct GPTLiveView: View {
                                 .textSelection(.enabled).accessibilityIdentifier("GPTLive status")
                         }
                         Color.clear.frame(height: 1).id("bottom")
-                    }.padding(.horizontal, 28).padding(.bottom, 12)
+                    }.padding(.horizontal, 18).padding(.bottom, 16)
                     .frame(maxWidth: .infinity)
                 }
                 .onChange(of: controller.pendingDraft?.id) { _, id in
@@ -119,11 +71,11 @@ struct GPTLiveView: View {
                 }
                 .onChange(of: session.transcript.last?.text) { if showTranscript { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
-            if showText { textComposer.padding(.horizontal, 24).padding(.bottom, 16) }
-            voiceControls.padding(.horizontal, 24).padding(.bottom, 24).padding(.top, 12)
+            Divider()
+            voiceControls.padding(.horizontal, 18).padding(.vertical, 18)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .frame(minWidth: 460, minHeight: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $controller.showSettings) { settings }
         .sheet(isPresented: $showDebug) { GPTLiveDebugView(activity: controller.activity) }
         .onChange(of: controller.selectedComparisonID) { controller.selectedRecipientID = "all" }
@@ -132,7 +84,11 @@ struct GPTLiveView: View {
     }
     private var header: some View {
         HStack {
-            Label("GPT-Live", systemImage: "waveform").font(.headline)
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 15, weight: .medium)).foregroundStyle(.white)
+                .frame(width: 28, height: 28).background(.green.gradient, in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityHidden(true)
+            Text("GPT-Live").font(.headline)
             Spacer()
             Menu {
                 Button("Voice settings…", systemImage: "slider.horizontal.3") { controller.showSettings = true }
@@ -143,17 +99,18 @@ struct GPTLiveView: View {
             } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Voice options").accessibilityLabel("Voice options").accessibilityIdentifier("GPTLive options")
-        }.padding(.horizontal, 24).padding(.vertical, 16)
+        }.padding(.horizontal, 18).padding(.vertical, 14)
+            .overlay(alignment: .bottom) { Divider() }
     }
     private var voiceStage: some View {
-        VStack(spacing: 24) {
-            Spacer(minLength: hasReview || showTranscript ? 4 : 42)
-            GPTLiveVoiceOrb(level: max(audio.inputLevel, audio.outputLevel),
-                            active: controller.microphone || speaking, preparing: preparing)
-                .frame(width: hasReview || showTranscript ? 112 : 196, height: hasReview || showTranscript ? 112 : 196)
+        VStack(spacing: 18) {
+            GPTLiveVoiceMark(level: max(audio.inputLevel, audio.outputLevel),
+                             active: controller.microphone || speaking, preparing: preparing,
+                             compact: hasReview || showTranscript)
                 .accessibilityHidden(true)
-            VStack(spacing: 10) {
-                Text(voiceTitle).font(.system(size: 24, weight: .medium, design: .rounded))
+            VStack(spacing: 7) {
+                Text(voiceTitle).font(.system(size: 21, weight: .semibold))
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("GPTLive voice state")
                 Text(voiceHint).font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
@@ -163,8 +120,8 @@ struct GPTLiveView: View {
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     .accessibilityIdentifier("GPTLive connect")
             }
-            Spacer(minLength: hasReview || showTranscript ? 0 : 32)
-        }.frame(maxWidth: .infinity)
+        }.frame(maxWidth: .infinity).padding(.top, hasReview || showTranscript ? 24 : 46)
+            .padding(.bottom, 12)
     }
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -182,47 +139,33 @@ struct GPTLiveView: View {
         }.padding(16).background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
     }
     private var voiceControls: some View {
-        HStack(spacing: 22) {
-            roundButton(showText ? "Hide keyboard" : "Type a message", icon: "keyboard", selected: showText) {
-                showText.toggle(); textFocused = showText
-            }.accessibilityIdentifier("GPTLive keyboard")
-            roundButton(controller.microphone ? "Mute microphone" : "Unmute microphone",
-                        icon: controller.microphone ? "mic.fill" : "mic.slash.fill", selected: !controller.microphone, prominent: true) {
+        HStack(spacing: 24) {
+            voiceButton(controller.microphone ? "Mute" : "Unmute",
+                        help: controller.microphone ? "Mute microphone" : "Unmute microphone",
+                        icon: controller.microphone ? "mic.fill" : "mic.slash.fill",
+                        selected: controller.microphone) {
                 Task { await controller.setMicrophone(!controller.microphone) }
             }.disabled(!controller.connected || controller.simulate || controller.microphoneStarting)
                 .accessibilityIdentifier("GPTLive microphone")
-            roundButton("End voice", icon: "xmark", prominent: true) { GPTLiveWindowController.close() }
-                .disabled(controller.sending).accessibilityIdentifier("GPTLive end")
-            roundButton(showTranscript ? "Hide transcript" : "Show transcript", icon: "captions.bubble", selected: showTranscript) {
+            voiceButton("Transcript", help: showTranscript ? "Hide transcript" : "Show transcript",
+                        icon: "captions.bubble", selected: showTranscript) {
                 showTranscript.toggle()
             }.accessibilityIdentifier("GPTLive transcript toggle")
+            voiceButton("End", help: "End voice", icon: "xmark", endsVoice: true) { controller.dismiss() }
+                .disabled(controller.sending).accessibilityIdentifier("GPTLive end")
         }.frame(maxWidth: .infinity)
     }
-    private func roundButton(_ title: String, icon: String, selected: Bool = false, prominent: Bool = false,
-                             action: @escaping () -> Void) -> some View {
+    private func voiceButton(_ title: String, help: String, icon: String, selected: Bool = false,
+                             endsVoice: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon).font(.system(size: prominent ? 21 : 18, weight: .medium))
-                .frame(width: prominent ? 58 : 40, height: prominent ? 58 : 40)
-                .background(selected ? Color.primary.opacity(0.12) : Color.primary.opacity(prominent ? 0.06 : 0), in: Circle())
-                .contentShape(Circle())
-        }.buttonStyle(.plain).help(title).accessibilityLabel(title)
-    }
-    private var textComposer: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            TextField("Message GPT-Live…", text: $controller.input, axis: .vertical)
-                .lineLimit(1...4).textFieldStyle(.plain).focused($textFocused)
-                .onSubmit { submitText() }.accessibilityIdentifier("GPTLive request")
-            Button(action: submitText) { Image(systemName: "arrow.up.circle.fill").font(.system(size: 27)) }
-                .buttonStyle(.plain).help("Send message").accessibilityLabel("Send message")
-                .disabled(!controller.connected || session.backendBusy || controller.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || controller.input.count > 8000)
-                .accessibilityIdentifier("GPTLive ask")
-        }.padding(14).background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 22))
-            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Color.primary.opacity(0.08)))
-    }
-    private func submitText() {
-        guard controller.connected, !session.backendBusy else { return }
-        showTranscript = true
-        Task { await controller.ask() }
+            VStack(spacing: 7) {
+                Image(systemName: icon).font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(endsVoice ? Color.white : selected ? Color.accentColor : Color.primary)
+                    .frame(width: 48, height: 48)
+                    .background(endsVoice ? Color.red : selected ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.06), in: Circle())
+                Text(title).font(.caption).foregroundStyle(.secondary)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain).help(help).accessibilityLabel(help)
     }
     private var transcript: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -310,10 +253,12 @@ struct GPTLiveView: View {
             Text("Conversation: " + controller.draftConversationTitle).font(.subheadline)
             Text("To: " + controller.draftRecipientName).font(.subheadline.bold())
                 .fixedSize(horizontal: false, vertical: true)
-            TextEditor(text: Binding(get: { controller.pendingDraft?.text ?? "" }, set: { controller.editDraft($0) }))
-                .font(.body).frame(minHeight: 100, maxHeight: 180).scrollContentBackground(.hidden)
-                .padding(8).background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                .disabled(controller.sending).accessibilityIdentifier("GPTLive reviewed draft")
+            Text(controller.pendingDraft?.text ?? "")
+                .font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12).background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityIdentifier("GPTLive reviewed draft")
+            Text("Ask me to change anything by voice.").font(.caption).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 10) {
                 Text("Nothing is sent until you click Send.").font(.caption).foregroundStyle(.secondary)
                 HStack {
@@ -325,7 +270,8 @@ struct GPTLiveView: View {
                         .accessibilityIdentifier("GPTLive send draft")
                 }
             }
-        }.padding(16).background(Color.teal.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+        }.padding(14).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(0.06)))
     }
     private var endConversationReview: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -346,34 +292,34 @@ struct GPTLiveView: View {
     }
 }
 
-/// Drawn with native shapes; movement follows measured audio, and respects Reduce Motion.
-private struct GPTLiveVoiceOrb: View {
+/// Native speech bubbles echo the app mark. The waveform follows measured audio.
+private struct GPTLiveVoiceMark: View {
     let level: Double
     let active: Bool
     let preparing: Bool
+    let compact: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: reduceMotion || (!active && !preparing))) { timeline in
-            let phase = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-            let breath = active || preparing ? sin(phase * 1.6) * 0.025 : 0
+        VStack(spacing: 18) {
             ZStack {
-                Circle().fill(Color.cyan.opacity(0.08)).scaleEffect(1.12 + level * 0.12)
-                Circle().fill(
-                    RadialGradient(colors: [Color(red: 0.65, green: 0.93, blue: 1),
-                                            Color(red: 0.15, green: 0.60, blue: 0.90),
-                                            Color(red: 0.14, green: 0.30, blue: 0.66)],
-                                   center: .init(x: 0.32 + breath, y: 0.25), startRadius: 0, endRadius: 190))
-                    .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                    .shadow(color: .blue.opacity(active ? 0.18 : 0.08), radius: 20, y: 10)
-                HStack(spacing: 7) {
-                    ForEach(0..<5) { index in
-                        Capsule().fill(.white.opacity(0.92))
-                            .frame(width: 7, height: 10 + level * (18 + 32 * abs(sin(phase * 3 + Double(index) * 0.8))))
+                Circle().fill(Color.green.opacity(0.035))
+                Circle().strokeBorder(Color.green.opacity(active || preparing ? 0.65 : 0.22), lineWidth: 1.5)
+                ZStack {
+                    Image(systemName: "bubble.left.fill").offset(x: -14, y: -15).opacity(0.35)
+                    Image(systemName: "bubble.right.fill").offset(x: 13, y: 0).opacity(0.60)
+                    Image(systemName: "bubble.left.fill").offset(x: -1, y: 19)
+                }.font(.system(size: compact ? 32 : 42)).foregroundStyle(.green.gradient)
+            }.frame(width: compact ? 94 : 132, height: compact ? 94 : 132)
+            TimelineView(.animation(minimumInterval: 1.0 / 24, paused: reduceMotion || !active)) { timeline in
+                let phase = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+                HStack(spacing: 5) {
+                    ForEach(0..<7) { index in
+                        Capsule().fill(Color.accentColor.opacity(active ? 1 : 0.35))
+                            .frame(width: 4, height: 5 + min(1, max(0, level)) * (12 + 24 * abs(sin(phase * 3 + Double(index) * 0.8))))
                     }
-                }
-            }.scaleEffect(1 + breath + level * 0.035)
-                .saturation(active || preparing ? 1 : 0.5)
+                }.frame(height: 40)
+            }
         }
     }
 }

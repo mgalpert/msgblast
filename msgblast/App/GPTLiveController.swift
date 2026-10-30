@@ -19,7 +19,6 @@ final class GPTLiveController: ObservableObject {
     @Published var apiKey = ""
     @Published var rememberKey = true
     @Published var keyStatus = ""
-    @Published var input = ""
     @Published var pendingDraft: GPTLiveDraft?
     @Published var pendingEndConversationID: UUID?
     @Published var status = ""
@@ -29,6 +28,7 @@ final class GPTLiveController: ObservableObject {
     @Published private(set) var microphoneStarting = false
     @Published private(set) var startingVoice = false
     @Published var showSettings = false
+    @Published private(set) var isPresented = false
     @Published private(set) var voiceNeedsKey = false
     @Published var speaker = true
     @Published var simulate: Bool
@@ -36,6 +36,7 @@ final class GPTLiveController: ObservableObject {
     @Published private(set) var fixtureTranscript: [String] = []
     private var attemptedDraftIDs: Set<UUID> = []
     private var observations: Set<AnyCancellable> = []
+    private var credentialsLoaded = false
     private var closing = false
     private var microphoneRequestID = UUID()
     private var voiceRequestID = UUID()
@@ -46,9 +47,6 @@ final class GPTLiveController: ObservableObject {
         self.session = session; self.audio = audio
         selectedComparisonID = comparisonID ?? model.webAgents.comparisonID
         simulate = model.demo
-        do {
-            if let key = try GPTLiveCredentials.read() { apiKey = key; keyStatus = "Key saved in macOS Keychain" }
-        } catch { keyStatus = "Keychain unavailable. Enter a key for this session."; rememberKey = false }
         session.onToolCall = { [weak self] call in await self?.handle(call) ?? #"{"error":"The panel has closed."}"# }
         session.onActivity = { [weak self] category, summary in self?.activity.record(category: category, summary: summary) }
         audio.onDiagnostic = { [weak self] detail in self?.activity.record(category: "audio", summary: "Microphone configuration", detail: detail) }
@@ -154,6 +152,31 @@ final class GPTLiveController: ObservableObject {
         await session.connect(apiKey: apiKey, instructions: Self.voiceInstructions, backendInstructions: Self.backendInstructions, tools: Self.tools)
         if session.state == .connected { status = "Connected · app-wide control enabled" }
     }
+    private func loadCredentialsIfNeeded() {
+        guard !credentialsLoaded else { return }
+        credentialsLoaded = true
+        guard apiKey.isEmpty else { return }
+        do {
+            if let key = try GPTLiveCredentials.read() { apiKey = key; keyStatus = "Key saved in macOS Keychain" }
+        } catch { keyStatus = "Keychain unavailable. Enter a key for this session."; rememberKey = false }
+    }
+    func present(comparisonID: UUID? = nil) {
+        loadCredentialsIfNeeded()
+        if let comparisonID { selectedComparisonID = comparisonID }
+        isPresented = true
+        beginVoice()
+    }
+    @discardableResult
+    func dismiss() -> Bool {
+        guard !sending else { return false }
+        leaveWorkspace()
+        return true
+    }
+    func leaveWorkspace() {
+        isPresented = false
+        showSettings = false
+        Task { await disconnect() }
+    }
     func beginVoice() {
         guard !startingVoice, !active || session.state == .closing else { return }
         guard simulate || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -209,28 +232,6 @@ final class GPTLiveController: ObservableObject {
             guard requestID == microphoneRequestID else { return }
             self.error = error.localizedDescription
         }
-    }
-    func ask(_ prompt: String? = nil) async {
-        let text = (prompt ?? input).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard connected, !text.isEmpty, text.count <= 8000 else { return }
-        error = nil
-        activity.record(category: "request", summary: "User request", detail: text)
-        if fixtureConnected {
-            fixtureTranscript.append("You: " + text)
-            _ = await handle(.init(callID: UUID().uuidString, name: "get_app_state", arguments: "{}"))
-            if (text.localizedCaseInsensitiveContains("draft") || text.localizedCaseInsensitiveContains("prepare")), pendingDraft == nil,
-               let target = (selectedComparisonID == nil ? appDestinations : destinations).first {
-                let args: [String: Any] = ["conversation_id": selectedComparisonID?.uuidString as Any? ?? NSNull(), "recipient_ids": [target.id], "text": "Could you outline a small pilot and how we would measure success?"]
-                let result = await handle(.init(callID: UUID().uuidString, name: "prepare_message", arguments: Self.json(args)))
-                let failure = (try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any])?["error"] as? String
-                fixtureTranscript.append("GPT-Live · simulated: " + (failure ?? "Your draft is ready. Review the message and recipients before sending."))
-            } else { fixtureTranscript.append("GPT-Live · simulated: App state inspected. \(model.state.comparisons.count) saved conversations and \(appDestinations.count) configured agents are available.") }
-            if fixtureTranscript.count > 100 { fixtureTranscript.removeFirst(fixtureTranscript.count - 100) }
-            if prompt == nil { input = "" }; return
-        }
-        guard !session.backendBusy else { return }
-        await session.sendText(text)
-        if session.error == nil, prompt == nil { input = "" }
     }
     private func handle(_ call: GPTLiveFunctionCall) async -> String {
         let started = Date()

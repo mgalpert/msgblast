@@ -35,12 +35,12 @@ struct msgblastApp: App {
                     Group {
                         if model.needsSharingChoice { SharingChoiceView(model: model) }
                         else if model.needsOnboarding { OnboardingView(model: model) }
-                        else { MainView(model: model, updater: updater) }
+                        else if let voice = startup.voice { MainView(model: model, updater: updater, voice: voice) }
                     }.onChange(of: model.gptLiveNavigationRequest) { _, request in
                         if request?.destination == .settings { openSettings() }
                     }.onAppear { [model] in
                         lifecycle.configure(model: model); updater.configure(delegate: lifecycle)
-                        lifecycle.closeLiveSession = { await GPTLiveWindowController.shutdown() }
+                        lifecycle.closeLiveSession = { await startup.voice?.disconnect() }
                         CrashReporting.shared.start(model: model)
                         lifecycle.reopenWorkspace = { [weak model] in model?.coordinator?.reopenWorkspace() ?? false }
                         startup.shortcut.onTrigger = startNewBlast
@@ -51,8 +51,12 @@ struct msgblastApp: App {
         .commands {
             BlastCommands()
             CommandGroup(after: .appInfo) {
-                Button("GPT-Live…") { if let model { GPTLiveWindowController.show(model: model) } }
-                    .keyboardShortcut("l", modifiers: [.command, .shift]).disabled(model == nil)
+                Button("GPT-Live…") {
+                    showWorkspace()
+                    startup.voice?.present()
+                }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                    .disabled(model == nil || model?.needsOnboarding == true || model?.needsSharingChoice == true)
                 Button("Share Feedback…") { FeedbackWindowController.show(model: model, updater: updater) }
                 Button("Review Crash Reports…") { CrashReporting.shared.show() }
                 Button("Build a New Feature…") { BuildFeatureWindowController.show() }
@@ -186,6 +190,7 @@ enum msgblastMain {
 private final class AppStartup: ObservableObject {
     let needsInstallation: Bool
     let model: AppModel?
+    let voice: GPTLiveController?
     let shortcut = NewBlastShortcut()
     private var observation: AnyCancellable?
 
@@ -201,7 +206,11 @@ private final class AppStartup: ObservableObject {
             bundleURL: Bundle.main.bundleURL,
             homeURL: FileManager.default.homeDirectoryForCurrentUser, development: development)
         model = needsInstallation ? nil : AppModel()
-        if let model { model.coordinator = WindowCoordinator(model: model) }
+        voice = model.map { GPTLiveController(model: $0) }
+        if let model {
+            model.coordinator = WindowCoordinator(model: model)
+            model.coordinator?.workspaceWillDismiss = { [weak voice] in voice?.dismiss() ?? true }
+        }
         // Keep comparison menus in sync without constructing the model for an
         // uninstalled copy (its initializer starts Messages history polling).
         observation = model?.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }

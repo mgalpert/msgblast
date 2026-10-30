@@ -181,6 +181,7 @@ struct MainView: View {
     @Environment(\.controlActiveState) private var controlActiveState
     @ObservedObject var model: AppModel
     @ObservedObject private var web: WebAgents
+    @ObservedObject private var voice: GPTLiveController
     private let updater: AppUpdater
     private enum DetailSelection { case agents, discover }
     @StateObject private var captureLayout = ChatCaptureLayout()
@@ -191,10 +192,11 @@ struct MainView: View {
     private var showingAgents: Bool { selection == .agents && !showingComparison }
     private var selectedComparisonID: UUID? { selection == .agents && showingComparison ? web.comparisonID : nil }
 
-    init(model: AppModel, updater: AppUpdater) {
+    init(model: AppModel, updater: AppUpdater, voice: GPTLiveController) {
         self.model = model
         self.web = model.webAgents
         self.updater = updater
+        self.voice = voice
         _showingComparison = State(initialValue: model.webAgents.comparisonID.flatMap { model.comparison($0) } != nil)
     }
 
@@ -208,6 +210,7 @@ struct MainView: View {
     }
 
     var body: some View {
+        HStack(spacing: 0) {
         NavigationSplitView(columnVisibility: $captureLayout.sidebarVisibility) {
             List {
                 Section {
@@ -274,7 +277,14 @@ struct MainView: View {
             }.navigationTitle("")
             }
         }
-        .frame(minWidth: 760, minHeight: 560)
+        .frame(minWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
+        if voice.isPresented {
+            Divider()
+            GPTLiveView(controller: voice).frame(width: 330)
+        }
+        }
+        .frame(minHeight: 560)
+        .onDisappear { voice.leaveWorkspace() }
         .background(ConversationCloseBridge(model: model, comparisonID: selection == .agents && showingComparison ? web.comparisonID : nil))
         .tint(.blue)
         .focusedSceneValue(\.mainWindowActions, model.error != nil ? nil : MainWindowActions(
@@ -296,7 +306,7 @@ struct MainView: View {
         } message: { Text(model.error ?? "") }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { GPTLiveWindowController.show(model: model, comparisonID: selectedComparisonID) } label: {
+                Button { voice.present(comparisonID: selectedComparisonID) } label: {
                     Label("GPT-Live", systemImage: "waveform")
                 }.help("Start voice with GPT-Live").accessibilityIdentifier("Open GPTLive")
             }

@@ -1,6 +1,6 @@
 # GPTLive local development build
 
-GPTLive is an app-wide OpenAI assistant with typed and live voice requests.
+GPTLive is an app-wide OpenAI assistant with live voice requests.
 It can discover configured agents and saved conversations, read requested history,
 navigate the app, select agents for a new conversation, manage drafts, switch
 window layout, prepare multi-recipient messages and request conversation closure.
@@ -70,12 +70,16 @@ Turn off **Remember in Keychain** for session-only use without changing a saved 
 Keep the key out of source files, build arguments, screenshots, and logs. OpenAI
 usage is billed to the key's account independently of any ChatGPT subscription.
 
-The voice panel shows listening, speaking, working, and muted states. Its visual
+The voice sidebar stays attached to the workspace as you move between Agents,
+Discover, and conversations. It shows listening, speaking, working, and muted states. Its visual
 meter follows measured input/output audio; silent packets do not count as speech.
-The microphone button mutes or resumes input. **End voice** closes the panel and
-releases the session and microphone; closing the window does the same. Closing
+The microphone button mutes or resumes input. **End voice** closes the sidebar and
+releases the session and microphone; closing the workspace does the same. Closing
 during startup prevents a late permission response from enabling capture.
-The keyboard button reveals text entry; the captions button reveals the transcript.
+The captions button reveals a read-only transcript. Voice has no keyboard composer
+or editable message field. Prepared messages appear as read-only review cards;
+ask for changes by voice, then approve with **Send** or choose **Discard**.
+The app’s ordinary conversation composers are unchanged.
 The **…** menu contains **Voice settings…**, the transcript option, and **Activity…**.
 Key management, speaker output, usage, and app-state preview live in settings.
 

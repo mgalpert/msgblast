@@ -2,7 +2,7 @@ import XCTest
 
 final class GPTLiveWorkflowTests: XCTestCase {
     @MainActor
-    func testReviewDraftAndSendOnlyAfterReviewInDemo() {
+    func testVoiceSidebarStartsWithoutTextInputsAndKeepsDebugOptional() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]
         app.launch()
@@ -19,25 +19,17 @@ final class GPTLiveWorkflowTests: XCTestCase {
         XCTAssertEqual(debug.value as? String, "0", "Debug mode starts off")
         debug.click()
         app.buttons["Done"].click()
-        app.buttons["GPTLive keyboard"].click()
-        let request = app.textFields["GPTLive request"]
-        request.click()
-        request.typeText("Draft a follow-up")
-        app.buttons["GPTLive ask"].click()
-        let editor = app.textViews["GPTLive reviewed draft"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 5))
-        XCTAssertTrue((editor.value as? String)?.contains("pilot") == true)
-        XCTAssertTrue(app.staticTexts["Nothing is sent until you click Send."].exists)
-        let send = app.buttons["GPTLive send draft"]
-        XCTAssertTrue(send.isEnabled)
-        send.click()
-        let status = app.staticTexts["GPTLive status"]
-        let submitted = NSPredicate(format: "label CONTAINS %@", "Submitted")
-        expectation(for: submitted, evaluatedWith: status)
-        waitForExpectations(timeout: 8)
-        XCTAssertFalse(app.buttons["GPTLive send draft"].exists)
+        XCTAssertFalse(app.buttons["GPTLive keyboard"].exists)
+        XCTAssertFalse(app.textFields["GPTLive request"].exists)
+        XCTAssertFalse(app.textViews["GPTLive reviewed draft"].exists)
+        XCTAssertTrue(app.buttons["GPTLive microphone"].exists)
+        app.buttons["GPTLive transcript toggle"].click()
+        XCTAssertTrue(app.staticTexts["Your conversation will appear here."].waitForExistence(timeout: 5))
+        app.buttons["Discover"].click()
+        XCTAssertTrue(app.buttons["GPTLive end"].exists, "Voice stays available across the app")
         app.buttons["GPTLive end"].click()
-        XCTAssertFalse(app.windows["GPT-Live"].exists)
+        XCTAssertFalse(app.buttons["GPTLive end"].exists)
+        XCTAssertFalse(app.windows["GPT-Live"].exists, "Voice is integrated in the workspace")
         launch.click()
         XCTAssertTrue(app.staticTexts["Demo conversation"].waitForExistence(timeout: 5))
     }

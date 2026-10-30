@@ -68,6 +68,29 @@ import AppKit
     }
 
     @MainActor static func voiceLifecycleChecks(_ model: AppModel) async throws {
+        let sidebar = GPTLiveController(model: model)
+        sidebar.present()
+        try await waitUntil("Toolbar presentation must start voice") { sidebar.connected }
+        precondition(sidebar.isPresented && !sidebar.activity.enabled)
+        sidebar.sending = true
+        precondition(!sidebar.dismiss() && sidebar.isPresented && sidebar.connected,
+                     "A send in progress must keep its review visible")
+        sidebar.sending = false
+        let coordinator = WindowCoordinator(model: model)
+        let workspace = NSWindow(contentRect: .init(x: 0, y: 0, width: 800, height: 600),
+                                 styleMask: [.titled], backing: .buffered, defer: false)
+        coordinator.workspaceWindow = workspace
+        coordinator.workspaceWillDismiss = { sidebar.dismiss() }
+        coordinator.dismissConversationWindow(workspace)
+        precondition(!sidebar.isPresented && !sidebar.showSettings)
+        try await waitUntil("Closing the workspace must disconnect voice") { !sidebar.active }
+        sidebar.present()
+        try await waitUntil("Sidebar must reopen with one action") { sidebar.connected }
+        precondition(sidebar.isPresented)
+        sidebar.leaveWorkspace()
+        precondition(!sidebar.isPresented)
+        try await waitUntil("Leaving for onboarding must disconnect") { !sidebar.active }
+
         // Cancel while connecting: the pending connection must not open a mic.
         let waitingWire = VoiceUXTransport()
         let waitingSession = GPTLiveSession(transportFactory: { waitingWire })
