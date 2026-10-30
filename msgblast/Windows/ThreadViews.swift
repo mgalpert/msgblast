@@ -50,24 +50,27 @@ struct ThreadBubble<Content: View>: View {
 }
 
 /// The Messages row around a bubble: a reply is indented past a 28 pt avatar that sits beside
-/// the last bubble of its run, and the run starts with the sender's name; a status caption
-/// sits 2 pt under the bubble. Rows set their own side insets.
+/// the last bubble of its run; a status caption sits 2 pt under the bubble. The sender's name
+/// above the run is only for a thread with several senders (`showsSenderName`): a column
+/// has one sender, named in its header, as a Messages 1:1 thread names nobody. Rows set
+/// their own side insets.
 struct ThreadRow<Bubble: View>: View {
     let mine: Bool
     let firstOfRun: Bool
     let lastOfRun: Bool
     var sender: (name: String, avatar: AnyView)? = nil
+    var showsSenderName = false
     var status: (text: String, color: Color)? = nil
     private let bubble: Bubble
     init(mine: Bool, firstOfRun: Bool, lastOfRun: Bool, sender: (name: String, avatar: AnyView)? = nil,
-         status: (text: String, color: Color)? = nil, @ViewBuilder bubble: () -> Bubble) {
+         showsSenderName: Bool = false, status: (text: String, color: Color)? = nil, @ViewBuilder bubble: () -> Bubble) {
         self.mine = mine; self.firstOfRun = firstOfRun; self.lastOfRun = lastOfRun
-        self.sender = sender; self.status = status; self.bubble = bubble()
+        self.sender = sender; self.showsSenderName = showsSenderName; self.status = status; self.bubble = bubble()
     }
     private var avatarColumn: CGFloat { sender != nil ? Space.avatarThread + Space.beside : 0 }
     var body: some View {
         VStack(alignment: mine ? .trailing : .leading, spacing: 0) {
-            if !mine, firstOfRun, let sender {
+            if showsSenderName, !mine, firstOfRun, let sender {
                 // Aligned with the bubble's text, 2 pt above the bubble.
                 Text(sender.name).font(.system(size: Space.threadCaption, weight: .medium)).foregroundStyle(.secondary)
                     .padding(.leading, avatarColumn + Space.bubbleH)

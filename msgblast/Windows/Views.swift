@@ -417,8 +417,9 @@ struct TranscriptView: View {
                         let previous = offset == 0 ? nil : transcript[offset - 1]
                         let next = offset + 1 < transcript.count ? transcript[offset + 1] : nil
                         let header = ThreadFormat.showsTimeHeader(message.date, previous: previous?.date)
-                        let continues = !header && previous.map { $0.outgoing == message.outgoing && $0.replyTo == message.replyTo } == true
-                        let endsRun = next.map { ThreadFormat.showsTimeHeader($0.date, previous: message.date) || $0.outgoing != message.outgoing || $0.replyTo != message.replyTo } ?? true
+                        // Messages groups a run by sender and time only; a reply link does not split it.
+                        let continues = !header && previous.map { $0.outgoing == message.outgoing } == true
+                        let endsRun = next.map { ThreadFormat.showsTimeHeader($0.date, previous: message.date) || $0.outgoing != message.outgoing } ?? true
                         if header { ThreadTimeHeader(date: message.date, first: offset == 0) }
                         ThreadRow(mine: message.outgoing, firstOfRun: !continues, lastOfRun: endsRun,
                                   sender: sender(for: message), status: status(for: message, lastOutgoingID: lastOutgoingID)) {

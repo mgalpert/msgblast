@@ -44,7 +44,7 @@ Messages' measured metrics, from `msgblast/Windows/Layout.swift`:
 | Within a run / between runs | 2 pt / 8 pt |
 | Time header | 11 pt semibold, 12 pt above and below, after a 5-minute gap |
 | Body text | 13 pt (`NSFont.systemFontSize`) |
-| Incoming run | name above (11 pt), 28 pt avatar at the bottom, 8 pt from the edge |
+| Incoming run | 28 pt avatar at the bottom of the run, 8 pt from the edge; no name (the column header names its one sender, as a 1:1 Messages thread names nobody) |
 | Bubble width | at most 75 percent of the column |
 | Colors | outgoing `systemBlue`, incoming E9E9EB / 3B3B3D, no custom tints |
 

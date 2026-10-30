@@ -121,6 +121,10 @@ enum DesignRequest: Equatable {
         case .sideChat: return try await seedSideChat(model: model)
         case .noAccess:
             guard model.permissionGuidePreview else { throw Failure("the simulated Messages-history denial is not active") }
+            // The simulated denial would otherwise reopen onboarding; this fixture shows the workspace's status line.
+            model.state.onboarding = nil
+            model.persist()
+            try await Task.sleep(for: .milliseconds(500))
             return try await seedSideChat(model: model)
         case .group: return try await seedGroup(model: model)
         }
@@ -185,6 +189,8 @@ enum DesignRequest: Equatable {
             throw Failure("the Muse session's saved state could not be seeded")
         }
         model.openWebComparison(id)
+        // The Demo's sample draft would otherwise sit in the field; the fixture shows the placeholder.
+        model.setSharedDraft("")
         try await Task.sleep(for: .milliseconds(500))
         return id
     }
