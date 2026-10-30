@@ -58,6 +58,12 @@ final class GPTLiveController: ObservableObject {
         }
         session.$state.sink { [weak self] state in
             if state == .failed || state == .idle {
+                // A remote close can arrive while macOS is still awaiting a
+                // permission answer. Release startup now, without cancelling
+                // an intentional reopen that is waiting for an old close.
+                if self?.microphoneStarting == true {
+                    self?.voiceRequestID = UUID(); self?.startingVoice = false
+                }
                 self?.microphoneRequestID = UUID(); self?.audio.stop(); self?.microphone = false
                 self?.microphoneStarting = false
                 if self?.status.hasPrefix("Connected") == true { self?.status = state == .failed ? "Disconnected" : "Session ended" }

@@ -26,6 +26,9 @@ import AppKit
         cancelled = true
         receiver?.resume(throwing: CancellationError()); receiver = nil
     }
+    func failReceive() {
+        receiver?.resume(throwing: URLError(.notConnectedToInternet)); receiver = nil
+    }
 }
 
 @main struct GPTLiveControllerChecks {
@@ -98,31 +101,56 @@ import AppKit
         precondition(!pending.audio.isCapturing && !pending.microphone && !pending.microphoneStarting && !pending.startingVoice,
                      "Late permission approval must not restart a closed session")
 
+        // Remote expiry while permission is pending must release the UI before
+        // macOS answers, and its late approval must not revive capture.
+        let expiredWire = VoiceUXTransport()
+        let expiredSession = GPTLiveSession(transportFactory: { expiredWire })
+        var expiredPermission: CheckedContinuation<Bool, Never>?
+        let expired = GPTLiveController(model: model, session: expiredSession,
+            audio: GPTLiveAudio(requestPermission: { await withCheckedContinuation { expiredPermission = $0 } }))
+        expired.simulate = false; expired.apiKey = "sk-fixture-only"; expired.rememberKey = false
+        let expiring = Task { await expired.startVoice() }
+        try await waitUntil("Expected expiring session") { expiredWire.types.contains("session.start") }
+        expiredWire.push("session.started")
+        try await waitUntil("Expected expiring permission request") { expiredPermission != nil }
+        expiredWire.push("session.closed")
+        try await waitUntil("Remote closure must release pending startup") {
+            !expired.active && !expired.startingVoice && !expired.microphoneStarting
+        }
+        expiredPermission?.resume(returning: true)
+        await expiring.value
+        precondition(!expired.audio.isCapturing && !expired.microphone,
+                     "Approval after remote closure must not open a microphone")
+
         // Reopening during close waits, then starts exactly one new session.
-        let first = VoiceUXTransport(), second = VoiceUXTransport()
-        var starts = 0
-        let restartingSession = GPTLiveSession(transportFactory: { starts += 1; return starts == 1 ? first : second })
-        let restarting = GPTLiveController(model: model, session: restartingSession,
-                                          audio: GPTLiveAudio(requestPermission: { false }))
-        restarting.simulate = false; restarting.apiKey = "sk-fixture-only"; restarting.rememberKey = false
-        let initial = Task { await restarting.startVoice() }
-        try await waitUntil("Expected initial voice start") { first.types.contains("session.start") }
-        first.push("session.started")
-        await initial.value
-        let ending = Task { await restarting.disconnect() }
-        try await waitUntil("Expected old session to close") { first.types.contains("session.close") }
-        restarting.beginVoice()
-        first.push("session.closed")
-        await ending.value
-        try await waitUntil("Toolbar reopen must start the next session") { second.types.contains("session.start") }
-        second.push("session.started")
-        try await waitUntil("Expected resumed voice attempt to finish") { !restarting.startingVoice }
-        precondition(starts == 2 && restarting.connected && !restarting.microphone)
-        let finalClose = Task { await restarting.disconnect() }
-        try await waitUntil("Expected final close") { second.types.contains("session.close") }
-        second.push("session.closed")
-        await finalClose.value
-        print("PASS: one-action voice cancellation during connection and permission, late approval rejection, and automatic restart after close. No OS prompt or audio device opened.")
+        for closeFails in [false, true] {
+            let first = VoiceUXTransport(), second = VoiceUXTransport()
+            var starts = 0
+            let restartingSession = GPTLiveSession(transportFactory: { starts += 1; return starts == 1 ? first : second })
+            let restarting = GPTLiveController(model: model, session: restartingSession,
+                                              audio: GPTLiveAudio(requestPermission: { false }))
+            restarting.simulate = false; restarting.apiKey = "sk-fixture-only"; restarting.rememberKey = false
+            let initial = Task { await restarting.startVoice() }
+            try await waitUntil("Expected initial voice start") { first.types.contains("session.start") }
+            first.push("session.started")
+            await initial.value
+            let ending = Task { await restarting.disconnect() }
+            try await waitUntil("Expected old session to close") { first.types.contains("session.close") }
+            restarting.beginVoice()
+            // Let beginVoice enter its close wait before completing the old wire.
+            try await waitUntil("Expected queued voice reopen") { restarting.startingVoice }
+            if closeFails { first.failReceive() } else { first.push("session.closed") }
+            await ending.value
+            try await waitUntil("Toolbar reopen must start the next session") { second.types.contains("session.start") }
+            second.push("session.started")
+            try await waitUntil("Expected resumed voice attempt to finish") { !restarting.startingVoice }
+            precondition(starts == 2 && restarting.connected && !restarting.microphone)
+            let finalClose = Task { await restarting.disconnect() }
+            try await waitUntil("Expected final close") { second.types.contains("session.close") }
+            second.push("session.closed")
+            await finalClose.value
+        }
+        print("PASS: one-action voice cancellation during connection and permission, remote closure during permission, late approval rejection, and automatic restart after successful or failed close. No OS prompt or audio device opened.")
     }
 
     @MainActor static func checks() async throws {
