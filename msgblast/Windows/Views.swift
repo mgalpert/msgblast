@@ -298,7 +298,7 @@ struct MainView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button { GPTLiveWindowController.show(model: model, comparisonID: selectedComparisonID) } label: {
                     Label("GPT-Live", systemImage: "waveform")
-                }.help("Review and draft with GPT-Live").accessibilityIdentifier("Open GPTLive")
+                }.help("Start voice with GPT-Live").accessibilityIdentifier("Open GPTLive")
             }
             if selection == .discover {
                 ToolbarItem(placement: .navigation) {

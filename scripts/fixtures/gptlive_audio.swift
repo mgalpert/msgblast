@@ -3,6 +3,24 @@
 // exercise the private converter. --hardware also opens the default audio route.
 @main struct GPTLiveAudioChecks {
     @MainActor static func main() async throws {
+        precondition(GPTLiveAudio.level(of: Data()) == 0)
+        precondition(GPTLiveAudio.level(of: Data(repeating: 0, count: 480)) == 0, "Silent streaming must not look like speaking")
+        precondition(GPTLiveAudio.level(of: Data([0, 64, 0, 192])) > 0.8, "The meter must respond to positive and negative PCM samples")
+        precondition(GPTLiveAudio.level(of: Data([0, 128])) == 1, "Int16.min must not overflow")
+        precondition(GPTLiveAudio.level(of: Data([255])) == 0, "An incomplete sample has no measured level")
+        var permission: CheckedContinuation<Bool, Never>?
+        let waitingAudio = GPTLiveAudio(requestPermission: { await withCheckedContinuation { permission = $0 } })
+        let pendingStart = Task {
+            do {
+                try await waitingAudio.start { _ in preconditionFailure("Cancelled permission must never deliver audio") }
+                preconditionFailure("Cancelled permission must not start capture")
+            } catch is CancellationError { }
+        }
+        while permission == nil { await Task.yield() }
+        waitingAudio.stop()
+        permission?.resume(returning: true)
+        try await pendingStart.value
+        precondition(!waitingAudio.isCapturing && waitingAudio.inputLevel == 0 && waitingAudio.outputLevel == 0)
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_800)!
         buffer.frameLength = 4_800

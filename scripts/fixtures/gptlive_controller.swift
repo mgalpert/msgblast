@@ -1,5 +1,32 @@
 import AppKit
-import msgblastCore
+@testable import msgblastCore
+
+// In-memory wire; lifecycle checks use the actual session/controller/audio classes.
+@MainActor private final class VoiceUXTransport: GPTLiveTransport {
+    var types: [String] = []
+    private var incoming: [String] = []
+    private var receiver: CheckedContinuation<String, Error>?
+    private var cancelled = false
+    func start(request: URLRequest) { }
+    func send(_ text: String) async throws {
+        let event = try JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
+        types.append(event["type"] as! String)
+    }
+    func receive() async throws -> String {
+        if !incoming.isEmpty { return incoming.removeFirst() }
+        if cancelled { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { receiver = $0 }
+    }
+    func push(_ type: String) {
+        let text = "{\"type\":\"" + type + "\"}"
+        if let receiver { self.receiver = nil; receiver.resume(returning: text) }
+        else { incoming.append(text) }
+    }
+    func cancel() {
+        cancelled = true
+        receiver?.resume(throwing: CancellationError()); receiver = nil
+    }
+}
 
 @main struct GPTLiveControllerChecks {
     @MainActor static var callSequence = 0
@@ -37,15 +64,86 @@ import msgblastCore
         app.run()
     }
 
+    @MainActor static func voiceLifecycleChecks(_ model: AppModel) async throws {
+        // Cancel while connecting: the pending connection must not open a mic.
+        let waitingWire = VoiceUXTransport()
+        let waitingSession = GPTLiveSession(transportFactory: { waitingWire })
+        var permissionRequests = 0
+        let waitingAudio = GPTLiveAudio(requestPermission: { permissionRequests += 1; return false })
+        let waiting = GPTLiveController(model: model, session: waitingSession, audio: waitingAudio)
+        waiting.simulate = false; waiting.apiKey = "sk-fixture-only"; waiting.rememberKey = false
+        let connection = Task { await waiting.startVoice() }
+        try await waitUntil("Expected connecting state") { waitingWire.types.contains("session.start") }
+        await waiting.disconnect()
+        await connection.value
+        precondition(permissionRequests == 0 && !waiting.startingVoice && !waiting.microphone)
+
+        // Cancel while the real audio class awaits an injected permission answer.
+        let permissionWire = VoiceUXTransport()
+        let permissionSession = GPTLiveSession(transportFactory: { permissionWire })
+        var permission: CheckedContinuation<Bool, Never>?
+        let permissionAudio = GPTLiveAudio(requestPermission: { await withCheckedContinuation { permission = $0 } })
+        let pending = GPTLiveController(model: model, session: permissionSession, audio: permissionAudio)
+        pending.simulate = false; pending.apiKey = "sk-fixture-only"; pending.rememberKey = false
+        let starting = Task { await pending.startVoice() }
+        try await waitUntil("Expected pending session") { permissionWire.types.contains("session.start") }
+        permissionWire.push("session.started")
+        try await waitUntil("Expected permission request") { permission != nil }
+        let closing = Task { await pending.disconnect() }
+        try await waitUntil("Expected close") { permissionWire.types.contains("session.close") }
+        permissionWire.push("session.closed")
+        await closing.value
+        permission?.resume(returning: true)
+        await starting.value
+        precondition(!pending.audio.isCapturing && !pending.microphone && !pending.microphoneStarting && !pending.startingVoice,
+                     "Late permission approval must not restart a closed session")
+
+        // Reopening during close waits, then starts exactly one new session.
+        let first = VoiceUXTransport(), second = VoiceUXTransport()
+        var starts = 0
+        let restartingSession = GPTLiveSession(transportFactory: { starts += 1; return starts == 1 ? first : second })
+        let restarting = GPTLiveController(model: model, session: restartingSession,
+                                          audio: GPTLiveAudio(requestPermission: { false }))
+        restarting.simulate = false; restarting.apiKey = "sk-fixture-only"; restarting.rememberKey = false
+        let initial = Task { await restarting.startVoice() }
+        try await waitUntil("Expected initial voice start") { first.types.contains("session.start") }
+        first.push("session.started")
+        await initial.value
+        let ending = Task { await restarting.disconnect() }
+        try await waitUntil("Expected old session to close") { first.types.contains("session.close") }
+        restarting.beginVoice()
+        first.push("session.closed")
+        await ending.value
+        try await waitUntil("Toolbar reopen must start the next session") { second.types.contains("session.start") }
+        second.push("session.started")
+        try await waitUntil("Expected resumed voice attempt to finish") { !restarting.startingVoice }
+        precondition(starts == 2 && restarting.connected && !restarting.microphone)
+        let finalClose = Task { await restarting.disconnect() }
+        try await waitUntil("Expected final close") { second.types.contains("session.close") }
+        second.push("session.closed")
+        await finalClose.value
+        print("PASS: one-action voice cancellation during connection and permission, late approval rejection, and automatic restart after close. No OS prompt or audio device opened.")
+    }
+
     @MainActor static func checks() async throws {
         let model = AppModel()
         precondition(model.demo && model.webAgents.fixture)
         model.timer?.invalidate()
         let directory = model.local.url.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: directory) }
+        try await voiceLifecycleChecks(model)
         let controller = GPTLiveController(model: model)
+        precondition(!controller.activity.enabled, "Debug details must be optional and off by default")
+        controller.simulate = false
+        controller.apiKey = ""
+        controller.beginVoice()
+        precondition(controller.showSettings && controller.voiceNeedsKey && !controller.active && !controller.audio.isCapturing,
+                     "Opening voice without a key must show setup without opening the microphone")
+        controller.simulate = true
         controller.activity.enabled = true
-        await controller.connect()
+        await controller.startVoice()
+        precondition(!controller.startingVoice && !controller.microphoneStarting && !controller.audio.isCapturing,
+                     "The one-action voice entry must keep Demo audio simulated")
         precondition(controller.fixtureConnected && controller.session.state == .idle, "The API must remain disconnected")
         let agents = model.state.agents
         precondition(agents.count >= 4)

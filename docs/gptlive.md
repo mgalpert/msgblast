@@ -58,8 +58,10 @@ DEVELOPER_DIR=/Users/pal/Applications/Xcode.app/Contents/Developer \
 
 ## Use GPTLive
 
-Open **GPT-Live** from the toolbar or the app menu (⌘⇧L). Expand **OpenAI API key**,
-enter your key, and use **Save key** to store it in macOS Keychain. The live and
+Click the toolbar voice icon or choose **GPT-Live** from the app menu (⌘⇧L).
+That action connects and starts listening immediately when a key is available.
+On first use, the voice settings sheet asks for your OpenAI key; choose **Start
+voice** to continue. macOS may also ask for microphone access. The live and
 Demo variants have separate Keychain services; timestamped rebuilds reuse their
 variant’s service. macOS can deny an ad-hoc rebuild access to the previous
 credential; the panel stays usable and accepts a session-only key in that case.
@@ -68,8 +70,17 @@ Turn off **Remember in Keychain** for session-only use without changing a saved 
 Keep the key out of source files, build arguments, screenshots, and logs. OpenAI
 usage is billed to the key's account independently of any ChatGPT subscription.
 
-No conversation needs to be selected before connecting. **Preview app state**
-shows the current workspace, selected agents and draft state. After connecting,
+The voice panel shows listening, speaking, working, and muted states. Its visual
+meter follows measured input/output audio; silent packets do not count as speech.
+The microphone button mutes or resumes input. **End voice** closes the panel and
+releases the session and microphone; closing the window does the same. Closing
+during startup prevents a late permission response from enabling capture.
+The keyboard button reveals text entry; the captions button reveals the transcript.
+The **…** menu contains **Voice settings…**, the transcript option, and **Activity…**.
+Key management, speaker output, usage, and app-state preview live in settings.
+
+No conversation needs to be selected. **Preview app state** in settings
+shows the current workspace, selected agents and draft state. Once listening,
 try “Show my agents”, “Compare my recent conversations”, “Open Settings”, or
 “Prepare a new message to Cedar and Lumen”. GPTLive discovers exact IDs through
 structured tools and can work across conversations during the same session.
@@ -89,7 +100,8 @@ encoded size, with truncation reported. Attachment contents are excluded.
 
 ### Debug mode
 
-Click **Debug activity** at the top of GPT-Live. Summaries show connection events,
+Choose **… → Activity…**. Debug mode is optional and **off by default**; opening
+voice or activity never enables it. Summaries show connection events,
 requests, tool calls, completion times, native actions and approvals, submission
 receipts, errors, cancellation and usage. Microphone configuration records the
 input format and whether Apple voice processing is enabled. Turn on **Debug mode**
@@ -104,14 +116,16 @@ are redacted. Nothing is automatically saved to disk or uploaded. Enable Debug
 mode before reproducing a problem; earlier details cannot be recovered.
 
 The Demo app defaults to a fully simulated session. To exercise OpenAI with sample
-data, turn off **Simulate GPT-Live** and supply a key. OpenAI requests are then real;
+data, open voice settings, choose **Disconnect to change setup**, turn off
+**Simulate GPT-Live**, supply a key, and choose **Start voice**. OpenAI requests are then real;
 destination sends in the Demo app remain simulated.
 
 The implementation uses [GPT-Live 1](https://developers.openai.com/api/docs/models/gpt-live-1),
 the [Live WebSocket API](https://developers.openai.com/api/reference/resources/live/primary-websocket),
 and [managed Responses delegation](https://developers.openai.com/api/docs/guides/live-delegation)
 with GPT-6 Luna, following the official documentation checked on October 28, 2026.
-Audio is mono PCM16 at 24 kHz; microphone input starts muted. Ending the session
+Audio is mono PCM16 at 24 kHz. The wire session starts muted; the explicit toolbar
+voice action starts capture and unmutes after connection. Ending the session
 closes the socket, releases audio resources, and displays final usage when supplied
 by OpenAI. Failed or uncertain sends are never automatically retried.
 

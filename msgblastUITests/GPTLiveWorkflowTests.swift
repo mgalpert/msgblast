@@ -10,18 +10,16 @@ final class GPTLiveWorkflowTests: XCTestCase {
         let launch = app.buttons["Open GPTLive"]
         XCTAssertTrue(launch.waitForExistence(timeout: 15))
         launch.click()
-        let sample = app.buttons["GPTLive create sample"]
-        XCTAssertTrue(sample.waitForExistence(timeout: 5))
-        sample.click()
-        let connect = app.buttons["GPTLive connect"]
-        XCTAssertTrue(connect.waitForExistence(timeout: 5))
-        XCTAssertTrue(connect.isEnabled)
-        connect.click()
-        app.buttons["GPTLive debug"].click()
+        XCTAssertTrue(app.staticTexts["Demo conversation"].waitForExistence(timeout: 5), "The toolbar icon starts the session")
+        XCTAssertFalse(app.buttons["GPTLive connect"].exists, "Voice does not need a second Connect action")
+        app.menuButtons["GPTLive options"].click()
+        app.menuItems["Activity…"].click()
         let debug = app.checkBoxes["GPTLive debug mode"]
         XCTAssertTrue(debug.waitForExistence(timeout: 5))
+        XCTAssertEqual(debug.value as? String, "0", "Debug mode starts off")
         debug.click()
         app.buttons["Done"].click()
+        app.buttons["GPTLive keyboard"].click()
         let request = app.textFields["GPTLive request"]
         request.click()
         request.typeText("Draft a follow-up")
@@ -39,7 +37,8 @@ final class GPTLiveWorkflowTests: XCTestCase {
         waitForExpectations(timeout: 8)
         XCTAssertFalse(app.buttons["GPTLive send draft"].exists)
         app.buttons["GPTLive end"].click()
-        XCTAssertTrue(connect.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["GPTLive microphone"].isEnabled)
+        XCTAssertFalse(app.windows["GPT-Live"].exists)
+        launch.click()
+        XCTAssertTrue(app.staticTexts["Demo conversation"].waitForExistence(timeout: 5))
     }
 }

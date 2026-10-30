@@ -9,6 +9,8 @@ import Foundation
 final class GPTLiveAudio: ObservableObject {
     @Published private(set) var isCapturing = false
     @Published private(set) var error: String?
+    @Published private(set) var inputLevel = 0.0
+    @Published private(set) var outputLevel = 0.0
 
     var onDiagnostic: (@MainActor (String) -> Void)?
 
@@ -23,9 +25,22 @@ final class GPTLiveAudio: ObservableObject {
     private var queuedFrames = 0
     private var trailingOutputByte: UInt8?
     private var isMuted = false
+    private var lastInputMeterUpdate = 0.0
+    private var lastOutputMeterUpdate = 0.0
+    private let requestPermission: @MainActor () async -> Bool
 
     private static let sampleRate = 24_000.0
     private static let maximumQueuedFrames = 24_000 * 6
+
+    init(requestPermission: (@MainActor () async -> Bool)? = nil) {
+        self.requestPermission = requestPermission ?? {
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized: return true
+            case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
+            default: return false
+            }
+        }
+    }
 
     func start(onPCM: @escaping @MainActor (Data) -> Void) async throws {
         stop()
@@ -34,15 +49,7 @@ final class GPTLiveAudio: ObservableObject {
 
         do {
             try Task.checkCancellation()
-            let permitted: Bool
-            switch AVCaptureDevice.authorizationStatus(for: .audio) {
-            case .authorized:
-                permitted = true
-            case .notDetermined:
-                permitted = await AVCaptureDevice.requestAccess(for: .audio)
-            default:
-                permitted = false
-            }
+            let permitted = await requestPermission()
 
             // Stop, a newer start, or cancellation while the permission dialog is
             // open must never turn the microphone on when that dialog finishes.
@@ -76,6 +83,12 @@ final class GPTLiveAudio: ObservableObject {
                         self.stop()
                         self.error = failure
                     } else if self.isCapturing, !self.isMuted, !delivery.pcm.isEmpty {
+                        let now = ProcessInfo.processInfo.systemUptime
+                        if now - self.lastInputMeterUpdate >= 0.05 {
+                            let level = Self.level(of: delivery.pcm)
+                            if self.inputLevel != level { self.inputLevel = level }
+                            self.lastInputMeterUpdate = now
+                        }
                         onPCM(delivery.pcm)
                     }
                 }
@@ -115,6 +128,7 @@ final class GPTLiveAudio: ObservableObject {
     func setMuted(_ muted: Bool) {
         isMuted = muted
         capturePipeline?.setMuted(muted)
+        if muted && inputLevel != 0 { inputLevel = 0 }
     }
 
     /// Queues decoded output bytes in arrival order, including split samples.
@@ -160,6 +174,7 @@ final class GPTLiveAudio: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self, self.playbackID == scheduledID else { return }
                     self.queuedFrames = max(0, self.queuedFrames - frameCount)
+                    if self.queuedFrames == 0 && self.outputLevel != 0 { self.outputLevel = 0 }
                 }
             }
             if !player.isPlaying { player.play() }
@@ -174,12 +189,48 @@ final class GPTLiveAudio: ObservableObject {
         playbackID = UUID()
         queuedFrames = 0
         trailingOutputByte = nil
+        if outputLevel != 0 { outputLevel = 0 }
+        lastOutputMeterUpdate = 0
         player?.stop()
         player?.reset()
     }
 
     private static func playbackFormat() -> AVAudioFormat? {
         AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
+    }
+
+    /// A display-only RMS meter. Silent PCM must stay at zero: GPT-Live can
+    /// stream silence between words, which is not a speaking indication.
+    nonisolated static func level(of pcm: Data) -> Double {
+        let count = pcm.count / 2
+        guard count > 0 else { return 0 }
+        let power = pcm.withUnsafeBytes { raw -> Double in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            var sum = 0.0
+            for index in 0..<count {
+                let bits = UInt16(bytes[index * 2]) | UInt16(bytes[index * 2 + 1]) << 8
+                let sample = Double(Int16(bitPattern: bits)) / 32768
+                sum += sample * sample
+            }
+            return sum / Double(count)
+        }
+        let rms = sqrt(power)
+        return rms < 0.004 ? 0 : min(1, sqrt(rms) * 1.6)
+    }
+
+    nonisolated private static func level(of buffer: AVAudioPCMBuffer) -> Double {
+        guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return 0 }
+        var power = 0.0
+        for channel in 0..<Int(buffer.format.channelCount) {
+            for frame in 0..<Int(buffer.frameLength) {
+                let sample = Double(buffer.format.isInterleaved
+                    ? channels[0][frame * Int(buffer.format.channelCount) + channel]
+                    : channels[channel][frame])
+                power += sample * sample
+            }
+        }
+        let rms = sqrt(power / Double(buffer.frameLength * buffer.format.channelCount))
+        return rms < 0.004 ? 0 : min(1, sqrt(rms) * 1.6)
     }
 
     private static func canUseVoiceProcessing() -> Bool {
@@ -215,6 +266,19 @@ final class GPTLiveAudio: ObservableObject {
         // The mixer handles output hardware sample rates; the player receives
         // correctly decoded 24 kHz floating-point samples, never relabeled PCM.
         engine.connect(player, to: engine.mainMixerNode, format: format)
+        // Meter rendered output, not arriving network packets, which can be
+        // several seconds ahead of the sound the user is actually hearing.
+        let observedID = engineID
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1_024, format: nil) { @Sendable [weak self] buffer, _ in
+            let level = Self.level(of: buffer)
+            Task { @MainActor [weak self] in
+                guard let self, self.engineID == observedID, self.queuedFrames > 0, self.player?.isPlaying == true else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                guard now - self.lastOutputMeterUpdate >= 0.05 else { return }
+                if self.outputLevel != level { self.outputLevel = level }
+                self.lastOutputMeterUpdate = now
+            }
+        }
     }
 
     private func ensurePlaybackEngine() throws {
@@ -256,7 +320,10 @@ final class GPTLiveAudio: ObservableObject {
         inputNode = nil
         capturePipeline = nil
         isCapturing = false
+        if inputLevel != 0 { inputLevel = 0 }
+        lastInputMeterUpdate = 0
         stopPlayback()
+        engine?.mainMixerNode.removeTap(onBus: 0)
         engine?.stop()
         engine?.reset()
         player = nil
@@ -268,6 +335,7 @@ final class GPTLiveAudio: ObservableObject {
         capturePipeline?.deactivate()
         if let inputNode { inputNode.removeTap(onBus: 0) }
         player?.stop()
+        engine?.mainMixerNode.removeTap(onBus: 0)
         engine?.stop()
     }
 }

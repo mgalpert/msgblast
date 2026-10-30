@@ -11,8 +11,8 @@ final class GPTLiveController: ObservableObject {
         let webID: WebAgentID?
     }
     let model: AppModel
-    let session = GPTLiveSession()
-    let audio = GPTLiveAudio()
+    let session: GPTLiveSession
+    let audio: GPTLiveAudio
     let activity = GPTLiveActivityLog()
     @Published var selectedComparisonID: UUID?
     @Published var selectedRecipientID = "all"
@@ -26,6 +26,10 @@ final class GPTLiveController: ObservableObject {
     @Published var error: String?
     @Published var sending = false
     @Published var microphone = false
+    @Published private(set) var microphoneStarting = false
+    @Published private(set) var startingVoice = false
+    @Published var showSettings = false
+    @Published private(set) var voiceNeedsKey = false
     @Published var speaker = true
     @Published var simulate: Bool
     @Published private(set) var fixtureConnected = false
@@ -34,9 +38,12 @@ final class GPTLiveController: ObservableObject {
     private var observations: Set<AnyCancellable> = []
     private var closing = false
     private var microphoneRequestID = UUID()
+    private var voiceRequestID = UUID()
 
-    init(model: AppModel, comparisonID: UUID? = nil) {
+    init(model: AppModel, comparisonID: UUID? = nil,
+         session: GPTLiveSession = GPTLiveSession(), audio: GPTLiveAudio = GPTLiveAudio()) {
         self.model = model
+        self.session = session; self.audio = audio
         selectedComparisonID = comparisonID ?? model.webAgents.comparisonID
         simulate = model.demo
         do {
@@ -52,6 +59,7 @@ final class GPTLiveController: ObservableObject {
         session.$state.sink { [weak self] state in
             if state == .failed || state == .idle {
                 self?.microphoneRequestID = UUID(); self?.audio.stop(); self?.microphone = false
+                self?.microphoneStarting = false
                 if self?.status.hasPrefix("Connected") == true { self?.status = state == .failed ? "Disconnected" : "Session ended" }
             }
         }.store(in: &observations)
@@ -140,7 +148,33 @@ final class GPTLiveController: ObservableObject {
         await session.connect(apiKey: apiKey, instructions: Self.voiceInstructions, backendInstructions: Self.backendInstructions, tools: Self.tools)
         if session.state == .connected { status = "Connected · app-wide control enabled" }
     }
+    func beginVoice() {
+        guard !startingVoice, !active || session.state == .closing else { return }
+        guard simulate || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            voiceNeedsKey = true; showSettings = true; return
+        }
+        voiceNeedsKey = false; showSettings = false
+        let requestID = UUID(); voiceRequestID = requestID
+        Task { [weak self] in
+            guard let self, self.voiceRequestID == requestID else { return }
+            await self.startVoice()
+        }
+    }
+    /// A single explicit voice action connects and requests the microphone.
+    /// Closing during connection or permission must never start capture later.
+    func startVoice() async {
+        guard !startingVoice else { return }
+        let requestID = UUID(); voiceRequestID = requestID
+        startingVoice = true
+        defer { if voiceRequestID == requestID { startingVoice = false } }
+        if session.state == .closing { await session.close() }
+        guard voiceRequestID == requestID else { return }
+        if !connected { await connect() }
+        guard voiceRequestID == requestID, connected, !closing, !simulate else { return }
+        await setMicrophone(true)
+    }
     func disconnect() async {
+        voiceRequestID = UUID(); startingVoice = false; microphoneStarting = false
         microphoneRequestID = UUID(); closing = true; audio.stop(); microphone = false; fixtureConnected = false
         await session.close()
         status = "Session ended"
@@ -150,6 +184,8 @@ final class GPTLiveController: ObservableObject {
         guard connected, !simulate else { return }
         error = nil
         let requestID = UUID(); microphoneRequestID = requestID
+        microphoneStarting = enabled
+        defer { if microphoneRequestID == requestID { microphoneStarting = false } }
         if !enabled { microphone = false; audio.stop(); await session.setInputMuted(true); activity.record(category: "audio", summary: "Microphone muted"); return }
         do {
             await session.setInputMuted(false)
@@ -180,7 +216,8 @@ final class GPTLiveController: ObservableObject {
                let target = (selectedComparisonID == nil ? appDestinations : destinations).first {
                 let args: [String: Any] = ["conversation_id": selectedComparisonID?.uuidString as Any? ?? NSNull(), "recipient_ids": [target.id], "text": "Could you outline a small pilot and how we would measure success?"]
                 let result = await handle(.init(callID: UUID().uuidString, name: "prepare_message", arguments: Self.json(args)))
-                fixtureTranscript.append("GPT-Live · simulated: " + result)
+                let failure = (try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any])?["error"] as? String
+                fixtureTranscript.append("GPT-Live · simulated: " + (failure ?? "Your draft is ready. Review the message and recipients before sending."))
             } else { fixtureTranscript.append("GPT-Live · simulated: App state inspected. \(model.state.comparisons.count) saved conversations and \(appDestinations.count) configured agents are available.") }
             if fixtureTranscript.count > 100 { fixtureTranscript.removeFirst(fixtureTranscript.count - 100) }
             if prompt == nil { input = "" }; return
