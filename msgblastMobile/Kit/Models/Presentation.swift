@@ -39,8 +39,26 @@ public enum ChipState: String, Equatable, Sendable {
     }
 
     public var symbol: String {
-        switch self { case .sending: "clock"; case .sent: "checkmark"; case .replied: "checkmark.bubble"; case .notSent: "xmark.circle"; case .unconfirmed: "questionmark.circle" }
+        switch self { case .sending: "clock"; case .sent: "checkmark"; case .replied: "checkmark"; case .notSent: "xmark.circle"; case .unconfirmed: "questionmark.circle" }
     }
+
+    /// What fills a status glyph's badge. Sent and Replied share the checkmark and differ by
+    /// fill: Sent sits on the plain ringed badge, Replied on the tint.
+    public enum BadgeFill: Equatable, Sendable { case plain, tint, red, orange }
+
+    /// The badge on an agent's status glyph: no speech bubble, only these marks.
+    public var badge: (symbol: String, fill: BadgeFill) {
+        switch self {
+        case .sending: ("clock", .plain)
+        case .sent: ("checkmark", .plain)
+        case .replied: ("checkmark", .tint)
+        case .notSent: ("xmark", .red)
+        case .unconfirmed: ("questionmark", .orange)
+        }
+    }
+
+    /// The state as VoiceOver reads it after the agent's name: "sent", "replied".
+    public var spoken: String { rawValue.lowercased() }
 }
 
 public struct StatusChip: Equatable, Identifiable, Sendable {

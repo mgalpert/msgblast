@@ -234,6 +234,21 @@ final class PresenterTests: XCTestCase {
         }
     }
 
+    func testStatusBadgesUseOneCheckmarkAndDifferByFill() {
+        XCTAssertEqual(ChipState.sent.badge.symbol, "checkmark")
+        XCTAssertEqual(ChipState.sent.badge.fill, .plain)
+        XCTAssertEqual(ChipState.replied.badge.symbol, "checkmark", "No speech bubble")
+        XCTAssertEqual(ChipState.replied.badge.fill, .tint, "Replied differs from Sent by its fill")
+        XCTAssertEqual(ChipState.sending.badge.symbol, "clock")
+        XCTAssertEqual(ChipState.notSent.badge.symbol, "xmark")
+        XCTAssertEqual(ChipState.notSent.badge.fill, .red)
+        XCTAssertEqual(ChipState.unconfirmed.badge.symbol, "questionmark")
+        XCTAssertEqual(ChipState.unconfirmed.badge.fill, .orange)
+        XCTAssertFalse([ChipState.sending, .sent, .replied, .notSent, .unconfirmed].contains { $0.badge.symbol.contains("bubble") || $0.symbol.contains("bubble") })
+        XCTAssertEqual(ChipState.sent.spoken, "sent")
+        XCTAssertEqual(ChipState.replied.spoken, "replied")
+    }
+
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
         var state = ProjectionState()
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {

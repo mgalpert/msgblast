@@ -521,7 +521,7 @@ struct StatusGlyph: View {
                 .padding(.trailing, badge * 0.35)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(chip.agentName), \(chip.state.rawValue.lowercased())")
+        .accessibilityLabel("\(chip.agentName), \(chip.state.spoken)")
         .accessibilityHint("Shows details")
         .popover(isPresented: $showing) {
             VStack(alignment: .leading, spacing: Space.gap) {
@@ -542,20 +542,22 @@ struct StatusBadge: View {
     var state: ChipState
     var size: CGFloat
     var body: some View {
-        Image(systemName: Self.symbol(state))
+        let badge = state.badge
+        Image(systemName: badge.symbol)
             .resizable().scaledToFit()
             .fontWeight(.bold)
-            .foregroundStyle(Self.color(state))
+            .padding(size * 0.22)
+            .foregroundStyle(badge.fill == .plain ? Color.secondary : Color.white)
             .frame(width: size, height: size)
+            .background(Circle().fill(Self.fill(badge.fill)))
             .background(Circle().fill(Color(.systemBackground)).padding(-Space.hairline))
     }
-    static func symbol(_ state: ChipState) -> String {
-        switch state {
-        case .sending: "clock.fill"
-        case .sent: "checkmark.circle.fill"
-        case .replied: "checkmark.bubble.fill"
-        case .notSent: "xmark.circle.fill"
-        case .unconfirmed: "questionmark.circle.fill"
+    static func fill(_ fill: ChipState.BadgeFill) -> AnyShapeStyle {
+        switch fill {
+        case .plain: AnyShapeStyle(Color(.tertiarySystemFill))
+        case .tint: AnyShapeStyle(.tint)
+        case .red: AnyShapeStyle(Color.red)
+        case .orange: AnyShapeStyle(Color.orange)
         }
     }
     static func color(_ state: ChipState) -> Color {
