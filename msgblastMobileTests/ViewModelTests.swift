@@ -11,7 +11,8 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(rows.first?.title, "Second fixture question", "Newest activity first")
         XCTAssertTrue(rows.allSatisfy(\.isDirect), "One-agent conversations are direct rows")
         let first = try XCTUnwrap(rows.first { $0.title == "Fixture question from the phone" })
-        XCTAssertTrue(first.preview.contains(":"), "Preview shows the last reply with its agent")
+        XCTAssertFalse(first.preview.hasPrefix(presenter.shortName(first.agentIDs[0]) + ":"), "A direct row shows the reply without repeating the agent")
+        XCTAssertNotEqual(first.preview, first.title, "Preview shows the last reply, not the prompt")
 
         let prompt = try XCTUnwrap(presenter.turns(in: first.id, agentID: nil).first { $0.origin == .sharedPrompt })
         let chips = presenter.chips(for: prompt)
@@ -41,21 +42,22 @@ final class PresenterTests: XCTestCase {
         let presenter = ProjectionPresenter(state: state)
         let messages = try XCTUnwrap(state.orderedAgents.first { $0.form == .messages })
         XCTAssertNil(presenter.disabledReason(agentIDs: [messages.agentID], conversation: nil))
-        XCTAssertEqual(presenter.disabledReason(agentIDs: ["geminiApp"], conversation: nil), "Gemini is not offered in this version of msgblast.")
-        XCTAssertEqual(presenter.disabledReason(agentIDs: [], conversation: nil), "Choose who to send to.")
+        XCTAssertEqual(presenter.disabledLine(agentIDs: ["geminiApp"], conversation: nil), StatusLine("Gemini isn't in this version", detail: "Gemini is not offered in this version of msgblast."))
+        XCTAssertEqual(presenter.disabledReason(agentIDs: [], conversation: nil), "Choose who to send to")
 
         var app = try XCTUnwrap(state.agents["chatgptApp"])
         app.readiness = .readyWillLaunch
         state.agents["chatgptApp"] = app
-        XCTAssertEqual(ProjectionPresenter(state: state).launchNotes(agentIDs: ["chatgptApp"]), ["Will open ChatGPT on your Mac"])
+        XCTAssertEqual(ProjectionPresenter(state: state).launchNotes(agentIDs: ["chatgptApp"]), ["Opens ChatGPT on your Mac"])
+        XCTAssertEqual(ProjectionPresenter.agentStatus(app), "Opens on your Mac", "The row already names the agent")
 
         let conversation = UUID()
         state.conversations[conversation] = RemoteConversation(id: conversation, title: "T", prompt: "P", created: Date(), endedAt: nil, agentIDs: ["chatgptApp"], canEnd: true,
             unresolvedAttemptCount: 1, lastActivity: Date(), incompleteAttempts: [RemoteIncompleteAttempt(agentID: "chatgptApp", attemptID: "wa:1", reasonCode: .incompleteRequestBlocking)])
-        XCTAssertNotNil(ProjectionPresenter(state: state).disabledReason(agentIDs: ["chatgptApp"], conversation: conversation), "Blocked inside that conversation")
+        XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: ["chatgptApp"], conversation: conversation), "Finish the ChatGPT request first", "Blocked inside that conversation")
         XCTAssertNil(ProjectionPresenter(state: state).disabledReason(agentIDs: ["chatgptApp"], conversation: nil), "Ready elsewhere")
         state.macLocked = true
-        XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: [messages.agentID], conversation: nil), "Your Mac is locked.")
+        XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: [messages.agentID], conversation: nil), "Mac locked")
 
         let groups = presenter.productGroups
         XCTAssertEqual(Set(groups.map(\.product)).count, groups.count, "One group per product")
@@ -70,18 +72,20 @@ final class PresenterTests: XCTestCase {
         app.readiness = .ready
         state.agents["chatgptApp"] = app
         let name = app.displayName
-        let refused = ["chatgptApp": "The app is still updating its controls. No input was sent."]
+        let refused = ["chatgptApp": "Check msgblast permissions on your Mac"]
         let ready = ProjectionPresenter(state: state)
 
         // Only the refused prepare is in the way: its reason shows, Send stays enabled.
         let failed = try XCTUnwrap(ready.composeBlock(canSend: true, connectionText: "Connected", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused))
-        XCTAssertEqual(failed, .prepareFailed("\(name): The app is still updating its controls. No input was sent."))
+        XCTAssertEqual(failed, .prepareFailed("\(name): Check msgblast permissions on your Mac"))
+        XCTAssertEqual(ready.composeBlock(canSend: true, connectionText: "", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: ["chatgptApp": "\(name) is still loading"]),
+                       .prepareFailed("\(name) is still loading"), "A line that names the agent is not prefixed again")
         XCTAssertTrue(failed.allowsSend)
         XCTAssertNil(ready.composeBlock(canSend: true, connectionText: "Connected", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: [:]))
         XCTAssertEqual(ready.composeBlock(canSend: true, connectionText: "", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: ["": "Not ready"]), .prepareFailed("Not ready"))
 
         // Disconnection and the projection's own reasons still disable Send.
-        let offline = try XCTUnwrap(ready.composeBlock(canSend: false, connectionText: "Reconnecting…", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused))
+        let offline = try XCTUnwrap(ready.composeBlock(canSend: false, connectionText: MacConnectionState.reconnecting(attempt: 1, retryAt: Date()).statusText, agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused))
         XCTAssertEqual(offline, .blocked("Reconnecting…")); XCTAssertFalse(offline.allowsSend)
         var busyState = state
         app.readiness = .busy(detail: "Sending")
@@ -94,6 +98,51 @@ final class PresenterTests: XCTestCase {
         XCTAssertTrue(ready.shouldRetryPrepare(prepareReasons: refused, agentIDs: ["chatgptApp"]))
         XCTAssertFalse(ready.shouldRetryPrepare(prepareReasons: [:], agentIDs: ["chatgptApp"]), "Nothing to retry")
         XCTAssertNotEqual(busy.readiness(agentIDs: ["chatgptApp"]), ready.readiness(agentIDs: ["chatgptApp"]), "The view notices the change")
+    }
+
+    func testBlockedLinesKeepTheMacsLongerReasonAsDetail() throws {
+        var state = try RecordedFixtures.reduce(["snapshot"])
+        var app = try XCTUnwrap(state.agents["chatgptApp"])
+        let usage = "An earlier request to ChatGPT did not complete. Review it before sending again; usage may have been consumed."
+        app.readiness = .blocked
+        app.reasons = [AvailabilityReason(code: .incompleteRequestBlocking, userText: "Finish the ChatGPT request first", fixOn: .phone, attemptID: "A1", detail: usage)]
+        state.agents["chatgptApp"] = app
+        let block = try XCTUnwrap(ProjectionPresenter(state: state).composeBlock(canSend: true, connectionText: "", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: [:]))
+        XCTAssertEqual(block, .blocked("Finish the ChatGPT request first", detail: usage))
+        XCTAssertFalse(block.allowsSend)
+        XCTAssertEqual(ProjectionPresenter.agentStatus(app), "Finish the ChatGPT request first")
+    }
+
+    func testIncompleteSummaryRecipientsAndTimestamps() throws {
+        var state = ProjectionState()
+        let conversation = UUID(), started = Date(timeIntervalSince1970: 1_800_000_000)
+        state.agents["museApp"] = AgentAvailability(agentID: "museApp", product: .muse, form: .macApp, displayName: "Muse", visibleInGrid: true, selectedForSharedSend: true,
+            capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+            readiness: .blocked, reasons: [AvailabilityReason(code: .incompleteRequestBlocking, userText: "Finish the Muse request first", fixOn: .phone, detail: "Usage may have been consumed.")],
+            observedAt: started, source: .live)
+        state.attempts["wa:1"] = RemoteAttempt(id: "wa:1", conversationID: conversation, agentID: "museApp", text: "Hi", status: .attempting, detail: "Outgoing message observed in the app. Waiting for its reply.", created: started)
+        let incomplete = RemoteIncompleteAttempt(agentID: "museApp", attemptID: "wa:1", reasonCode: .incompleteRequestBlocking)
+        let running = ProjectionPresenter(state: state).incompleteSummary(incomplete)
+        XCTAssertTrue(running.running); XCTAssertEqual(running.title, "Waiting for Muse…"); XCTAssertEqual(running.started, started)
+        XCTAssertEqual(running.details, ["Outgoing message observed in the app. Waiting for its reply.", "Usage may have been consumed."], "Every Mac reason stays reachable")
+        state.attempts["wa:1"]?.status = .uncertain
+        let review = ProjectionPresenter(state: state).incompleteSummary(incomplete)
+        XCTAssertFalse(review.running); XCTAssertEqual(review.title, "Muse didn't reply")
+
+        let presenter = ProjectionPresenter(state: state)
+        XCTAssertEqual(presenter.recipientSummary(["museApp", "claude"], members: ["claude", "museApp"]), "To everyone")
+        XCTAssertEqual(presenter.recipientSummary(["museApp"], members: ["claude", "museApp"]), "Only Muse")
+        XCTAssertEqual(presenter.recipientSummary(["a", "b"], members: ["a", "b", "c"]), "To 2 agents")
+        let chip = StatusChip(agentID: "museApp", agentName: "Muse", state: .sending, reason: nil)
+        XCTAssertEqual(chip.label(showsName: false), "Sending"); XCTAssertEqual(chip.label(showsName: true), "Muse · Sending")
+
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "UTC")!
+        let locale = Locale(identifier: "en_US")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)  // Friday 15 January 2027, 08:00 UTC
+        XCTAssertEqual(ProjectionPresenter.inboxTimestamp(now.addingTimeInterval(-3600), now: now, calendar: calendar, locale: locale).replacingOccurrences(of: "\u{202F}", with: " "), "7:00 AM")
+        XCTAssertEqual(ProjectionPresenter.inboxTimestamp(now.addingTimeInterval(-86_400), now: now, calendar: calendar, locale: locale), "Yesterday")
+        XCTAssertEqual(ProjectionPresenter.inboxTimestamp(now.addingTimeInterval(-3 * 86_400), now: now, calendar: calendar, locale: locale), "Tuesday")
+        XCTAssertEqual(ProjectionPresenter.inboxTimestamp(now.addingTimeInterval(-30 * 86_400), now: now, calendar: calendar, locale: locale), "12/16/26")
     }
 }
 

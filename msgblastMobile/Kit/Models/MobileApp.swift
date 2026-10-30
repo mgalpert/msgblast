@@ -84,7 +84,7 @@ public final class MobileApp: ObservableObject {
 
     public func pair(link: String, deviceName: String) async throws -> PairedMac {
         guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)), let offer = try? RemotePairingOffer(url: url) else {
-            throw RemotePairingError(message: "That is not a msgblast pairing link. Show the code in msgblast Settings → Remote on your Mac.")
+            throw RemotePairingError(message: "Not a msgblast pairing link")
         }
         return try await pair(offer: offer, deviceName: deviceName)
     }
@@ -117,15 +117,15 @@ public final class MobileApp: ObservableObject {
 
     /// Splits a file into protocol-sized chunks, uploads it, and returns the Mac's attachment id.
     public func upload(_ data: Data, filename: String) async throws -> String {
-        guard data.count <= RemoteProtocol.maximumAttachmentBytes else { throw RemotePairingError(message: "Files are limited to 25 MB.") }
+        guard data.count <= RemoteProtocol.maximumAttachmentBytes else { throw RemotePairingError(message: "Files are limited to 25 MB") }
         let id = UUID()
         let chunks = stride(from: 0, to: data.count, by: RemoteProtocol.maximumAttachmentChunkBytes).map { data[$0..<min($0 + RemoteProtocol.maximumAttachmentChunkBytes, data.count)] }
         for (index, chunk) in chunks.enumerated() {
             let result = try await perform(.uploadAttachmentChunk(uploadID: id, filename: filename, index: index, count: chunks.count, data: Data(chunk)))
-            guard result.outcome == .applied else { throw RemotePairingError(message: result.message ?? "The Mac refused the file.") }
+            guard result.outcome == .applied else { throw RemotePairingError(message: result.message ?? "Your Mac refused the file") }
         }
         let staged = try await perform(.attachStaged(uploadID: id, sha256: Data(SHA256.hash(data: data))))
-        guard staged.outcome == .applied, let attachment = staged.attachmentID else { throw RemotePairingError(message: staged.message ?? "The Mac refused the file.") }
+        guard staged.outcome == .applied, let attachment = staged.attachmentID else { throw RemotePairingError(message: staged.message ?? "Your Mac refused the file") }
         return attachment
     }
 }

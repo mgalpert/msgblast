@@ -1,19 +1,28 @@
 import Foundation
 import msgblastRemoteProtocol
 
+/// One glanceable line and, when the Mac said more, the full reason shown on demand.
+public struct StatusLine: Equatable, Sendable {
+    public var text: String
+    public var detail: String?
+    public init(_ text: String, detail: String? = nil) { self.text = text; self.detail = detail == text ? nil : detail }
+}
+
 /// What stops the compose bar from sending.
 public enum ComposeBlock: Equatable, Sendable {
     /// Disconnected, locked, not ready in the projection: Send is disabled.
-    case blocked(String)
+    case blocked(String, detail: String? = nil)
     /// The last `prepareConversation` was refused. Send stays enabled and prepares again.
-    case prepareFailed(String)
-    public var text: String { switch self { case .blocked(let text), .prepareFailed(let text): text } }
+    case prepareFailed(String, detail: String? = nil)
+    public var text: String { switch self { case .blocked(let text, _), .prepareFailed(let text, _): text } }
+    /// The Mac's longer reason, for the compose bar's info popover.
+    public var detail: String? { switch self { case .blocked(_, let detail), .prepareFailed(_, let detail): detail } }
     public var allowsSend: Bool { if case .prepareFailed = self { true } else { false } }
 }
 
 /// How a status chip under one of your messages reads, per agent.
 public enum ChipState: String, Equatable, Sendable {
-    case sending = "Sending on Mac"
+    case sending = "Sending"
     case sent = "Sent"
     case replied = "Replied"
     case notSent = "Not sent"
@@ -28,6 +37,10 @@ public enum ChipState: String, Equatable, Sendable {
         case .uncertain: self = .unconfirmed
         }
     }
+
+    public var symbol: String {
+        switch self { case .sending: "clock"; case .sent: "checkmark"; case .replied: "checkmark.bubble"; case .notSent: "xmark.circle"; case .unconfirmed: "questionmark.circle" }
+    }
 }
 
 public struct StatusChip: Equatable, Identifiable, Sendable {
@@ -36,6 +49,20 @@ public struct StatusChip: Equatable, Identifiable, Sendable {
     public var agentName: String
     public var state: ChipState
     public var reason: String?
+    /// "Sent", or "Muse · Sent" when several agents' chips share a message.
+    public func label(showsName: Bool) -> String { showsName ? "\(agentName) · \(state.rawValue)" : state.rawValue }
+}
+
+/// The compact notice for an app, CLI or bot request that has not finished.
+public struct IncompleteSummary: Equatable, Sendable, Identifiable {
+    public var id: String { agentID }
+    public var agentID: String
+    /// Still running on the Mac: the row offers Stop. Otherwise it needs review: Dismiss.
+    public var running: Bool
+    public var title: String
+    /// The Mac's full text, for the details sheet.
+    public var details: [String]
+    public var started: Date?
 }
 
 public struct InboxRow: Equatable, Identifiable, Sendable {
@@ -65,7 +92,8 @@ public struct ProjectionPresenter: Sendable {
             let reply = state.turns(in: conversation.id).last { $0.role == .assistant }
             let unconfirmedCommands = commands.values.filter { $0.conversationID == conversation.id && $0.status == .unconfirmed }.count
             return InboxRow(id: conversation.id, title: conversation.title, agentNames: conversation.agentIDs.map(shortName), agentIDs: conversation.agentIDs,
-                            preview: reply.map { "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: conversation.lastActivity,
+                            // A direct row already shows the agent; only group previews name who replied.
+                            preview: reply.map { conversation.agentIDs.count == 1 ? $0.text : "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: conversation.lastActivity,
                             unconfirmed: conversation.unresolvedAttemptCount + unconfirmedCommands, ended: conversation.endedAt != nil)
         }
     }
@@ -99,19 +127,44 @@ public struct ProjectionPresenter: Sendable {
     }
 
     /// Why sending to these agents is not possible now, in the Mac's words; nil when it is.
-    public func disabledReason(agentIDs: [String], conversation: UUID?) -> String? {
-        guard !agentIDs.isEmpty else { return "Choose who to send to." }
-        if state.macLocked { return "Your Mac is locked." }
+    public func disabledReason(agentIDs: [String], conversation: UUID?) -> String? { disabledLine(agentIDs: agentIDs, conversation: conversation)?.text }
+
+    /// `disabledReason` with the Mac's longer reason as detail.
+    public func disabledLine(agentIDs: [String], conversation: UUID?) -> StatusLine? {
+        guard !agentIDs.isEmpty else { return StatusLine("Choose who to send to") }
+        if state.macLocked { return StatusLine("Mac locked") }
         for id in agentIDs {
-            guard let agent = state.agents[id] else { return "\(id) is no longer on your Mac." }
+            guard let agent = state.agents[id] else { return StatusLine("\(id) is gone from your Mac") }
             if !agent.readiness.acceptsSend {
-                return agent.reasons.first?.userText ?? "\(agent.displayName) is not ready."
+                if let reason = agent.reasons.first { return StatusLine(reason.userText, detail: reason.detail) }
+                if case .busy(let detail) = agent.readiness, !detail.isEmpty { return StatusLine(detail) }
+                return StatusLine("\(agent.displayName) isn't ready")
             }
-            if let conversation, state.conversations[conversation]?.incompleteAttempts.contains(where: { $0.agentID == id }) == true {
-                return "\(agent.displayName) has an unfinished request in this conversation. Acknowledge it first."
+            if let conversation, let incomplete = state.conversations[conversation]?.incompleteAttempts.first(where: { $0.agentID == id }) {
+                return StatusLine("Finish the \(agent.displayName) request first", detail: incompleteSummary(incomplete).details.joined(separator: "\n\n").nilIfEmpty)
             }
         }
         return nil
+    }
+
+    /// "Waiting for Muse…" while the request runs, "Muse didn't reply" once it needs review.
+    public func incompleteSummary(_ incomplete: RemoteIncompleteAttempt) -> IncompleteSummary {
+        let attempt = state.attempts[incomplete.attemptID]
+        let running = attempt.map { [.attempting, .preparing].contains($0.status) } ?? false
+        let name = shortName(incomplete.agentID)
+        let reason = state.agents[incomplete.agentID]?.reasons.first { $0.code == .incompleteRequestBlocking }
+        var details: [String] = []
+        if let text = attempt?.detail, !text.isEmpty { details.append(text) }
+        if let text = reason?.detail, !text.isEmpty, !details.contains(text) { details.append(text) }
+        return IncompleteSummary(agentID: incomplete.agentID, running: running, title: running ? "Waiting for \(name)…" : "\(name) didn't reply",
+                                 details: details, started: attempt?.created)
+    }
+
+    /// "To everyone", "Only Muse", "To 2 agents".
+    public func recipientSummary(_ recipients: [String], members: [String]) -> String {
+        if Set(recipients) == Set(members) { return "To everyone" }
+        if recipients.count == 1 { return "Only \(shortName(recipients[0]))" }
+        return recipients.isEmpty ? "Choose who to send to" : "To \(recipients.count) agents"
     }
 
     /// Why the compose bar cannot send right now, and whether Send may still be tapped.
@@ -120,9 +173,14 @@ public struct ProjectionPresenter: Sendable {
     public func composeBlock(canSend: Bool, connectionText: String, agentIDs: [String], conversation: UUID?,
                              prepareReasons: [String: String]) -> ComposeBlock? {
         if !canSend { return .blocked(connectionText) }
-        if let reason = disabledReason(agentIDs: agentIDs, conversation: conversation) { return .blocked(reason) }
+        if let line = disabledLine(agentIDs: agentIDs, conversation: conversation) { return .blocked(line.text, detail: line.detail) }
         if let first = prepareReasons.sorted(by: { $0.key < $1.key }).first {
-            return .prepareFailed(first.key.isEmpty ? first.value : "\(shortName(first.key)): \(first.value)")
+            guard !first.key.isEmpty else { return .prepareFailed(first.value) }
+            let name = shortName(first.key)
+            // The Mac's line often names the agent already; never say it twice.
+            let text = first.value.hasPrefix(name) ? first.value : "\(name): \(first.value)"
+            let detail = state.agents[first.key]?.reasons.compactMap(\.detail).first
+            return .prepareFailed(text, detail: detail)
         }
         return nil
     }
@@ -139,9 +197,35 @@ public struct ProjectionPresenter: Sendable {
     /// The readiness of each recipient, so a view can notice when one changes.
     public func readiness(agentIDs: [String]) -> [AgentReadiness?] { agentIDs.map { state.agents[$0]?.readiness } }
 
-    /// "Will open ChatGPT on your Mac" for agents whose send launches a Mac app.
+    /// "Opens ChatGPT on your Mac" for agents whose send launches a Mac app.
     public func launchNotes(agentIDs: [String]) -> [String] {
-        agentIDs.compactMap { state.agents[$0] }.filter { $0.readiness == .readyWillLaunch }.map { "Will open \($0.displayName) on your Mac" }
+        agentIDs.compactMap { state.agents[$0] }.filter { $0.readiness == .readyWillLaunch }.map { "Opens \($0.displayName) on your Mac" }
+    }
+
+    /// The short status under an agent in the new-conversation list; nil when there is nothing to say.
+    /// The row already shows the agent's name, so a launch reads "Opens on your Mac".
+    public static func agentStatus(_ agent: AgentAvailability) -> String? {
+        switch agent.readiness {
+        case .ready: agent.reasons.first(where: { $0.fixOn == .mac })?.userText
+        case .readyWillLaunch: "Opens on your Mac"
+        case .busy: "Busy"
+        case .blocked, .unavailable: agent.reasons.first?.userText
+        }
+    }
+
+    /// Like Messages: the time today, "Yesterday", the weekday this week, else a short date.
+    public static func inboxTimestamp(_ date: Date, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        var calendar = calendar
+        calendar.locale = locale
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? .max
+        var style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        switch days {
+        case ...0: style = style.hour().minute()
+        case 1: return "Yesterday"
+        case 2..<7: style = style.weekday(.wide)
+        default: style = style.year(.twoDigits).month(.defaultDigits).day(.defaultDigits)
+        }
+        return date.formatted(style)
     }
 
     public struct ProductGroup: Identifiable, Equatable, Sendable {
@@ -166,4 +250,8 @@ public struct ProjectionPresenter: Sendable {
     public static func formLabel(_ form: AgentForm) -> String {
         switch form { case .macApp: "Mac app"; case .website: "Web"; case .cli: "CLI"; case .webhookBot: "Bot"; case .messages: "Messages" }
     }
+}
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

@@ -195,7 +195,7 @@ Native messenger feel, not a remote desktop:
 - **Conversation:** your shared turns on the right; each agent's replies as
   grouped bubbles with the agent avatar on the left; a segmented filter
   **All · Claude · ChatGPT · …** that collapses to a single agent's private
-  thread. Status chips under your turn: *Sending on Mac → Submitted → Replied*
+  thread. Status chips under your turn: *Sending → Sent → Replied*
   or *Uncertain*, per agent.
 - **Compose bar:** recipient chips. Chips = all members → shared send; one chip
   → private send. Drafts stay on the phone (per device) unless we decide to
@@ -285,7 +285,7 @@ automation | accessibility | screenRecording)`, `automationNeedsMessagesOpen`,
 `messagesDatabaseUnavailable`, `conversationUnroutable(status)`, `macLocked`,
 `macDisplayAsleep`.
 
-`readyWillLaunch` is a distinct state on purpose: the phone shows "will open
+`readyWillLaunch` is a distinct state on purpose: the phone shows "Opens
 ChatGPT on your Mac" before the send, because the launch activates the app and
 steals focus on the Mac.
 

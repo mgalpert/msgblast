@@ -3,7 +3,7 @@ import VisionKit
 import msgblastMobileKit
 import msgblastRemoteProtocol
 
-/// Scan the QR code from msgblast Settings → Remote on the Mac (or paste its link),
+/// Scan the QR code from msgblast › Settings › Remote on the Mac (or paste its link),
 /// confirm the Mac's name and key fingerprint, then pair.
 struct PairingView: View {
     @ObservedObject var app: MobileApp
@@ -17,47 +17,75 @@ struct PairingView: View {
     @State private var unreachable = false
     @State private var pairing = false
     @State private var scanning = false
+    @State private var pasting = false
 
     var body: some View {
         Form {
-            Section {
-                Text("On your Mac, open msgblast Settings → Remote and choose Pair a phone.")
-                if DataScannerViewController.isSupported {
-                    Button { scanning = true } label: { Label("Scan the pairing code", systemImage: "qrcode.viewfinder") }
-                }
-                if offer == nil {
-                    TextField("Or paste the msgblast://pair link", text: $link, axis: .vertical)
-                        .lineLimit(1...3)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("Continue") { read(link) }.disabled(link.isEmpty)
-                } else {
-                    Button("Use a different code") { offer = nil; link = "" }
-                }
-            }
             if let offer {
-                Section("Pair with this Mac?") {
+                Section {
                     LabeledContent("Mac", value: offer.macName)
-                    LabeledContent("Key", value: PairedMac.fingerprint(offer.identityKeySHA256)).font(.callout.monospaced())
-                    if offer.variant == .demo { Text("Demo: simulated agents and messages.").font(.footnote).foregroundStyle(.secondary) }
-                    Text("Check that the Mac shows the same name. The code works once and expires \(offer.expiresAt.formatted(.relative(presentation: .named))).")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Button(pairing ? "Pairing…" : "Pair") { pair(offer) }.disabled(pairing)
-                    if let error {
-                        Text(error).foregroundStyle(.red)
-                        if unreachable {
-                            Text("Check that Tailscale is connected on this phone, or that both devices are on the same Wi-Fi.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
+                    LabeledContent("Key") {
+                        Text(PairedMac.fingerprint(offer.identityKeySHA256)).font(.callout.monospaced()).foregroundStyle(.secondary)
+                    }
+                    if offer.variant == .demo { LabeledContent("Mode", value: "Demo") }
+                } footer: {
+                    Text("Expires in \(Self.minutesLeft(offer.expiresAt)) min")
+                }
+                Section {
+                    Button { pair(offer) } label: {
+                        HStack { Spacer(); if pairing { ProgressView() } else { Text("Pair").bold() }; Spacer() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .disabled(pairing)
+                    errorRows
+                    Button("Use Another Code") { self.offer = nil; link = ""; error = nil; unreachable = false }
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                        .disabled(pairing)
+                }
+            } else {
+                Section {
+                    VStack(spacing: 12) {
+                        Image(systemName: "qrcode.viewfinder").font(.system(size: 64, weight: .light)).foregroundStyle(.tint)
+                        Text("Open msgblast › Settings › Remote on your Mac")
+                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .listRowBackground(Color.clear)
+                }
+                Section {
+                    Button { scanning = true } label: { Label("Scan Code", systemImage: "camera").frame(maxWidth: .infinity) }
+                        .buttonStyle(.borderedProminent).controlSize(.large)
+                        .disabled(!DataScannerViewController.isSupported)
+                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    if !pasting {
+                        Button("Paste Link") { pasting = true }
+                            .frame(maxWidth: .infinity)
+                            .listRowBackground(Color.clear)
                     }
                 }
-            }
-            if offer == nil, let error { Section { Text(error).foregroundStyle(.red) } }
-            Section {
-                Text("Your phone talks only to your Mac, over your local network or Tailscale, encrypted end to end. Sign-ins, permissions and keys stay on the Mac.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                if pasting {
+                    Section {
+                        TextField("msgblast://pair…", text: $link, axis: .vertical)
+                            .lineLimit(1...3)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Button("Continue") { read(link) }.disabled(link.isEmpty)
+                    }
+                }
+                if error != nil { Section { errorRows } }
             }
         }
-        .navigationTitle("Pair with your Mac")
+        .safeAreaInset(edge: .bottom) {
+            Label("Encrypted, device to device. Keys stay on your Mac.", systemImage: "lock.fill")
+                .font(.footnote).foregroundStyle(.secondary)
+                .padding(.bottom, 8)
+        }
+        .navigationTitle("Pair Your Mac")
         .toolbar {
             if let close { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { close() }.disabled(pairing) } }
         }
@@ -66,13 +94,25 @@ struct PairingView: View {
         .onChange(of: incomingLink) { _, value in if let value { read(value); incomingLink = nil } }
     }
 
+    @ViewBuilder private var errorRows: some View {
+        if let error {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(error).foregroundStyle(.red)
+                if unreachable { Text("Check Tailscale or Wi‑Fi").font(.caption).foregroundStyle(.secondary) }
+            }
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    static func minutesLeft(_ expiry: Date, now: Date = Date()) -> Int { max(1, Int((expiry.timeIntervalSince(now) / 60).rounded(.up))) }
+
     private func read(_ text: String) {
         error = nil
         unreachable = false
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)), let parsed = try? RemotePairingOffer(url: url) else {
-            error = "That is not a msgblast pairing code."; return
+            error = "Not a msgblast pairing code"; return
         }
-        guard parsed.expiresAt > Date() else { error = "This code expired. Show a new one on your Mac."; return }
+        guard parsed.expiresAt > Date() else { error = "Code expired. Show a new one on your Mac"; return }
         link = url.absoluteString
         offer = parsed
     }

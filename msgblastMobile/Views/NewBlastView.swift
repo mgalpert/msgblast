@@ -21,7 +21,7 @@ struct NewBlastView: View {
         .safeAreaInset(edge: .bottom) {
             ComposeBar(app: app, conversationID: nil, recipients: $selected, onSent: { id in dismiss(); _ = id })
         }
-        .navigationTitle("New conversation")
+        .navigationTitle("New Conversation")
         .toolbar { Button("Cancel") { dismiss() } }
     }
 
@@ -35,24 +35,17 @@ struct NewBlastView: View {
                 AgentAvatar(name: agent.displayName, product: agent.product.rawValue)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(agent.displayName).foregroundStyle(sendable ? .primary : .secondary)
-                    Text([ProjectionPresenter.formLabel(agent.form), status(agent)].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text([ProjectionPresenter.formLabel(agent.form), ProjectionPresenter.agentStatus(agent)].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle").foregroundStyle(isSelected ? Color.accentColor : .secondary)
             }
         }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .opacity(agent.readiness == .unavailable ? 0.5 : 1)
         .disabled(agent.readiness == .unavailable)
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
-    }
-
-    private func status(_ agent: AgentAvailability) -> String? {
-        switch agent.readiness {
-        case .ready: agent.reasons.first(where: { $0.fixOn == .mac })?.userText
-        case .readyWillLaunch: "Will open on your Mac"
-        case .busy(let detail): detail
-        case .blocked, .unavailable:
-            agent.reasons.first.map { $0.fixOn == .mac ? "On your Mac: \($0.userText)" : $0.userText }
-        }
     }
 }

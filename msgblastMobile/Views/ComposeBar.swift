@@ -5,7 +5,8 @@ import msgblastMobileKit
 import msgblastRemoteProtocol
 
 /// Recipient chips (all members = shared, one = private), a per-device draft, attachments
-/// for Messages agents, the Mac's reason when a send is not possible, and launch notes.
+/// for Messages agents, and at most one status line: what blocks Send, then preparing,
+/// then the last result, then a launch note. A longer Mac reason is behind ⓘ.
 struct ComposeBar: View {
     @ObservedObject var app: MobileApp
     let conversationID: UUID?
@@ -19,13 +20,14 @@ struct ComposeBar: View {
     @State private var attachments: [(id: String, name: String)] = []
     @State private var photo: PhotosPickerItem?
     @State private var importing = false
+    @State private var uploading = false
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var members: [String] { conversationID.flatMap { app.store.projection.conversations[$0]?.agentIDs } ?? [] }
     private var draftKey: String { MobileStore.draftKey(conversation: conversationID, agentID: recipients.count == 1 && conversationID != nil ? recipients[0] : nil) }
     private var onlyMessages: Bool { !recipients.isEmpty && recipients.allSatisfy { app.store.projection.agents[$0]?.form == .messages } }
     private var block: ComposeBlock? {
-        presenter.composeBlock(canSend: app.connection.state.canSend, connectionText: app.connection.state.bannerText,
+        presenter.composeBlock(canSend: app.connection.state.canSend, connectionText: app.connection.state == .macLocked ? app.connection.state.statusText : "Not connected",
                                agentIDs: recipients, conversation: conversationID, prepareReasons: prepareReasons)
     }
 
@@ -37,23 +39,14 @@ struct ComposeBar: View {
                         ForEach(members, id: \.self) { id in
                             let on = recipients.contains(id)
                             Button(presenter.shortName(id)) { if on { recipients.removeAll { $0 == id } } else { recipients.append(id) } }
-                                .buttonStyle(.bordered).tint(on ? .accentColor : .secondary)
+                                .buttonStyle(.bordered).controlSize(.small).tint(on ? .accentColor : .secondary)
                                 .accessibilityValue(on ? "Selected" : "Not selected")
                         }
+                        Text(presenter.recipientSummary(recipients, members: members)).font(.caption).foregroundStyle(.secondary).padding(.leading, 4)
                     }
                 }
-                Text(recipients.count == members.count ? "Shared with everyone" : recipients.count == 1 ? "Private to \(presenter.shortName(recipients[0]))" : "Shared with \(recipients.count) agents")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            if preparing { Label("Getting ready…", systemImage: "hourglass").font(.caption).foregroundStyle(.secondary) }
-            ForEach(presenter.launchNotes(agentIDs: recipients), id: \.self) { Label($0, systemImage: "macwindow").font(.caption).foregroundStyle(.secondary) }
-            if let block {
-                HStack(alignment: .firstTextBaseline) {
-                    Label(block.text, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange)
-                    if block.allowsSend { Button("Try again") { prepare() }.font(.caption).disabled(preparing || sending) }
-                }
-            }
-            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+            if let status { statusLine(status) }
             if !attachments.isEmpty {
                 ScrollView(.horizontal) { HStack { ForEach(attachments, id: \.id) { Label($0.name, systemImage: "paperclip").font(.caption) } } }
             }
@@ -85,6 +78,49 @@ struct ComposeBar: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result { Task { await upload(url) } }
         }
+    }
+
+    private struct Status {
+        var text: String
+        var detail: String?
+        var symbol: String?
+        /// Orange: Send is disabled until this changes.
+        var blocks = false
+        var retry = false
+        var progress = false
+    }
+
+    /// At most one line: block > preparing > the last result > launch note.
+    private var status: Status? {
+        // With nobody chosen, Send is simply disabled; there is nothing to explain.
+        if recipients.isEmpty { return nil }
+        if let block {
+            return Status(text: block.text, detail: block.detail, symbol: block.allowsSend ? "exclamationmark.circle" : "exclamationmark.triangle.fill",
+                          blocks: !block.allowsSend, retry: block.allowsSend)
+        }
+        if preparing { return Status(text: "Getting ready…", progress: true) }
+        if let message { return Status(text: message, progress: uploading) }
+        let notes = presenter.launchNotes(agentIDs: recipients)
+        if notes.count == 1 { return Status(text: notes[0], symbol: "macwindow") }
+        if notes.count > 1 { return Status(text: "Opens \(notes.count) apps on your Mac", detail: notes.joined(separator: "\n"), symbol: "macwindow") }
+        return nil
+    }
+
+    private func statusLine(_ status: Status) -> some View {
+        // A line too long to read at a glance shows its start; ⓘ has the rest.
+        let long = status.text.count > 44
+        let detail = status.detail ?? (long ? status.text : nil)
+        return HStack(spacing: 6) {
+            if status.progress { ProgressView().controlSize(.mini) }
+            else if let symbol = status.symbol { Image(systemName: symbol) }
+            Text(status.text).lineLimit(1).truncationMode(.tail)
+            if let detail { DetailButton(detail: detail) }
+            Spacer(minLength: 0)
+            if status.retry { Button("Try Again") { prepare() }.buttonStyle(.borderless).disabled(preparing || sending) }
+        }
+        .font(.caption)
+        .foregroundStyle(status.blocks ? Color.orange : Color.secondary)
+        .padding(.horizontal, 4)
     }
 
     /// Tells the Mac which agents are coming so their pages are ready before Send.
@@ -149,7 +185,7 @@ struct ComposeBar: View {
     }
 
     private func upload(_ item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self) else { message = "That photo could not be read."; return }
+        guard let data = try? await item.loadTransferable(type: Data.self) else { message = "Couldn't read that photo"; return }
         let type = item.supportedContentTypes.first
         await upload(data, name: "Photo.\(type?.preferredFilenameExtension ?? "jpg")")
         photo = nil
@@ -157,11 +193,13 @@ struct ComposeBar: View {
     private func upload(_ url: URL) async {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { message = "That file could not be read."; return }
+        guard let data = try? Data(contentsOf: url) else { message = "Couldn't read that file"; return }
         await upload(data, name: url.lastPathComponent)
     }
     private func upload(_ data: Data, name: String) async {
-        message = "Uploading \(name)…"
+        message = "Uploading…"
+        uploading = true
+        defer { uploading = false }
         do { attachments.append((try await app.upload(data, filename: name), name)); message = nil }
         catch { message = error.localizedDescription }
     }

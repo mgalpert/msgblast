@@ -94,7 +94,7 @@ final class ConnectionTests: XCTestCase {
         mac.lockedOnConnect = true
         mac.sessions.forEach { $0.transport.drop() }
         await settle { connection.state == .macLocked }
-        XCTAssertEqual(connection.state.bannerText, "Disconnected: your Mac is locked")
+        XCTAssertEqual(connection.state.title, "Mac Locked"); XCTAssertEqual(connection.state.statusText, "Mac locked")
         XCTAssertFalse(connection.state.canSend)
 
         mac.lockedOnConnect = false
@@ -200,7 +200,19 @@ final class ConnectionTests: XCTestCase {
     }
 
     func testUnconfirmedIsNotNotConnected() {
-        XCTAssertTrue(MobileConnectionError.notConnected.errorDescription!.contains("Nothing was sent"))
-        XCTAssertFalse(MobileConnectionError.unconfirmed.errorDescription!.contains("Nothing was sent"))
+        XCTAssertTrue(MobileConnectionError.notConnected.errorDescription!.contains("Not sent"))
+        XCTAssertFalse(MobileConnectionError.unconfirmed.errorDescription!.lowercased().contains("not sent"), "An unconfirmed send may have reached the Mac")
+    }
+
+    func testBannerTitlesAreShortAndTheExplanationIsSeparate() {
+        let states: [MacConnectionState] = [.unpaired, .pairing, .connecting, .connected, .macLocked, .reconnecting(attempt: 1, retryAt: Date()), .pairingLost("Pair again."), .stopped]
+        for state in states {
+            XCTAssertLessThanOrEqual(state.title.split(separator: " ").count, 3, state.title)
+            XCTAssertLessThanOrEqual(state.statusText.count, 20, state.statusText)
+        }
+        XCTAssertEqual(MacConnectionState.reconnecting(attempt: 2, retryAt: Date()).title, "Reconnecting…")
+        XCTAssertNotNil(MacConnectionState.reconnecting(attempt: 2, retryAt: Date()).detail, "Why it may be reconnecting stays available")
+        XCTAssertEqual(MacConnectionState.pairingLost("This phone was forgotten.").detail, "This phone was forgotten.")
+        XCTAssertEqual(MacConnectionState.stopped.statusText, "Not connected")
     }
 }

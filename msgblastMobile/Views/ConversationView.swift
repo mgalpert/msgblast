@@ -10,6 +10,7 @@ struct ConversationView: View {
     @State private var recipients: [String] = []
     @State private var actionError: String?
     @State private var confirmEnd = false
+    @State private var details: IncompleteSummary?
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var conversation: RemoteConversation? { app.store.projection.conversations[conversationID] }
@@ -18,7 +19,7 @@ struct ConversationView: View {
         if let conversation {
             content(conversation)
         } else {
-            ContentUnavailableView("Conversation not on your Mac", systemImage: "questionmark.bubble")
+            ContentUnavailableView("Not on Your Mac", systemImage: "questionmark.bubble")
         }
     }
 
@@ -37,8 +38,8 @@ struct ConversationView: View {
                     ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                         bubble(turn, showsName: turn.role != .user && (index == 0 || turns[index - 1].agentID != turn.agentID)).id(turn.id)
                     }
-                    if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red) }
-                    if conversation.endedAt != nil { Text("This conversation has ended.").font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity) }
+                    if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity) }
+                    if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 4) }
                 }.padding()
             }
             .onChange(of: turns.last?.id) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } }
@@ -54,15 +55,22 @@ struct ConversationView: View {
         .onChange(of: filter) { _, value in recipients = value.map { [$0] } ?? conversation.agentIDs }
         .toolbar {
             Menu {
-                Button("End conversation", role: .destructive) { confirmEnd = true }.disabled(!conversation.canEnd || conversation.endedAt != nil)
-                if !conversation.canEnd && conversation.endedAt == nil { Text("Open it on the Mac first to end it.") }
-                Button("Request a report on the Mac") { run(.requestReport(conversationID: conversationID)) }
+                Button("End Conversation", systemImage: "xmark.circle", role: .destructive) { confirmEnd = true }.disabled(conversation.endedAt != nil)
+                Button("Request Report", systemImage: "doc.text.magnifyingglass") { run(.requestReport(conversationID: conversationID)) }
             } label: { Image(systemName: "ellipsis.circle") }
+            .accessibilityLabel("More")
         }
-        .confirmationDialog("End this conversation?", isPresented: $confirmEnd) {
-            Button("End conversation", role: .destructive) { run(.endConversation(conversationID: conversationID)) }
-            Button("Keep active", role: .cancel) {}
-        } message: { Text("Replies that arrive later are not added.") }
+        .confirmationDialog(conversation.canEnd ? "End This Conversation?" : "Can't End Yet", isPresented: $confirmEnd, titleVisibility: .visible) {
+            if conversation.canEnd {
+                Button("End Conversation", role: .destructive) { run(.endConversation(conversationID: conversationID)) }
+                Button("Keep Active", role: .cancel) {}
+            } else {
+                Button("OK", role: .cancel) {}
+            }
+        } message: {
+            Text(conversation.canEnd ? "Later replies won't be added" : "Open it on your Mac first so its history loads")
+        }
+        .sheet(item: $details) { summary in RequestDetailsSheet(summary: summary, name: presenter.name(summary.agentID)) }
     }
 
     private func bubble(_ turn: RemoteTurn, showsName: Bool) -> some View {
@@ -80,30 +88,40 @@ struct ConversationView: View {
                 .background(mine ? Color.accentColor : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 .foregroundStyle(mine ? .white : .primary)
             if !turn.attachments.isEmpty && !turn.text.isEmpty {
-                Label(turn.attachments.map(\.filename).joined(separator: ", "), systemImage: "paperclip").font(.caption).foregroundStyle(.secondary)
+                Label(turn.attachments.map(\.filename).joined(separator: ", "), systemImage: "paperclip").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             if mine {
-                let chips = presenter.chips(for: turn, agentID: filter)
-                FlowChips(chips: chips)
+                FlowChips(chips: presenter.chips(for: turn, agentID: filter))
             }
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
         .padding(mine ? .leading : .trailing, 40)
     }
 
+    /// One compact row: what is happening, and the one action that fits. Tap for the Mac's full text.
     private func incompleteRow(_ incomplete: RemoteIncompleteAttempt) -> some View {
-        let attempt = app.store.projection.attempts[incomplete.attemptID]
-        let running = attempt.map { [.attempting, .preparing].contains($0.status) } ?? false
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("\(presenter.shortName(incomplete.agentID)) did not finish a request here.").font(.subheadline.weight(.semibold))
-            if let detail = attempt?.detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
-            HStack {
-                if running { Button("Stop waiting") { run(.cancelNative(agentID: incomplete.agentID)) } }
-                else { Button("Acknowledge") { run(.acknowledgeIncomplete(agentID: incomplete.agentID, attemptID: String(incomplete.attemptID.dropFirst("wa:".count)))) } }
-            }.buttonStyle(.bordered)
+        let summary = presenter.incompleteSummary(incomplete)
+        return HStack(spacing: 10) {
+            Button { details = summary } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: summary.running ? "hourglass" : "exclamationmark.circle")
+                        .foregroundStyle(summary.running ? Color.secondary : Color.orange)
+                    Text(summary.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows request details")
+            if summary.running {
+                Button("Stop") { run(.cancelNative(agentID: incomplete.agentID)) }.buttonStyle(.bordered).controlSize(.small)
+            } else {
+                Button("Dismiss") { run(.acknowledgeIncomplete(agentID: incomplete.agentID, attemptID: String(incomplete.attemptID.dropFirst("wa:".count)))) }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
         }
-        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func run(_ action: RemoteAction) {
@@ -117,28 +135,60 @@ struct ConversationView: View {
     }
 }
 
-/// Sending on Mac → Sent → Replied / Not sent / Unconfirmed, per agent, with the Mac's reason.
+/// The Mac's full text for an unfinished request, and when it started.
+struct RequestDetailsSheet: View {
+    var summary: IncompleteSummary
+    var name: String
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    LabeledContent("Agent", value: name)
+                    LabeledContent("Status", value: summary.running ? "Running on your Mac" : "Needs review")
+                    if let started = summary.started { LabeledContent("Started", value: started.formatted(date: .abbreviated, time: .shortened)) }
+                }
+                if !summary.details.isEmpty {
+                    Section("From your Mac") { ForEach(summary.details, id: \.self) { Text($0).font(.callout) } }
+                }
+            }
+            .navigationTitle("Request Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("Done") { dismiss() } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+/// Sending → Sent → Replied / Not sent / Unconfirmed, per agent. Tap a chip for the Mac's reason.
 struct FlowChips: View {
     var chips: [StatusChip]
     var body: some View {
-        VStack(alignment: .trailing, spacing: 3) {
-            ForEach(chips) { chip in
-                HStack(spacing: 4) {
-                    Image(systemName: symbol(chip.state))
-                    Text(chips.count > 1 ? "\(chip.agentName): \(chip.state.rawValue)" : chip.state.rawValue)
-                }
-                .font(.caption2).foregroundStyle(color(chip.state))
-                .help(chip.reason ?? "")
-                if let reason = chip.reason, chip.state == .unconfirmed || chip.state == .notSent {
-                    Text(reason).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
-                }
-            }
+        // One row when it fits; several agents stack rather than clip.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { ForEach(chips) { chip in ChipView(chip: chip, showsName: chips.count > 1) } }
+            VStack(alignment: .trailing, spacing: 3) { ForEach(chips) { chip in ChipView(chip: chip, showsName: chips.count > 1) } }
         }
     }
-    private func symbol(_ state: ChipState) -> String {
-        switch state { case .sending: "clock"; case .sent: "checkmark"; case .replied: "checkmark.bubble"; case .notSent: "xmark.circle"; case .unconfirmed: "questionmark.circle" }
+}
+
+struct ChipView: View {
+    var chip: StatusChip
+    var showsName: Bool
+    @State private var showingReason = false
+    var body: some View {
+        let label = Label(chip.label(showsName: showsName), systemImage: chip.state.symbol)
+            .font(.caption2).foregroundStyle(color).lineLimit(1)
+        if let reason = chip.reason, !reason.isEmpty {
+            Button { showingReason = true } label: { label }
+                .buttonStyle(.plain)
+                .accessibilityHint("Shows why")
+                .popover(isPresented: $showingReason) { DetailPopover(text: reason) }
+        } else {
+            label
+        }
     }
-    private func color(_ state: ChipState) -> Color {
-        switch state { case .notSent: .red; case .unconfirmed: .orange; default: .secondary }
+    private var color: Color {
+        switch chip.state { case .notSent: .red; case .unconfirmed: .orange; default: .secondary }
     }
 }

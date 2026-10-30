@@ -15,18 +15,40 @@ public enum MacConnectionState: Equatable, Sendable {
     /// The Mac no longer knows this phone (forgotten or replaced). Pair again.
     case pairingLost(String)
     case stopped
-    public var bannerText: String {
+    /// The banner's title: at most three words, Title Case.
+    public var title: String {
         switch self {
-        case .unpaired: "Not paired"
+        case .unpaired, .pairingLost: "Not Paired"
         case .pairing: "Pairing…"
-        case .connecting: "Connecting to your Mac…"
+        case .connecting: "Connecting…"
         case .connected: "Connected"
-        case .macLocked: "Disconnected: your Mac is locked"
-        case .reconnecting: "Reconnecting… msgblast may not be running, or your Mac is asleep or off this network"
-        case .pairingLost(let reason): reason
+        case .macLocked: "Mac Locked"
+        case .reconnecting: "Reconnecting…"
         case .stopped: "Disconnected"
         }
     }
+    /// A short sentence-case status for inline lines and Settings ("Mac locked", "Not connected").
+    public var statusText: String {
+        switch self {
+        case .unpaired, .pairingLost: "Not paired"
+        case .pairing: "Pairing…"
+        case .connecting: "Connecting…"
+        case .connected: "Connected"
+        case .macLocked: "Mac locked"
+        case .reconnecting: "Reconnecting…"
+        case .stopped: "Not connected"
+        }
+    }
+    /// The explanation, shown on demand (the banner shows a reconnecting one after a while).
+    public var detail: String? {
+        switch self {
+        case .macLocked: "Unlock your Mac to send"
+        case .reconnecting: "Mac asleep, offline, or msgblast closed"
+        case .pairingLost(let reason): reason
+        default: nil
+        }
+    }
+    public var isReconnecting: Bool { if case .reconnecting = self { true } else { false } }
     public var canSend: Bool { self == .connected }
 }
 

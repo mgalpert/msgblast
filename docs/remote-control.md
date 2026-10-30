@@ -229,9 +229,11 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   LAN are tried at once over TLS 1.3 with the Mac's key pinned. After connecting the
   phone resumes from its stored `seq`, requests keep-awake (Settings toggle), asks
   about commands still waiting for a result, and pings every 20 s. It reconnects
-  with backoff. The banner reads Connected, Reconnecting (msgblast may not be
-  running, or the Mac is asleep or off this network), Disconnected: your Mac is
-  locked, or asks to pair again when the Mac forgot this phone.
+  with backoff. The banner title is at most three words (Connecting…,
+  Reconnecting…, Mac Locked, Disconnected, Not Paired) with "Last heard …" as its
+  caption; after 20 seconds of reconnecting the caption explains why (msgblast may
+  be closed, or the Mac is asleep or off this network). It offers Pair Again when
+  the Mac forgot this phone.
 - **Cache:** a SQLite file (system sqlite3) in the app's Application Support holds
   the projection, the last `seq`, per-device drafts, and each command with its last
   result. It is derived from the Mac, so it is excluded from iCloud and computer
@@ -243,16 +245,20 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   is shown as unconfirmed and never resent, including `unknownCommand` after a Mac
   restart; drafts never leave the phone; forms of one product (ChatGPT web, Mac app,
   Codex CLI) are separate threads.
-- **Screens:** inbox (conversations and direct chats), conversation (All or one
-  agent, status chips Sending on Mac → Sent → Replied / Not sent / Unconfirmed with
-  the Mac's reason, acknowledge, stop waiting, end or keep active), compose bar
-  (recipient chips: all = shared, one = private; the Mac's reason when a send is
-  not possible; "Will open ChatGPT on your Mac"; "Getting ready…" while
-  `prepareConversation` runs; photos and files for Messages agents), new
-  conversation grid grouped by product, Mac banner, and Settings (Mac name, key
-  fingerprint, forget, keep-awake).
-- **Compose bar after a refused prepare:** the Mac's reason stays under the
-  composer with a "Try again" button, and Send stays enabled: tapping it prepares
+- **Screens:** inbox (conversations and direct chats, an orange unconfirmed-count
+  badge, Messages-style timestamps), conversation (All or one agent, status chips
+  Sending → Sent → Replied / Not sent / Unconfirmed; tap a chip for the Mac's
+  reason; an unfinished request is one row, "Waiting for Muse…" with Stop or "Muse
+  didn't reply" with Dismiss, that opens Request Details; End Conversation or Keep
+  Active), compose bar (recipient chips: all = shared, one = private; at most one
+  status line, what blocks Send first, then "Getting ready…" while
+  `prepareConversation` runs, then the last result, then "Opens ChatGPT on your
+  Mac"; ⓘ shows the Mac's longer reason; photos and files for Messages agents), new
+  conversation list grouped by product, Mac banner, and Settings (Mac name, key
+  fingerprint, status and route, Keep Mac Awake, Forget This Mac). Every screen
+  follows one rule: a short line to glance at, the Mac's full text on demand.
+- **Compose bar after a refused prepare:** the Mac's reason stays above the
+  composer with a "Try Again" button, and Send stays enabled: tapping it prepares
   again and sends only if that succeeds; if it fails again the reason updates. The
   prepare also runs again by itself when the refused agents become ready on the
   Mac. Being disconnected, a locked Mac, or an agent that is not ready still
