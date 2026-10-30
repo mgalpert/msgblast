@@ -270,6 +270,24 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(presenter.composeBlock(canSend: false, connectionText: "Reconnecting…", agentIDs: ["muse"], conversation: nil, prepareReasons: [:])?.warns, true)
     }
 
+    func testDirectThreadsAreTitledByTheirPromptOrName() {
+        var state = ProjectionState()
+        let sunday = UUID(), gift = UUID()
+        state.conversations[sunday] = RemoteConversation(id: sunday, title: "Plan a quiet Sunday in Lisbon.", prompt: "Plan a quiet Sunday in Lisbon.", created: fixedNow, endedAt: nil,
+                                                         agentIDs: ["museApp"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow.addingTimeInterval(-60))
+        // Renamed on the Mac or the phone: the name, not the prompt.
+        state.conversations[gift] = RemoteConversation(id: gift, title: "Ana's birthday", prompt: "Gift ideas for Ana?", created: fixedNow, endedAt: nil,
+                                                       agentIDs: ["museApp"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow)
+        state.turns["p"] = RemoteTurn(id: "p", conversationID: sunday, agentID: "museApp", role: .user, origin: .followUp, text: "Plan a quiet Sunday in Lisbon.", created: fixedNow, ordinal: 0, contentHash: "h")
+        let presenter = ProjectionPresenter(state: state)
+        let rows = presenter.inbox
+        XCTAssertEqual(rows.map(\.title), ["Ana's birthday", "Plan a quiet Sunday in Lisbon."], "Two threads with one agent: newest first, each with its own title")
+        XCTAssertTrue(rows.allSatisfy(\.isDirect))
+        XCTAssertEqual(presenter.pinnedPrompt(for: sunday, selection: [])?.id, "p", "A direct thread pins its prompt too")
+        state.turns["p"]?.origin = .messagesHistory
+        XCTAssertNil(ProjectionPresenter(state: state).pinnedPrompt(for: sunday, selection: []), "An older Messages chat has no prompt to pin")
+    }
+
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
         var state = ProjectionState()
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {
@@ -423,7 +441,7 @@ final class PresenterTests: XCTestCase {
         XCTAssertNil(MobileStore(database: database).attachment(turnID: "m:1", index: 0, thumbnail: true), "Forget This Mac clears the cache")
     }
 
-    func testPinnedPromptIsTheSharedPromptOfAGroupOnly() {
+    func testPinnedPromptIsAGroupsSharedPromptOrADirectThreadsFirstMessage() {
         var state = ProjectionState()
         let group = UUID(), direct = UUID(), noPrompt = UUID(), start = Date(timeIntervalSince1970: 1_800_000_000)
         for (id, agents) in [(group, ["claude", "codexCLI"]), (direct, ["claude"]), (noPrompt, ["claude", "codexCLI"])] {
@@ -436,7 +454,7 @@ final class PresenterTests: XCTestCase {
         let presenter = ProjectionPresenter(state: state)
         XCTAssertEqual(presenter.pinnedPrompt(for: group)?.id, "g0")
         XCTAssertEqual(presenter.pinnedPrompt(for: group, agentID: "codexCLI")?.id, "g0", "An agent's view still starts with the shared prompt")
-        XCTAssertNil(presenter.pinnedPrompt(for: direct), "Never in a direct thread")
+        XCTAssertEqual(presenter.pinnedPrompt(for: direct)?.id, "d0", "A direct thread pins the prompt that started it")
         XCTAssertNil(presenter.pinnedPrompt(for: noPrompt), "No shared prompt, no pin")
         XCTAssertNil(presenter.pinnedPrompt(for: noPrompt, agentID: "claude"))
     }

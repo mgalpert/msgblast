@@ -14,8 +14,15 @@ struct InboxView: View {
         ProjectionPresenter(state: app.store.projection, commands: app.store.commands, lastOpened: app.store.lastOpened, unreadSince: app.store.unreadSince)
     }
 
-    /// The row's title as shown: a direct row is named for its agent or contact.
-    private func title(_ row: InboxRow) -> String { row.isDirect ? presenter.name(row.agentIDs[0]) : row.title }
+    /// The row's title: the conversation's own (its first prompt, or the name it was given), for
+    /// direct threads too, so several threads with one agent read differently.
+    private func title(_ row: InboxRow) -> String { row.title }
+    /// Who a direct thread is with, when its title does not already say.
+    private func with(_ row: InboxRow) -> String? {
+        guard row.isDirect else { return nil }
+        let name = presenter.shortName(row.agentIDs[0])
+        return row.title.localizedStandardContains(name) ? nil : name
+    }
 
     var body: some View {
         let all = presenter.inbox
@@ -110,6 +117,7 @@ struct InboxView: View {
                     // The accessory keeps its full size; the preview wraps beside it.
                     if row.unconfirmed > 0 { UnconfirmedBadge(count: row.unconfirmed).fixedSize() }
                     else if row.ended { Text("Ended").font(.caption).foregroundStyle(.secondary).fixedSize() }
+                    else if let with = with(row) { Text(with).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize() }
                 }
             }
             .padding(.leading, Space.inboxTextGap)

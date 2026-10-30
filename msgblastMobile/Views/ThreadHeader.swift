@@ -34,7 +34,7 @@ struct ThreadHeader: View {
             }
             .buttonStyle(.plain)
             .contextMenu {
-                if agentIDs.count > 1 && !app.unsupportedActions.contains("renameConversation") {
+                if !app.unsupportedActions.contains("renameConversation") {
                     Button("Rename", systemImage: "pencil") { open() }
                 }
             }
@@ -251,7 +251,8 @@ struct ThreadDetailsSheet: View {
         NavigationStack {
             if let conversation = app.store.projection.conversations[conversationID] {
                 List {
-                    if conversation.agentIDs.count > 1 && !app.unsupportedActions.contains("renameConversation") {
+                    // Every thread can be named, direct ones too.
+                    if !app.unsupportedActions.contains("renameConversation") {
                         Section {
                             HStack(spacing: Space.gap) {
                                 TextField("Name", text: $name)
@@ -309,7 +310,7 @@ struct ThreadDetailsSheet: View {
                         }
                     }
                 }
-                .navigationTitle(conversation.agentIDs.count == 1 ? presenter.name(conversation.agentIDs[0]) : conversation.title)
+                .navigationTitle(conversation.title)
                 .onAppear { if name.isEmpty { name = conversation.title } }
                 .sharedContentPresentation(app, opening: $opening)
                 .navigationBarTitleDisplayMode(.inline)

@@ -185,9 +185,8 @@ public struct ProjectionPresenter: Sendable {
     /// when it is the shared prompt. Nil for direct threads, for a filtered view that does
     /// not start with it, and when there is no shared prompt.
     public func pinnedPrompt(for conversation: UUID, agentID filter: String? = nil) -> RemoteTurn? {
-        guard (state.conversations[conversation]?.agentIDs.count ?? 0) > 1,
-              let first = turns(in: conversation, agentID: filter).first,
-              first.role == .user, first.origin == .sharedPrompt, !first.text.isEmpty else { return nil }
+        guard let members = state.conversations[conversation]?.agentIDs, let first = turns(in: conversation, agentID: filter).first,
+              Self.pins(first, direct: members.count == 1) else { return nil }
         return first
     }
 
@@ -355,9 +354,16 @@ public struct ProjectionPresenter: Sendable {
         typingAgents(in: conversation).filter { selection.isEmpty || selection.contains($0) }
     }
     public func pinnedPrompt(for conversation: UUID, selection: Set<String>) -> RemoteTurn? {
-        guard (state.conversations[conversation]?.agentIDs.count ?? 0) > 1, let first = turns(in: conversation, selection: selection).first,
-              first.role == .user, first.origin == .sharedPrompt, !first.text.isEmpty else { return nil }
+        guard let members = state.conversations[conversation]?.agentIDs, let first = turns(in: conversation, selection: selection).first,
+              Self.pins(first, direct: members.count == 1) else { return nil }
         return first
+    }
+
+    /// The prompt that started a thread: a group's shared prompt, or a direct thread's first
+    /// message of yours unless it was read from Messages' history (an older chat, not a prompt).
+    static func pins(_ turn: RemoteTurn, direct: Bool) -> Bool {
+        guard turn.role == .user, !turn.text.isEmpty else { return false }
+        return direct ? turn.origin != .messagesHistory : turn.origin == .sharedPrompt
     }
 
     /// "To everyone", "Only Muse", "To 2 agents".

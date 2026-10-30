@@ -188,13 +188,30 @@ enum DesignFixtures {
                 reply(&state, manyConversation, agent, "m\(index + 1)", answer, at: t7.addingTimeInterval(Double(30 + index * 20)))
             }
         }
-        if name == .conversationShort {
-            // Like a real one-question Muse thread: one message and one reply.
+        if name == .conversationShort || name == .inbox {
+            // A real Muse thread started by a prompt; direct threads are titled by it. In
+            // `conversation-short` it runs on, so the prompt scrolls away and pins.
             let t6 = now.addingTimeInterval(-6 * 60)
-            conversation(&state, shortConversation, "Quiet Sunday", ["museApp"], created: t6, last: t6.addingTimeInterval(40))
+            conversation(&state, shortConversation, "Plan a quiet Sunday in Lisbon.", ["museApp"], created: t6, last: t6.addingTimeInterval(40))
             user(&state, shortConversation, "s1", "Plan a quiet Sunday in Lisbon.", at: t6, agent: "museApp")
             attempt(&state, shortConversation, "museApp", "Plan a quiet Sunday in Lisbon.", .observed, at: t6)
             reply(&state, shortConversation, "museApp", "s2", "Coffee in Príncipe Real, the Gulbenkian garden, then sunset at Miradouro da Senhora do Monte.", at: t6.addingTimeInterval(40))
+            if name == .conversationShort {
+                for (index, (question, answer)) in [("Where for lunch?", "Taberna da Rua das Flores, if you book ahead."), ("And if it rains?", "The Gulbenkian museum and a long lunch."),
+                                                    ("Best custard tart?", "Manteigaria, warm, with cinnamon."), ("Getting around?", "Tram 28 early, then walk."),
+                                                    ("A view at dusk?", "Miradouro de Santa Luzia, before the crowds."), ("Dinner?", "Something small in Alfama, no reservation needed."),
+                                                    ("Music after?", "A fado house on Rua de São Miguel.")].enumerated() {
+                    let at = t6.addingTimeInterval(Double(60 + index * 60))
+                    user(&state, shortConversation, "s\(index)q", question, at: at, agent: "museApp")
+                    reply(&state, shortConversation, "museApp", "s\(index)a", answer, at: at.addingTimeInterval(20))
+                }
+            }
+            // A second Muse thread reads differently in the inbox.
+            let t8 = now.addingTimeInterval(-3 * 3600)
+            let gift = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000008")!
+            conversation(&state, gift, "Gift ideas for Ana", ["museApp"], created: t8, last: t8.addingTimeInterval(60))
+            user(&state, gift, "g1", "Gift ideas for Ana, who loves ceramics?", at: t8, agent: "museApp")
+            reply(&state, gift, "museApp", "g2", "A workshop voucher at a local studio.", at: t8.addingTimeInterval(60))
         }
         if name == .blocked {
             let t5 = now.addingTimeInterval(-15 * 60)
