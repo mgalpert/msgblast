@@ -63,6 +63,15 @@ enum DesignFixtures {
         if let draft = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DRAFT"], case .conversation(let id) = screen(name) {
             app.store.setDraft(draft, for: MobileStore.draftKey(conversation: id, agentID: nil))
         }
+        // Attachment bytes as if fetched from the Mac: two photos and a PDF on the group's prompt.
+        if name != .pairing && name != .pairingPaste {
+            let prompt = "\(group)-p1"
+            for (index, hue) in [0.3, 0.08].enumerated() {
+                app.store.storeAttachment(photo(hue: hue, side: 320), type: "image/jpeg", turnID: prompt, index: index, thumbnail: true)
+                app.store.storeAttachment(photo(hue: hue, side: 1600), type: "image/jpeg", turnID: prompt, index: index, thumbnail: false)
+            }
+            app.store.storeAttachment(recipePDF(), type: "application/pdf", turnID: prompt, index: 2, thumbnail: false)
+        }
         // Every row but the group has been read on this phone, so the inbox shows one unread dot.
         for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
         if name != .pairing && name != .pairingPaste {
@@ -109,18 +118,21 @@ enum DesignFixtures {
         // A group of three: every chip state across two of your messages, replies, one Mac app failure.
         let t0 = now.addingTimeInterval(-50 * 60)
         conversation(&state, group, "Best pasta shape for pesto?", ["claude", "chatgptApp", "museApp"], created: t0, last: now.addingTimeInterval(-4 * 60))
-        user(&state, group, "p1", "Best pasta shape for pesto? One answer each.", at: t0)
+        user(&state, group, "p1", "Best pasta shape for pesto? One answer each.", at: t0,
+             attachments: [RemoteAttachmentRef(id: "f1", filename: "Basil.jpg", mimeType: "image/jpeg", byteCount: 812_000),
+                           RemoteAttachmentRef(id: "f2", filename: "Pasta shelf.jpg", mimeType: "image/jpeg", byteCount: 1_240_000),
+                           RemoteAttachmentRef(id: "f3", filename: "Pesto recipe.pdf", mimeType: "application/pdf", byteCount: 96_000)])
         attempt(&state, group, "claude", "Best pasta shape for pesto? One answer each.", .observed, at: t0)
         attempt(&state, group, "chatgptApp", "Best pasta shape for pesto? One answer each.", .observed, at: t0)
         attempt(&state, group, "museApp", "Best pasta shape for pesto? One answer each.", .notSent, at: t0,
                 detail: "App control could not complete this request. Review msgblast permissions; nothing will be retried automatically.")
         reply(&state, group, "claude", "r1", "Trofie. Its twists hold pesto better than anything else, and it is the Ligurian classic.", at: t0.addingTimeInterval(40))
         reply(&state, group, "claude", "r1b", "Fusilli is a close second.", at: t0.addingTimeInterval(45))
-        reply(&state, group, "chatgptApp", "r2", "Trofie or trenette. If you can't find those, use fusilli.", at: t0.addingTimeInterval(55))
+        reply(&state, group, "chatgptApp", "r2", "Trofie or trenette. If you can't find those, use fusilli: https://en.wikipedia.org/wiki/Trofie", at: t0.addingTimeInterval(55))
         // A reply from this phone to Claude's first answer (a private send; the quote is local).
         user(&state, group, "q1", Self.replyText, at: t0.addingTimeInterval(120), agent: "claude")
         attempt(&state, group, "claude", Self.replyText, .observed, at: t0.addingTimeInterval(120))
-        reply(&state, group, "claude", "r3", "Its tight twists trap the sauce in every bite.", at: t0.addingTimeInterval(150))
+        reply(&state, group, "claude", "r3", "Its tight twists trap the sauce in every bite. Serious Eats agrees: https://www.seriouseats.com/pesto-sauce-recipe", at: t0.addingTimeInterval(150))
         let t1 = now.addingTimeInterval(-4 * 60)
         user(&state, group, "p2", "What about gnocchi?", at: t1)
         attempt(&state, group, "claude", "What about gnocchi?", .sending, at: t1)
@@ -221,6 +233,31 @@ enum DesignFixtures {
         }
         return result
     }()
+
+    /// A generated photo: a soft gradient with a few discs, no third-party art.
+    static func photo(hue: CGFloat, side: CGFloat) -> Data {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side * 0.75), format: format).jpegData(withCompressionQuality: 0.8) { context in
+            let rect = context.format.bounds
+            let colors = [UIColor(hue: hue, saturation: 0.55, brightness: 0.85, alpha: 1).cgColor, UIColor(hue: hue + 0.08, saturation: 0.7, brightness: 0.45, alpha: 1).cgColor]
+            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 1])!
+            context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: rect.maxX, y: rect.maxY), options: [])
+            for i in 0..<5 {
+                UIColor.white.withAlphaComponent(0.25).setFill()
+                let d = side * (0.12 + 0.04 * CGFloat(i))
+                UIBezierPath(ovalIn: CGRect(x: side * 0.15 * CGFloat(i + 1), y: rect.height * (0.2 + 0.1 * CGFloat(i % 3)), width: d, height: d)).fill()
+            }
+        }
+    }
+
+    /// A one-page generated PDF.
+    static func recipePDF() -> Data {
+        UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+            context.beginPage()
+            ("Pesto alla genovese\n\nBasil, pine nuts, garlic, Parmigiano, Pecorino, olive oil, salt.\nPound in a mortar; toss with trofie." as NSString)
+                .draw(in: CGRect(x: 72, y: 72, width: 468, height: 600), withAttributes: [.font: UIFont.systemFont(ofSize: 18)])
+        }
+    }
 
     private static func agent(_ id: String, _ product: AgentProduct, _ form: AgentForm, _ name: String, _ readiness: AgentReadiness, _ reasons: [AvailabilityReason]) -> AgentAvailability {
         AgentAvailability(agentID: id, product: product, form: form, displayName: name, visibleInGrid: true, selectedForSharedSend: readiness.acceptsSend,

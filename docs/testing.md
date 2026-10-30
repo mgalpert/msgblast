@@ -182,7 +182,8 @@ keyboard opens, `MSGBLAST_FIXTURE_EMOJI=1` opens the emoji keyboard,
 `MSGBLAST_FIXTURE_DICTATION=1` shows the dictation glyph even without a microphone, and
 `MSGBLAST_FIXTURE_DETAILS=1` opens a conversation's Details sheet,
 `MSGBLAST_FIXTURE_FILTER=claude,museApp` selects agents in the header, and
-`MSGBLAST_FIXTURE_REPLY=1` starts a reply. Further fixtures: `conversation-pinned` (the
+`MSGBLAST_FIXTURE_REPLY=1` starts a reply, and `MSGBLAST_FIXTURE_PHOTO=1` opens the first
+shared photo in the viewer. Further fixtures: `conversation-pinned` (the
 pinned prompt row) and `conversation-many` (six agents). Build the Debug app for a simulator, install it, then:
 
 ```sh

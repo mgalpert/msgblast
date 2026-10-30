@@ -198,6 +198,16 @@ device when the language supports it; otherwise Apple's speech service, which th
 field says once). The microphone and audio never reach the Mac; only the text you
 send does.
 
+Attachments reach the phone only on demand. The projection lists each turn's files
+by name; the conversation's Details sheet groups them as Photos, Links (found in
+message text on the phone) and Documents, and photos show inline in the thread. When
+one is shown, the phone sends `fetchAttachment` for that turn and index: the Mac reads
+only files recorded on that turn, sends images as JPEG (320 px thumbnails, 1600 px for
+the viewer) and other files whole, never more than 5 MB, refuses while locked, and
+answers `attachmentUnavailable` when the file is gone or too large. The phone caches
+what it fetched in its local database, which Forget This Mac clears; an older Mac
+answers `unsupported` and the lists show names only, with "Open on your Mac".
+
 Agent artwork is the one image the phone receives unasked. Each agent's
 `avatarRef` is `sha256:<hex>` of the picture the Mac shows for it (normalized to
 256 × 256, at most 64 KB). The phone fetches each reference once with

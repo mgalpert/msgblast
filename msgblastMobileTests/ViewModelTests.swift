@@ -3,6 +3,9 @@ import XCTest
 import msgblastRemoteProtocol
 @testable import msgblastMobileKit
 
+/// A fixed instant, so no test depends on when it runs (Friday 15 January 2027, 08:00 UTC).
+private let fixedNow = Date(timeIntervalSince1970: 1_800_000_000)
+
 final class PresenterTests: XCTestCase {
     func testInboxChipsAndThreadsFromRecordedEvents() throws {
         let state = try RecordedFixtures.reduce(["send", "resume"])
@@ -28,10 +31,10 @@ final class PresenterTests: XCTestCase {
     func testSharedPromptChipsFollowTheAgentFilter() {
         var state = ProjectionState()
         let conversation = UUID()
-        let prompt = RemoteTurn(id: "p", conversationID: conversation, agentID: nil, role: .user, origin: .sharedPrompt, text: "Hi", created: Date(), ordinal: 0, contentHash: "h")
+        let prompt = RemoteTurn(id: "p", conversationID: conversation, agentID: nil, role: .user, origin: .sharedPrompt, text: "Hi", created: fixedNow, ordinal: 0, contentHash: "h")
         state.turns[prompt.id] = prompt
         for (agent, status) in [("claude", RemoteAttemptStatus.observed), ("codexCLI", .uncertain)] {
-            state.attempts[agent] = RemoteAttempt(id: agent, conversationID: conversation, agentID: agent, text: "Hi", status: status, detail: nil, created: Date())
+            state.attempts[agent] = RemoteAttempt(id: agent, conversationID: conversation, agentID: agent, text: "Hi", status: status, detail: nil, created: fixedNow)
         }
         let presenter = ProjectionPresenter(state: state)
         XCTAssertEqual(presenter.chips(for: prompt).map(\.agentID), ["claude", "codexCLI"], "All shows every agent")
@@ -53,8 +56,8 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(ProjectionPresenter.agentStatus(app), "Opens on your Mac", "The row already names the agent")
 
         let conversation = UUID()
-        state.conversations[conversation] = RemoteConversation(id: conversation, title: "T", prompt: "P", created: Date(), endedAt: nil, agentIDs: ["chatgptApp"], canEnd: true,
-            unresolvedAttemptCount: 1, lastActivity: Date(), incompleteAttempts: [RemoteIncompleteAttempt(agentID: "chatgptApp", attemptID: "wa:1", reasonCode: .incompleteRequestBlocking)])
+        state.conversations[conversation] = RemoteConversation(id: conversation, title: "T", prompt: "P", created: fixedNow, endedAt: nil, agentIDs: ["chatgptApp"], canEnd: true,
+            unresolvedAttemptCount: 1, lastActivity: fixedNow, incompleteAttempts: [RemoteIncompleteAttempt(agentID: "chatgptApp", attemptID: "wa:1", reasonCode: .incompleteRequestBlocking)])
         XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: ["chatgptApp"], conversation: conversation), "Finish the ChatGPT request first", "Blocked inside that conversation")
         XCTAssertNil(ProjectionPresenter(state: state).disabledReason(agentIDs: ["chatgptApp"], conversation: nil), "Ready elsewhere")
         state.macLocked = true
@@ -90,7 +93,7 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(ready.composeBlock(canSend: true, connectionText: "", agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: ["": "Not ready"]), .prepareFailed("Not ready"))
 
         // Disconnection and the projection's own reasons still disable Send.
-        let offline = try XCTUnwrap(ready.composeBlock(canSend: false, connectionText: MacConnectionState.reconnecting(attempt: 1, retryAt: Date()).statusText, agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused))
+        let offline = try XCTUnwrap(ready.composeBlock(canSend: false, connectionText: MacConnectionState.reconnecting(attempt: 1, retryAt: fixedNow).statusText, agentIDs: ["chatgptApp"], conversation: nil, prepareReasons: refused))
         XCTAssertEqual(offline, .blocked("Reconnecting…")); XCTAssertFalse(offline.allowsSend)
         var busyState = state
         app.readiness = .busy(detail: "Sending")
@@ -157,7 +160,7 @@ final class PresenterTests: XCTestCase {
         for (id, name) in [("claude", "Claude"), ("museApp", "Muse"), ("codexCLI", "Codex CLI"), ("grok", "Grok"), ("dotsApp", "Dots")] {
             state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: .website, displayName: name, visibleInGrid: true, selectedForSharedSend: true,
                 capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
-                readiness: .ready, reasons: [], observedAt: Date(), source: .live)
+                readiness: .ready, reasons: [], observedAt: fixedNow, source: .live)
         }
         let presenter = ProjectionPresenter(state: state)
         let id = UUID(), three = ["claude", "museApp", "codexCLI"], five = three + ["grok", "dotsApp"]
@@ -204,6 +207,41 @@ final class PresenterTests: XCTestCase {
         XCTAssertTrue(MobileStore(database: database).replyTo.isEmpty)
     }
 
+    func testLinksAttachmentsAndSharedContent() throws {
+        let text = "See https://en.wikipedia.org/wiki/Trofie and www.seriouseats.com/pesto, not mailto:a@b.c."
+        let found = SharedContent.links(in: text)
+        XCTAssertEqual(found.map(\.url.host), ["en.wikipedia.org", "www.seriouseats.com"], "Web links only, in order")
+        XCTAssertEqual(String(text[found[0].range]), "https://en.wikipedia.org/wiki/Trofie")
+        XCTAssertTrue(SharedContent.isImage(filename: "IMG_0001.HEIC", mimeType: nil))
+        XCTAssertTrue(SharedContent.isImage(filename: "photo", mimeType: "image/png"))
+        XCTAssertFalse(SharedContent.isImage(filename: "Menu.pdf", mimeType: "application/pdf"))
+        XCTAssertFalse(SharedContent.isImage(filename: "notes", mimeType: nil))
+
+        var state = ProjectionState()
+        let conversation = UUID()
+        state.conversations[conversation] = RemoteConversation(id: conversation, title: "T", prompt: "P", created: fixedNow, endedAt: nil, agentIDs: ["claude", "cedar"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow)
+        state.turns["p"] = RemoteTurn(id: "p", conversationID: conversation, agentID: nil, role: .user, origin: .sharedPrompt, text: "Which is better?", created: fixedNow, ordinal: 0,
+                                      attachments: [RemoteAttachmentRef(id: "1", filename: "a.jpg", mimeType: "image/jpeg", byteCount: 10), RemoteAttachmentRef(id: "2", filename: "Menu.pdf", mimeType: "application/pdf", byteCount: 2000)], contentHash: "a")
+        state.turns["r"] = RemoteTurn(id: "r", conversationID: conversation, agentID: "claude", role: .assistant, origin: .agentTranscript, text: "Read https://example.com/a\nand https://example.com/a again",
+                                      created: fixedNow.addingTimeInterval(5), ordinal: 1, attachments: [RemoteAttachmentRef(id: "3", filename: "b.png", mimeType: nil, byteCount: nil)], contentHash: "b")
+        let shared = ProjectionPresenter(state: state).sharedContent(in: conversation)
+        XCTAssertEqual(shared.photos.map(\.id), ["p#0", "r#0"])
+        XCTAssertEqual(shared.documents.map(\.filename), ["Menu.pdf"]); XCTAssertNil(shared.documents[0].agentID, "Your own file")
+        XCTAssertEqual(shared.links.count, 1, "A repeated link is listed once")
+        XCTAssertEqual(shared.links.first?.host, "example.com"); XCTAssertEqual(shared.links.first?.context, "Read https://example.com/a"); XCTAssertEqual(shared.links.first?.agentID, "claude")
+    }
+
+    @MainActor func testFetchedAttachmentsAreCachedAndForgotten() throws {
+        let database = try LocalDatabase(url: nil)
+        let store = MobileStore(database: database)
+        store.storeAttachment(Data([1, 2]), type: "image/jpeg", turnID: "m:1", index: 0, thumbnail: true)
+        XCTAssertNil(store.attachment(turnID: "m:1", index: 0, thumbnail: false), "Thumbnails and full files are cached apart")
+        let cached = try XCTUnwrap(MobileStore(database: database).attachment(turnID: "m:1", index: 0, thumbnail: true))
+        XCTAssertEqual(cached.data, Data([1, 2])); XCTAssertEqual(cached.type, "image/jpeg")
+        store.forgetMac()
+        XCTAssertNil(MobileStore(database: database).attachment(turnID: "m:1", index: 0, thumbnail: true), "Forget This Mac clears the cache")
+    }
+
     func testPinnedPromptIsTheSharedPromptOfAGroupOnly() {
         var state = ProjectionState()
         let group = UUID(), direct = UUID(), noPrompt = UUID(), start = Date(timeIntervalSince1970: 1_800_000_000)
@@ -227,12 +265,12 @@ final class PresenterTests: XCTestCase {
         func agent(_ id: String, _ product: AgentProduct, _ form: AgentForm, _ name: String) -> AgentAvailability {
             AgentAvailability(agentID: id, product: product, form: form, displayName: name, visibleInGrid: true, selectedForSharedSend: true,
                               capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
-                              readiness: .ready, reasons: [], observedAt: Date(), source: .live)
+                              readiness: .ready, reasons: [], observedAt: fixedNow, source: .live)
         }
         for a in [agent("chatgpt", .chatgpt, .website, "ChatGPT"), agent("chatgptApp", .chatgpt, .macApp, "ChatGPT"), agent("claude", .claude, .website, "Claude")] { state.agents[a.agentID] = a }
         let both = UUID(), one = UUID()
-        state.conversations[both] = RemoteConversation(id: both, title: "T", prompt: "P", created: Date(), endedAt: nil, agentIDs: ["chatgpt", "chatgptApp", "claude"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: Date())
-        state.conversations[one] = RemoteConversation(id: one, title: "T", prompt: "P", created: Date(), endedAt: nil, agentIDs: ["chatgptApp", "claude"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: Date())
+        state.conversations[both] = RemoteConversation(id: both, title: "T", prompt: "P", created: fixedNow, endedAt: nil, agentIDs: ["chatgpt", "chatgptApp", "claude"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow)
+        state.conversations[one] = RemoteConversation(id: one, title: "T", prompt: "P", created: fixedNow, endedAt: nil, agentIDs: ["chatgptApp", "claude"], canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow)
         let presenter = ProjectionPresenter(state: state)
         XCTAssertEqual(presenter.senderLabel("chatgptApp", in: both), "ChatGPT · Mac app")
         XCTAssertEqual(presenter.senderLabel("chatgpt", in: both), "ChatGPT · Web")
@@ -335,7 +373,7 @@ final class MobileAppTests: XCTestCase {
         func agent(_ id: String, _ avatarRef: String?) -> AgentAvailability {
             AgentAvailability(agentID: id, product: .claude, form: .website, displayName: id, avatarRef: avatarRef, visibleInGrid: true, selectedForSharedSend: true,
                               capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
-                              readiness: .ready, reasons: [], observedAt: Date(), source: .live)
+                              readiness: .ready, reasons: [], observedAt: fixedNow, source: .live)
         }
         mac.snapshot.agents = [agent("claude", ref), agent("copy", ref), agent("liar", lying), agent("old", "provider:grok"), agent("none", nil)]
         let database = try LocalDatabase(url: nil)
@@ -363,7 +401,7 @@ final class MobileAppTests: XCTestCase {
         mac.avatars = nil
         mac.snapshot.agents = [AgentAvailability(agentID: "claude", product: .claude, form: .website, displayName: "Claude", avatarRef: "sha256:" + String(repeating: "a", count: 64),
             visibleInGrid: true, selectedForSharedSend: true, capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
-            readiness: .ready, reasons: [], observedAt: Date(), source: .live)]
+            readiness: .ready, reasons: [], observedAt: fixedNow, source: .live)]
         let app = MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
                             makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")

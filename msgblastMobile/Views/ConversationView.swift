@@ -29,6 +29,8 @@ struct ConversationView: View {
     @State private var savedSelection: Set<String>?
     @State private var focusRequest = 0
     @State private var scrollTarget: String?
+    /// A link, photo or document being opened from the thread.
+    @State private var opening: SharedOpen?
     @State private var details: IncompleteSummary?
     /// Your messages whose full chip row was revealed by a tap, as Messages reveals times.
     @State private var expanded: Set<String> = []
@@ -186,6 +188,10 @@ struct ConversationView: View {
             if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_REPLY"] != nil {
                 replyTo = presenter.turns(in: conversationID, agentID: nil).first { $0.role == .assistant && $0.agentID == "claude" }
             }
+            // `MSGBLAST_FIXTURE_PHOTO` opens the first shared photo in the viewer.
+            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_PHOTO"] != nil, let first = presenter.sharedContent(in: conversationID).photos.first {
+                opening = .photo(first)
+            }
             if let agents = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FILTER"] { selection = Set(agents.split(separator: ",").map(String.init)) }
             #endif
         }
@@ -206,6 +212,7 @@ struct ConversationView: View {
                 ThreadHeader(app: app, agentIDs: conversation.agentIDs, selection: $selection) { showingDetails = true }
             }
         }
+        .sharedContentPresentation(app, opening: $opening)
         .sheet(isPresented: $showingDetails) { ThreadDetailsSheet(app: app, conversationID: conversationID, selection: $selection, run: run) }
         .sheet(item: $details) { summary in RequestDetailsSheet(summary: summary, name: presenter.name(summary.agentID)) }
     }
@@ -257,7 +264,7 @@ struct ConversationView: View {
                 // Messages' Not Delivered mark sits at the bubble's leading edge.
                 if let notSent { ChipView(chip: notSent, showsName: false, iconOnly: true, retry: retry(turn, notSent)) }
                 MaxWidth(width: available * (mine ? Space.bubbleWidth : Space.bubbleIncoming)) {
-                    Text(text)
+                    Text(LinkedText.attributed(text, mine: mine))
                         .font(.body)
                         .textSelection(.enabled)
                         .padding(.horizontal, Space.bubbleX).padding(.vertical, Space.bubbleY)
@@ -277,8 +284,30 @@ struct ConversationView: View {
                         }
                 }
             }
-            if !turn.attachments.isEmpty && !turn.text.isEmpty {
-                Label(turn.attachments.map(\.filename).joined(separator: ", "), systemImage: "paperclip").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if !turn.attachments.isEmpty {
+                // Photos inline (up to 240 pt), other files as a row; both open on tap.
+                let files = turn.attachments.enumerated().map { index, file in
+                    SharedAttachment(turnID: turn.id, index: index, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount,
+                                     agentID: mine ? nil : turn.agentID, date: turn.created)
+                }
+                VStack(alignment: mine ? .trailing : .leading, spacing: Space.tight) {
+                    ForEach(files) { file in
+                        if file.isImage {
+                            Button { opening = .photo(file) } label: {
+                                AttachmentThumbnail(app: app, file: file)
+                                    .frame(width: Space.inlinePhoto, height: Space.inlinePhoto * 3 / 4)
+                                    .clipShape(RoundedRectangle(cornerRadius: Space.cornerBubble, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Button { opening = .document(file) } label: {
+                                Label(file.filename, systemImage: "doc").font(.caption).lineLimit(1)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+                .padding(.leading, showsAvatar ? Space.avatarThread + Space.gap : 0)
             }
             if mine {
                 let visible = presenter.visibleChips(for: turn, selection: selection, isLatest: isLatest, expanded: expanded.contains(turn.id))

@@ -2,6 +2,9 @@ import XCTest
 import msgblastRemoteProtocol
 @testable import msgblastMobileKit
 
+/// A fixed instant, so no test depends on when it runs (Friday 15 January 2027, 08:00 UTC).
+private let fixedNow = Date(timeIntervalSince1970: 1_800_000_000)
+
 /// Fixtures were recorded from the Demo Mac through scripts/record_mobile_fixtures.sh
 /// (simulated Messages and replies, simulated lock; the Mac name is neutralized).
 enum RecordedFixtures {
@@ -94,7 +97,7 @@ final class ReducerTests: XCTestCase {
     func testCommandLedger() throws {
         var records: [UUID: CommandRecord] = [:]
         let send = RemoteCommand(action: .sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Hi", attachmentIDs: []))
-        records[send.clientCommandID] = CommandLedger.record(send, at: Date())
+        records[send.clientCommandID] = CommandLedger.record(send, at: fixedNow)
         CommandLedger.apply(RemoteCommandResult(clientCommandID: send.clientCommandID, outcome: .accepted), to: &records)
         XCTAssertEqual(records[send.clientCommandID]?.status, .accepted)
         CommandLedger.connectionLost(&records)

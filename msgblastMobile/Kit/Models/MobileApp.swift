@@ -153,6 +153,49 @@ public final class MobileApp: ObservableObject {
         store.forgetMac()
     }
 
+    /// What fetching an attachment gave: its bytes, or why there are none.
+    public enum AttachmentFetch: Equatable, Sendable {
+        case data(Data, type: String)
+        /// The Mac refused (missing, too large); its short reason.
+        case unavailable(String)
+        /// This Mac cannot send attachments; open it on the Mac.
+        case unsupported
+        case notConnected
+    }
+    /// Thumbnails are asked for up to this size, full files up to the protocol's cap.
+    public static let thumbnailBytes = 200_000
+
+    /// One attachment from the cache, or from the Mac (then cached). Never recorded in the
+    /// command ledger: a fetch has no effect to confirm.
+    public func fetchAttachment(turnID: String, index: Int, thumbnail: Bool) async -> AttachmentFetch {
+        if let cached = store.attachment(turnID: turnID, index: index, thumbnail: thumbnail) { return .data(cached.data, type: cached.type) }
+        if unsupportedActions.contains("fetchAttachment") { return .unsupported }
+        let maxBytes = thumbnail ? Self.thumbnailBytes : RemoteProtocol.maximumAttachmentFetchBytes
+        guard let result = try? await request(.fetchAttachment(turnID: turnID, index: index, maxBytes: maxBytes)) else { return .notConnected }
+        if result.outcome == .applied, let data = result.attachment {
+            let type = result.attachmentType ?? "application/octet-stream"
+            store.storeAttachment(data, type: type, turnID: turnID, index: index, thumbnail: thumbnail)
+            return .data(data, type: type)
+        }
+        if result.code == .unsupported { unsupportedActions.insert("fetchAttachment"); return .unsupported }
+        return .unavailable(result.message ?? "Open it on your Mac")
+    }
+
+    /// Sends a read-only request and waits for its result without recording it.
+    private func request(_ action: RemoteAction) async throws -> RemoteCommandResult {
+        let command = RemoteCommand(action: action)
+        try connection.send(command)
+        let timeout = commandTimeout
+        return try await withCheckedThrowingContinuation { continuation in
+            waiting[command.clientCommandID] = continuation
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self, let pending = self.waiting.removeValue(forKey: command.clientCommandID) else { return }
+                pending.resume(throwing: MobileConnectionError.unconfirmed)
+            }
+        }
+    }
+
     /// Splits a file into protocol-sized chunks, uploads it, and returns the Mac's attachment id.
     public func upload(_ data: Data, filename: String) async throws -> String {
         guard data.count <= RemoteProtocol.maximumAttachmentBytes else { throw RemotePairingError(message: "Files are limited to 25 MB") }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import msgblastMobileKit
 import msgblastRemoteProtocol
 
@@ -134,8 +135,82 @@ struct ThreadDetailsSheet: View {
     @State private var name = ""
     @State private var renaming = false
     @State private var renameError: String?
+    @State private var opening: SharedOpen?
+    @State private var detent: PresentationDetent = .medium
     @Environment(\.dismiss) private var dismiss
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
+
+    /// Photos, Links and Documents shared in the conversation; each hides when empty.
+    @ViewBuilder private var sharedSections: some View {
+        let shared = presenter.sharedContent(in: conversationID)
+        if !shared.photos.isEmpty {
+            Section("Photos") {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Space.tight), count: 3), spacing: Space.tight) {
+                    ForEach(shared.photos) { file in
+                        Button { opening = .photo(file) } label: {
+                            Color.clear.aspectRatio(1, contentMode: .fit)
+                                .overlay { AttachmentThumbnail(app: app, file: file) }
+                                .clipShape(RoundedRectangle(cornerRadius: Space.tight, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: Space.gap, leading: Space.gap, bottom: Space.gap, trailing: Space.gap))
+            }
+        }
+        if !shared.links.isEmpty {
+            Section("Links") {
+                ForEach(shared.links) { link in
+                    Button { opening = .link(link.url) } label: {
+                        HStack(spacing: Space.inset) {
+                            senderAvatar(link.agentID)
+                            VStack(alignment: .leading, spacing: Space.hairline) {
+                                Text(link.host).foregroundStyle(.primary).lineLimit(1)
+                                Text(link.context).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: Space.gap)
+                            if let date = link.date { Text(ProjectionPresenter.inboxTimestamp(date)).font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                    .buttonStyle(.plain).contentShape(Rectangle())
+                }
+            }
+        }
+        if !shared.documents.isEmpty {
+            Section("Documents") {
+                ForEach(shared.documents) { file in
+                    Button { opening = .document(file) } label: {
+                        HStack(spacing: Space.inset) {
+                            Image(systemName: Self.symbol(for: file.filename)).font(.title2).foregroundStyle(.tint).frame(width: Space.avatarThread)
+                            VStack(alignment: .leading, spacing: Space.hairline) {
+                                Text(file.filename).foregroundStyle(.primary).lineLimit(1)
+                                Text([file.byteCount.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) },
+                                      file.agentID.map(presenter.shortName) ?? "You",
+                                      file.date.map { ProjectionPresenter.inboxTimestamp($0) }].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain).contentShape(Rectangle())
+                }
+            }
+        }
+    }
+
+    private func senderAvatar(_ agentID: String?) -> some View {
+        Group {
+            if let agentID { AgentAvatar(app: app, agentID: agentID, name: presenter.shortName(agentID), size: Space.avatarThread) }
+            else { Image(systemName: "link").frame(width: Space.avatarThread, height: Space.avatarThread).background(Circle().fill(Color(.tertiarySystemFill))) }
+        }
+    }
+
+    static func symbol(for filename: String) -> String {
+        let type = UTType(filenameExtension: (filename as NSString).pathExtension)
+        if type?.conforms(to: .pdf) == true { return "doc.richtext" }
+        if type?.conforms(to: .audio) == true { return "waveform" }
+        if type?.conforms(to: .movie) == true { return "film" }
+        return "doc"
+    }
 
     /// Sends the new name; the title updates when the Mac's projection does.
     private func rename(_ conversation: RemoteConversation) {
@@ -207,6 +282,7 @@ struct ThreadDetailsSheet: View {
                             .accessibilityAddTraits(selection.contains(id) ? [.isButton, .isSelected] : .isButton)
                         }
                     }
+                    sharedSections
                     Section {
                         Button("Request Report", systemImage: "doc.text.magnifyingglass") { run(.requestReport(conversationID: conversationID)); dismiss() }
                     }
@@ -218,6 +294,7 @@ struct ThreadDetailsSheet: View {
                 }
                 .navigationTitle(conversation.agentIDs.count == 1 ? presenter.name(conversation.agentIDs[0]) : conversation.title)
                 .onAppear { if name.isEmpty { name = conversation.title } }
+                .sharedContentPresentation(app, opening: $opening)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { Button("Done") { dismiss() } }
                 .confirmationDialog(conversation.canEnd ? "End This Conversation?" : "Can't End Yet", isPresented: $confirmEnd, titleVisibility: .visible) {
@@ -232,6 +309,10 @@ struct ThreadDetailsSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
+        #if DEBUG
+        // Design review: `MSGBLAST_FIXTURE_DETAILS=large` opens the sheet full height.
+        .onAppear { if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DETAILS"] == "large" { detent = .large } }
+        #endif
     }
 }

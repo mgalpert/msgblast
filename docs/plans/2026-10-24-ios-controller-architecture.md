@@ -207,6 +207,10 @@ Native messenger feel, not a remote desktop:
   running, with the last known seq so stale content is labelled.
 - **Cache:** SQLite (GRDB or SwiftData) holding the projection and last seq;
   full offline read. No offline send queue.
+- **Shared content (added in the design pass):** Details lists Photos, Links and
+  Documents. Files are fetched on demand with `fetchAttachment` (turn and index, a
+  size limit; images scaled on the Mac, 5 MB cap), only from the turn's recorded
+  attachments, cached on the phone and cleared by Forget This Mac.
 - **Avatars (added in the design pass):** `AgentAvailability.avatarRef` carries a
   content reference (`sha256:<hex>`) to the artwork the Mac shows; the phone
   fetches each one once with `fetchAvatar` over the paired channel only, caches

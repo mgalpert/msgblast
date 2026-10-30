@@ -71,6 +71,20 @@ public final class MobileStore: ObservableObject {
         scheduleSave()
     }
 
+    // MARK: Attachments fetched from the Mac (thumbnails and full files), cached on the phone.
+
+    static func fileKey(_ turnID: String, _ index: Int, thumbnail: Bool) -> String { "file:\(thumbnail ? "thumb" : "full"):\(turnID):\(index)" }
+    public func attachment(turnID: String, index: Int, thumbnail: Bool) -> (data: Data, type: String)? {
+        let key = Self.fileKey(turnID, index, thumbnail: thumbnail)
+        guard let data = database.data(key) else { return nil }
+        return (data, database.value(String.self, key + ":type") ?? "application/octet-stream")
+    }
+    public func storeAttachment(_ data: Data, type: String, turnID: String, index: Int, thumbnail: Bool) {
+        let key = Self.fileKey(turnID, index, thumbnail: thumbnail)
+        database.set(data, for: key)
+        database.setValue(type, key + ":type")
+    }
+
     // MARK: Replies
 
     public func recordReply(_ command: UUID, quoting turnID: String) {

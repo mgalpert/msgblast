@@ -89,6 +89,8 @@ enum Space {
     /// Inbox and New Conversation rows: the screen margin, 10 pt above and below (owner's grid).
     static let row = EdgeInsets(top: 10, leading: screen, bottom: 10, trailing: screen)
 
+    /// A photo shown inline under a message.
+    static let inlinePhoto: CGFloat = 240
     /// The app mark on the pairing screen.
     static let hero: CGFloat = 96
     /// Popover text width.
