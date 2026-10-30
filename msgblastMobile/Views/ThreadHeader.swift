@@ -197,7 +197,7 @@ struct ThreadDetailsSheet: View {
                 ForEach(shared.documents) { file in
                     Button { opening = .document(file) } label: {
                         HStack(spacing: Space.inset) {
-                            Image(systemName: Self.symbol(for: file.filename)).font(.title2).foregroundStyle(.tint).frame(width: Space.avatarThread)
+                            Image(systemName: Self.symbol(for: file.filename)).font(.title2).foregroundStyle(.tint).frame(width: Space.avatarList)
                             VStack(alignment: .leading, spacing: Space.hairline) {
                                 Text(file.filename).foregroundStyle(.primary).lineLimit(1)
                                 Text([file.byteCount.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) },
@@ -215,8 +215,8 @@ struct ThreadDetailsSheet: View {
 
     private func senderAvatar(_ agentID: String?) -> some View {
         Group {
-            if let agentID { AgentAvatar(app: app, agentID: agentID, name: presenter.shortName(agentID), size: Space.avatarThread) }
-            else { Image(systemName: "link").frame(width: Space.avatarThread, height: Space.avatarThread).background(Circle().fill(Color(.tertiarySystemFill))) }
+            if let agentID { AgentAvatar(app: app, agentID: agentID, name: presenter.shortName(agentID), size: Space.avatarList) }
+            else { Image(systemName: "link").frame(width: Space.avatarList, height: Space.avatarList).background(Circle().fill(Color(.tertiarySystemFill))) }
         }
     }
 

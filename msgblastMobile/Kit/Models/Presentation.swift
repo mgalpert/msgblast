@@ -77,6 +77,8 @@ public struct InboxRow: Equatable, Identifiable, Sendable {
     public var ended: Bool
     /// A reply arrived after the conversation was last opened on this phone.
     public var unread: Bool = false
+    /// The latest message is your own, so the preview is yours (Messages marks it with a reply glyph).
+    public var fromYou: Bool = false
     public var isDirect: Bool { agentIDs.count == 1 }
 }
 
@@ -131,13 +133,15 @@ public struct ProjectionPresenter: Sendable {
         return state.conversations.values.map { conversation in
             let turns = state.turns(in: conversation.id)
             let reply = turns.last { $0.role == .assistant }
+            // Your own message when it is the newest; otherwise the latest reply, or the prompt.
+            let yours = turns.last.flatMap { $0.role == .user && !$0.text.isEmpty ? $0 : nil }
             let activity = [conversation.lastActivity, turns.compactMap(\.created).max(), latestSend[conversation.id]].compactMap { $0 }.max() ?? conversation.lastActivity
             let unconfirmedCommands = commands.values.filter { $0.conversationID == conversation.id && $0.status == .unconfirmed }.count
             return InboxRow(id: conversation.id, title: conversation.title, agentNames: conversation.agentIDs.map(shortName), agentIDs: conversation.agentIDs,
                             // A direct row already shows the agent; only group previews name who replied.
-                            preview: reply.map { conversation.agentIDs.count == 1 ? $0.text : "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: activity,
+                            preview: yours?.text ?? reply.map { conversation.agentIDs.count == 1 ? $0.text : "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: activity,
                             unconfirmed: conversation.unresolvedAttemptCount + unconfirmedCommands, ended: conversation.endedAt != nil,
-                            unread: isUnread(conversation.id, latestReply: reply?.created))
+                            unread: isUnread(conversation.id, latestReply: reply?.created), fromYou: yours != nil)
         }
         .sorted { ($0.lastActivity, $1.id.uuidString) > ($1.lastActivity, $0.id.uuidString) }
     }

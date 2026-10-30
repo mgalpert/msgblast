@@ -57,6 +57,7 @@ struct ComposeBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.gap) {
+            Group {
             if let quoted = replyTo.wrappedValue, let agent = quoted.agentID {
                 // Messages-style quote bar while replying to one response.
                 HStack(spacing: Space.gap) {
@@ -79,6 +80,10 @@ struct ComposeBar: View {
                 ScrollView(.horizontal) { HStack { ForEach(attachments, id: \.id) { Label($0.name, systemImage: "paperclip").font(.caption) } } }
             }
             if let note = dictation.note { Text(note).font(.caption).foregroundStyle(.secondary) }
+            }
+            // The rows above the field keep the 16 pt screen margin (applied to each; an empty
+            // group adds no spacing); the field row is wider.
+            .padding(.horizontal, Space.screen - Space.barEdge)
             // Telegram's bar: a plain plus circle, one quiet capsule (an agent badge when one is
             // chosen, the text, then the dictation glyph inside), and a round Send outside.
             HStack(alignment: .bottom, spacing: Space.gap) {
@@ -100,20 +105,21 @@ struct ComposeBar: View {
                         // Who this goes to; tap to choose next to the keyboard.
                         Button { withAnimation(.snappy) { recipientsOpen.toggle() } } label: {
                             RecipientBadge(app: app, recipients: recipients)
-                                .frame(width: Space.control - Space.gap, height: Space.fieldHeight)
-                                .contentShape(Rectangle().inset(by: -Space.tight))
+                                .frame(height: Space.fieldHeight)
+                                .padding(.leading, Space.fieldBadgeInset)
+                                // At least 44 pt to tap.
+                                .contentShape(Rectangle().inset(by: -Space.fieldBadgeInset))
                         }
                         .buttonStyle(.plain)
-                        .padding(.leading, Space.tight)
                         .accessibilityLabel("Recipients, \(recipients.count == members.count ? "everyone" : recipients.map(presenter.shortName).formatted(.list(type: .and)))")
                         .accessibilityHint(recipientsOpen ? "Hides the agents" : "Shows the agents to choose from")
                     } else if recipients.count == 1, let agent = recipients.first {
                         AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.badge)
-                            .padding(.leading, Space.inset)
+                            .padding(.leading, Space.fieldBadgeInset)
                             .padding(.bottom, (Space.fieldHeight - Space.badge) / 2)
                     }
                     MessageField(text: $text, placeholder: placeholder, focused: $fieldFocused,
-                                 leadingInset: choosesRecipients ? Space.tight : recipients.count == 1 ? Space.gap : Space.inset)
+                                 leadingInset: choosesRecipients || recipients.count == 1 ? Space.gap : Space.fieldTextInset)
                     if !hasContent && showsDictation {
                         DictationGlyph(listening: dictation.state == .listening) { dictation.toggle(base: text) { text = $0 } }
                     }
@@ -134,7 +140,7 @@ struct ComposeBar: View {
                 .accessibilityLabel("Send")
             }
         }
-        .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
+        .padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
         .background(.bar)
         .sensoryFeedback(.success, trigger: sentCount)
         .sensoryFeedback(.error, trigger: refusedCount)

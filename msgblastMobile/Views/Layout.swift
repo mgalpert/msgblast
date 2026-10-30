@@ -35,8 +35,9 @@ struct BubbleShape: Shape {
     }
 }
 
-/// One spacing system for every screen, on the 4/8 pt grid. Views use these names, never
-/// literal numbers, so margins, gaps and corners stay consistent.
+/// One spacing system for every screen. Lists, margins and the pairing screen keep the
+/// 4/8/16 pt grid; the thread, the compose bar and the inbox rows use Messages' own measured
+/// metrics, which are tighter. Views use these names, never literal numbers.
 enum Space {
     /// Horizontal screen margin; equals the list content inset.
     static let screen: CGFloat = 16
@@ -51,16 +52,33 @@ enum Space {
     /// Consecutive bubbles from one sender, as Messages groups them; also ring widths.
     static let hairline: CGFloat = 2
 
-    /// Messages' bubble metrics: 18 pt corners, 14 × 10 padding, 2 pt within a run,
-    /// 10 pt between runs, 16 pt around a time separator.
+    /// Messages' thread metrics: 18 pt corners, 12 × 7 text inset, 2 pt within a run, 8 pt
+    /// between runs and after a status row, 12 pt above and below a time header.
     static let cornerBubble: CGFloat = 18
-    static let bubbleX: CGFloat = 14
-    static let bubbleY: CGFloat = 10
+    static let bubbleH: CGFloat = 12
+    static let bubbleV: CGFloat = 7
     static let run: CGFloat = 2
-    static let runGap: CGFloat = 10
-    static let separator: CGFloat = 16
-    /// Incoming bubbles take at most 72 percent of the width, outgoing 78.
-    static let bubbleIncoming: CGFloat = 0.72
+    static let runGap: CGFloat = 8
+    static let separator: CGFloat = 12
+    /// Bubbles take at most 75 percent of the thread's width, incoming and outgoing alike.
+    static let bubbleMax: CGFloat = 0.75
+    /// In groups the incoming avatar sits 8 pt from the screen edge with 6 pt to its bubble
+    /// (so the bubble starts at 42 pt); the red Not sent mark is 6 pt from its bubble.
+    static let threadAvatarEdge: CGFloat = 8
+    static let beside: CGFloat = 6
+    /// Sender name above its bubble, status row below it, quote block above it.
+    static let attached: CGFloat = 2
+    static let quoteGap: CGFloat = 4
+    /// Thread type: sender names and time headers 11 pt, quotes 10 pt, the pinned prompt 15 pt.
+    static let threadCaption: CGFloat = 11
+    static let quoteText: CGFloat = 10
+    static let pinnedText: CGFloat = 15
+    static let pinnedV: CGFloat = 10
+    /// The red Not sent mark beside a bubble.
+    static let notSentMark: CGFloat = 20
+    /// Typing bubble: 7 pt dots 4 pt apart, 36 pt tall.
+    static let typingDot: CGFloat = 7
+    static let typingHeight: CGFloat = 36
 
     /// Notices.
     static let corner: CGFloat = 16
@@ -68,6 +86,12 @@ enum Space {
 
     /// The compose field's minimum height; the plus and Send circles beside it match it.
     static let fieldHeight: CGFloat = 36
+    /// Compose bar: 8 pt from the screen edges and between its three elements, 6 pt above and
+    /// below; inside the field the badge starts 10 pt in and text without one 12 pt in.
+    static let barEdge: CGFloat = 8
+    static let barV: CGFloat = 6
+    static let fieldBadgeInset: CGFloat = 10
+    static let fieldTextInset: CGFloat = 12
     /// Glyphs in and beside the compose field, and the agent badge inside it.
     static let glyph: CGFloat = 20
     static let badge: CGFloat = 18
@@ -75,22 +99,28 @@ enum Space {
     static let control: CGFloat = 44
 
     static let avatarRow: CGFloat = 40
-    /// The avatar beside an incoming run.
-    static let avatarThread: CGFloat = 30
+    /// The avatar beside an incoming run in a group.
+    static let avatarThread: CGFloat = 28
+    /// Rows in the Details sheet's shared content lists.
+    static let avatarList: CGFloat = 30
     /// Header avatars: each in a group's cluster (overlapping by 8 pt), and a direct thread's one.
     static let avatarHeader: CGFloat = 36
     static let avatarHeaderDirect: CGFloat = 40
-    /// The two circles of a group avatar inside `avatarRow` (the owner's Messages spec: 26 pt).
-    static let avatarGroup: CGFloat = 26
+    /// Inbox rows, measured from Messages on iOS 26: a 50 pt avatar 20 pt from the edge, the
+    /// unread dot (10 pt) 6 pt from the edge, text 14 pt after the avatar, 12 pt above and
+    /// below; a group's two circles are 28 pt inside the 50 pt frame.
+    static let avatarInbox: CGFloat = 50
+    static let avatarGroup: CGFloat = 28
+    static let inboxAvatarEdge: CGFloat = 20
+    static let unreadDot: CGFloat = 10
+    static let unreadEdge: CGFloat = 6
+    static let inboxTextGap: CGFloat = 14
+    static let inboxRowV: CGFloat = 12
     static let avatarInline: CGFloat = 22
     static let avatarChip: CGFloat = 16
-    /// The status badge on a send-status glyph (owner's spec: 10 pt, scaled with the caption).
-    static let statusBadge: CGFloat = 10
-    /// The unread dot and the typing dots.
-    static let dot: CGFloat = 8
-    /// The inbox's unread column, present on every row so avatars align (owner's grid: 14 pt).
-    static let unreadGutter: CGFloat = 14
-    /// Inbox and New Conversation rows: the screen margin, 10 pt above and below (owner's grid).
+    /// The status badge on a send-status glyph (Messages: 9 pt, scaled with the caption).
+    static let statusBadge: CGFloat = 9
+    /// New Conversation and Details rows: the screen margin, 10 pt above and below (owner's grid).
     static let row = EdgeInsets(top: 10, leading: screen, bottom: 10, trailing: screen)
 
     /// A photo shown inline under a message.
@@ -99,6 +129,11 @@ enum Space {
     static let hero: CGFloat = 96
     /// Popover text width.
     static let popoverWidth: CGFloat = 296
-    /// Outgoing bubbles take at most this share of the conversation's width.
-    static let bubbleWidth: CGFloat = 0.78
+}
+
+extension Font {
+    /// A fixed Messages size that still follows Dynamic Type, scaled like `style`.
+    static func scaled(_ size: CGFloat, weight: UIFont.Weight = .regular, relativeTo style: UIFont.TextStyle) -> Font {
+        Font(UIFontMetrics(forTextStyle: style).scaledFont(for: .systemFont(ofSize: size, weight: weight)) as CTFont)
+    }
 }

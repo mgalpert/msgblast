@@ -10,7 +10,7 @@ struct MessageField: UIViewRepresentable {
     var placeholder: String
     @Binding var focused: Bool
     /// Text inset from the field's leading edge (less when an agent badge precedes it).
-    var leadingInset: CGFloat = Space.inset
+    var leadingInset: CGFloat = Space.fieldTextInset
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 

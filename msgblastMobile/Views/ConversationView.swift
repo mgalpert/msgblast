@@ -15,12 +15,13 @@ struct ConversationView: View {
     /// The visible part of the thread in content coordinates, below the navigation bar.
     @State private var visibleSpan: ClosedRange<CGFloat> = 0...0
     @State private var pinnedRowHeight: CGFloat = 0
-    /// The prompt's own bubble is on screen (measured as if the pinned row were not there,
+    /// The prompt's text is fully on screen (measured as if the pinned row were not there,
     /// so showing the row never hides the prompt it stands for).
     private var pinnedOnScreen: Bool {
         guard let frame = pinnedFrame else { return false }
         let top = visibleSpan.lowerBound - (showsPinnedRow ? pinnedRowHeight : 0)
-        return frame.maxY > top + Space.gap && frame.minY < visibleSpan.upperBound
+        // The whole text must be in view: a prompt half under the bar still needs the row.
+        return frame.minY >= top && frame.minY < visibleSpan.upperBound
     }
     @State private var showsPinnedRow = false
     @State private var pinnedExpanded = false
@@ -67,11 +68,13 @@ struct ConversationView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // A submitted request shows as typing below; the row is for Stop or review.
                     ForEach(conversation.incompleteAttempts.filter { ![.waiting, .submitted].contains(app.store.projection.attempts[$0.attemptID]?.status) }, id: \.attemptID) { incomplete in
-                        incompleteRow(incomplete).padding(.bottom, Space.gap)
+                        incompleteRow(incomplete).padding(.bottom, Space.gap).padding(.horizontal, Space.screen)
                     }
                     Spacer(minLength: 0)
-                // Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs are
-                // 10 pt apart, and a time separator has 16 pt above and below.
+                // Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs (and
+                // anything after a status row) are 8 pt apart, and a time header has 12 pt
+                // above and below. Rows set their own edges: bubbles sit 16 pt from the screen,
+                // a group's incoming avatar 8 pt.
                 LazyVStack(alignment: .leading, spacing: 0) {
                     let latestMine = turns.last { $0.role == .user }?.id
                     let isGroup = conversation.agentIDs.count > 1 && selection.count != 1
@@ -81,30 +84,27 @@ struct ConversationView: View {
                         let header = turn.created.flatMap { ProjectionPresenter.timeHeader($0, previous: previous?.created) }
                         let nextHeader = next?.created.flatMap { ProjectionPresenter.timeHeader($0, previous: turn.created) }
                         if let header {
-                            Text(header).font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                            Text(header).font(.scaled(Space.threadCaption, weight: .semibold, relativeTo: .caption2)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                                 .padding(.top, index == 0 ? 0 : Space.separator).padding(.bottom, Space.separator)
                         }
-                        let continues = header == nil && previous.map { Self.sameSender($0, turn) } == true
+                        let afterStatus = previous.map { $0.role == .user && !presenter.visibleChips(for: $0, selection: selection, isLatest: $0.id == latestMine, expanded: expanded.contains($0.id)).isEmpty } == true
+                        let continues = header == nil && !afterStatus && previous.map { Self.sameSender($0, turn) } == true
                         let endsRun = nextHeader != nil || next.map { Self.sameSender(turn, $0) } != true
-                        bubble(turn, firstOfRun: !continues, lastOfRun: endsRun, isGroup: isGroup, isLatest: turn.id == latestMine)
+                        bubble(turn, firstOfRun: !continues, lastOfRun: endsRun, isGroup: isGroup, isLatest: turn.id == latestMine, isPinned: turn.id == pinned?.id)
                             .padding(.top, header != nil || previous == nil ? 0 : continues ? Space.run : Space.runGap)
                             .id(turn.id)
-                            // Where the prompt sits in the thread, so the pinned row can tell when
-                            // it is on screen. Content coordinates stay valid after the row unloads.
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.threadSpace)) } action: { frame in
-                                if turn.id == pinned?.id { pinnedFrame = frame }
-                            }
                     }
                     ForEach(presenter.typingAgents(in: conversationID, selection: selection), id: \.self) { agent in
                         TypingBubble(app: app, agentID: agent, name: presenter.shortName(agent), showsAvatar: isGroup)
+                            .padding(.leading, isGroup ? Space.threadAvatarEdge : Space.screen)
                             .padding(.top, Space.runGap).id("typing-\(agent)")
                     }
-                    if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap) }
+                    if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap).padding(.horizontal, Space.screen) }
                     if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section) }
                 }
                 Color.clear.frame(height: 0).id(Self.bottomID)
                 }
-                .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
+                .padding(.vertical, Space.gap)
                 .frame(minHeight: visibleHeight, alignment: .bottom)
                 .coordinateSpace(.named(Self.threadSpace))
             }
@@ -223,19 +223,22 @@ struct ConversationView: View {
 
     static func sameSender(_ a: RemoteTurn, _ b: RemoteTurn) -> Bool { a.role == b.role && (a.role == .user || a.agentID == b.agentID) }
 
-    /// One bubble in Messages' layout. In a group, replies are indented past a 30 pt avatar that
+    /// One bubble in Messages' layout. In a group, replies are indented past a 28 pt avatar that
     /// sits beside the last bubble of the run, and the run starts with the sender's name.
-    private func bubble(_ turn: RemoteTurn, firstOfRun: Bool, lastOfRun: Bool, isGroup: Bool, isLatest: Bool) -> some View {
+    private func bubble(_ turn: RemoteTurn, firstOfRun: Bool, lastOfRun: Bool, isGroup: Bool, isLatest: Bool, isPinned: Bool = false) -> some View {
         let mine = turn.role == .user
         let text = turn.text.isEmpty ? turn.attachments.map(\.filename).joined(separator: ", ") : turn.text
         let all = mine ? presenter.chips(for: turn, selection: selection) : []
         let notSent = all.first { $0.state == .notSent }
         let showsAvatar = isGroup && !mine
-        let available = width - 2 * Space.screen
-        return VStack(alignment: mine ? .trailing : .leading, spacing: Space.tight) {
+        let maxBubble = width * Space.bubbleMax
+        let avatarColumn = showsAvatar ? Space.avatarThread + Space.beside : 0
+        return VStack(alignment: mine ? .trailing : .leading, spacing: 0) {
             if showsAvatar && firstOfRun, let agent = turn.agentID {
-                Text(presenter.senderLabel(agent, in: conversationID)).font(.caption).foregroundStyle(.secondary)
-                    .padding(.leading, Space.avatarThread + Space.gap + Space.bubbleX)
+                // Aligned with the bubble's text, 2 pt above the bubble.
+                Text(presenter.senderLabel(agent, in: conversationID)).font(.scaled(Space.threadCaption, weight: .medium, relativeTo: .caption2)).foregroundStyle(.secondary)
+                    .padding(.leading, avatarColumn + Space.bubbleH)
+                    .padding(.bottom, Space.attached)
             }
             if mine, let quoted = replyPresenter.quotedTurn(for: turn), let agent = quoted.agentID {
                 // The response this message replied to, as Messages shows a quote.
@@ -243,18 +246,19 @@ struct ConversationView: View {
                     HStack(spacing: Space.gap) {
                         RoundedRectangle(cornerRadius: 1).fill(.tint).frame(width: Space.hairline)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(presenter.shortName(agent)).font(.caption.weight(.semibold))
-                            Text(quoted.text.components(separatedBy: .newlines).first ?? "").font(.caption).lineLimit(1)
+                            Text(presenter.shortName(agent)).font(.scaled(Space.quoteText, weight: .semibold, relativeTo: .caption2))
+                            Text(quoted.text.components(separatedBy: .newlines).first ?? "").font(.scaled(Space.quoteText, relativeTo: .caption2)).lineLimit(1)
                         }
                         .foregroundStyle(.secondary)
                     }
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: available * Space.bubbleWidth, alignment: .leading)
+                    .frame(maxWidth: maxBubble, alignment: .leading)
                 }
                 .buttonStyle(.plain)
+                .padding(.bottom, Space.quoteGap)
                 .accessibilityLabel("Reply to \(presenter.shortName(agent)): \(quoted.text)")
             }
-            HStack(alignment: mine ? .center : .bottom, spacing: Space.gap) {
+            HStack(alignment: mine ? .center : .bottom, spacing: Space.beside) {
                 if showsAvatar {
                     if lastOfRun, let agent = turn.agentID {
                         AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarThread)
@@ -269,11 +273,17 @@ struct ConversationView: View {
                     Text(text).font(.largeTitle).textSelection(.enabled)
                         .contextMenu { emojiMenu(turn: turn, mine: mine, text: text) }
                 } else {
-                MaxWidth(width: available * (mine ? Space.bubbleWidth : Space.bubbleIncoming)) {
+                MaxWidth(width: maxBubble) {
                     Text(LinkedText.attributed(text, mine: mine))
+                        // Where the prompt's text sits in the thread (not its photos), so the
+                        // pinned row shows while the text is away. Content coordinates stay valid
+                        // after the row unloads.
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.threadSpace)) } action: { frame in
+                            if isPinned { pinnedFrame = frame }
+                        }
                         .font(.body)
                         .textSelection(.enabled)
-                        .padding(.horizontal, Space.bubbleX).padding(.vertical, Space.bubbleY)
+                        .padding(.horizontal, Space.bubbleH).padding(.vertical, Space.bubbleV)
                         .background(BubbleShape(mine: mine, tail: lastOfRun).fill(mine ? Color("Bubble") : Color(.secondarySystemBackground)))
                         .foregroundStyle(mine ? .white : .primary)
                         .contentShape(.contextMenuPreview, BubbleShape(mine: mine, tail: false))
@@ -321,16 +331,20 @@ struct ConversationView: View {
                         }
                     }
                 }
-                .padding(.leading, showsAvatar ? Space.avatarThread + Space.gap : 0)
+                .padding(.leading, avatarColumn)
+                .padding(.top, Space.tight)
             }
             if mine {
                 let visible = presenter.visibleChips(for: turn, selection: selection, isLatest: isLatest, expanded: expanded.contains(turn.id))
                 if !visible.isEmpty {
                     StatusGlyphRow(app: app, chips: visible, retry: { chip in chip.state == .notSent ? retry(turn, chip) : nil })
+                        .padding(.top, Space.attached)
                 }
             }
         }
         .padding(.top, turn.reactions?.isEmpty == false ? Space.inset + Space.tight : 0)
+        .padding(.leading, showsAvatar ? Space.threadAvatarEdge : Space.screen)
+        .padding(.trailing, Space.screen)
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
     }
 
@@ -394,8 +408,8 @@ struct PinnedPromptRow: View {
         HStack(alignment: .top, spacing: Space.gap) {
             Image(systemName: "pin.fill").font(.footnote).foregroundStyle(.tint).padding(.top, Space.hairline)
             VStack(alignment: .leading, spacing: Space.hairline) {
-                Text("Prompt").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(text).font(.subheadline).lineLimit(expanded ? nil : 2)
+                Text("Prompt").font(.scaled(Space.threadCaption, weight: .semibold, relativeTo: .caption2)).foregroundStyle(.secondary)
+                Text(text).font(.scaled(Space.pinnedText, relativeTo: .subheadline)).lineLimit(expanded ? nil : 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -403,7 +417,7 @@ struct PinnedPromptRow: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityHint(expanded ? "Shows two lines" : "Shows the whole prompt")
         }
-        .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
+        .padding(.horizontal, Space.screen).padding(.vertical, Space.pinnedV)
         .background(.bar)
     }
 }
@@ -468,9 +482,10 @@ struct StatusGlyphRow: View {
     var chips: [StatusChip]
     var retry: (StatusChip) -> (() -> Void)? = { _ in nil }
     var body: some View {
-        HStack(spacing: Space.gap) {
+        HStack(spacing: Space.attached) {
             ForEach(chips) { chip in StatusGlyph(app: app, chip: chip, retry: retry(chip)) }
         }
+        .frame(minHeight: Space.avatarChip)
         .fixedSize()
         // Scales with the caption, capped so the row always stays on one line.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
@@ -545,7 +560,7 @@ struct ChipView: View {
     @State private var showingReason = false
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        let label = content.font(iconOnly ? .title3 : .caption2).foregroundStyle(color)
+        let label = content.font(iconOnly ? .system(size: Space.notSentMark) : .caption2).foregroundStyle(color)
         if chip.reason?.isEmpty == false || retry != nil {
             Button { showingReason = true } label: { label }
                 .buttonStyle(.plain)
@@ -591,20 +606,21 @@ struct TypingBubble: View {
     @ObservedObject var app: MobileApp
     var agentID: String
     var name: String
-    /// Groups show the 30 pt avatar beside it; direct threads show none.
+    /// Groups show the 28 pt avatar beside it; direct threads show none.
     var showsAvatar = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        HStack(alignment: .bottom, spacing: Space.gap) {
+        HStack(alignment: .bottom, spacing: Space.beside) {
             if showsAvatar { AgentAvatar(app: app, agentID: agentID, name: name, size: Space.avatarThread) }
             TimelineView(.animation(minimumInterval: 0.15, paused: reduceMotion)) { timeline in
                 let phase = reduceMotion ? -1 : Int(timeline.date.timeIntervalSinceReferenceDate / 0.3) % 3
                 HStack(spacing: Space.tight) {
                     ForEach(0..<3, id: \.self) { dot in
-                        Circle().fill(Color.secondary).frame(width: Space.dot, height: Space.dot).opacity(phase == dot ? 0.9 : 0.35)
+                        Circle().fill(Color.secondary).frame(width: Space.typingDot, height: Space.typingDot).opacity(phase == dot ? 0.9 : 0.35)
                     }
                 }
-                .padding(.horizontal, Space.bubbleX).padding(.vertical, Space.bubbleY + Space.tight)
+                .padding(.horizontal, Space.bubbleH)
+                .frame(height: Space.typingHeight)
                 .background(BubbleShape(mine: false, tail: true).fill(Color(.secondarySystemBackground)))
             }
         }

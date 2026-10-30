@@ -300,7 +300,9 @@ final class PresenterTests: XCTestCase {
             XCTAssertEqual(reloaded.turns["t\(index)"]?.text.unicodeScalars.map(\.value), text.unicodeScalars.map(\.value), "No normalization or escaping")
         }
         XCTAssertEqual(reloaded.conversations[conversation]?.title, "👩‍👩‍👧‍👦")
-        XCTAssertEqual(ProjectionPresenter(state: reloaded).inbox.first?.preview, samples[4], "The latest reply previews exactly")
+        let row = ProjectionPresenter(state: reloaded).inbox.first
+        XCTAssertEqual(row?.preview, samples[5], "The latest message, your own here, previews exactly")
+        XCTAssertEqual(row?.fromYou, true, "Marked as yours, as Messages marks your replies")
         XCTAssertTrue(SharedContent.isEmojiOnly("👩‍👩‍👧‍👦"), "A ZWJ family is one emoji")
         XCTAssertTrue(SharedContent.isEmojiOnly("🇵🇹🇮🇹"))
         XCTAssertTrue(SharedContent.isEmojiOnly("❤️❤️❤️"))
