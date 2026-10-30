@@ -12,26 +12,42 @@ struct MaxWidth: Layout {
     }
 }
 
-/// Messages' bubble: an 18 pt rounded rectangle, with a tail at the bottom outer corner on
-/// the last bubble of a run (bottom right for yours, bottom left for replies).
+/// Messages' bubble: an 18 pt continuous rounded rectangle; the last bubble of a run carries
+/// the curved hook at its bottom outer corner (bottom right for yours, bottom left for
+/// replies). The body and hook are one path, so the silhouette is continuous: the outer edge
+/// runs straight down, curls out about 5 pt to a softly rounded tip on the baseline, and
+/// sweeps back up and in to rejoin the bottom edge, with no straight sides or sharp vertex.
 struct BubbleShape: Shape {
     var mine: Bool
     var tail: Bool
     func path(in rect: CGRect) -> Path {
-        let path = Path(roundedRect: rect, cornerRadius: min(Space.cornerBubble, rect.height / 2), style: .continuous)
-        guard tail else { return path }
-        // Drawn for an outgoing bubble, then mirrored for a reply.
-        var wedge = Path()
-        let x = rect.maxX, y = rect.maxY
-        wedge.move(to: CGPoint(x: x - 18, y: y))
-        wedge.addLine(to: CGPoint(x: x - 4, y: y))
-        wedge.addQuadCurve(to: CGPoint(x: x + 5, y: y + 0.5), control: CGPoint(x: x + 1, y: y + 1))
-        wedge.addQuadCurve(to: CGPoint(x: x, y: y - 12), control: CGPoint(x: x - 1, y: y - 3))
-        wedge.addLine(to: CGPoint(x: x - 18, y: y - 12))
-        wedge.closeSubpath()
-        if !mine { wedge = wedge.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: rect.minX + rect.maxX, ty: 0)) }
-        // A union, not an added subpath: opposite windings would punch a hole at the corner.
-        return path.union(wedge)
+        let r = min(Space.cornerBubble, rect.height / 2)
+        guard tail else { return Path(roundedRect: rect, cornerRadius: r, style: .continuous) }
+        // Drawn for an outgoing bubble, then mirrored for a reply. The hook scales with the
+        // corner, so a one-line bubble keeps Messages' proportions.
+        let k = r / Space.cornerBubble
+        let x0 = rect.minX, y0 = rect.minY, x1 = rect.maxX, y1 = rect.maxY
+        var p = Path()
+        p.move(to: CGPoint(x: x0 + r, y: y0))
+        p.addLine(to: CGPoint(x: x1 - r, y: y0))
+        p.addArc(tangent1End: CGPoint(x: x1, y: y0), tangent2End: CGPoint(x: x1, y: y0 + r), radius: r)
+        // The outer edge continues straight down, then curls out to the tip.
+        p.addLine(to: CGPoint(x: x1, y: max(y0 + r, y1 - 14 * k)))
+        p.addCurve(to: CGPoint(x: x1 + 5 * k, y: y1 - 0.3 * k),
+                   control1: CGPoint(x: x1, y: y1 - 5 * k), control2: CGPoint(x: x1 + 1.8 * k, y: y1 - 1.2 * k))
+        // A softly rounded tip on the baseline.
+        p.addQuadCurve(to: CGPoint(x: x1 + 3.4 * k, y: y1 + 0.6 * k), control: CGPoint(x: x1 + 6.4 * k, y: y1 + 0.6 * k))
+        // Back under the bubble and up into a shallow notch, then down into the bottom edge.
+        p.addCurve(to: CGPoint(x: x1 - 6.5 * k, y: y1 - 3.4 * k),
+                   control1: CGPoint(x: x1 + 0.4 * k, y: y1 + 0.6 * k), control2: CGPoint(x: x1 - 3 * k, y: y1 - 1.4 * k))
+        p.addCurve(to: CGPoint(x: x1 - 17 * k, y: y1),
+                   control1: CGPoint(x: x1 - 9.5 * k, y: y1 - 5 * k), control2: CGPoint(x: x1 - 13 * k, y: y1))
+        p.addLine(to: CGPoint(x: x0 + r, y: y1))
+        p.addArc(tangent1End: CGPoint(x: x0, y: y1), tangent2End: CGPoint(x: x0, y: y1 - r), radius: r)
+        p.addLine(to: CGPoint(x: x0, y: y0 + r))
+        p.addArc(tangent1End: CGPoint(x: x0, y: y0), tangent2End: CGPoint(x: x0 + r, y: y0), radius: r)
+        p.closeSubpath()
+        return mine ? p : p.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: rect.minX + rect.maxX, ty: 0))
     }
 }
 
