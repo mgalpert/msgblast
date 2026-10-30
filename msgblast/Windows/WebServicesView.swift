@@ -128,6 +128,16 @@ struct AgentsWorkspaceView: View {
             if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = []; requestedAgents = [] }
         }
         .onChange(of: showingComparison) { _, value in if value { editingAgents = false } }
+        #if DEBUG
+        .onChange(of: model.designRequest) { _, request in
+            guard let request, request.comparisonID == (windowComparisonID ?? (showingComparison ? web.comparisonID : nil)) else { return }
+            switch request {
+            case .showDetails: showingDetails = true
+            case .hideDetails: showingDetails = false
+            case .send: send()
+            }
+        }
+        #endif
         .toolbar {
             if showingComparison {
                 ToolbarItem(placement: .primaryAction) {
@@ -149,14 +159,6 @@ struct AgentsWorkspaceView: View {
                         .disabled(sending)
                 }
             }
-            if windowComparisonID == nil && !model.state.comparisons.isEmpty { ToolbarItem(placement: .navigation) {
-                Button {
-                    model.requestNewBlast()
-                } label: {
-                    Label("New Blast", systemImage: "square.and.pencil").labelStyle(.iconOnly)
-                }
-                .help("New Blast").accessibilityLabel("New Blast").disabled(!model.canStartNewBlast)
-            } }
         }
     }
 

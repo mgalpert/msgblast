@@ -22,9 +22,15 @@ struct msgblastApp: App {
         }
         return NSSize(width: 1600, height: 1100)
     }
+    private var launchWindowSize: NSSize {
+        #if DEBUG
+        if let size = DesignFixture.windowSize() { return size }
+        #endif
+        return preferredWindowSize
+    }
     private var initialWindowSize: NSSize {
-        let screen = NSScreen.main?.visibleFrame.size ?? preferredWindowSize
-        return NSSize(width: min(preferredWindowSize.width, screen.width), height: min(preferredWindowSize.height, screen.height))
+        let screen = NSScreen.main?.visibleFrame.size ?? launchWindowSize
+        return NSSize(width: min(launchWindowSize.width, screen.width), height: min(launchWindowSize.height, screen.height))
     }
     var body: some Scene {
         WindowGroup(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "msgblast", id: "main") {
@@ -42,7 +48,7 @@ struct msgblastApp: App {
                         startup.shortcut.onTrigger = startNewBlast
                     }
                 }
-            }.background(InitialWindowFrame(size: preferredWindowSize))
+            }.background(InitialWindowFrame(size: launchWindowSize))
         }.defaultSize(width: initialWindowSize.width, height: initialWindowSize.height).windowToolbarStyle(.unified)
         .commands {
             BlastCommands()
@@ -203,6 +209,9 @@ private final class AppStartup: ObservableObject {
             Task {
                 await model.onboarding.resumePermissionsAtLaunch()
             }
+            #if DEBUG
+            if DesignFixture.isRequested { Task { await DesignFixture.run(model: model) } }
+            #endif
         }
     }
 }
