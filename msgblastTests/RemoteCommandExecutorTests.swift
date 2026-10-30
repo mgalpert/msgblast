@@ -13,6 +13,7 @@ final class FakeRemoteHost: RemoteCommandHost {
     var sends: [RemoteSendPlan] = []
     var running = 0, maximumConcurrent = 0
     var sendDelay: Duration = .zero
+    var onSendStarted: (() -> Void)?
     var staged: [String: (Data, String)] = [:]
     var keepAwake: [Bool] = []
     var ended: [UUID] = []
@@ -23,6 +24,7 @@ final class FakeRemoteHost: RemoteCommandHost {
         running += 1; maximumConcurrent = max(maximumConcurrent, running)
         defer { running -= 1 }
         sends.append(plan)
+        onSendStarted?()
         if sendDelay > .zero { try? await Task.sleep(for: sendDelay) }
         let id = plan.conversationID ?? UUID()
         return .applied(conversationID: id, statuses: Dictionary(uniqueKeysWithValues: plan.agentIDs.map { ($0, .observed) }))
@@ -90,15 +92,18 @@ final class RemoteCommandExecutorTests: XCTestCase {
         XCTAssertEqual(host.sends.count, 1, "A replay returns the stored result")
 
         // A replay while the first copy is still running reports progress, not a second send.
-        host.sendDelay = .milliseconds(80)
         let slow = RemoteCommand(action: .createConversation(text: "Slow", agentIDs: ["claude"], attachmentIDs: []))
         var replies: [RemoteCommandResult] = []
-        executor.submit(slow) { replies.append($0) }
-        try? await Task.sleep(for: .milliseconds(10))
-        executor.submit(slow) { replies.append($0) }
-        for _ in 0..<50 where replies.count < 2 { try? await Task.sleep(for: .milliseconds(10)) }
+        // Replay from inside the host send, before it can return, regardless of scheduling.
+        host.onSendStarted = {
+            host.onSendStarted = nil
+            executor.submit(slow) { replies.append($0) }
+        }
+        let completed = await executor.execute(slow)
+        replies.append(completed)
         XCTAssertEqual(replies.map(\.outcome), [.accepted, .applied])
-        XCTAssertTrue(replies[0].replayed)
+        XCTAssertEqual(replies.first?.replayed, true)
+        XCTAssertFalse(completed.replayed)
         XCTAssertEqual(host.sends.count, 2)
     }
 
