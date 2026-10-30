@@ -6,12 +6,12 @@ import msgblastMobileKit
 import msgblastRemoteProtocol
 
 /// Debug-only screens for design review without pairing or a network. Launch with
-/// `MSGBLAST_FIXTURE` set to inbox, conversation, typing, incomplete, blocked, new, settings,
+/// `MSGBLAST_FIXTURE` set to inbox, conversation, conversation-short, typing, incomplete, blocked, new, settings,
 /// reconnecting, locked, pairing or pairing-paste (and optionally `MSGBLAST_FIXTURE_CONVERSATION=<uuid>`
 /// and `MSGBLAST_FIXTURE_DRAFT=<text>` to pre-fill the composer).
 /// Everything here is simulated; nothing is read from or sent to a Mac.
 enum DesignFixtures {
-    enum Name: String, CaseIterable { case inbox, conversation, typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
+    enum Name: String, CaseIterable { case inbox, conversation, conversationShort = "conversation-short", typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
 
     static var current: Name? { ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE"].flatMap(Name.init(rawValue:)) }
 
@@ -21,6 +21,7 @@ enum DesignFixtures {
     static let cedarDirect = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000003")!
     static let unfinished = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000004")!
     static let blockedConversation = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000005")!
+    static let shortConversation = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000006")!
     static let cedar = "messages:6F1C2B4A-0000-4000-8000-0000000000C0"
 
     /// The screen the fixture opens on.
@@ -28,6 +29,7 @@ enum DesignFixtures {
         let requested = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_CONVERSATION"].flatMap(UUID.init(uuidString:))
         switch name {
         case .conversation, .typing: return .conversation(requested ?? group)
+        case .conversationShort: return .conversation(requested ?? shortConversation)
         case .incomplete: return .conversation(requested ?? unfinished)
         case .blocked: return .conversation(requested ?? blockedConversation)
         case .new: return .newConversation
@@ -134,6 +136,14 @@ enum DesignFixtures {
                 text: "Plan two days in Lisbon.", status: .attempting, detail: "Outgoing message observed in the app. Waiting for its reply.", created: t4)
             state.attempts["wa:11111111-0000-4000-8000-000000000002"] = RemoteAttempt(id: "wa:11111111-0000-4000-8000-000000000002", conversationID: unfinished, agentID: "chatgptApp",
                 text: "Plan two days in Lisbon.", status: .uncertain, detail: "ChatGPT stopped answering before its reply finished.", created: t4)
+        }
+        if name == .conversationShort {
+            // Like a real one-question Muse thread: one message and one reply.
+            let t6 = now.addingTimeInterval(-6 * 60)
+            conversation(&state, shortConversation, "Quiet Sunday", ["museApp"], created: t6, last: t6.addingTimeInterval(40))
+            user(&state, shortConversation, "s1", "Plan a quiet Sunday in Lisbon.", at: t6, agent: "museApp")
+            attempt(&state, shortConversation, "museApp", "Plan a quiet Sunday in Lisbon.", .observed, at: t6)
+            reply(&state, shortConversation, "museApp", "s2", "Coffee in Príncipe Real, the Gulbenkian garden, then sunset at Miradouro da Senhora do Monte.", at: t6.addingTimeInterval(40))
         }
         if name == .blocked {
             let t5 = now.addingTimeInterval(-15 * 60)

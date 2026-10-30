@@ -16,6 +16,11 @@ struct ConversationView: View {
     /// The scroll view's width, for the 78 percent bubble limit.
     /// Starts at a phone's width until the first layout measures it.
     @State private var width: CGFloat = 390
+    /// The visible height between the navigation bar and the compose bar.
+    @State private var visibleHeight: CGFloat = 0
+    /// Within 40 pt of the newest message; only then does the thread follow new content.
+    @State private var atBottom = true
+    @State private var openedAtBottom = false
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var conversation: RemoteConversation? { app.store.projection.conversations[conversationID] }
@@ -32,9 +37,9 @@ struct ConversationView: View {
         let turns = presenter.turns(in: conversationID, agentID: filter)
         return ScrollViewReader { proxy in
             ScrollView {
-                // Spacing is explicit per row: 2 pt within one sender's run, 8 pt between
-                // senders, a time header 24 pt above and 8 pt below (Messages' rhythm).
-                LazyVStack(alignment: .leading, spacing: 0) {
+                // Messages anchors the thread to the bottom: a short thread sits just above the
+                // compose bar (the spacer takes the slack), a long one scrolls as usual.
+                VStack(alignment: .leading, spacing: 0) {
                     if conversation.agentIDs.count > 1 {
                         Picker("Show", selection: $filter) {
                             Text("All").tag(String?.none)
@@ -47,6 +52,10 @@ struct ConversationView: View {
                     ForEach(conversation.incompleteAttempts.filter { ![.waiting, .submitted].contains(app.store.projection.attempts[$0.attemptID]?.status) }, id: \.attemptID) { incomplete in
                         incompleteRow(incomplete).padding(.bottom, Space.gap)
                     }
+                    Spacer(minLength: 0)
+                // Spacing is explicit per row: 2 pt within one sender's run, 8 pt between
+                // senders, a time header 24 pt above and 8 pt below (Messages' rhythm).
+                LazyVStack(alignment: .leading, spacing: 0) {
                     let latestMine = turns.last { $0.role == .user }?.id
                     ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
                         let previous = index == 0 ? nil : turns[index - 1]
@@ -66,19 +75,45 @@ struct ConversationView: View {
                     if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap) }
                     if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section) }
                 }
+                Color.clear.frame(height: 0).id(Self.bottomID)
+                }
                 .padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
+                .frame(minHeight: visibleHeight, alignment: .bottom)
             }
             .scrollDismissesKeyboard(.interactively)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            .onChange(of: turns.last?.id) { _, id in
-                if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+            .onScrollGeometryChange(for: ThreadGeometry.self) { geometry in
+                // `containerSize` is the area between the bars; `visibleRect` spans the insets too,
+                // so the distance to the end counts the bottom inset. The navigation bar's inset
+                // arrives last, so the first settled pass is the one that decides the opening.
+                ThreadGeometry(visible: geometry.containerSize.height, content: geometry.contentSize.height,
+                               distanceFromBottom: geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY,
+                               settled: geometry.contentInsets.top > 0)
+            } action: { old, new in
+                visibleHeight = max(0, new.visible)
+                guard new.settled else { return }
+                // Open on the newest message: a short thread is already bottom-aligned by the
+                // spacer; a long one scrolls to its end once.
+                if !openedAtBottom {
+                    openedAtBottom = true
+                    atBottom = true
+                    if new.content > new.visible + 1 { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                    return
+                }
+                // The keyboard or the compose bar changed the visible height: keep the newest
+                // message in view, but only if the reader was already there.
+                if old.visible != new.visible, atBottom {
+                    withAnimation(.snappy) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                    return
+                }
+                atBottom = new.distanceFromBottom <= 40
+            }
+            .onChange(of: turns.last?.id) { _, _ in
+                if atBottom { withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }
                 app.store.markOpened(conversationID)
             }
-            // Open on the latest message, as Messages does.
-            .task {
-                // After the first layout, so lazily sized rows are measured.
-                try? await Task.sleep(for: .milliseconds(100))
-                if let id = turns.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            .onChange(of: presenter.typingAgents(in: conversationID, agentID: filter)) { _, _ in
+                if atBottom { withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -110,6 +145,8 @@ struct ConversationView: View {
         }
         .sheet(item: $details) { summary in RequestDetailsSheet(summary: summary, name: presenter.name(summary.agentID)) }
     }
+
+    private static let bottomID = "thread-bottom"
 
     private func bubble(_ turn: RemoteTurn, showsName: Bool, isLatest: Bool) -> some View {
         let mine = turn.role == .user
@@ -198,6 +235,14 @@ struct ConversationView: View {
             } catch { actionError = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription }
         }
     }
+}
+
+/// What the conversation tracks about its scroll view to stay anchored at the bottom.
+struct ThreadGeometry: Equatable {
+    var visible: CGFloat
+    var content: CGFloat
+    var distanceFromBottom: CGFloat
+    var settled: Bool
 }
 
 /// The Mac's full text for an unfinished request, and when it started.

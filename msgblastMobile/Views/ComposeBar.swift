@@ -25,6 +25,7 @@ struct ComposeBar: View {
     @State private var sentCount = 0
     @State private var refusedCount = 0
     @Environment(\.dynamicTypeSize) private var typeSize
+    @FocusState private var fieldFocused: Bool
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var members: [String] { conversationID.flatMap { app.store.projection.conversations[$0]?.agentIDs } ?? [] }
@@ -80,6 +81,7 @@ struct ComposeBar: View {
                 // with Send inside its trailing edge once there is something to send.
                 HStack(alignment: .bottom, spacing: Space.tight) {
                     TextField(placeholder, text: $text, axis: .vertical)
+                        .focused($fieldFocused)
                         .lineLimit(1...5)
                         .padding(.horizontal, Space.inset).padding(.vertical, Space.gap)
                     if hasContent {
@@ -105,7 +107,13 @@ struct ComposeBar: View {
         .background(.bar)
         .sensoryFeedback(.success, trigger: sentCount)
         .sensoryFeedback(.error, trigger: refusedCount)
-        .onAppear { text = app.store.draft(draftKey); prepare() }
+        .onAppear {
+            text = app.store.draft(draftKey); prepare()
+            #if DEBUG
+            // Design review: `MSGBLAST_FIXTURE_FOCUS` opens the keyboard, which simctl cannot tap.
+            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FOCUS"] != nil { fieldFocused = true }
+            #endif
+        }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
         // A refused prepare runs again once the agents it named can accept a send.

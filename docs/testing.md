@@ -171,12 +171,13 @@ manual simulator check.
 #### Design review fixtures
 
 Debug builds of the phone app open on simulated screens without pairing or any
-network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `typing`, `incomplete`,
+network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `conversation-short`, `typing`, `incomplete`,
 `blocked`, `new`, `settings`, `reconnecting`, `locked`, `pairing` or `pairing-paste`. The fake Mac is
 named "Studio Mac"; the data is built in `msgblastMobile/Debug/DesignFixtures.swift`
 and compiles out of Release. `MSGBLAST_FIXTURE_CONVERSATION=<uuid>` opens a
 particular conversation, and `MSGBLAST_FIXTURE_DRAFT=<text>` pre-fills its composer so
-Send shows (simctl cannot type). Build the Debug app for a simulator, install it, then:
+Send shows (simctl cannot type); `MSGBLAST_FIXTURE_FOCUS=1` focuses the field so the
+keyboard opens. Build the Debug app for a simulator, install it, then:
 
 ```sh
 SIMCTL_CHILD_MSGBLAST_FIXTURE=conversation xcrun simctl launch --terminate-running-process <udid> com.msgblast.ios
