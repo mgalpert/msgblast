@@ -87,7 +87,7 @@ simulated timestamps; Unicode, blank lines and chunked text;
 single submission and exact reply readback; serialized receipt recovery;
 read-only setup with a foreign draft; refusing to overwrite that draft; and
 sending to another bot while preserving it. Results include individual timings,
-a summary, screenshots, and optionally a playable MP4. A failed scenario makes
+a summary and, with `--record`, screenshots and a playable MP4. A failed scenario makes
 the runner exit nonzero. Timings use a 100 ms poll and 300 ms stable-reply interval
 for both drivers, rather than the production one/three seconds. Replies are
 local simulations, so this does not measure provider latency or delivery.

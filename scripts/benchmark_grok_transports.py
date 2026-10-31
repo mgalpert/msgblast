@@ -96,14 +96,15 @@ def main():
                 if daemon.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError('Private Cua runtime failed to start')
                 time.sleep(.05)
-            query(args.agent_desktop, 'screenshot', str(args.output / 'before.png'), '--app', 'Grok Transport Fixture', '--window-id', window['id'])
             if args.record:
+                query(args.agent_desktop, 'screenshot', str(args.output / 'before.png'), '--app', 'Grok Transport Fixture', '--window-id', window['id'])
                 recorder = subprocess.Popen([str(recorder_binary), window['id'][2:], str(args.output / 'workflow.mp4')], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log)
                 if not select.select([recorder.stdout], [], [], 15)[0] or recorder.stdout.readline().strip() != b'READY':
                     raise RuntimeError('Fixture-only recording did not start')
             with open(args.output / 'results.txt', 'w') as results:
                 result = subprocess.run([str(harness), str(args.agent_desktop), str(args.cua_driver), str(fixture.pid), socket, args.driver], stdout=results, stderr=subprocess.STDOUT, timeout=300)
-            query(args.agent_desktop, 'screenshot', str(args.output / 'after.png'), '--app', 'Grok Transport Fixture', '--window-id', window['id'])
+            if args.record:
+                query(args.agent_desktop, 'screenshot', str(args.output / 'after.png'), '--app', 'Grok Transport Fixture', '--window-id', window['id'])
             rows = (args.output / 'results.txt').read_text()
             summary = {'source_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'dirty_source': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)), 'exit_code': result.returncode, 'recorded': args.record, 'selected_driver': args.driver, 'limits': 'Electron 45.2.1 simulated provider. Only app discovery is injected; real accessibility, input, production workflow and receipts. No live requests. Poll 100 ms, stable reply 300 ms; five samples per driver, Cua first. Includes CLI startup and safety checks; excludes model latency.', 'drivers': {}}
             for driver in ['cua-0.38.0', 'agent-desktop-1.0.2']:
