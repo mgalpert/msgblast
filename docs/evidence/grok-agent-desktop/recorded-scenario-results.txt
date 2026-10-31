@@ -1,0 +1,14 @@
+PASS agent-desktop-1.0.2: list both fixture bots
+TIMING agent-desktop-1.0.2 0 10.559515
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 1 11.209937083
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 2 11.398418209
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 3 11.23103775
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 4 11.188806834
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+PASS agent-desktop-1.0.2: read-only setup with foreign draft, send refusal, other-bot send preserves original draft
+EDGE PASS agent-desktop-1.0.2: leading blank line
+EDGE PASS agent-desktop-1.0.2: chunked long Unicode

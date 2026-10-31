@@ -1,0 +1,28 @@
+PASS cua-0.38.0: list both fixture bots
+TIMING cua-0.38.0 0 8.861231792
+PASS cua-0.38.0: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING cua-0.38.0 1 9.87829825
+PASS cua-0.38.0: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING cua-0.38.0 2 10.103032625
+PASS cua-0.38.0: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING cua-0.38.0 3 10.073292708
+PASS cua-0.38.0: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING cua-0.38.0 4 10.21182325
+PASS cua-0.38.0: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+PASS cua-0.38.0: read-only setup with foreign draft, send refusal, other-bot send preserves original draft
+EDGE PASS cua-0.38.0: leading blank line
+EDGE PASS cua-0.38.0: chunked long Unicode
+PASS agent-desktop-1.0.2: list both fixture bots
+TIMING agent-desktop-1.0.2 0 11.232461792
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 1 11.947076416
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 2 11.830472833
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 3 12.161514292
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+TIMING agent-desktop-1.0.2 4 11.90906175
+PASS agent-desktop-1.0.2: multiline Unicode, bot switching, duplicate prompt attribution, serialized receipt recovery
+PASS agent-desktop-1.0.2: read-only setup with foreign draft, send refusal, other-bot send preserves original draft
+EDGE PASS agent-desktop-1.0.2: leading blank line
+EDGE PASS agent-desktop-1.0.2: chunked long Unicode

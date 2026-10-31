@@ -1,0 +1,38 @@
+{
+  "source_sha": "95d25599ab5e67a6ba0cf931ed4e3add6ded2b51",
+  "dirty_source": false,
+  "exit_code": 0,
+  "recorded": false,
+  "selected_driver": "both",
+  "limits": "Electron 45.2.1 simulated provider. Real app discovery runs, then only the fixture provider identity is rewritten; real accessibility, input, production workflow and receipts. No live requests. Poll 100 ms, stable reply 300 ms; five samples per driver, Cua first. Includes CLI startup and safety checks; excludes model latency.",
+  "drivers": {
+    "cua-0.38.0": {
+      "samples_seconds": [
+        8.861231792,
+        9.87829825,
+        10.103032625,
+        10.073292708,
+        10.21182325
+      ],
+      "median_seconds": 10.073292708,
+      "edge_cases": [
+        "EDGE PASS cua-0.38.0: leading blank line",
+        "EDGE PASS cua-0.38.0: chunked long Unicode"
+      ]
+    },
+    "agent-desktop-1.0.2": {
+      "samples_seconds": [
+        11.232461792,
+        11.947076416,
+        11.830472833,
+        12.161514292,
+        11.90906175
+      ],
+      "median_seconds": 11.90906175,
+      "edge_cases": [
+        "EDGE PASS agent-desktop-1.0.2: leading blank line",
+        "EDGE PASS agent-desktop-1.0.2: chunked long Unicode"
+      ]
+    }
+  }
+}

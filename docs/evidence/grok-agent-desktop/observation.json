@@ -1,0 +1,277 @@
+{
+  "limits": "Read-only CLI observations; no screenshots, input, live sends, provider latency, or model cost. CLI startup included. Different tree representations; count is not equivalent work.",
+  "samples": [
+    {
+      "driver": "agent-desktop",
+      "warmup": true,
+      "milliseconds": 130.087,
+      "complete": true,
+      "elements": 228,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": true,
+      "milliseconds": 633.929,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 100.881,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 114.884,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 129.822,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 101.456,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 99.906,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 125.308,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 124.271,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 89.02,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 88.005,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 122.492,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 115.486,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 98.773,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 89.136,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 128.527,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 115.527,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 89.015,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 86.871,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 116.539,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 122.781,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 104.376,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 96.91,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 115.745,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 124.352,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 83.522,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 88.674,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 117.95,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 118.596,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 89.932,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "cua-driver",
+      "warmup": false,
+      "milliseconds": 104.981,
+      "complete": true,
+      "elements": 105,
+      "composers": 1
+    },
+    {
+      "driver": "agent-desktop",
+      "warmup": false,
+      "milliseconds": 118.953,
+      "complete": true,
+      "elements": 229,
+      "composers": 1
+    }
+  ],
+  "agent_version": "1.0.2",
+  "cua_version": "cua-driver 0.38.0",
+  "summary": {
+    "agent-desktop": {
+      "n": 15,
+      "median_ms": 118.953,
+      "p95_ms": 129.822,
+      "accepted_with_one_composer": 15
+    },
+    "cua-driver": {
+      "n": 15,
+      "median_ms": 89.932,
+      "p95_ms": 104.981,
+      "accepted_with_one_composer": 15
+    }
+  }
+}
