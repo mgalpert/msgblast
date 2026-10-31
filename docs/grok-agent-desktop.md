@@ -79,8 +79,11 @@ fixture. Both drivers perform real OS accessibility reads and native input.
 The recorder captures only this fixture window, without audio. All subprocesses
 owned by the runner are stopped when it finishes.
 
+A separate leading-newline probe reports either a completed reply or a safe
+refusal with unchanged history; it is excluded from the latency samples.
+
 The scenarios cover bot discovery and switching; repeated prompts with distinct
-simulated timestamps; Unicode, blank lines, leading newline and chunked text;
+simulated timestamps; Unicode, blank lines and chunked text;
 single submission and exact reply readback; serialized receipt recovery;
 read-only setup with a foreign draft; refusing to overwrite that draft; and
 sending to another bot while preserving it. Results include individual timings,

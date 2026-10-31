@@ -106,7 +106,7 @@ def main():
                 if args.driver != 'both' and not driver.startswith(args.driver):
                     continue
                 values = [float(line.split()[3]) for line in rows.splitlines() if line.startswith('TIMING ' + driver + ' ')]
-                summary['drivers'][driver] = {'samples_seconds': values, 'median_seconds': statistics.median(values) if values else None}
+                summary['drivers'][driver] = {'samples_seconds': values, 'median_seconds': statistics.median(values) if values else None, 'leading_newline': next((line for line in rows.splitlines() if line.startswith('EDGE ') and driver in line), 'not run')}
             (args.output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
             print(rows, end='')
             print(json.dumps(summary, indent=2))
