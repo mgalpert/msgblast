@@ -526,6 +526,10 @@ struct LocalAgentSettingsView: View {
     @State private var setupRuntime: LocalAgentRuntime?
     private var isBusy: Bool { busy || !agent.running.isEmpty }
 
+    private var sortedRuntimes: [LocalAgentRuntime] {
+        LocalAgentRuntime.allCases.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -540,7 +544,7 @@ struct LocalAgentSettingsView: View {
             }.padding(.bottom, 12)
             Text("Enable a CLI to add it as a separate agent.")
                 .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
-            ForEach(WebProvider.optionalProviders) { webProvider in
+            ForEach(WebProvider.optionalProviders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { webProvider in
                 let provider = webProvider.personalAgentProvider!
                 Toggle("Enable \(webProvider.name)", isOn: Binding(
                     get: { web.sessions.first(where: { $0.provider == webProvider })?.isEnabled == true },
@@ -562,7 +566,7 @@ struct LocalAgentSettingsView: View {
                 }
                 Divider()
             }
-            ForEach(LocalAgentRuntime.allCases) { runtime in
+            ForEach(sortedRuntimes) { runtime in
                 let installed = agent.detectedLocalAgents.contains { $0.runtime == runtime }
                 accountRow(name: runtime.name, icon: runtime == .openclaw ? "openclaw" : "hermes",
                            status: agent.detectingLocalAgents ? "Checking installation…" : installed ? "CLI found · Provider setup not checked" : "CLI not found") {
@@ -577,7 +581,7 @@ struct LocalAgentSettingsView: View {
                      ? "Setup shortcut only · OpenClaw chats and reports are not connected yet."
                      : "Messages comparison reports · Configure your provider and model in Terminal.")
                     .font(.caption).foregroundStyle(.secondary).padding(.leading, 44).padding(.bottom, 10)
-                if runtime != LocalAgentRuntime.allCases.last { Divider() }
+                if runtime != sortedRuntimes.last { Divider() }
             }
             if agent.demo {
                 Text("Demo accounts · sign-in and setup are simulated.")

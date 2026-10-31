@@ -893,9 +893,9 @@ private struct WebAgentSettingsView: View {
     var body: some View {
         Text("Use separate website profiles for work and personal accounts. Mac app connections use the account selected in that app.")
             .font(.caption).foregroundStyle(.secondary)
-        ForEach(WebProvider.settingsOnlyWebProviders) { provider in
+        ForEach(WebProvider.settingsOnlyWebProviders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { provider in
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(web.sessions.filter { $0.provider == provider }, id: \.id) { session in
+                ForEach(web.sessions.filter { $0.provider == provider }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }, id: \.id) { session in
                     HStack {
                         Toggle(session.name, isOn: Binding(
                             get: { session.isEnabled },
