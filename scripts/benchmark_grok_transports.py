@@ -106,7 +106,7 @@ def main():
             if args.record:
                 query(args.agent_desktop, 'screenshot', str(args.output / 'after.png'), '--app', 'Grok Transport Fixture', '--window-id', window['id'])
             rows = (args.output / 'results.txt').read_text()
-            summary = {'source_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'dirty_source': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)), 'exit_code': result.returncode, 'recorded': args.record, 'selected_driver': args.driver, 'limits': 'Electron 45.2.1 simulated provider. Only app discovery is injected; real accessibility, input, production workflow and receipts. No live requests. Poll 100 ms, stable reply 300 ms; five samples per driver, Cua first. Includes CLI startup and safety checks; excludes model latency.', 'drivers': {}}
+            summary = {'source_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'dirty_source': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)), 'exit_code': result.returncode, 'recorded': args.record, 'selected_driver': args.driver, 'limits': 'Electron 45.2.1 simulated provider. Real app discovery runs, then only the fixture provider identity is rewritten; real accessibility, input, production workflow and receipts. No live requests. Poll 100 ms, stable reply 300 ms; five samples per driver, Cua first. Includes CLI startup and safety checks; excludes model latency.', 'drivers': {}}
             for driver in ['cua-0.38.0', 'agent-desktop-1.0.2']:
                 if args.driver != 'both' and not driver.startswith(args.driver):
                     continue

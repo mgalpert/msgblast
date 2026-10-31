@@ -12,15 +12,6 @@ import Foundation
         }
         let agent = URL(fileURLWithPath: args[1]), cua = URL(fileURLWithPath: args[2]), socket = args[4]
         let runner: DesktopAppConversation.ProcessRunner = { executable, arguments, environment, timeout, cancellation in
-            // Only discovery is injected to bind the unchanged Grok workflow to
-            // the explicit local fixture. Every window read and input is real.
-            if arguments.first == "call", arguments.dropFirst().first == "list_apps" {
-                return .init(status: 0, stdout: "{\"apps\":[{\"pid\":\(pid),\"bundle_id\":\"com.anysphere.sand\",\"running\":true}]}")
-            }
-            if arguments.first == "list-apps" {
-                let value: [String: Any] = ["ok": true, "data": ["apps": [["pid": pid, "bundle_id": "com.anysphere.sand", "name": "Grok Transport Fixture"]]]]
-                return .init(status: 0, stdout: String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self))
-            }
             var invocation = arguments
             if executable == cua {
                 if arguments.count > 2, arguments[1] == "get_window_state" {
@@ -31,7 +22,22 @@ import Foundation
                 invocation += ["--embedded", "--socket", socket]
             }
             let result = try await DesktopAppConversation.execute(executable, invocation, environment, timeout, cancellation)
-            if result.status != 0 { print("DRIVER ERROR", arguments.prefix(2), result.status, result.stderr, result.stdout) }
+            if result.status != 0 { print("DRIVER ERROR", arguments.prefix(2), result.status, result.stderr, result.stdout); return result }
+            // Run real discovery (including its latency), then rewrite only
+            // the fixture's provider identity. Never expose a real Grok process
+            // as a benchmark destination, and never fabricate a running PID.
+            let isCuaDiscovery = arguments.first == "call" && arguments.dropFirst().first == "list_apps"
+            if isCuaDiscovery || arguments.first == "list-apps" {
+                var envelope = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as! [String: Any]
+                var data = isCuaDiscovery ? envelope : envelope["data"] as! [String: Any]
+                let rows = data["apps"] as? [[String: Any]] ?? []
+                var matches = rows.filter { $0["pid"] as? Int == pid && $0["bundle_id"] as? String == "com.msgblast.grok-transport-fixture" }
+                guard matches.count == 1 else { throw CocoaError(.validationMissingMandatoryProperty) }
+                matches[0]["bundle_id"] = "com.anysphere.sand"
+                data["apps"] = matches
+                if isCuaDiscovery { envelope = data } else { envelope["data"] = data }
+                return .init(status: result.status, stdout: String(decoding: try JSONSerialization.data(withJSONObject: envelope), as: UTF8.self), stderr: result.stderr)
+            }
             return result
         }
         var timing = DesktopAppConversation.Timing()

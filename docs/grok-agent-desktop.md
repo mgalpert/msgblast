@@ -74,8 +74,9 @@ frontmost ordinary window). The failed run is not a latency sample.
 The runner packages a separate **Grok Transport Fixture**, gives it a distinct
 bundle ID and temporary profile, blocks network requests, and starts a private
 Cua runtime. It refuses an already-running fixture rather than replacing it.
-Only discovery is injected to point the real production Grok workflow at the
-fixture. Both drivers perform real OS accessibility reads and native input.
+Both drivers run real app discovery, including its cost; the harness then
+rewrites only the fixture's provider identity and filters out real provider
+processes. Both perform real OS accessibility reads and native input.
 The recorder captures only this fixture window, without audio. All subprocesses
 owned by the runner are stopped when it finishes.
 
