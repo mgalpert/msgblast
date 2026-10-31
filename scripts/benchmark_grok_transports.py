@@ -58,6 +58,10 @@ def main():
     plist_path.write_bytes(plistlib.dumps(info))
     resources = app / 'Contents/Resources/app'
     resources.mkdir()
+    notices = app / 'Contents/Resources/ThirdPartyNotices'
+    notices.mkdir()
+    for name in ['LICENSE', 'LICENSES.chromium.html']:
+        shutil.copyfile(args.electron_app.parent / name, notices / name)
     for name in ['fixture.html', 'main.cjs', 'package.json']:
         shutil.copyfile(FIXTURE / name, resources / name)
     run(['codesign', '--force', '--deep', '--sign', '-', app], stdout=subprocess.DEVNULL)
