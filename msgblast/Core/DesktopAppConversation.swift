@@ -728,6 +728,9 @@ actor DesktopAppConversation {
                onReceipt: @Sendable (DesktopAppSnapshot.GrokHistoryAnchor) async throws -> Void = { _ in },
                onSubmitted: @Sendable () async throws -> Void = {},
                releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
+        guard agentDesktop == nil || delivery == .foreground else {
+            throw DesktopAppError.unavailable("Agent Desktop sends require an explicitly foreground Grok session. Nothing was typed.")
+        }
         guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !prompt.unicodeScalars.contains(where: { ($0.value < 32 && $0.value != 10) || $0.value == 127 }) else {

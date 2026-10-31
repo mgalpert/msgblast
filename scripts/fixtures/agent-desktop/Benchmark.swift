@@ -62,7 +62,7 @@ import Foundation
                 for iteration in 0..<5 {
                     let bot = iteration % 2 == 0 ? "Fixture Bot" : "Research Bot"
                     let binding = try await driver.connectGrokBot(named: bot)
-                    let prompt = "Repeated benchmark prompt\nUnicode 🦊 café\n\n" + String(repeating: "Long Unicode 🦊 café ", count: 18)
+                    let prompt = "Repeated benchmark prompt\nUnicode 🦊 café\n\nFinal line"
                     let receipt = Receipt()
                     let start = ContinuousClock.now
                     let answer = try await driver.reply(prompt, app: .grokBot, binding: binding, onReceipt: { await receipt.save($0) })
@@ -89,17 +89,23 @@ import Foundation
                 try await click("Fixture Bot")
                 guard try GrokBotAppProfile.capture(target).draft == draft else { throw CocoaError(.validationMissingMandatoryProperty) }
                 print("PASS \(name): read-only setup with foreign draft, send refusal, other-bot send preserves original draft")
-                try await click("Reset fixture")
-                let edgeBefore = try await driver.snapshot(target, session: "leading-newline")
-                let edgeAnchor = try edgeBefore.grokHistoryAnchor()
-                do {
-                    let edge = try await driver.reply("\nLeading blank line", app: .grokBot, binding: .init(name: "Fixture Bot"))
-                    guard edge == "Fixture reply: \nLeading blank line" else { throw CocoaError(.validationMissingMandatoryProperty) }
-                    print("EDGE PASS \(name): leading blank line")
-                } catch {
-                    let edgeAfter = try await driver.snapshot(target, session: "leading-newline")
-                    guard try edgeAnchor.matchesEnd(of: edgeAfter.historyText(app: .grokBot)) else { throw error }
-                    print("EDGE REFUSED \(name): leading blank line, transcript unchanged, nothing submitted; \(error)")
+                let edgeCases = [
+                    ("leading blank line", "\nLeading blank line"),
+                    ("chunked long Unicode", String(repeating: "Long Unicode 🦊 café ", count: 18) + "End.")
+                ]
+                for (label, prompt) in edgeCases {
+                    try await click("Reset fixture")
+                    let edgeBefore = try await driver.snapshot(target, session: "edge-probe")
+                    let edgeAnchor = try edgeBefore.grokHistoryAnchor()
+                    do {
+                        let answer = try await driver.reply(prompt, app: .grokBot, binding: .init(name: "Fixture Bot"))
+                        guard answer == "Fixture reply: " + prompt else { throw CocoaError(.validationMissingMandatoryProperty) }
+                        print("EDGE PASS \(name): \(label)")
+                    } catch {
+                        let edgeAfter = try await driver.snapshot(target, session: "edge-probe")
+                        guard try edgeAnchor.matchesEnd(of: edgeAfter.historyText(app: .grokBot)) else { throw error }
+                        print("EDGE REFUSED \(name): \(label), transcript unchanged, nothing submitted; \(error)")
+                    }
                 }
             } catch {
                 failures += 1

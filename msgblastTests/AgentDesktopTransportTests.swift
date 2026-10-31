@@ -79,6 +79,21 @@ final class AgentDesktopTransportTests: XCTestCase {
         }
     }
 
+    func testBackgroundTransportCannotEscalateToHeadedSend() async throws {
+        let calls = Calls()
+        let transport = AgentDesktopTransport(executable: URL(fileURLWithPath: "/fixture/agent-desktop"), run: { _, args, _, _, _ in
+            await calls.append(args)
+            return .init(status: 1, stdout: "")
+        })
+        let driver = DesktopAppConversation(agentDesktop: transport)
+        do {
+            _ = try await driver.reply("Preserve the foreground", app: .grokBot, binding: .init(name: "Fixture"))
+            XCTFail("Background sessions must not dispatch headed input")
+        } catch { }
+        let recorded = await calls.values
+        XCTAssertTrue(recorded.isEmpty)
+    }
+
     private actor Calls {
         var values: [[String]] = []
         func append(_ value: [String]) { values.append(value) }
