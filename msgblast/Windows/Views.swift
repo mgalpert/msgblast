@@ -762,6 +762,30 @@ struct AppSettingsView: View {
                 }
             }
             .listStyle(.sidebar)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Divider().padding(.bottom, 6)
+                    Button {
+                        FeedbackWindowController.show(model: model, updater: updater)
+                    } label: {
+                        Label("Share Feedback", systemImage: "bubble.left")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                    }
+                    .accessibilityIdentifier("settings-send-feedback")
+                    Button {
+                        BuildFeatureWindowController.show()
+                    } label: {
+                        Label("Build A New Feature", systemImage: "hammer")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                    }
+                    .accessibilityIdentifier("settings-build-feature")
+                }
+                .buttonStyle(.plain)
+                .font(.callout)
+                .padding(.horizontal, 16).padding(.bottom, 12)
+            }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
         } detail: {
             VStack(alignment: .leading, spacing: 16) {

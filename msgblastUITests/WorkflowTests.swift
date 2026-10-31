@@ -51,6 +51,23 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         settings.staticTexts["settings-page-sharing"].click()
         XCTAssertEqual(String(describing: usage.value ?? ""), unsavedValue, "Saved choices must survive reopening")
+        for page in ["general", "apps", "websites", "cli", "webhooks", "permissions", "sharing", "updates"] {
+            settings.staticTexts["settings-page-\(page)"].click()
+            XCTAssertTrue(settings.buttons["settings-send-feedback"].isHittable)
+            XCTAssertTrue(settings.buttons["settings-build-feature"].isHittable)
+        }
+        XCTAssertEqual(settings.buttons["settings-send-feedback"].label, "Share Feedback")
+        XCTAssertEqual(settings.buttons["settings-build-feature"].label, "Build A New Feature")
+        settings.buttons["settings-send-feedback"].click()
+        let feedback = app.windows["Send Feedback"]
+        XCTAssertTrue(feedback.waitForExistence(timeout: 5))
+        XCTAssertTrue(feedback.textViews["Feedback note"].exists)
+        feedback.buttons[XCUIIdentifierCloseWindow].click()
+        settings.buttons["settings-build-feature"].click()
+        let feature = app.windows["Build a New Feature"]
+        XCTAssertTrue(feature.waitForExistence(timeout: 5))
+        XCTAssertTrue(feature.textFields["Feature idea, optional"].exists)
+        feature.buttons[XCUIIdentifierCloseWindow].click()
     }
 
     @MainActor

@@ -42,6 +42,8 @@ keep their separate sign-in and execution boundaries.
 Most controls apply immediately. Sharing choices apply only with **Save choices**;
 unsaved choices remain while switching pages. Leaving General cancels shortcut
 recording. Each category scrolls independently within the resizable settings window.
+Share Feedback and Build A New Feature remain pinned below the sidebar list and open
+the existing feedback and feature-building windows without submitting anything.
 
 ## Runtime boundaries
 
