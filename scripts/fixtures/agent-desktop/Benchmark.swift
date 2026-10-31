@@ -101,7 +101,13 @@ import Foundation
                     guard try edgeAnchor.matchesEnd(of: edgeAfter.historyText(app: .grokBot)) else { throw error }
                     print("EDGE REFUSED \(name): leading blank line, transcript unchanged, nothing submitted; \(error)")
                 }
-            } catch { failures += 1; print("FAIL \(name): \(error)") }
+            } catch {
+                failures += 1
+                print("FAIL \(name): \(error)")
+                if let target = try? await driver.target(.grokBot), let native = try? GrokBotAppProfile.capture(target) {
+                    print("FIXTURE FAILURE STATE \(name): draft=\(String(reflecting: native.draft)), focused=\(native.composerFocused == true)")
+                }
+            }
         }
         if failures > 0 { exit(1) }
     }
