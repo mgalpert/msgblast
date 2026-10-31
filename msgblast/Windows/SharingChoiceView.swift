@@ -41,15 +41,26 @@ struct SharingSettingsView: View {
     @ObservedObject var model: AppModel
     @State private var preferences = SharingPreferences()
     @State private var saved = false
+    @State private var saving = false
+    @State private var saveError: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if TelemetryCollector.endpoint(demo: model.demo) == nil {
                 Text("Collection is disabled in this preview or source build.").font(.caption).foregroundStyle(.secondary)
             }
             SharingPreferencesView(preferences: $preferences, showTitle: false)
-            Button(saved ? "Choices saved" : "Save choices") {
-                Task { saved = await model.saveSharingChoices(preferences) }
-            }.disabled(saved)
+                .disabled(saving).allowsHitTesting(!saving)
+            Button(saving ? "Saving…" : saved ? "Choices saved" : "Save choices") {
+                let snapshot = preferences
+                saving = true
+                saveError = nil
+                Task {
+                    saved = await model.saveSharingChoices(snapshot)
+                    if !saved { saveError = model.error ?? "Could not save your choices. Try again." }
+                    saving = false
+                }
+            }.disabled(saved || saving)
+            if let saveError { Text(saveError).font(.caption).foregroundStyle(.red) }
             Text("Changes take effect when you save your choices.").font(.caption).foregroundStyle(.secondary)
             Text("All features work with sharing turned off.").font(.caption).foregroundStyle(.secondary)
             if let id = model.state.sharingConsent?.installationID {
@@ -58,6 +69,6 @@ struct SharingSettingsView: View {
             }
         }
         .onAppear { preferences = model.state.sharingConsent?.preferences ?? SharingPreferences() }
-        .onChange(of: preferences) { _, _ in saved = false }
+        .onChange(of: preferences) { _, _ in saved = false; saveError = nil }
     }
 }

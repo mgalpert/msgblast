@@ -31,6 +31,18 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Feedback handler | `feedback/` | Validated private R2 intake; template integrated into a separate production landing Worker |
 | Build/release tooling | `scripts/`, `.github/workflows/` | Project generation, helpers, previews, installers, validation, and distribution |
 
+## Settings organization
+
+Settings uses five tabs: General, Connections, Permissions, Sharing, and Updates.
+Connections separates Mac apps, Websites, CLI tools, and Webhooks. Webhooks
+currently contains Grok Bot routines; the Grok Bot Mac app remains under Mac apps.
+Mac app setup links directly to Permissions. Website profiles and CLI accounts
+keep their separate sign-in and execution boundaries.
+
+Most controls apply immediately. Sharing choices apply only with **Save choices**;
+unsaved choices remain while switching tabs. Leaving General cancels shortcut
+recording. Each category scrolls independently within the resizable settings window.
+
 ## Runtime boundaries
 
 The app creates its model only after installation checks allow startup. The model
@@ -41,7 +53,7 @@ Follow nearby panels and lifecycle code when adding a window or menu command.
 
 The menu bar's **New Blast** opens the Agents workspace with the current saved
 recipient selections and preserves unsent drafts. It does not submit a message.
-**Settings → Quick Access → Record Shortcut** assigns and enables a system-wide
+**Settings → General → Quick Access → Record Shortcut** assigns and enables a system-wide
 shortcut for the same action; it works while msgblast is running, including when
 its workspace is hidden or minimized. Escape cancels recording, and the enable
 toggle releases the shortcut without forgetting it. macOS shortcut conflicts are
