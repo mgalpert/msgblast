@@ -53,8 +53,7 @@ final class OnboardingWorkflowTests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         app.typeKey(",", modifierFlags: .command)
-        app.buttons["Connections"].click()
-        app.radioButtons["Websites"].click()
+        app.staticTexts["settings-page-websites"].click()
         let chatgpt = app.switches["enable-web-chatgpt"]
         XCTAssertTrue(chatgpt.waitForExistence(timeout: 5))
         for provider in ["muse", "chatgpt", "claude", "dots", "grok"] {

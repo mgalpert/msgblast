@@ -12,8 +12,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         let add = app.buttons["add-account-chatgpt"]
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        app.buttons["Connections"].click()
-        app.radioButtons["Websites"].click()
+        app.staticTexts["settings-page-websites"].click()
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.click()
         let name = app.textFields["Agent name"]
@@ -37,8 +36,7 @@ final class WebServiceWorkflowTests: XCTestCase {
     private func selectWebFixtureRecipients(_ app: XCUIApplication) {
         // New profiles explicitly enable website alternatives in Settings.
         app.typeKey(",", modifierFlags: .command)
-        app.buttons["Connections"].click()
-        app.radioButtons["Websites"].click()
+        app.staticTexts["settings-page-websites"].click()
         for provider in ["muse", "chatgpt", "claude", "grok"] {
             let toggle = app.switches["enable-web-\(provider)"]
             XCTAssertTrue(toggle.waitForExistence(timeout: 5))
@@ -185,8 +183,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        app.buttons["Connections"].click()
-        app.radioButtons["CLI tools"].click()
+        app.staticTexts["settings-page-cli"].click()
         for name in ["Codex CLI", "Claude Code"] {
             XCTAssertTrue(settings.staticTexts["Enable \(name)"].waitForExistence(timeout: 5))
             let toggle = settings.switches["Enable \(name)"]
@@ -253,8 +250,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        app.buttons["Connections"].click()
-        app.radioButtons["CLI tools"].click()
+        app.staticTexts["settings-page-cli"].click()
         for name in ["Codex CLI", "Claude Code"] {
             let toggle = settings.switches["Enable \(name)"]
             XCTAssertTrue(toggle.waitForExistence(timeout: 5))

@@ -722,13 +722,16 @@ struct RecipientPills: View {
     }
 }
 
-private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general = "General", connections = "Connections", permissions = "Permissions", sharing = "Sharing", updates = "Updates"
+private enum SettingsPage: String, CaseIterable, Identifiable {
+    case general = "General", apps = "Mac apps", websites = "Websites", cli = "CLI tools", webhooks = "Webhooks", permissions = "Permissions", sharing = "Sharing", updates = "Updates"
     var id: Self { self }
     var symbol: String {
         switch self {
         case .general: "gearshape"
-        case .connections: "link"
+        case .apps: "macwindow"
+        case .websites: "globe"
+        case .cli: "terminal"
+        case .webhooks: "point.3.connected.trianglepath.dotted"
         case .permissions: "hand.raised"
         case .sharing: "chart.bar"
         case .updates: "arrow.down.circle"
@@ -736,63 +739,46 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     }
 }
 
-private enum SettingsConnection: String, CaseIterable, Identifiable {
-    case apps = "Mac apps", websites = "Websites", cli = "CLI tools", webhooks = "Webhooks"
-    var id: Self { self }
-}
-
 struct AppSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updater: AppUpdater
     @ObservedObject var shortcut: NewBlastShortcut
-    @State private var tab = SettingsTab.general
-    @State private var connection = SettingsConnection.apps
+    @State private var page = SettingsPage.general
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                ForEach(SettingsTab.allCases) { item in
-                    Button { tab = item } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: item.symbol).font(.system(size: 23))
-                            Text(item.rawValue).font(.callout)
-                        }
-                        .frame(width: 104, height: 62)
-                        .foregroundStyle(tab == item ? Color.accentColor : .secondary)
-                        .background(tab == item ? Color.accentColor.opacity(0.12) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(item.rawValue)
-                    .accessibilityValue(tab == item ? "Selected" : "Not selected")
-                    .accessibilityIdentifier("settings-tab-\(item.id)")
+        NavigationSplitView {
+            List(selection: Binding<SettingsPage?>(get: { page }, set: { if let value = $0 { page = value } })) {
+                sidebarRow(.general)
+                Section("Connections") {
+                    sidebarRow(.apps)
+                    sidebarRow(.websites)
+                    sidebarRow(.cli)
+                    sidebarRow(.webhooks)
                 }
-            }.padding(.vertical, 12).frame(maxWidth: .infinity)
-            Divider()
+                Section {
+                    sidebarRow(.permissions)
+                    sidebarRow(.sharing)
+                    sidebarRow(.updates)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+        } detail: {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(tab.rawValue).font(.title.bold())
+                    Text(page.rawValue).font(.title.bold())
                     Text(subtitle).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: 700, alignment: .leading)
                 .padding(.horizontal, 20).frame(maxWidth: .infinity).padding(.top, 20)
-                if tab == .connections {
-                    Picker("Connection type", selection: $connection) {
-                        ForEach(SettingsConnection.allCases) { Text($0.rawValue).tag($0) }
+                if page == .apps {
+                    HStack {
+                        Text("Mac apps use the account selected in that app.").font(.callout).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Manage permissions") { page = .permissions }
                     }
-                    .pickerStyle(.segmented).labelsHidden()
                     .frame(maxWidth: 700)
                     .padding(.horizontal, 20).frame(maxWidth: .infinity)
-                    if connection == .apps {
-                        HStack {
-                            Text("Mac apps use the account selected in that app.").font(.callout).foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Manage permissions") { tab = .permissions }
-                        }
-                        .frame(maxWidth: 700)
-                        .padding(.horizontal, 20).frame(maxWidth: .infinity)
-                    }
                 }
                 // Retain each page's local drafts, disclosure state and scroll position.
                 ZStack {
@@ -805,10 +791,11 @@ struct AppSettingsView: View {
                             }.pickerStyle(.radioGroup)
                         }
                     }
-                    ForEach(SettingsConnection.allCases) { category in
+                    ForEach([SettingsPage.apps, .websites, .cli, .webhooks]) { category in
                         Form { connectionSettings(category) }
                             .formStyle(.grouped)
-                            .modifier(SettingsPageVisibility(visible: tab == .connections && connection == category))
+                            .accessibilityIdentifier("settings-detail-\(category.id)")
+                            .modifier(SettingsPageVisibility(visible: page == category))
                     }
                     settingsPage(.permissions) {
                         Section { PermissionsSettingsView(model: model) }
@@ -833,27 +820,37 @@ struct AppSettingsView: View {
 
             }
         }
-        .frame(minWidth: 720, idealWidth: 780, minHeight: 620, idealHeight: 700)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 700)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: tab) { _, _ in shortcut.cancelRecording() }
+        .onChange(of: page) { _, _ in shortcut.cancelRecording() }
+    }
+
+    private func sidebarRow(_ item: SettingsPage) -> some View {
+        Label(item.rawValue, systemImage: item.symbol)
+            .tag(item)
+            .accessibilityIdentifier("settings-page-\(item.id)")
     }
 
     private var subtitle: String {
-        switch tab {
+        switch page {
         case .general: "Choose how you start blasts and open conversations."
-        case .connections: "Manage where your agents run."
+        case .apps: "Connect the AI apps installed on this Mac."
+        case .websites: "Manage separate website profiles for your accounts."
+        case .cli: "Connect local command-line tools and accounts."
+        case .webhooks: "Connect agents through webhook routines."
         case .permissions: "Control what msgblast can access on this Mac."
         case .sharing: "Choose the anonymous statistics you share to improve msgblast."
         case .updates: "Keep msgblast up to date."
         }
     }
 
-    private func settingsPage<Content: View>(_ item: SettingsTab, @ViewBuilder content: () -> Content) -> some View {
+    private func settingsPage<Content: View>(_ item: SettingsPage, @ViewBuilder content: () -> Content) -> some View {
         Form(content: content).formStyle(.grouped)
-            .modifier(SettingsPageVisibility(visible: tab == item))
+            .modifier(SettingsPageVisibility(visible: page == item))
     }
 
-    @ViewBuilder private func connectionSettings(_ category: SettingsConnection) -> some View {
+    @ViewBuilder private func connectionSettings(_ category: SettingsPage) -> some View {
         switch category {
         case .apps:
             Section("Mac apps") {
@@ -871,6 +868,7 @@ struct AppSettingsView: View {
             Section("Grok Bot") {
                 GrokBotConnectionsView(model: model, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
             }
+        default: EmptyView()
         }
     }
 }

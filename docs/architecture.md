@@ -33,14 +33,14 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 
 ## Settings organization
 
-Settings uses five tabs: General, Connections, Permissions, Sharing, and Updates.
-Connections separates Mac apps, Websites, CLI tools, and Webhooks. Webhooks
-currently contains Grok Bot routines; the Grok Bot Mac app remains under Mac apps.
+Settings uses a native sidebar with General, Permissions, Sharing, and Updates,
+plus a Connections group containing Mac apps, Websites, CLI tools, and Webhooks.
+Webhooks currently contains Grok Bot routines; the Grok Bot Mac app remains under Mac apps.
 Mac app setup links directly to Permissions. Website profiles and CLI accounts
 keep their separate sign-in and execution boundaries.
 
 Most controls apply immediately. Sharing choices apply only with **Save choices**;
-unsaved choices remain while switching tabs. Leaving General cancels shortcut
+unsaved choices remain while switching pages. Leaving General cancels shortcut
 recording. Each category scrolls independently within the resizable settings window.
 
 ## Runtime boundaries
