@@ -148,6 +148,12 @@ The seven retained `FindsOtherDesktopAndRejectsAmbiguousMainWindows` cases also 
 Claude's layer-1000 full-display overlay with membership in multiple Spaces. The
 same fixture still rejects a second real layer-zero window on either desktop.
 
+## Agent Desktop comparison
+
+The optional Grok transport and reproducible Cua comparison are described in
+[Grok Bot through Agent Desktop](grok-agent-desktop.md). Its native fixture uses
+simulated replies and does not contact Grok.
+
 ## Embedded app-control runtime
 
 `EmbeddedCuaDriverTests` exercises private daemon startup, shared concurrent

@@ -1,0 +1,1 @@
+{"name":"msgblast-grok-transport-fixture","version":"1.0.0","private":true,"main":"main.cjs","devDependencies":{"electron":"45.2.1"}}

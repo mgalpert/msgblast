@@ -1,0 +1,18 @@
+<!doctype html><meta charset="utf-8"><title>Grok Transport Fixture</title>
+<style>body{font:17px system-ui;background:#f7f7f5;color:#222;margin:24px}header{color:#666}main{display:flex;gap:24px}aside{width:180px}section{flex:1}button{padding:10px;margin:5px}#history p{white-space:pre-wrap}#history{height:270px;overflow:auto;border:1px solid #ccc;padding:12px}#editor{border:1px solid #aaa;padding:12px;min-height:80px;white-space:pre-wrap}#editor:focus{outline:2px solid #23886b}</style>
+<header>LOCAL FIXTURE · simulated replies · no account or network<button onclick="resetFixture()">Reset fixture</button></header><main>
+<aside><ul><li role="presentation"><button onclick="choose('Fixture Bot')">Fixture Bot</button></li><li role="presentation"><button onclick="choose('Research Bot')">Research Bot</button></li></ul></aside>
+<div role="separator" aria-label="Resize sidebar"></div>
+<section><h1 id="sand-conversation-heading">Fixture Bot</h1><div id="history"></div>
+<div id="editor" role="textbox" contenteditable="true" aria-label="Prompt" class="tiptap ProseMirror" aria-multiline="true"></div>
+<button aria-label="Send message" onclick="send()">Send message</button><button onclick="draft()">Seed foreign draft</button></section></main>
+<script>
+let bot='Fixture Bot', histories={'Fixture Bot':[['Fixture Bot','Fixture ready.']], 'Research Bot':[['Research Bot','Research ready.']]}, drafts={};
+const editor=document.querySelector('#editor');
+function render(){document.querySelector('h1').textContent=bot;let h=document.querySelector('#history');h.replaceChildren();for(let [who,text,stamp] of histories[bot]){let a=document.createElement('article');let s=document.createElement('p');s.textContent=who;let t=document.createElement('p');t.textContent=text;a.append(s,t);if(stamp){let time=document.createElement("p");time.textContent=stamp;a.append(time);}h.append(a);}h.scrollTop=h.scrollHeight;}
+function choose(name){drafts[bot]=editor.innerText;bot=name;editor.innerText=drafts[bot]||'';render();}
+function resetFixture(){histories={'Fixture Bot':[['Fixture Bot','Fixture ready.']], 'Research Bot':[['Research Bot','Research ready.']]};drafts={};bot='Fixture Bot';editor.innerText='';render();}
+function draft(){editor.innerText='Existing user draft — preserve me';}
+function send(){let text=editor.innerText;if(!text.trim())return;histories[bot].push(['You',text],[bot,'Fixture reply: '+text,'10:'+String(histories[bot].length).padStart(2,'0')+' AM']);editor.innerText='';drafts[bot]='';render();}
+editor.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});render();
+</script>

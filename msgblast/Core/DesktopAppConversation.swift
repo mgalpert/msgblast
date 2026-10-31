@@ -335,6 +335,16 @@ struct DesktopAppSnapshot: Decodable, Sendable {
 actor DesktopAppConversation {
     enum Delivery: String, Sendable { case background, foreground }
     static let shared = DesktopAppConversation(delivery: .foreground)
+    // Explicit development opt-in; production keeps its bundled, verified runtime.
+    static let agentDesktopGrok: DesktopAppConversation? = {
+        #if DEBUG
+        guard let path = ProcessInfo.processInfo.environment["MSGBLAST_AGENT_DESKTOP_PATH"], path.hasPrefix("/") else { return nil }
+        return DesktopAppConversation(delivery: .foreground, agentDesktop: AgentDesktopTransport(executable: URL(fileURLWithPath: path)))
+        #else
+        return nil
+        #endif
+    }()
+    private let agentDesktop: AgentDesktopTransport?
     private var occupied: Set<DesktopAppProvider> = []
     struct Timing: Sendable {
         var pollInterval: Duration = .seconds(1)
@@ -356,7 +366,9 @@ actor DesktopAppConversation {
          runProcess: @escaping ProcessRunner = DesktopAppConversation.execute,
          confirmHostFocus: @escaping @Sendable (Target) async -> Bool = { await DesktopAppConversation.hostHasFocus($0) },
          captureHostWindow: @escaping @Sendable () async throws -> Target = { try await DesktopAppConversation.hostWindow() },
-         readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
+         readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture,
+         agentDesktop: AgentDesktopTransport? = nil) {
+        self.agentDesktop = agentDesktop
         self.executable = executable ?? Self.findDriver()
         self.embedded = executable == nil
         self.delivery = delivery
@@ -381,6 +393,10 @@ actor DesktopAppConversation {
         let windows: [Window]
     }
     func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
+        if let agentDesktop {
+            let data = try await agentDesktop.call(tool, strings: arguments, numbers: numbers)
+            return try JSONDecoder().decode(type, from: data)
+        }
         guard let executable else { throw DesktopAppError.unavailable("App control is missing from this copy of msgblast. Reinstall msgblast.") }
         var object: [String: Any] = arguments
         for (key, value) in numbers { object[key] = value }
@@ -581,6 +597,9 @@ actor DesktopAppConversation {
         return .init(name: name)
     }
     func target(_ app: DesktopAppProvider) async throws -> Target {
+        guard agentDesktop == nil || app == .grokBot else {
+            throw DesktopAppError.unavailable("The Agent Desktop transport is configured for Grok Bot only.")
+        }
         let apps = try await call("list_apps", [:], as: AppList.self)
         guard let matches = app.bundleIDs.map({ bundle in apps.apps.filter { $0.bundle_id == bundle && $0.running } }).first(where: { !$0.isEmpty }) else {
             throw DesktopAppError.unavailable(app == .grokBot ? "Open Grok Bot and sign in, then choose your bot in msgblast." : "Open \(app.name), sign in, and select its conversation first.")
@@ -643,8 +662,23 @@ actor DesktopAppConversation {
                   step.before.isEmpty || native.composerFocused == true else {
                 throw DesktopAppError.unavailable("Grok Bot's draft, focus, or history changed. Nothing was submitted; review the preserved text.")
             }
-            point = try state.pixelCenter(of: field.element, target: target, imageURL: image, appName: "Grok Bot")
+            if self.agentDesktop == nil {
+                point = try state.pixelCenter(of: field.element, target: target, imageURL: image, appName: "Grok Bot")
+            }
         }, perform: { step in
+            if let agentDesktop = self.agentDesktop {
+                let field = try state.composer(app: .grokBot).element
+                guard let ref = field.element_token else { throw DesktopAppError.incompleteSnapshot }
+                if step.input == .newline, native.composerFocused != true {
+                    try await agentDesktop.focusComposer(ref: ref, target: target)
+                    let focused = try await self.grokState(state, target: target)
+                    guard focused.name == binding.name, focused.draft == step.before, focused.composerFocused == true else {
+                        throw DesktopAppError.unavailable("Grok Bot's composer is not focused. Nothing was submitted.")
+                    }
+                }
+                try await agentDesktop.enter(step.input, ref: ref, target: target, session: session)
+                return
+            }
             if step.input == .newline, native.composerFocused != true {
                 _ = try await self.call("click", ["session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window, "x": point.x, "y": point.y], as: Action.self)
                 let focused = try await self.grokState(state, target: target)

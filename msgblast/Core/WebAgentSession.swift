@@ -169,14 +169,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
         self.init(provider: provider, storageURL: storageURL, fixture: fixture, migrationError: migrationError, agentID: agentID, accountID: accountID, name: name, museApp: .shared)
     }
-    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation = .shared, geminiApp: GeminiAppConversation = .shared, claudeApp: ClaudeAppConversation = .shared, chatgptApp: ChatGPTAppConversation = .shared) {
+    init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil, museApp: MuseAppConversation, desktopApps: DesktopAppInstallationClient? = nil, wabiApp: WabiAppConversation = .shared, desktopDriver: DesktopAppConversation? = nil, geminiApp: GeminiAppConversation = .shared, claudeApp: ClaudeAppConversation = .shared, chatgptApp: ChatGPTAppConversation = .shared) {
         self.museApp = museApp
         self.claudeApp = claudeApp
         self.chatgptApp = chatgptApp
         self.geminiApp = geminiApp
         self.wabiApp = wabiApp
         self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
-        self.desktopDriver = desktopDriver
+        self.desktopDriver = desktopDriver ?? (provider == .grokBotApp && !fixture ? DesktopAppConversation.agentDesktopGrok : nil) ?? .shared
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
         self.storageURL = storageURL
