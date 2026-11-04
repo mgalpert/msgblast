@@ -577,7 +577,7 @@ final class WorkflowTests: XCTestCase {
         // A fresh isolated store must use the joined layout by default.
         if separateWindows {
             app.menuBars.menuBarItems["msgblast"].click()
-            app.menuItems["Settings…"].click()
+            app.menuBars.menuBarItems["msgblast"].menuItems["Settings…"].click()
             let layout = app.radioButtons["Separate windows"]
             XCTAssertTrue(layout.waitForExistence(timeout: 5))
             layout.click()
@@ -624,6 +624,8 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         // Reopening the conversation restores its hidden column with the draft intact.
         workspace.buttons[XCUIIdentifierCloseWindow].click()
+        let keepActive = app.buttons["Keep Active and Close"]
+        if keepActive.waitForExistence(timeout: 3) { keepActive.click() }
         let saved = app.outlines.cells.containing(NSPredicate(format: "label CONTAINS %@", "Remove pane fixture")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 5))
         saved.click()
