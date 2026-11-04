@@ -586,7 +586,8 @@ final class WorkflowTests: XCTestCase {
         let reset = app.buttons["Reset sample data"]
         XCTAssertTrue(reset.waitForExistence(timeout: 10))
         reset.click()
-        for name in ["Muse", "ChatGPT", "Claude", "Grok"] where app.buttons[name].value as? String == "Selected" { app.buttons[name].click() }
+        // Web tiles are absent on a Mac whose desktop app replaces the website fixture.
+        for name in ["Muse", "ChatGPT", "Claude", "Grok"] where app.buttons[name].exists && app.buttons[name].value as? String == "Selected" { app.buttons[name].click() }
         if threeAgentsOnly {
             for name in ["Maple", "Echo", "Flint"] { app.buttons[name].click() }
         }
@@ -624,7 +625,7 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         // Reopening the conversation restores its hidden column with the draft intact.
         workspace.buttons[XCUIIdentifierCloseWindow].click()
-        let keepActive = app.buttons["Keep Active and Close"]
+        let keepActive = app.buttons["Keep Active and Close"].firstMatch
         if keepActive.waitForExistence(timeout: 3) { keepActive.click() }
         let saved = app.outlines.cells.containing(NSPredicate(format: "label CONTAINS %@", "Remove pane fixture")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 5))
