@@ -625,7 +625,7 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         // Reopening the conversation restores its hidden column with the draft intact.
         workspace.buttons[XCUIIdentifierCloseWindow].click()
-        let keepActive = app.buttons["Keep Active and Close"].firstMatch
+        let keepActive = workspace.sheets.firstMatch.buttons["Keep Active and Close"]
         if keepActive.waitForExistence(timeout: 3) { keepActive.click() }
         let saved = app.outlines.cells.containing(NSPredicate(format: "label CONTAINS %@", "Remove pane fixture")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 5))
