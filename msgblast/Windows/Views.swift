@@ -242,10 +242,7 @@ struct MainView: View {
                 }
             }.listStyle(.sidebar).navigationTitle("msgblast")
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 8) {
-                        UpdateSidebar(updater: updater)
-                        WhatsNewSidebar()
-                    }.padding(12)
+                    SidebarFooter(service: model.remote, updater: updater).padding(12)
                         .background(Color(nsColor: .windowBackgroundColor))
                         .overlay(alignment: .top) { Divider() }
                 }
