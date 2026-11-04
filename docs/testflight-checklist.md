@@ -144,8 +144,11 @@ editing (`git archive HEAD | tar -x -C build/export`), as the local previews do.
 ## 6. Tester onboarding note (paste into the invitation)
 
 - Install msgblast on your Mac from `https://updates.msgblast.app/latest.zip`
-  (or run a Dev preview), open Settings › Remote, turn Remote on, and keep the
-  Mac awake or let the phone's Keep Mac Awake do it.
+  and check About shows **0.11.0 or newer**: that is the first Mac release that
+  contains the remote service (`release-notes/0.11.0.md`); older versions have
+  nothing for the phone to pair with. Open Settings › Remote and turn Remote on.
+  Keep Mac Awake on the phone holds an awake, unlocked Mac awake; it cannot wake,
+  unlock, or light a Mac that is already asleep.
 - Put the phone and Mac on the same Wi-Fi or the same Tailscale tailnet. If
   pairing hangs, restart Tailscale on the phone first; a stale MagicSock state
   has blocked pairing before.
