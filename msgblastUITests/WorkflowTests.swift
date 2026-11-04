@@ -627,7 +627,7 @@ final class WorkflowTests: XCTestCase {
         workspace.buttons[XCUIIdentifierCloseWindow].click()
         let keepActive = workspace.sheets.firstMatch.buttons["Keep Active and Close"]
         if keepActive.waitForExistence(timeout: 3) { keepActive.click() }
-        let saved = app.outlines.cells.containing(NSPredicate(format: "label CONTAINS %@", "Remove pane fixture")).firstMatch
+        let saved = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Remove pane fixture")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 5))
         saved.click()
         XCTAssertTrue(workspace.waitForExistence(timeout: 5))
