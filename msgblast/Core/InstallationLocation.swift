@@ -13,6 +13,18 @@ public enum InstallationLocation {
     }
 }
 
+public enum AppBundleIdentity {
+    public static let production = "com.msgblast.mac"
+    public static let development = "com.msgblast.development"
+
+    /// Development previews use `com.msgblast.development` or a named sibling such as
+    /// `com.msgblast.development.remote`. They all count as development builds.
+    public static func isDevelopment(_ bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return bundleIdentifier == development || bundleIdentifier.hasPrefix(development + ".")
+    }
+}
+
 public enum SupportDirectory {
     /// Production stays `msgblast`. Demo stays `msgblast-Demo`. A preview may set
     /// `msgblastSupportDirectory` to another `msgblast-…` folder; anything else is ignored.

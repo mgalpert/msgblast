@@ -126,6 +126,79 @@ so Continue stays blocked until a complete permission group is enabled. These
 settings never change macOS access and are ignored for live app-control grants.
 Label captures as simulated and retain the compiled source revision.
 
+## Remote control
+
+`msgblastRemoteProtocolTests` (encode/decode round trips, framing limits, the
+encryption envelope with known-answer vectors checked against OpenSSL and Python)
+runs in the native command above, or alone with
+`-only-testing:msgblastRemoteProtocolTests`. The Mac side is in `msgblastTests`:
+`RemoteIdentityTests`, `RemotePairingTests`, `RemoteAvailabilityTests` (every
+provider form and readiness state from fixture sessions, without connecting or
+launching), `RemoteProjectionTests`, `RemoteCommandExecutorTests`, and
+`RemoteServerTests` (handshake, pairing, resume, lock, and replacement over the
+in-memory transport). None opens a port.
+
+`bash scripts/test_web_comparisons.sh <derived-data>` also runs the remote fixture:
+commands through the actual AppModel send paths and the real `RemoteService` with an
+in-memory phone, in the isolated Demo profile. Set `MSGBLAST_REMOTE_EVIDENCE_DIR` to
+render the actual Settings → Remote pane off-screen into PNGs.
+
+`bash scripts/test_remote_client.sh <derived-data> [evidence-dir]` is the end-to-end
+check over real TLS: the Demo profile listens on this Mac's Tailscale or LAN
+address for that run only, and `scripts/remote_client` pairs with the pinned key,
+reads the snapshot, sends to a simulated Messages agent, and resumes. It needs a
+Tailscale or private LAN address and opens a port while it runs; it sends nothing
+real. It does not prove reachability from a phone on another network.
+
+### Phone app
+
+The phone's logic tests (`msgblastMobileTests`: connection state machine against a
+fake Mac over an in-memory transport, the reducer against fixtures recorded from
+the Demo Mac, the store, and presenters) run without a simulator:
+
+```sh
+xcodebuild -project msgblast.xcodeproj -scheme msgblastMobileKit -configuration Debug \
+  -derivedDataPath build/mobile-macos -destination 'platform=macOS,arch=arm64' test
+```
+
+The same bundle runs in a simulator with `-scheme msgblastMobile -destination
+'platform=iOS Simulator,name=iPhone 17' test`. Re-record its fixtures with
+`bash scripts/record_mobile_fixtures.sh <derived-data>` (Demo profile, simulated
+lock; the Mac's name is replaced with "Demo Mac"). There are no phone UI tests yet;
+[Remote control](remote-control.md#ux-iteration-against-the-demo-mac) lists the
+manual simulator check.
+
+#### Design review fixtures
+
+Debug builds of the phone app open on simulated screens without pairing or any
+network when `MSGBLAST_FIXTURE` is set: `inbox`, `conversation`, `conversation-short`, `conversation-pinned`,
+`conversation-many`, `typing`, `incomplete`,
+`blocked`, `new`, `settings`, `reconnecting`, `locked`, `pairing` or `pairing-paste`. The fake Mac is
+named "Studio Mac"; the data is built in `msgblastMobile/Debug/DesignFixtures.swift`
+and compiles out of Release. `MSGBLAST_FIXTURE_CONVERSATION=<uuid>` opens a
+particular conversation, and `MSGBLAST_FIXTURE_DRAFT=<text>` pre-fills its composer so
+Send shows (simctl cannot type); `MSGBLAST_FIXTURE_FOCUS=1` focuses the field so the
+keyboard opens, `MSGBLAST_FIXTURE_DICTATION=1` shows the dictation glyph even without a microphone, and
+`MSGBLAST_FIXTURE_DETAILS=1` opens a conversation's Details sheet,
+`MSGBLAST_FIXTURE_RECIPIENTS=1` opens the recipient strip above the field with the keyboard up,
+`MSGBLAST_FIXTURE_SCROLL=photo` scrolls the thread's first photo message up under the header,
+`MSGBLAST_FIXTURE_SEARCH=<text>` types a query into the inbox's search field with the keyboard up,
+`MSGBLAST_FIXTURE_FILTER=claude,museApp` selects agents in the header (with `new`, which opens the
+pushed new thread with the field focused and every agent that can take a send checked, it checks
+exactly these instead), and
+`MSGBLAST_FIXTURE_REPLY=1` starts a reply, and `MSGBLAST_FIXTURE_PHOTO=1` opens the first
+shared photo in the viewer. Further fixtures: `conversation-pinned` (the
+pinned prompt row) and `conversation-many` (six agents). Build the Debug app for a simulator, install it, then:
+
+```sh
+SIMCTL_CHILD_MSGBLAST_FIXTURE=conversation xcrun simctl launch --terminate-running-process <udid> com.msgblast.ios
+xcrun simctl io <udid> screenshot build/design-review/conversation.png
+```
+
+The reconnecting subtitle explains itself only after 20 seconds, so wait that long
+before capturing `reconnecting`. Scan Code is disabled in the simulator, which has
+no camera scanner.
+
 ## Shared native app engine
 
 `DesktopAccessibilityTests` covers exact draft/URL metadata, bounded incomplete

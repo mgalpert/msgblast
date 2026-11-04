@@ -87,6 +87,31 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertTrue(messages[2].attachments.isEmpty)
         XCTAssertEqual(try Data(contentsOf: url), before)
     }
+    func testPluginPayloadsEmptyAndHiddenAttachmentsAreNotFiles() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &writer), SQLITE_OK)
+        // A rich link reply as Messages stores it: two plugin payloads beside a real photo.
+        let sql = """
+        CREATE TABLE attachment(guid TEXT,filename TEXT,transfer_name TEXT,mime_type TEXT,total_bytes INTEGER,uti TEXT);
+        CREATE TABLE message_attachment_join(message_id INTEGER,attachment_id INTEGER);
+        INSERT INTO attachment VALUES
+          ('p1','~/Library/Messages/Attachments/a/EDEDFC10-EA2D-401D-B35A-CEA26A570AF8.pluginPayloadAttachment','EDEDFC10-EA2D-401D-B35A-CEA26A570AF8.pluginPayloadAttachment',NULL,2048,'com.apple.messages.pluginPayloadAttachment'),
+          ('p2','~/Library/Messages/Attachments/b/payload','payload',NULL,512,'com.apple.messages.pluginPayloadAttachment'),
+          ('photo','~/Library/Messages/Attachments/c/photo.jpg','photo.jpg','image/jpeg',4096,'public.jpeg'),
+          ('empty','~/Library/Messages/Attachments/d/empty.pdf','empty.pdf','application/pdf',0,'com.adobe.pdf'),
+          ('hidden','~/Library/Messages/Attachments/e/.DS_Store','.DS_Store',NULL,6148,NULL),
+          ('doc','/tmp/notes.pdf','notes.pdf','application/pdf',100,'com.adobe.pdf');
+        INSERT INTO message_attachment_join VALUES(1,1),(1,2),(1,3),(1,4),(1,5),(2,6);
+        """
+        XCTAssertEqual(sqlite3_exec(writer, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(writer)
+        let messages = try MessagesDatabase(path: url.path).messages(chatID: "A")
+        XCTAssertEqual(messages[0].attachments.map(\.filename), ["photo.jpg"], "Only the real photo is a file")
+        XCTAssertEqual(messages[1].attachments.map(\.filename), ["notes.pdf"])
+        XCTAssertFalse(MessageAttachment.isUserFile(filename: "x.PLUGINPAYLOADATTACHMENT", path: "/a/x", uti: nil, byteCount: nil))
+        XCTAssertTrue(MessageAttachment.isUserFile(filename: "report.pdf", path: "/a/report.pdf", uti: nil, byteCount: nil), "An unknown size is kept")
+    }
     func testEmptyOrdinaryMessageDoesNotBecomeAnUnavailableBusinessCard() throws {
         let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
         var db: OpaquePointer?
@@ -218,6 +243,48 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertEqual(messages[0].reactions.first?.outgoing, true)
         XCTAssertEqual(messages[1].reactions.map(\.emoji), ["✅"])
         XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+    func testEveryStandardTapbackAndItsRemovalMap() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &writer), SQLITE_OK)
+        // One contact reacts with each standard tapback in turn on "answer" (each replaces the
+        // last), and you react to "anchor"; then removals 3000–3005 take them away.
+        var rows: [String] = []
+        for (offset, type) in (2000...2005).enumerated() { rows.append("('add-\(type)',NULL,\(810000010000000000 + offset * 1000000000),0,\(type),'p:0/answer',1)") }
+        rows.append("('mine-love',NULL,810000020000000000,1,2000,'p:0/anchor',0)")
+        let sql = """
+        ALTER TABLE message ADD COLUMN associated_message_guid TEXT;
+        ALTER TABLE message ADD COLUMN associated_message_emoji TEXT;
+        ALTER TABLE message ADD COLUMN handle_id INTEGER;
+        INSERT INTO message(guid,text,date,is_from_me,associated_message_type,associated_message_guid,handle_id) VALUES \(rows.joined(separator: ","));
+        INSERT INTO chat_message_join SELECT 1, ROWID FROM message WHERE guid LIKE 'add-%' OR guid = 'mine-love';
+        """
+        XCTAssertEqual(sqlite3_exec(writer, sql, nil, nil, nil), SQLITE_OK)
+        var reader = try MessagesDatabase(path: url.path)
+        var messages = try reader.messages(chatID: "A", after: 1)
+        XCTAssertEqual(messages.first { $0.guid == "answer" }?.reactions.map(\.emoji), ["❓"], "The latest of ❤️ 👍 👎 😂 ‼️ ❓ replaces the earlier ones")
+        XCTAssertEqual(messages.first { $0.guid == "anchor" }?.reactions.map(\.emoji), ["❤️"]); XCTAssertEqual(messages.first { $0.guid == "anchor" }?.reactions.first?.outgoing, true)
+        for (index, emoji) in ["❤️", "👍", "👎", "😂", "‼️", "❓"].enumerated() {
+            XCTAssertEqual(sqlite3_exec(writer, "INSERT INTO message(guid,text,date,is_from_me,associated_message_type,associated_message_guid,handle_id) VALUES('add-again-\(index)',NULL,\(810000030000000000 + index * 2000000000),0,\(2000 + index),'p:0/answer',1); INSERT INTO chat_message_join VALUES(1,last_insert_rowid());", nil, nil, nil), SQLITE_OK)
+            reader = try MessagesDatabase(path: url.path)
+            XCTAssertEqual(try reader.messages(chatID: "A", after: 1).first { $0.guid == "answer" }?.reactions.map(\.emoji), [emoji], "Type \(2000 + index) is \(emoji)")
+            XCTAssertEqual(sqlite3_exec(writer, "INSERT INTO message(guid,text,date,is_from_me,associated_message_type,associated_message_guid,handle_id) VALUES('remove-\(index)',NULL,\(810000030000000000 + index * 2000000000 + 1000000000),0,\(3000 + index),'p:0/answer',1); INSERT INTO chat_message_join VALUES(1,last_insert_rowid());", nil, nil, nil), SQLITE_OK)
+            reader = try MessagesDatabase(path: url.path)
+            XCTAssertEqual(try reader.messages(chatID: "A", after: 1).first { $0.guid == "answer" }?.reactions.count, 0, "Type \(3000 + index) removes it")
+        }
+        messages = try reader.messages(chatID: "A", after: 1)
+        XCTAssertFalse(messages.contains { $0.guid.hasPrefix("add-") || $0.guid.hasPrefix("remove-") }, "Tapbacks never become messages")
+        sqlite3_close(writer)
+    }
+    func testEmojiTextIsReadExactly() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &writer), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(writer, "INSERT INTO message VALUES('emoji','👩‍👩‍👧‍👦 🇵🇹 👍🏽 ❤️',810000004000000000,0,NULL,0); INSERT INTO chat_message_join VALUES(1,last_insert_rowid());", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(writer)
+        let message = try XCTUnwrap(MessagesDatabase(path: url.path).messages(chatID: "A").first { $0.guid == "emoji" })
+        XCTAssertEqual(Array(message.text.utf8), Array("👩‍👩‍👧‍👦 🇵🇹 👍🏽 ❤️".utf8))
     }
     func testUnsupportedSchemaBlocksCleanly() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("unsupported-\(UUID()).db")

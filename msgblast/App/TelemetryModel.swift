@@ -6,7 +6,7 @@ extension AppModel {
         reviewingSharingChoice || (state.sharingConsent == nil &&
         (TelemetryCollector.endpoint(demo: demo) != nil ||
          (ProcessInfo.processInfo.arguments.contains("--sharing-preview") &&
-          (demo || Bundle.main.bundleIdentifier == "com.msgblast.development"))))
+          (demo || AppBundleIdentity.isDevelopment(Bundle.main.bundleIdentifier)))))
     }
     @discardableResult
     func saveSharingChoices(_ preferences: SharingPreferences) async -> Bool {
@@ -31,7 +31,7 @@ extension AppModel {
         var properties = properties
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
         if version.range(of: #"^[0-9][0-9A-Za-z._-]{0,31}$"#, options: .regularExpression) != nil { properties.appVersion = version }
-        properties.buildChannel = Bundle.main.bundleIdentifier == "com.msgblast.development" ? .development : .production
+        properties.buildChannel = AppBundleIdentity.isDevelopment(Bundle.main.bundleIdentifier) ? .development : .production
         properties.osMajor = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         return TelemetryEvent(name: name, properties: properties, consent: consent)
     }

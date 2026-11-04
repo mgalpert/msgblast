@@ -11,6 +11,16 @@ public struct MessageAttachment: Codable, Hashable, Identifiable, Sendable {
         self.id = id; self.filename = filename; self.path = path; self.mimeType = mimeType; self.byteCount = byteCount
     }
     public var url: URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
+    /// Whether a Messages attachment is something the person sent. iMessage app and rich link
+    /// payloads (`.pluginPayloadAttachment`), empty transfers and hidden files are not shown.
+    public static func isUserFile(filename: String, path: String, uti: String?, byteCount: Int64?) -> Bool {
+        let plugin = "pluginPayloadAttachment"
+        if uti?.caseInsensitiveCompare("com.apple.messages.\(plugin)") == .orderedSame { return false }
+        for name in [filename, URL(fileURLWithPath: path).lastPathComponent] {
+            if name.hasPrefix(".") || URL(fileURLWithPath: name).pathExtension.caseInsensitiveCompare(plugin) == .orderedSame { return false }
+        }
+        return byteCount != 0
+    }
     public var isImage: Bool {
         mimeType?.hasPrefix("image/") == true || UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true
     }

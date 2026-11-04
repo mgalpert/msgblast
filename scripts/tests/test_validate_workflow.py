@@ -44,6 +44,7 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertIn("automate_release.py", release)
         self.assertIn("tags: ['v*']", release)
         self.assertIn("python3 scripts/build_preview_apps.py", text)
+        self.assertIn("--build-stamp none", text)
         self.assertEqual(text.count("ref: ${{ env.REVIEW_SHA }}"), 2)
         self.assertIn("github.event.pull_request.head.sha", text)
         self.assertIn('-resultBundlePath "$PWD/build/native-tests.xcresult"', text)
@@ -96,6 +97,7 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertLess(text.index('test "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH"'), text.index("ci_signing.py setup"))
         self.assertLess(text.index("ci_signing.py setup"), text.index("build_preview_apps.py"))
         self.assertIn("--variant development", text)
+        self.assertIn("--build-stamp none", text)
         self.assertIn("--signing-identity", text)
         self.assertIn("--notary-profile", text)
         self.assertIn("if: always()", text)
@@ -120,6 +122,7 @@ class ValidateWorkflowTests(unittest.TestCase):
         publishing = text.split("\n  publish:\n", 1)[1]
         self.assertNotIn("secrets.", build)
         self.assertIn("--variant development --universal", build)
+        self.assertIn("--build-stamp none", build)
         self.assertNotIn("contents: write", build + signing)
         self.assertIn("environment: test-build-signing", signing)
         self.assertIn("ref: ${{ github.sha }}", signing)

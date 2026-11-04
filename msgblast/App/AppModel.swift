@@ -9,7 +9,16 @@ final class AppModel: ObservableObject {
     @Published var messages: [String: [Message]] = [:]
     @Published var databaseStatus = "Checking Messages history…"
     @Published var databaseAvailable = false
-    @Published var error: String?
+    // A remote command's errors go to its command result, not to the Mac's modal alert.
+    @Published var error: String? {
+        didSet {
+            guard let error, let capture = RemoteErrorCapture.current, !capture.restoring else { return }
+            capture.record(error)
+            capture.restoring = true
+            self.error = oldValue
+            capture.restoring = false
+        }
+    }
     @Published var busy = false
     @Published var webBroadcastBusy = false
     private(set) var sharedDraftRevision = SharedDraftRevision()
@@ -109,6 +118,8 @@ final class AppModel: ObservableObject {
     var telemetryTimer: Timer?
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     var database: MessagesDatabase?
+    /// Created on first use. The app starts it at launch; fixtures never touch it.
+    lazy var remote = RemoteService(model: self)
     var timer: Timer?
     var coordinator: WindowCoordinator?
     var demoRow: Int64 = 100
@@ -458,11 +469,18 @@ final class AppModel: ObservableObject {
         return result
     }
     func start(recipientIDs: Set<UUID>) async {
-        let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachments = state.attachmentsDraft ?? []
-        guard (!text.isEmpty || !attachments.isEmpty), !busy else { return }
+        await startBlast(text: state.draft, attachments: state.attachmentsDraft ?? [], recipientIDs: recipientIDs, interactive: true)
+    }
+    /// A Messages-only new blast. `interactive` is the Mac composer: it may request
+    /// Contacts access, clears the composer draft, and opens the conversation window.
+    /// Remote callers pass their own text and files and leave the Mac's draft alone.
+    @discardableResult
+    func startBlast(text rawText: String, attachments: [MessageAttachment], recipientIDs: Set<UUID>, interactive: Bool) async -> UUID? {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (!text.isEmpty || !attachments.isEmpty), !busy else { return nil }
         do {
             if !demo, contacts.status == .notDetermined {
+                guard interactive else { throw AppFailure.blocked("Allow Contacts for msgblast on the Mac before sending to Messages agents.") }
                 busy = true
                 defer { busy = false }
                 try await contacts.request()
@@ -475,10 +493,13 @@ final class AppModel: ObservableObject {
             }
             state.comparisons.insert(comparison, at: 0)
             try save() // Durable intent exists before any external send.
-            state.draft = ""; state.attachmentsDraft = nil; try save()
-            coordinator?.open(comparison.id)
+            if interactive {
+                state.draft = ""; state.attachmentsDraft = nil; try save()
+                coordinator?.open(comparison.id)
+            }
             await submit(comparison.id, retry: false)
-        } catch { self.error = error.localizedDescription }
+            return comparison.id
+        } catch { self.error = error.localizedDescription; return nil }
     }
     func setSharedDraft(_ text: String) {
         sharedDraftRevision.edited(from: state.draft, to: text)
@@ -549,17 +570,21 @@ final class AppModel: ObservableObject {
         persist()
     }
 
-    func prepareWebComparison(_ text: String, recipientIDs: Set<UUID>, agents: [WebAgentID]) async -> UUID? {
+    func prepareWebComparison(_ text: String, recipientIDs: Set<UUID>, agents: [WebAgentID], interactive: Bool = true) async -> UUID? {
         guard !busy else { return nil }
         do {
-            if !recipientIDs.isEmpty, !demo, contacts.status == .notDetermined { try await contacts.request() }
+            if !recipientIDs.isEmpty, !demo, contacts.status == .notDetermined {
+                guard interactive else { throw AppFailure.blocked("Allow Contacts for msgblast on the Mac before sending to Messages agents.") }
+                try await contacts.request()
+            }
             let members = recipientIDs.isEmpty ? [] : try validateMembers(prompt: text, selectedIDs: recipientIDs)
             var comparison = Comparison(prompt: text, members: members)
             comparison.setWebAgents(agents)
             state.comparisons.insert(comparison, at: 0)
             do { try save() }
             catch { state.comparisons.removeAll { $0.id == comparison.id }; throw error }
-            selectWorkspace(comparison.id, promotingDraft: true)
+            // The composer's draft becomes this conversation's; a remote send keeps the Mac's draft.
+            selectWorkspace(comparison.id, promotingDraft: interactive)
             return comparison.id
         } catch { self.error = error.localizedDescription; return nil }
     }
@@ -649,6 +674,16 @@ final class AppModel: ObservableObject {
         state.comparisons[i].endedWebHistory = Dictionary(uniqueKeysWithValues: previous.resolvedWebAgentIDs.map { agent in
             (agent.id, webAgents.session(for: agent)?.messagesForComparison(id) ?? [])
         })
+        do { try save(); return true }
+        catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
+    }
+
+    /// Names a conversation; an empty name or the prompt's own title returns to the prompt.
+    func renameConversation(_ id: UUID, title: String) -> Bool {
+        guard let i = index(id) else { return false }
+        let previous = state.comparisons[i]
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.comparisons[i].customTitle = name.isEmpty || name == previous.derivedTitle ? nil : name
         do { try save(); return true }
         catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
     }

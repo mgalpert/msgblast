@@ -133,7 +133,8 @@ jobs:
           python3 scripts/build_preview_apps.py \
             --sha "$REVIEW_SHA" \
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --output build/preview
+            --output build/preview \
+            --build-stamp none
 
       - name: Retain a compiled icon that failed classification
         if: failure()
