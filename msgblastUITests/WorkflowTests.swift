@@ -108,14 +108,14 @@ final class WorkflowTests: XCTestCase {
         let header = app.descendants(matching: .any).matching(identifier: "Agent header ChatGPT").firstMatch
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         header.rightClick()
-        app.menuItems["Remove from view"].click()
+        app.menuItems["Remove from View"].click()
         XCTAssertFalse(header.exists)
         menu.click()
         menu.menuItems["New Chat With"].click()
         menu.menuItems["ChatGPT"].click()
         XCTAssertTrue(header.waitForExistence(timeout: 5), "Opening a fresh unsent chat must restore its hidden pane")
         header.rightClick()
-        app.menuItems["Remove from view"].click()
+        app.menuItems["Remove from View"].click()
         app.buttons["Agents"].click()
         app.buttons["ChatGPT"].click()
         app.buttons["ChatGPT"].rightClick()
@@ -564,7 +564,8 @@ final class WorkflowTests: XCTestCase {
         app.buttons["Send & compare"].click()
         let workspace = app.windows["Pending contact regression fixture [Demo]"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10))
-        for name in ["Cedar", "Lumen", "Orbit"] { XCTAssertTrue(workspace.buttons["Recipient \(name)"].exists) }
+        for name in ["Cedar", "Lumen", "Orbit"] { XCTAssertTrue(workspace.buttons["Recipient \(name) (Demo)"].exists) }
+        XCTAssertFalse(workspace.buttons["Recipient pending@example.com (Demo)"].exists)
         XCTAssertFalse(workspace.buttons["Recipient pending@example.com"].exists)
     }
     @MainActor
@@ -604,18 +605,31 @@ final class WorkflowTests: XCTestCase {
         app.buttons["Send & compare"].click()
         let workspace = app.windows["Remove pane fixture [Demo]"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10))
-        let draft = workspace.textViews["Private reply to Lumen"]
+        let draft = workspace.textViews["Universal message"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
         draft.click(); draft.typeText("Retained hidden draft")
-        workspace.buttons["Select Lumen conversation"].rightClick()
-        XCTAssertTrue(app.menuItems["Remove from view"].waitForExistence(timeout: 3))
-        app.menuItems["Remove from view"].click()
-        XCTAssertFalse(draft.exists)
+        let lumen = workspace.descendants(matching: .any).matching(identifier: "Agent header Lumen (Demo)").firstMatch
+        XCTAssertTrue(lumen.waitForExistence(timeout: 5))
+        lumen.rightClick()
+        XCTAssertTrue(app.menuItems["Remove from View"].waitForExistence(timeout: 3))
+        app.menuItems["Remove from View"].click()
+        XCTAssertFalse(lumen.exists)
         let hidden = XCTAttachment(screenshot: workspace.screenshot()); hidden.name = "Lumen removed — isolated Demo fixture"; hidden.lifetime = .keepAlways; add(hidden)
-        XCTAssertTrue(workspace.textViews["Private reply to Cedar"].exists)
-        XCTAssertEqual(workspace.buttons["Recipient Lumen"].value as? String, "Not selected")
-        workspace.buttons["Recipient Lumen"].click()
-        XCTAssertTrue(draft.waitForExistence(timeout: 3))
-        XCTAssertEqual(draft.value as? String, "Retained hidden draft")
+        XCTAssertTrue(workspace.descendants(matching: .any).matching(identifier: "Agent header Cedar (Demo)").firstMatch.exists)
+        XCTAssertEqual(draft.value as? String, "Retained hidden draft", "Removing a column keeps the compose bar's draft")
+        workspace.buttons["Conversation details"].click()
+        let lumenRecipient = app.checkBoxes["Recipient Lumen"]
+        XCTAssertTrue(lumenRecipient.waitForExistence(timeout: 3), "Details still lists the removed conversation")
+        XCTAssertEqual(String(describing: lumenRecipient.value ?? ""), "0", "A removed conversation no longer receives the next message")
+        app.typeKey(.escape, modifierFlags: [])
+        // Reopening the conversation restores its hidden column with the draft intact.
+        workspace.buttons[XCUIIdentifierCloseWindow].click()
+        let saved = app.outlines.cells.containing(NSPredicate(format: "label CONTAINS %@", "Remove pane fixture")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        saved.click()
+        XCTAssertTrue(workspace.waitForExistence(timeout: 5))
+        XCTAssertTrue(lumen.waitForExistence(timeout: 5))
+        XCTAssertEqual(workspace.textViews["Universal message"].value as? String, "Retained hidden draft")
     }
 
     @MainActor
@@ -626,41 +640,39 @@ final class WorkflowTests: XCTestCase {
         app.buttons["Send & compare"].click()
         let workspace = app.windows["Connected workspace fixture [Demo]"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 10))
-        for name in ["Cedar", "Lumen", "Orbit"] { XCTAssertTrue(workspace.textViews["Private reply to \(name)"].exists) }
-        let cedarInput = workspace.textViews["Private reply to Cedar"]
-        let lumenInput = workspace.textViews["Private reply to Lumen"]
-        lumenInput.click(); lumenInput.typeText("Lumen retained private draft")
-        cedarInput.click(); cedarInput.typeText("Cedar pane reply fixture")
-        cedarInput.typeKey(.return, modifierFlags: [])
-        let paneReplies = workspace.textViews.matching(NSPredicate(format: "value == %@", "Cedar pane reply fixture"))
-        XCTAssertTrue(paneReplies.firstMatch.waitForExistence(timeout: 5))
-        XCTAssertEqual(paneReplies.count, 1, "A pane reply must reach only its own agent")
-        XCTAssertEqual(cedarInput.value as? String, "")
-        XCTAssertEqual(lumenInput.value as? String, "Lumen retained private draft")
+        for name in ["Cedar", "Lumen", "Orbit"] {
+            XCTAssertTrue(workspace.descendants(matching: .any).matching(identifier: "Agent header \(name) (Demo)").firstMatch.waitForExistence(timeout: 5))
+            XCTAssertEqual(workspace.buttons["Recipient \(name) (Demo)"].value as? String, "Selected")
+        }
         let input = workspace.textViews["Universal message"]
         XCTAssertTrue(input.exists)
-        for name in ["Cedar", "Lumen", "Orbit"] {
-            XCTAssertEqual(workspace.buttons["Recipient \(name)"].value as? String, "Selected")
-        }
+        // A private reply: only Cedar's avatar stays checked on the one compose bar.
+        workspace.buttons["Recipient Lumen (Demo)"].click()
+        workspace.buttons["Recipient Orbit (Demo)"].click()
+        XCTAssertEqual(workspace.buttons["Recipient Lumen (Demo)"].value as? String, "Not selected")
+        XCTAssertEqual(workspace.buttons["Recipient Orbit (Demo)"].value as? String, "Not selected")
+        input.click(); input.typeText("Cedar pane reply fixture")
+        input.typeKey(.return, modifierFlags: [])
+        let paneReplies = workspace.textViews.matching(NSPredicate(format: "value == %@", "Cedar pane reply fixture"))
+        XCTAssertTrue(paneReplies.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(paneReplies.count, 1, "A reply with one checked agent must reach only that agent")
+        XCTAssertEqual(input.value as? String, "")
         input.click(); input.typeText("Cedar private fixture")
-        workspace.buttons["Select Cedar conversation"].click()
         XCTAssertEqual(input.value as? String, "Cedar private fixture")
         workspace.buttons["Send to Cedar"].click()
         XCTAssertTrue(workspace.textViews.matching(NSPredicate(format: "value == %@", "Cedar private fixture")).firstMatch.waitForExistence(timeout: 5))
-        workspace.buttons["Recipient Lumen"].click()
-        workspace.buttons["Recipient Orbit"].click()
-        workspace.buttons["Recipient Cedar"].click()
-        XCTAssertEqual(workspace.buttons["Shared recipient Cedar"].value as? String, "Excluded")
-        XCTAssertEqual(workspace.buttons["Recipient Cedar"].value as? String, "Not selected")
-        XCTAssertEqual(workspace.buttons["Recipient Lumen"].value as? String, "Selected")
-        XCTAssertEqual(workspace.buttons["Recipient Orbit"].value as? String, "Selected")
+        workspace.buttons["Recipient Lumen (Demo)"].click()
+        workspace.buttons["Recipient Orbit (Demo)"].click()
+        workspace.buttons["Recipient Cedar (Demo)"].click()
+        XCTAssertEqual(workspace.buttons["Recipient Cedar (Demo)"].value as? String, "Not selected")
+        XCTAssertEqual(workspace.buttons["Recipient Lumen (Demo)"].value as? String, "Selected")
+        XCTAssertEqual(workspace.buttons["Recipient Orbit (Demo)"].value as? String, "Selected")
         input.click(); input.typeText("Remaining recipients fixture")
         workspace.buttons["Send to Lumen, Orbit"].click()
         let copies = workspace.textViews.matching(NSPredicate(format: "value == %@", "Remaining recipients fixture"))
         XCTAssertTrue(copies.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(copies.count, 2)
         input.click(); input.typeText("one retained draft")
-        workspace.buttons["Select Orbit conversation"].click()
         XCTAssertEqual(input.value as? String, "one retained draft")
         app.typeKey(",", modifierFlags: .command)
         app.radioButtons["Separate windows"].click()
@@ -764,7 +776,11 @@ final class WorkflowTests: XCTestCase {
         app.buttons["Send & compare"].click()
         let window = app.windows["Private scroll regression [Demo]"]
         XCTAssertTrue(window.waitForExistence(timeout: 10))
-        let input = window.textViews["Private reply to Cedar"]
+        // A private reply: only Cedar's avatar stays checked on the one compose bar.
+        XCTAssertTrue(window.buttons["Recipient Lumen (Demo)"].waitForExistence(timeout: 5))
+        window.buttons["Recipient Lumen (Demo)"].click()
+        window.buttons["Recipient Orbit (Demo)"].click()
+        let input = window.textViews["Universal message"]
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         let text = String(repeating: "Private sample content wraps across the pane. ", count: 30) + "END OF PRIVATE REPLY"
         input.click(); input.typeText(text); input.typeKey(.return, modifierFlags: [])
@@ -774,7 +790,7 @@ final class WorkflowTests: XCTestCase {
             return sent.isHittable && sent.frame.maxY <= input.frame.minY && sent.frame.maxY > window.frame.minY
         }
         let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: visible, object: nil)], timeout: 5)
-        XCTAssertEqual(result, .completed, "The submitted message's end must be visible above the individual composer without scrolling")
+        XCTAssertEqual(result, .completed, "The submitted message's end must be visible above the compose bar without scrolling")
         let image = XCTAttachment(screenshot: window.screenshot())
         image.name = "Private reply visible without scrolling"; image.lifetime = .keepAlways; add(image)
     }
