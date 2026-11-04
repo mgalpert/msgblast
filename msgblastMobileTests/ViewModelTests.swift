@@ -556,33 +556,102 @@ final class PresenterTests: XCTestCase {
     }
 }
 
+/// A value set from a callback and read later; the tests run on the main actor, so no lock.
+@MainActor private final class Slot<T> { var value: T? }
+
 @MainActor
 final class MobileAppTests: XCTestCase {
+    private func settle(_ until: () -> Bool) async {
+        for _ in 0..<400 { if until() { return }; try? await Task.sleep(for: .milliseconds(5)) }
+    }
+    private func makeApp(_ mac: FakeMac) throws -> MobileApp {
+        MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                  makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+    }
+    /// Starts a send through `perform` and waits until the fake Mac holds it; the result stays pending.
+    private func startSend(_ app: MobileApp, _ mac: FakeMac, _ action: RemoteAction) async throws -> (id: UUID, result: Task<RemoteCommandResult, Error>) {
+        let sent = Slot<RemoteCommand>()
+        let result = Task { try await app.perform(action) { sent.value = $0 } }
+        await settle { sent.value.map { command in mac.commands.contains { $0.clientCommandID == command.clientCommandID } } ?? false }
+        return (try XCTUnwrap(sent.value).clientCommandID, result)
+    }
+
     func testPairSendAndUnconfirmedWhenTheConnectionDrops() async throws {
         let mac = FakeMac()
-        let defaults = UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!
-        let app = MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: defaults,
-                            makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
-        app.connection.timing.backoff = [.seconds(30)]
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
         XCTAssertThrowsError(try app.send(.setKeepAwake(enabled: true)), "Never queued while disconnected")
         let paired = try await app.pair(link: mac.offer().url.absoluteString, deviceName: "Phone")
         XCTAssertEqual(paired.macName, "Fake Mac")
-        for _ in 0..<100 where app.store.projection.seq == nil { try await Task.sleep(for: .milliseconds(5)) }
+        await settle { app.store.projection.seq != nil }
         XCTAssertEqual(app.store.projection.seq, 10)
 
         let result = try await app.perform(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Hi", attachmentIDs: []))
         XCTAssertEqual(result.outcome, .applied)
         XCTAssertEqual(app.store.commands[result.clientCommandID]?.status, .applied)
 
+        // The Mac answers neither the send nor the reconnect's query: only the phone's timeout gives up.
         mac.answerCommands = false
-        let pending = try app.send(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Lost", attachmentIDs: []))
-        for _ in 0..<100 where !mac.commands.contains(where: { $0.clientCommandID == pending.clientCommandID }) { try await Task.sleep(for: .milliseconds(5)) }
+        app.commandTimeout = .milliseconds(300)
+        let (id, lost) = try await startSend(app, mac, .sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Lost", attachmentIDs: []))
         mac.sessions.last!.transport.drop()
-        for _ in 0..<100 where app.store.commands[pending.clientCommandID]?.status != .unconfirmed { try await Task.sleep(for: .milliseconds(5)) }
-        XCTAssertEqual(app.store.commands[pending.clientCommandID]?.status, .unconfirmed)
-        XCTAssertEqual(mac.commands.filter { $0.clientCommandID == pending.clientCommandID }.count, 1, "Not resent")
+        await settle { app.connection.state.isReconnecting }
+        XCTAssertEqual(app.store.commands[id]?.status, .sending, "A dropped connection does not give up on a sent command")
+        XCTAssertTrue(app.hasPendingSends)
+        do { _ = try await lost.value; XCTFail("No answer must end in unconfirmed") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
+        XCTAssertEqual(app.store.commands[id]?.status, .unconfirmed)
+        XCTAssertFalse(app.hasPendingSends)
+        XCTAssertEqual(mac.commands.filter { $0.clientCommandID == id }.count, 1, "Not resent")
         app.forgetMac()
         XCTAssertEqual(app.connection.state, .unpaired)
+    }
+
+    func testASendSurvivesAReconnectAndIsNeverRepeated() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        // New Conversation with one agent, keyed as ComposeBar keys it.
+        let key = MobileStore.draftKey(conversation: nil, agentID: nil)
+        app.store.setDraft("Hi", for: key)
+        let (id, send) = try await startSend(app, mac, .sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Hi", attachmentIDs: []))
+        // The Mac finished it while the phone was away, and tells the reconnect's query so.
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        mac.sessions.last!.transport.drop()
+        await settle { app.connection.state.isReconnecting }
+        XCTAssertEqual(app.store.commands[id]?.status, .sending)
+        XCTAssertEqual(app.store.draft(key), "Hi", "The draft stays until the Mac confirms")
+        await settle { app.connection.state == .connected }
+        let result = try await send.value
+        XCTAssertEqual(result.outcome, .applied)
+        XCTAssertTrue(result.replayed)
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendPrivate" }.count, 1, "Never sent a second time")
+        XCTAssertEqual(app.store.commands[id]?.status, .applied)
+        XCTAssertEqual(app.store.draft(key), "", "The draft the send carried is cleared")
+    }
+
+    func testAStillRunningSendIsAskedAboutAgainUntilItFinishes() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        app.requeryDelays = [.milliseconds(20)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        let (id, send) = try await startSend(app, mac, .sendShared(conversationID: UUID(), text: "Slow", agentIDs: [], attachmentIDs: []))
+        // Still running on the Mac when the phone comes back: the phone keeps asking, never resends.
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Still running on your Mac", replayed: true)
+        mac.sessions.last!.transport.drop()
+        await settle { app.connection.state == .connected }
+        func queries() -> Int { mac.commands.filter { $0.action == .queryCommand(clientCommandID: id) }.count }
+        await settle { queries() >= 2 }
+        XCTAssertGreaterThanOrEqual(queries(), 2, "Asked again after a replayed accepted")
+        XCTAssertEqual(app.store.commands[id]?.status, .accepted)
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        let result = try await send.value
+        XCTAssertEqual(result.outcome, .applied)
+        XCTAssertEqual(app.store.commands[id]?.status, .applied)
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendShared" }.count, 1, "Never sent a second time")
     }
 
     func testAvatarsAreFetchedOnceCachedAndClearedByForget() async throws {

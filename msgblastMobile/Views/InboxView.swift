@@ -68,7 +68,8 @@ struct InboxView: View {
         }
         // A new conversation is an empty thread pushed on the stack, not a sheet.
         .navigationDestination(isPresented: $composing) { NewConversationView(app: app) }
-        .refreshable { app.connection.connect() }
+        // Pull to refresh races the addresses again even while connected (a route may have changed).
+        .refreshable { app.connection.reconnectNow() }
         .onAppear {
             if launchScreen == .newConversation { composing = true }
             if launchScreen == .settings { settings = true }

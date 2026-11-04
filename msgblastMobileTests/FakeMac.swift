@@ -13,6 +13,9 @@ final class FakeMac {
     var snapshot: RemoteSnapshot
     var commands: [RemoteCommand] = []
     var answerCommands = true
+    /// Answers to `queryCommand` by the queried id. Without one, a query is treated like any
+    /// command: `applied` for the query's own id, or silence with `answerCommands` off.
+    var queryAnswers: [UUID: RemoteCommandResult] = [:]
     /// Artwork by reference. Nil models an older Mac without `fetchAvatar` (it answers `unsupported`).
     var avatars: [String: Data]? = [:]
     /// Holds the first snapshot back, like a Mac that takes a moment to build it.
@@ -92,6 +95,7 @@ final class FakeMac {
                                             ?? .rejected(command.clientCommandID, .unknownAvatar, "No artwork for that agent")))
                         continue
                     }
+                    if case .queryCommand(let id) = command.action, var answer = mac.queryAnswers[id] { answer.clientCommandID = id; send(.commandResult(answer)); continue }
                     if mac.answerCommands { send(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied))) }
                 case .ping(let nonce): send(.pong(nonce: nonce, seq: mac.snapshot.seq))
                 default: break

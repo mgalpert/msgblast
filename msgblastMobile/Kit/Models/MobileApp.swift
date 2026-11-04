@@ -14,6 +14,13 @@ public final class MobileApp: ObservableObject {
     private var waiting: [UUID: CheckedContinuation<RemoteCommandResult, Error>] = [:]
     private var subscriptions: Set<AnyCancellable> = []
     public var commandTimeout: Duration = .seconds(90)
+    /// Waits before asking again about a send the Mac says is still running (a replayed
+    /// `accepted` after a reconnect), one per answer; the last repeats. Tests shorten them.
+    public var requeryDelays: [Duration] = [.seconds(2), .seconds(4), .seconds(8), .seconds(10)]
+    /// The scheduled follow-up query per command still waiting, and how many preceded it.
+    private var requeries: [UUID: (task: Task<Void, Never>, attempt: Int)] = [:]
+    /// The state before the current one, to tell a fresh race from a live session apart.
+    private var lastConnectionState: MacConnectionState
     /// Command kinds the paired Mac answered `unsupported`: their controls hide until it is updated.
     @Published public var unsupportedActions: Set<String> = []
     private var snapshotRequested = false
@@ -34,23 +41,57 @@ public final class MobileApp: ObservableObject {
             connection = MacConnection(paired: saved, keys: keys, savePaired: { database.setValue($0, "pairedMac") })
         }
         keepAwake = defaults.object(forKey: "keepAwake") as? Bool ?? true
+        lastConnectionState = connection.state
         connection.keepAwakeRequested = keepAwake
         connection.onEvent = { [weak self] event in self?.handle(event) }
         connection.pendingCommandIDs = { [weak self] in self?.store.unresolvedCommandIDs ?? [] }
-        connection.willReplacePairing = { [weak self] _ in self?.store.forgetMac() }
+        connection.willReplacePairing = { [weak self] _ in self?.failWaiting(); self?.store.forgetMac() }
         connection.sinceSeq = { [weak self] in self?.store.projection.needsSnapshot == true ? nil : self?.store.projection.seq }
         connection.$state.removeDuplicates().sink { [weak self] state in
-            guard let self, !state.canSend else { return }
-            self.store.connectionLost()
-            // These commands were sent; the connection ended before their result.
-            for (_, continuation) in self.waiting { continuation.resume(throwing: MobileConnectionError.unconfirmed) }
-            self.waiting = [:]
-            // Artwork requests that got no answer are asked again after reconnecting.
-            self.avatarRequests = [:]
+            guard let self else { return }
+            let previous = self.lastConnectionState
+            self.lastConnectionState = state
+            // A new race started from a live session (pull to refresh) ends that session too.
+            guard Self.sessionGone(state) || (state == .connecting && [.connected, .macLocked].contains(previous)) else { return }
+            self.sessionLost()
         }.store(in: &subscriptions)
         connection.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
     }
+
+    /// States with no session at all. Connecting has nothing to lose yet; a locked Mac keeps
+    /// the session open and still answers (sends it refuses come back `rejected`).
+    private static func sessionGone(_ state: MacConnectionState) -> Bool {
+        switch state {
+        case .stopped, .reconnecting, .pairingLost, .unpaired, .pairing: true
+        case .connecting, .connected, .macLocked: false
+        }
+    }
+
+    /// The session ended. Recorded commands keep waiting: the Mac may still finish them and
+    /// answers the reconnect's query; only `commandTimeout` gives up on them. Read-only
+    /// requests are never replayed, so theirs fail now.
+    private func sessionLost() {
+        for (_, requery) in requeries { requery.task.cancel() }
+        requeries = [:]
+        for (id, continuation) in waiting where store.commands[id] == nil {
+            waiting[id] = nil
+            continuation.resume(throwing: MobileConnectionError.unconfirmed)
+        }
+        // Artwork requests that got no answer are asked again after reconnecting.
+        avatarRequests = [:]
+    }
+
+    /// Nothing can answer these any more: the pairing goes, and its records with it.
+    private func failWaiting() {
+        for (_, requery) in requeries { requery.task.cancel() }
+        requeries = [:]
+        for (_, continuation) in waiting { continuation.resume(throwing: MobileConnectionError.unconfirmed) }
+        waiting = [:]
+    }
+
+    /// A send made through `perform` still waits on the Mac, whose result comes only to this session.
+    public var hasPendingSends: Bool { waiting.keys.contains { store.commands[$0] != nil } }
 
     private func handle(_ event: RemoteClientDriver.Event) {
         if case .commandResult(let result) = event, let ref = avatarRequests.removeValue(forKey: result.clientCommandID) {
@@ -58,8 +99,15 @@ public final class MobileApp: ObservableObject {
             return
         }
         store.handle(event)
-        if case .commandResult(let result) = event, result.outcome != .accepted, let continuation = waiting.removeValue(forKey: result.clientCommandID) {
-            continuation.resume(returning: result)
+        if case .commandResult(let result) = event, waiting[result.clientCommandID] != nil {
+            if result.outcome != .accepted {
+                requeries.removeValue(forKey: result.clientCommandID)?.task.cancel()
+                waiting.removeValue(forKey: result.clientCommandID)?.resume(returning: result)
+            } else if result.replayed {
+                // Still running on the Mac after a reconnect: its final result goes only to the
+                // session that submitted it, so this session asks again until it is final.
+                scheduleRequery(result.clientCommandID)
+            }
         }
         if store.projection.needsSnapshot && !snapshotRequested { snapshotRequested = true; connection.requestSnapshot() }
         if case .snapshot = event { snapshotRequested = false }
@@ -98,19 +146,37 @@ public final class MobileApp: ObservableObject {
         return command
     }
 
-    /// Sends and waits for the final result. A lost connection or a timeout leaves the
-    /// command unconfirmed in the store; it is never resent.
-    public func perform(_ action: RemoteAction) async throws -> RemoteCommandResult {
+    /// Sends and waits for the final result; `onSent` gets the command before the wait, so a
+    /// caller can recognise a late result. A lost connection does not end the wait: the Mac may
+    /// still finish it and answers the reconnect's query. Only the timeout gives up, leaving the
+    /// command unconfirmed in the store. It is never resent.
+    public func perform(_ action: RemoteAction, onSent: ((RemoteCommand) -> Void)? = nil) async throws -> RemoteCommandResult {
         let command = try send(action)
+        onSent?(command)
         let timeout = commandTimeout
         return try await withCheckedThrowingContinuation { continuation in
             waiting[command.clientCommandID] = continuation
             Task { [weak self] in
                 try? await Task.sleep(for: timeout)
                 guard let self, let pending = self.waiting.removeValue(forKey: command.clientCommandID) else { return }
+                self.requeries.removeValue(forKey: command.clientCommandID)?.task.cancel()
+                self.store.markUnconfirmed(command.clientCommandID)
                 pending.resume(throwing: MobileConnectionError.unconfirmed)
             }
         }
+    }
+
+    private func scheduleRequery(_ id: UUID) {
+        guard !requeryDelays.isEmpty else { return }
+        let attempt = requeries[id]?.attempt ?? 0
+        requeries[id]?.task.cancel()
+        let delay = requeryDelays[min(attempt, requeryDelays.count - 1)]
+        let task = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self, self.waiting[id] != nil, self.connection.state.canSend else { return }
+            try? self.connection.send(RemoteCommand(action: .queryCommand(clientCommandID: id)))
+        }
+        requeries[id] = (task, attempt + 1)
     }
 
     private func sendKeepAwake() {
@@ -149,6 +215,7 @@ public final class MobileApp: ObservableObject {
     public func forgetMac() {
         avatarRequests = [:]
         avatarsUnavailable = []
+        failWaiting()
         connection.forget()
         store.forgetMac()
     }

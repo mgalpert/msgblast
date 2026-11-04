@@ -51,7 +51,9 @@ public enum CommandLedger {
         records[result.clientCommandID] = record
     }
 
-    /// The connection ended: anything without a final result is unconfirmed (checked again on reconnect).
+    /// Loading after the process ended mid-command: anything without a final result is
+    /// unconfirmed (still queried on reconnect). A dropped connection within a run does not use
+    /// this: the Mac may still finish those, and `perform` waits for its timeout.
     public static func connectionLost(_ records: inout [UUID: CommandRecord]) {
         for (id, record) in records where record.status == .sending || record.status == .accepted { records[id]?.status = .unconfirmed }
     }

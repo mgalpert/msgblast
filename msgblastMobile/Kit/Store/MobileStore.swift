@@ -38,7 +38,9 @@ public final class MobileStore: ObservableObject {
 
     public func handle(_ event: RemoteClientDriver.Event) {
         if case .commandResult(let result) = event {
+            let wasFinal = commands[result.clientCommandID]?.isFinal ?? true
             CommandLedger.apply(result, to: &commands)
+            if !wasFinal, let record = commands[result.clientCommandID], record.status == .applied { clearDraft(sentBy: record) }
         } else {
             projection = ProjectionReducer.reduce(projection, event)
             if case .snapshot = event, unreadSince == nil { unreadSince = Date(); database.setValue(unreadSince, "unreadSince") }
@@ -52,8 +54,11 @@ public final class MobileStore: ObservableObject {
         scheduleSave()
     }
 
-    public func connectionLost() {
-        CommandLedger.connectionLost(&commands)
+    /// `perform` gave up waiting and told the user so; the ledger says the same until a
+    /// reconnect's query answers.
+    public func markUnconfirmed(_ id: UUID) {
+        guard let record = commands[id], !record.isFinal else { return }
+        commands[id]?.status = .unconfirmed
         scheduleSave()
     }
 
@@ -65,6 +70,15 @@ public final class MobileStore: ObservableObject {
         "\(conversation?.uuidString ?? "new")|\(agentID ?? "all")"
     }
     public func draft(_ key: String) -> String { drafts[key] ?? "" }
+    /// A send reached the Mac (now, or by a late query answer): its field's draft goes, unless
+    /// edited since. Keyed as `ComposeBar` keys it: the agent only for one recipient in an
+    /// existing conversation (a private send, or a direct thread's only member).
+    private func clearDraft(sentBy record: CommandRecord) {
+        guard ["createConversation", "sendShared", "sendPrivate"].contains(record.kind), let text = record.text else { return }
+        let recipients = record.agentIDs.isEmpty ? record.conversationID.flatMap { projection.conversations[$0]?.agentIDs } ?? [] : record.agentIDs
+        let key = Self.draftKey(conversation: record.conversationID, agentID: recipients.count == 1 && record.conversationID != nil ? recipients[0] : nil)
+        if drafts[key]?.trimmingCharacters(in: .whitespacesAndNewlines) == text { setDraft("", for: key) }
+    }
     public func setDraft(_ text: String, for key: String) {
         guard drafts[key] != text else { return }
         drafts[key] = text.isEmpty ? nil : text

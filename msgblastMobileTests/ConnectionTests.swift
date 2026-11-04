@@ -199,6 +199,29 @@ final class ConnectionTests: XCTestCase {
         connection.stop()
     }
 
+    func testConnectKeepsAHealthySessionAndReconnectNowReplacesIt() async throws {
+        let mac = FakeMac()
+        let (connection, events, _) = make(mac)
+        connection.pair(offer: mac.offer(), deviceName: "Phone") { _ in }
+        await settle { connection.state == .connected && !events().isEmpty }
+        let sessions = mac.sessions.count, transports = mac.transports.count
+        // Every return to the foreground connects; a session that is up stays up.
+        connection.connect()
+        XCTAssertEqual(connection.state, .connected, "No new race from a live session")
+        XCTAssertEqual(mac.transports.count, transports)
+        XCTAssertEqual(mac.sessions.count, sessions)
+        // Pull to refresh really does race again, and a race in progress is not restarted.
+        connection.reconnectNow()
+        XCTAssertEqual(connection.state, .connecting)
+        let racing = mac.transports.count
+        XCTAssertGreaterThan(racing, transports)
+        connection.connect()
+        XCTAssertEqual(mac.transports.count, racing, "A race in progress is left to finish")
+        await settle { connection.state == .connected && mac.sessions.count > sessions }
+        XCTAssertGreaterThan(mac.sessions.count, sessions)
+        XCTAssertEqual(connection.state, .connected)
+    }
+
     func testUnconfirmedIsNotNotConnected() {
         XCTAssertTrue(MobileConnectionError.notConnected.errorDescription!.contains("Not sent"))
         XCTAssertFalse(MobileConnectionError.unconfirmed.errorDescription!.lowercased().contains("not sent"), "An unconfirmed send may have reached the Mac")

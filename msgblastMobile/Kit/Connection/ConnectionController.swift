@@ -163,7 +163,20 @@ public final class MacConnection: ObservableObject {
 
     // MARK: Lifecycle
 
+    /// Connects unless a session is already up or being set up: every return to the foreground
+    /// calls this, and dropping a live session would lose the results of sends in flight.
     public func connect() {
+        switch state {
+        case .connected, .macLocked: if transport != nil { return }
+        case .pairing: return
+        case .connecting: if driver != nil { return }
+        default: break
+        }
+        reconnectNow()
+    }
+
+    /// Drops whatever session there is and races the endpoints again (pull to refresh).
+    public func reconnectNow() {
         guard let mac = pairedMac else { state = .unpaired; return }
         reconnectTask?.cancel()
         guard let key = try? keys.loadOrCreate() else { state = .pairingLost("This phone's key is missing. Pair again."); return }

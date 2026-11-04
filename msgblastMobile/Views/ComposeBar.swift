@@ -28,6 +28,9 @@ struct ComposeBar: View {
     /// How long the phone waits for the Mac's readiness answer (the Mac bounds it at 20 s).
     static let prepareTimeout: Duration = .seconds(25)
     @State private var sending = false
+    /// The send waiting on the Mac: its command id and the text it carried, so a late `applied`
+    /// (after the field already said unconfirmed) clears the field if it still holds that text.
+    @State private var inFlight: (id: UUID, text: String)?
     @State private var message: String?
     @State private var attachments: [(id: String, name: String)] = []
     @State private var photo: PhotosPickerItem?
@@ -176,6 +179,8 @@ struct ComposeBar: View {
         }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
+        // The timeout said unconfirmed; then a reconnect's query said the Mac did send it.
+        .onChange(of: inFlight.flatMap { app.store.commands[$0.id]?.status }) { _, status in if status == .applied { lateApplied() } }
         // A refused prepare runs again once the agents it named can accept a send.
         .onChange(of: presenter.readiness(agentIDs: recipients)) { _, _ in
             if !preparing && presenter.shouldRetryPrepare(prepareReasons: prepareReasons, agentIDs: recipients) { prepare() }
@@ -316,7 +321,8 @@ struct ComposeBar: View {
         Task {
             defer { sending = false }
             do {
-                let result = try await app.perform(action)
+                let result = try await app.perform(action) { inFlight = ($0.clientCommandID, body) }
+                inFlight = nil
                 if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
                 sentCount += 1
                 text = ""; attachments = []
@@ -325,12 +331,25 @@ struct ComposeBar: View {
                 if let quoted = replyTo.wrappedValue { app.store.recordReply(result.clientCommandID, quoting: quoted.id); replyTo.wrappedValue = nil }
                 onSent(result.conversationID)
             } catch {
-                // Keep the text and files: the Mac may never have received them. An unconfirmed
-                // command is recorded and never resent; the user checks before sending again.
+                // Keep the text and files: the Mac may still be finishing this send (it is never
+                // resent, and Send stayed off until the timeout). If it does finish, the field
+                // clears itself; otherwise the user checks the conversation before sending again.
                 message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
                 refusedCount += 1
             }
         }
+    }
+
+    /// The Mac finished a send the field had given up on. Still that text: it went, so the
+    /// field clears as after any send; edited since: only the stale error goes.
+    private func lateApplied() {
+        guard let flight = inFlight, !sending else { return }
+        inFlight = nil
+        message = nil
+        guard text.trimmingCharacters(in: .whitespacesAndNewlines) == flight.text else { return }
+        sentCount += 1
+        text = ""; attachments = []
+        withAnimation(.snappy) { recipientsOpen = false }
     }
 
     private func upload(_ item: PhotosPickerItem) async {
