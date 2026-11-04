@@ -35,6 +35,7 @@ cloudflared_notices = obj('msgblast/Resources/CloudflaredNotices.txt', '{isa = P
 cua_manifest = obj('scripts/cua-driver.json', '{isa = PBXFileReference; lastKnownFileType = text.json; path = "scripts/cua-driver.json"; sourceTree = SOURCE_ROOT;}')
 mobile_plist = obj('msgblastMobile/Info.plist', '{isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "msgblastMobile/Info.plist"; sourceTree = SOURCE_ROOT;}')
 mobile_assets = obj('msgblastMobile/Assets.xcassets', '{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "msgblastMobile/Assets.xcassets"; sourceTree = SOURCE_ROOT;}')
+mobile_privacy = obj('msgblastMobile/PrivacyInfo.xcprivacy', '{isa = PBXFileReference; lastKnownFileType = text.xml; path = "msgblastMobile/PrivacyInfo.xcprivacy"; sourceTree = SOURCE_ROOT;}')
 mobile_fixtures = obj('msgblastMobileTests/Fixtures', '{isa = PBXFileReference; lastKnownFileType = folder; path = "msgblastMobileTests/Fixtures"; sourceTree = SOURCE_ROOT;}')
 cua_notices = obj('msgblast/Resources/CuaDriverNotices.txt', '{isa = PBXFileReference; lastKnownFileType = text; path = "msgblast/Resources/CuaDriverNotices.txt"; sourceTree = SOURCE_ROOT;}')
 products = {}
@@ -42,7 +43,7 @@ products = {}
 for name, kind, ext in [('msgblastRemoteProtocol','wrapper.framework','.framework'),('msgblastCore','wrapper.framework','.framework'),('msgblast','wrapper.application','.app'),('msgblastTests','wrapper.cfbundle','.xctest'),('msgblastUITests','wrapper.cfbundle','.xctest'),('msgblastRemoteProtocolTests','wrapper.cfbundle','.xctest'),('msgblastMobileKit','wrapper.framework','.framework'),('msgblastMobile','wrapper.application','.app'),('msgblastMobileTests','wrapper.cfbundle','.xctest')]:
     products[name] = obj(name+'product', '{isa = PBXFileReference; explicitFileType = '+kind+'; path = '+name+ext+'; sourceTree = BUILT_PRODUCTS_DIR;}')
 product_group = obj('products', '{isa = PBXGroup; name = Products; sourceTree = "<group>"; children = '+seq(list(products.values()))+';}')
-main_group = obj('mainGroup', '{isa = PBXGroup; sourceTree = "<group>"; children = '+seq(list(files.values())+[icon, demo_icon, notice, discover, muse_avatar, web_agent_icons, onboarding, release_notes, cloudflared_manifest, cloudflared_notices, cua_manifest, cua_notices, mobile_plist, mobile_assets, mobile_fixtures, product_group])+';}')
+main_group = obj('mainGroup', '{isa = PBXGroup; sourceTree = "<group>"; children = '+seq(list(files.values())+[icon, demo_icon, notice, discover, muse_avatar, web_agent_icons, onboarding, release_notes, cloudflared_manifest, cloudflared_notices, cua_manifest, cua_notices, mobile_plist, mobile_assets, mobile_privacy, mobile_fixtures, product_group])+';}')
 sparkle_package = obj('SparklePackage', '{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/sparkle-project/Sparkle"; requirement = {kind = exactVersion; version = 2.10.0;};}')
 sparkle_product = obj('SparkleProduct', '{isa = XCSwiftPackageProductDependency; package = '+sparkle_package+'; productName = Sparkle;}')
 cookie_package = obj('SweetCookieKitPackage', '{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/steipete/SweetCookieKit"; requirement = {kind = revision; revision = 29e7af6bb71f1b624380ab556330e8be8f7ddd65;};}')
@@ -111,7 +112,8 @@ for name in products:
         embed_kit = obj('embedMobileKitBuild','{isa = PBXBuildFile; fileRef = '+products['msgblastMobileKit']+'; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy,);};}')
         mobile_icon_build = obj('mobileAppIconBuild', '{isa = PBXBuildFile; fileRef = '+icon+';}')
         mobile_assets_build = obj('mobileAssetsBuild', '{isa = PBXBuildFile; fileRef = '+mobile_assets+';}')
-        phases.append(obj('mobileResources', '{isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = '+seq([mobile_icon_build, mobile_assets_build])+'; runOnlyForDeploymentPostprocessing = 0;}'))
+        mobile_privacy_build = obj('mobilePrivacyBuild', '{isa = PBXBuildFile; fileRef = '+mobile_privacy+';}')
+        phases.append(obj('mobileResources', '{isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = '+seq([mobile_icon_build, mobile_assets_build, mobile_privacy_build])+'; runOnlyForDeploymentPostprocessing = 0;}'))
         phases.append(obj('embedMobileFrameworks','{isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = '+seq([embed_mobile, embed_kit])+'; name = "Embed Frameworks"; runOnlyForDeploymentPostprocessing = 0;}'))
     if name == 'msgblastRemoteProtocol':
         settings.update({'DEFINES_MODULE':'YES', 'DYLIB_INSTALL_NAME_BASE':'"@rpath"', 'SKIP_INSTALL':'YES', 'LD_RUNPATH_SEARCH_PATHS':'"$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks @executable_path/Frameworks @loader_path/Frameworks"'})
