@@ -56,7 +56,7 @@ struct SidebarFooter: View {
     if offerShowing { return "Scan to pair your iPhone" }
     if let problem = service.problem { return problem }
     if service.power.locked { return "Mac locked" }
-    return "Starting…"
+    return service.running ? "Ready to pair" : "Starting…"
 }
 
 /// The expanded Phone section: Remote switch, live pairing QR code or the paired phone, and options.
