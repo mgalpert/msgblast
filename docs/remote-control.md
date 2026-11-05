@@ -11,7 +11,10 @@ app (`msgblastMobile`) is phase 2 of the
 
 Settings → Remote → **Allow a paired phone to use msgblast on this Mac**. It is
 off by default, and an upgraded Mac opens no port until the user turns it on.
-Turning it off disconnects the phone and closes every listener.
+Turning it off disconnects the phone and closes every listener. The main window's
+sidebar shows the same Remote switch and the pairing QR code in a **Phone** section
+above What's New; tapping the phone icon collapses it to the bottom of the sidebar,
+and that choice is remembered.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
@@ -31,6 +34,11 @@ Turning it off disconnects the phone and closes every listener.
 3. The phone answers an HMAC challenge keyed by the code and bound to the session
    transcript and to its own P-256 key, and signs the transcript with that key.
 4. The Mac stores only the phone's public key, name, and created/last-seen dates.
+
+The sidebar's Phone section shows the same code by itself while it is expanded,
+Remote is on and no phone is paired, replacing an expired code automatically. It
+opens pairing codes only while expanded and closes them when collapsed, so
+Settings → Remote keeps its own **Pair a phone…** flow.
 
 One phone per Mac. **Pair a different phone…** asks for confirmation; the new
 phone replaces the old record only after it pairs. **Forget** disconnects and
@@ -333,7 +341,7 @@ Record phone reducer fixtures from the Demo Mac with
 | Projection and journal | `msgblast/Core/Remote/RemoteProjection.swift` |
 | Commands | `msgblast/Core/Remote/RemoteCommandExecutor.swift`, `msgblast/Remote/AppRemoteHost.swift`, `msgblast/App/SharedSend.swift` |
 | Sessions, listener | `msgblast/Core/Remote/RemoteServer.swift`, `RemoteListener.swift` |
-| Service and settings UI | `msgblast/Remote/RemoteService.swift`, `RemoteAppSignals.swift`, `msgblast/Windows/RemoteSettingsView.swift` |
+| Service and settings UI | `msgblast/Remote/RemoteService.swift`, `RemoteAppSignals.swift`, `msgblast/Windows/RemoteSettingsView.swift`, `msgblast/Windows/PhoneSidebarView.swift` |
 | Phone logic (iOS and macOS) | `msgblastMobile/Kit/Connection/`, `Store/`, `Models/` (`msgblastMobileKit.framework`) |
 | Phone screens | `msgblastMobile/App/`, `msgblastMobile/Views/` |
 
