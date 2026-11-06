@@ -1,0 +1,17 @@
+# msgblastUITests on the Evidence-SHA tree, 2026-11-04, Xcode 27.0 (27A266a), dedicated Mac Studio
+# xcodebuild -project msgblast.xcodeproj -scheme msgblast -configuration Debug -derivedDataPath build/contributor-ui-tests -destination platform=macOS,arch=arm64 MSGBLAST_APP_BUNDLE_IDENTIFIER=com.msgblast.contributor-ui-tests ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -only-testing:… test-without-building
+Test Case '-[msgblastUITests.OnboardingWorkflowTests testFinishedSetupShowsChosenAgentsWithoutSelectingRecipients]' passed (29.106 seconds).
+Test Case '-[msgblastUITests.OnboardingWorkflowTests testNativeConnectionsShareOneChecklistAndContinueRequiresEveryRowResolved]' passed (58.604 seconds).
+	 Executed 2 tests, with 0 failures (0 unexpected) in 87.710 (87.713) seconds
+Test Case '-[msgblastUITests.WorkflowTests testJoinedInputRoutesSelectedAndExcludedConversationsAndPreservesItsDraft]' passed (46.319 seconds).
+msgblastUITests/WorkflowTests.swift:547: error: -[msgblastUITests.WorkflowTests testManualAccountWithoutChatIsSavedButCannotReceiveTheSharedPrompt] : Failed to click "Add agent" Button: No matches found for Elements matching predicate '"Add agent" IN identifiers' from input {(
+Test Case '-[msgblastUITests.WorkflowTests testManualAccountWithoutChatIsSavedButCannotReceiveTheSharedPrompt]' failed (15.677 seconds).
+msgblastUITests/WorkflowTests.swift:58: error: -[msgblastUITests.WorkflowTests testMenuBarNewBlastRetainsSelectionsAndReopensWorkspace] : Failed to timed out while waiting for menu open notification.
+Test Case '-[msgblastUITests.WorkflowTests testMenuBarNewBlastRetainsSelectionsAndReopensWorkspace]' failed (50.887 seconds).
+Test Case '-[msgblastUITests.WorkflowTests testPrivateComposerRevealsEndOfLongMessageWithoutManualScrolling]' passed (82.967 seconds).
+Test Case '-[msgblastUITests.WorkflowTests testRemoveConversationFromViewPreservesDraftAndCanRestore]' passed (28.695 seconds).
+Test Case '-[msgblastUITests.WorkflowTests testSharedPrivateAndAllScopes]' passed (40.766 seconds).
+	 Executed 6 tests, with 2 failures (0 unexpected) in 265.310 (265.315) seconds
+	 Executed 8 tests, with 2 failures (0 unexpected) in 353.021 (353.029) seconds
+	 Executed 8 tests, with 2 failures (0 unexpected) in 353.021 (353.030) seconds
+** TEST EXECUTE FAILED **
