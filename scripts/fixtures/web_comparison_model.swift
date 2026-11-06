@@ -725,6 +725,18 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         precondition(gridComparison.members.map(\.id) == [gridContact.id])
         precondition(busyWabi.state.selected, "Sending from the grid must preserve a busy agent's saved selection")
         precondition(busyWabi.state.attempts == [earlierRequest], "The earlier request must not be dismissed, reassigned or resent")
+        try await Task.sleep(for: .seconds(2))
+        do {
+            var queue: [Any] = [busyGridWindow.contentView!]; var seen = 0
+            while !queue.isEmpty, seen < 400 {
+                let e = queue.removeFirst(); seen += 1
+                var label = "-"; var kids: [Any] = []
+                if let v = e as? NSView { label = v.accessibilityLabel() ?? "nil"; kids = v.subviews + (v.accessibilityChildren() ?? []) }
+                else if let v = e as? NSAccessibilityElement { label = v.accessibilityLabel() ?? "nil"; kids = v.accessibilityChildren() ?? [] }
+                FileHandle.standardError.write("AXDUMP \(type(of: e)) label=\(label) kids=\(kids.count) role=\((e as? NSAccessibilityProtocol)?.accessibilityRole()?.rawValue ?? "?")\n".data(using: .utf8)!)
+                queue.append(contentsOf: kids)
+            }
+        }
         try await waitUntil {
             hasAccessibilityLabel("Recipient Claude", in: busyGridWindow.contentView!)
         }
