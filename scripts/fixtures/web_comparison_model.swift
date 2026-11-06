@@ -57,30 +57,21 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
     @MainActor static func editors(in view: NSView) -> [AttachmentTextView] {
         (view as? AttachmentTextView).map { [$0] } ?? view.subviews.flatMap { editors(in: $0) }
     }
-    /// Whether a SwiftUI control with this accessibility label is on screen. Columns no longer
-    /// carry their own fields, so a pane is found by its header's recipient check.
-    @MainActor static func hasAccessibilityLabel(_ label: String, in root: NSView) -> Bool {
-        var queue: [Any] = [root]
-        var visited = 0
-        while !queue.isEmpty, visited < 20_000 {
-            let element = queue.removeFirst()
-            visited += 1
-            if let view = element as? NSView {
-                if view.accessibilityLabel() == label { return true }
-                queue.append(contentsOf: view.subviews)
-                queue.append(contentsOf: view.accessibilityChildren() ?? [])
-            } else if let item = element as? NSAccessibilityElement {
-                if item.accessibilityLabel() == label { return true }
-                queue.append(contentsOf: item.accessibilityChildren() ?? [])
-            } else if let item = element as? NSObject, item.responds(to: #selector(NSAccessibilityProtocol.accessibilityLabel)) {
-                if (item.perform(#selector(NSAccessibilityProtocol.accessibilityLabel))?.takeUnretainedValue() as? String) == label { return true }
-                if item.responds(to: #selector(NSAccessibilityProtocol.accessibilityChildren)),
-                   let children = item.perform(#selector(NSAccessibilityProtocol.accessibilityChildren))?.takeUnretainedValue() as? [Any] {
-                    queue.append(contentsOf: children)
-                }
-            }
+    /// Text shown in app-agent bubbles (selectable SwiftUI text, not the Messages `NSTextView`).
+    /// Columns no longer carry their own fields, so a web pane is found by what it shows.
+    @MainActor static func agentBubbleTexts(in view: NSView) -> [String] {
+        var texts: [String] = []
+        if !(view is NSTextView), view.accessibilityRole() == .staticText, let value = view.accessibilityValue() as? String { texts.append(value) }
+        for child in view.subviews { texts += agentBubbleTexts(in: child) }
+        return texts
+    }
+    /// The number of chat columns the agents workspace lays out (its window-sizing view's count).
+    @MainActor static func displayedChatCount(in view: NSView) -> Int? {
+        if String(describing: type(of: view)) == "ChatWindowSizingView" {
+            return Mirror(reflecting: view).children.first { $0.label == "chatCount" }?.value as? Int
         }
-        return false
+        for child in view.subviews { if let count = displayedChatCount(in: child) { return count } }
+        return nil
     }
     @MainActor static func transcriptText(_ text: String, in view: NSView) -> NSTextView? {
         if let value = view as? NSTextView, !(value is AttachmentTextView), value.string == text { return value }
@@ -725,30 +716,12 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         precondition(gridComparison.members.map(\.id) == [gridContact.id])
         precondition(busyWabi.state.selected, "Sending from the grid must preserve a busy agent's saved selection")
         precondition(busyWabi.state.attempts == [earlierRequest], "The earlier request must not be dismissed, reassigned or resent")
-        try await Task.sleep(for: .seconds(2))
-        do {
-            var queue: [Any] = [busyGridWindow.contentView!]; var seen = 0
-            while !queue.isEmpty, seen < 400 {
-                let e = queue.removeFirst(); seen += 1
-                var label = "-"; var kids: [Any] = []
-                if let v = e as? NSView { label = v.accessibilityLabel() ?? "nil"; kids = v.subviews + (v.accessibilityChildren() ?? []) }
-                else if let v = e as? NSAccessibilityElement { label = v.accessibilityLabel() ?? "nil"; kids = v.accessibilityChildren() ?? [] }
-                if let v = e as? NSView {
-                    let val = (v.accessibilityValue() as? String) ?? (v.accessibilityValue().map { "\($0)" } ?? "nil")
-                    let tip = v.toolTip ?? "nil"
-                    let title = v.accessibilityTitle() ?? "nil"
-                    let ident = v.accessibilityIdentifier()
-                    if val != "nil" || tip != "nil" || title != "nil" || !ident.isEmpty {
-                        FileHandle.standardError.write("AXDUMP2 \(type(of: e)) value=\(val.prefix(80)) tip=\(tip) title=\(title) id=\(ident)\n".data(using: .utf8)!)
-                    }
-                }
-                queue.append(contentsOf: (e as? NSView)?.subviews ?? [])
-            }
-        }
         try await waitUntil {
-            hasAccessibilityLabel("Recipient Claude", in: busyGridWindow.contentView!)
+            let shown = agentBubbleTexts(in: busyGridWindow.contentView!)
+            return readyClaude.snapshot.messages.contains { $0.role != "user" && shown.contains($0.text) }
         }
-        precondition(!hasAccessibilityLabel("Recipient Wabi", in: busyGridWindow.contentView!), "A busy nonmember must not appear as an empty pane in the new comparison")
+        // Claude and the Messages contact only.
+        precondition(displayedChatCount(in: busyGridWindow.contentView!) == 2, "A busy nonmember must not appear as an empty pane in the new comparison")
         busyWabi.updateState { $0.attempts[0].status = .observed }
         precondition(busyGridModel.webAgents.broadcastSelection.contains { $0.id == busyWabi.id }, "Completing the reply restores availability without another selection click")
         busyGridModel.setSharedDraft("Follow up only with the recipients of this comparison")
@@ -762,7 +735,7 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
                 busyGridModel.state.comparisons.first?.followUps.count == 1 && !busyGridModel.webBroadcastBusy
         }
         precondition(busyWabi.state.attempts.count == 1)
-        precondition(!hasAccessibilityLabel("Recipient Wabi", in: busyGridWindow.contentView!), "Completing another conversation must not join this comparison")
+        precondition(displayedChatCount(in: busyGridWindow.contentView!) == 2, "Completing another conversation must not join this comparison")
         busyGridWindow.orderOut(nil)
         busyGridWindow.contentView = nil
         busyGridModel.timer?.invalidate()
