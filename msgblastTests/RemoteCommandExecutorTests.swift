@@ -47,6 +47,7 @@ final class FakeRemoteHost: RemoteCommandHost {
     var notReadyReason = "Sign in"
     var avatars: [String: Data] = [:]
     var renamed: [(UUID, String)] = []
+    var readMembers: [UUID] = []
     var files: [String: [RemoteAttachmentFetch]] = [:]
     var fileRequests: [(String, Int, Int)] = []
     func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch {
@@ -55,6 +56,10 @@ final class FakeRemoteHost: RemoteCommandHost {
         return list[index]
     }
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { renamed.append((id, title)); return .applied(conversationID: id) }
+    func markMessagesRead(_ id: UUID, memberID: UUID) -> RemoteHostResult {
+        readMembers.append(memberID)
+        return .applied(conversationID: id)
+    }
     var avatarReads = 0
     func avatar(_ ref: String) -> Data? { avatarReads += 1; return avatars[ref] }
     func prepareConversation(_ id: UUID?, agentIDs: [String]) async -> RemoteHostResult {
@@ -130,6 +135,26 @@ final class RemoteCommandExecutorTests: XCTestCase {
         for _ in 0..<100 where secondResult == nil { try? await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(secondResult?.code, .macBusy)
         XCTAssertEqual(host.sends.count, 1)
+    }
+
+    func testMarkMessagesReadRejectsLockedMacAndNonMessagesAgentAndDeduplicates() async {
+        let host = host()
+        let executor = RemoteCommandExecutor(host: host)
+        let conversation = UUID(), member = UUID()
+        let agentID = RemoteAgentIDs.messages(member)
+        host.conversations[conversation] = .active(members: [agentID])
+        host.isLocked = true
+        let locked = await executor.execute(RemoteCommand(action: .markMessagesRead(conversationID: conversation, agentID: agentID)))
+        XCTAssertEqual(locked.code, .macLocked)
+        host.isLocked = false
+        let website = await executor.execute(RemoteCommand(action: .markMessagesRead(conversationID: conversation, agentID: "claude")))
+        XCTAssertEqual(website.code, .invalidCommand)
+        let mark = RemoteCommand(action: .markMessagesRead(conversationID: conversation, agentID: agentID))
+        let applied = await executor.execute(mark)
+        let replay = await executor.execute(mark)
+        XCTAssertEqual(applied.outcome, .applied)
+        XCTAssertTrue(replay.replayed)
+        XCTAssertEqual(host.readMembers, [member])
     }
 
     func testGuardsRejectBeforeAnythingIsSent() async {

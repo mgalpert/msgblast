@@ -195,6 +195,23 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
         return url
     }
+    func testUnreadQueryUsesOnlyIncomingMessagesInTheExactChat() throws {
+        let url = try fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var writer: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &writer), SQLITE_OK)
+        let sql = "ALTER TABLE message ADD COLUMN is_read INTEGER DEFAULT 1; UPDATE message SET is_read=0 WHERE guid IN ('anchor','reply');"
+        XCTAssertEqual(sqlite3_exec(writer, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(writer)
+
+        let before = try Data(contentsOf: url)
+        let reader = try MessagesDatabase(path: url.path)
+        XCTAssertTrue(try reader.hasUnreadMessages(chatID: "A"))
+        XCTAssertFalse(try reader.hasUnreadMessages(chatID: "group"))
+        XCTAssertFalse(try reader.hasUnreadMessages(chatID: "missing"))
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
     func testReadOnlyAdapterRoutesAndReadsWithoutMutatingDatabase() throws {
         let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
         let before = try Data(contentsOf: url)
