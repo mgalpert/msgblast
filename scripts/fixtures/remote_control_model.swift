@@ -150,6 +150,19 @@ extension SideChatModelCheck {
         precondition(snapshot.agents.contains { $0.form == .messages })
         precondition(snapshot.turns.contains { $0.text == "Remote ask" && $0.origin == .sharedPrompt })
         precondition(service.connectedDeviceID != nil && service.pairing.device?.name == "Fixture iPhone")
+        let thread = snapshot.conversations.first { $0.prompt == "Remote ask" }!
+        let read = RemoteCommand(action: .markMessagesRead(conversationID: thread.id,
+            agentID: RemoteAgentIDs.messages(model.state.agents[0].id)))
+        let unrelated = RemoteCommand(action: .markMessagesRead(conversationID: thread.id,
+            agentID: RemoteAgentIDs.messages(model.state.agents[2].id)))
+        for command in [read, unrelated] { connection.send(try driver.frame(.command(command))) }
+        try await waitUntil {
+            let results = events.compactMap { if case .commandResult(let result) = $0 { result } else { nil } }
+            return results.contains { $0.clientCommandID == read.clientCommandID && $0.outcome == .applied }
+                && results.contains { $0.clientCommandID == unrelated.clientCommandID && $0.code == .unknownAgent }
+        }
+        print("PASS: paired phone can mark the matching iMessage thread as read in Demo")
+        print("PASS: a Messages recipient outside the thread was rejected")
         precondition(service.keepAwake.held == false, "Keep-awake waits for the phone's request")
         connection.send(try driver.frame(.command(RemoteCommand(action: .setKeepAwake(enabled: true)))))
         try await waitUntil { service.keepAwake.held }

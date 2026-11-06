@@ -4,6 +4,7 @@ import msgblastRemoteProtocol
 
 struct ConversationView: View {
     @ObservedObject var app: MobileApp
+    @Environment(\.scenePhase) private var scenePhase
     let conversationID: UUID
     /// The keyboard stays up when a new conversation becomes this thread.
     var startFocused = false
@@ -46,6 +47,7 @@ struct ConversationView: View {
     /// Within 40 pt of the newest message; only then does the thread follow new content.
     @State private var atBottom = true
     @State private var openedAtBottom = false
+    @State private var markedMessagesTurns: Set<String> = []
     /// A tapback pill's height, scaled with the caption like the pill itself.
     @ScaledMetric(relativeTo: .caption) private var reactionPill: CGFloat = Space.reactionPill
 
@@ -61,6 +63,15 @@ struct ConversationView: View {
         } else {
             ContentUnavailableView("Not on Your Mac", systemImage: "questionmark.bubble")
         }
+    }
+
+    private func messagesToMarkRead(_ turns: [RemoteTurn]) -> [String: String] {
+        guard scenePhase == .active, app.connection.state.canSend, openedAtBottom, atBottom else { return [:] }
+        var latest: [String: String] = [:]
+        for turn in turns where turn.origin == .messagesHistory && turn.role == .assistant {
+            if let agentID = turn.agentID { latest[agentID] = turn.id }
+        }
+        return latest
     }
 
     private func content(_ conversation: RemoteConversation) -> some View {
@@ -192,6 +203,13 @@ struct ConversationView: View {
         }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: messagesToMarkRead(turns), initial: true) { _, turns in
+            for (agentID, turnID) in turns where !markedMessagesTurns.contains(turnID) {
+                if app.markMessagesRead(conversationID: conversationID, agentID: agentID) {
+                    markedMessagesTurns.insert(turnID)
+                }
+            }
+        }
         .onAppear {
             app.store.markOpened(conversationID)
             if startFocused { focusRequest += 1 }
