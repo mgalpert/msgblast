@@ -57,6 +57,31 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
     @MainActor static func editors(in view: NSView) -> [AttachmentTextView] {
         (view as? AttachmentTextView).map { [$0] } ?? view.subviews.flatMap { editors(in: $0) }
     }
+    /// Whether a SwiftUI control with this accessibility label is on screen. Columns no longer
+    /// carry their own fields, so a pane is found by its header's recipient check.
+    @MainActor static func hasAccessibilityLabel(_ label: String, in root: NSView) -> Bool {
+        var queue: [Any] = [root]
+        var visited = 0
+        while !queue.isEmpty, visited < 20_000 {
+            let element = queue.removeFirst()
+            visited += 1
+            if let view = element as? NSView {
+                if view.accessibilityLabel() == label { return true }
+                queue.append(contentsOf: view.subviews)
+                queue.append(contentsOf: view.accessibilityChildren() ?? [])
+            } else if let item = element as? NSAccessibilityElement {
+                if item.accessibilityLabel() == label { return true }
+                queue.append(contentsOf: item.accessibilityChildren() ?? [])
+            } else if let item = element as? NSObject, item.responds(to: #selector(NSAccessibilityProtocol.accessibilityLabel)) {
+                if (item.perform(#selector(NSAccessibilityProtocol.accessibilityLabel))?.takeUnretainedValue() as? String) == label { return true }
+                if item.responds(to: #selector(NSAccessibilityProtocol.accessibilityChildren)),
+                   let children = item.perform(#selector(NSAccessibilityProtocol.accessibilityChildren))?.takeUnretainedValue() as? [Any] {
+                    queue.append(contentsOf: children)
+                }
+            }
+        }
+        return false
+    }
     @MainActor static func transcriptText(_ text: String, in view: NSView) -> NSTextView? {
         if let value = view as? NSTextView, !(value is AttachmentTextView), value.string == text { return value }
         for child in view.subviews { if let value = transcriptText(text, in: child) { return value } }
@@ -175,9 +200,16 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         scrollWindow.contentView?.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(300))
         let sentText = (1...40).map { "Private reply line \($0): sample wrapped content." }.joined(separator: "\n") + "\nEND OF PRIVATE MESSAGE"
-        scrollModel.state.comparisons[scrollModel.index(scrollID)!].privateDrafts[scrollAgent.id.uuidString] = sentText
+        // A private reply is the window's one compose bar with only this agent checked.
+        var privateRecipients = scrollModel.comparison(scrollID)!.recipientSelection ?? ConversationRecipients()
+        for member in scrollModel.comparison(scrollID)!.members where member.id != scrollAgent.id {
+            privateRecipients.toggleRecipient(member.id, in: scrollModel.comparison(scrollID)!.members)
+        }
+        scrollModel.setRecipients(privateRecipients, for: scrollID)
+        precondition(privateRecipients.recipientIDs(in: scrollModel.comparison(scrollID)!.members) == [scrollAgent.id])
+        scrollModel.state.comparisons[scrollModel.index(scrollID)!].allDraft = sentText
         try await Task.sleep(for: .milliseconds(300))
-        let scrollEditor = privateEditor(in: scrollWindow.contentView!)!
+        let scrollEditor = editors(in: scrollWindow.contentView!).first { $0.accessibilityLabel() == "Universal message" }!
         scrollWindow.makeFirstResponder(scrollEditor)
         let previousFollowUps = scrollModel.comparison(scrollID)!.followUps.count
         scrollEditor.sendMessage?()
@@ -694,9 +726,9 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         precondition(busyWabi.state.selected, "Sending from the grid must preserve a busy agent's saved selection")
         precondition(busyWabi.state.attempts == [earlierRequest], "The earlier request must not be dismissed, reassigned or resent")
         try await waitUntil {
-            editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Claude" }
+            hasAccessibilityLabel("Recipient Claude", in: busyGridWindow.contentView!)
         }
-        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "A busy nonmember must not appear as an empty pane in the new comparison")
+        precondition(!hasAccessibilityLabel("Recipient Wabi", in: busyGridWindow.contentView!), "A busy nonmember must not appear as an empty pane in the new comparison")
         busyWabi.updateState { $0.attempts[0].status = .observed }
         precondition(busyGridModel.webAgents.broadcastSelection.contains { $0.id == busyWabi.id }, "Completing the reply restores availability without another selection click")
         busyGridModel.setSharedDraft("Follow up only with the recipients of this comparison")
@@ -710,7 +742,7 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
                 busyGridModel.state.comparisons.first?.followUps.count == 1 && !busyGridModel.webBroadcastBusy
         }
         precondition(busyWabi.state.attempts.count == 1)
-        precondition(!editors(in: busyGridWindow.contentView!).contains { $0.accessibilityLabel() == "Message Wabi" }, "Completing another conversation must not join this comparison")
+        precondition(!hasAccessibilityLabel("Recipient Wabi", in: busyGridWindow.contentView!), "Completing another conversation must not join this comparison")
         busyGridWindow.orderOut(nil)
         busyGridWindow.contentView = nil
         busyGridModel.timer?.invalidate()
