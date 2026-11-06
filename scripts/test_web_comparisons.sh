@@ -52,5 +52,5 @@ shutil.copy2(root / "model", app / "MacOS" / "model")
 PY_REVIEW
 "$web_tmp/PermissionReview.app/Contents/MacOS/model" --demo --permission-review-relaunch-fixture --contacts-access-preview
 
-xcrun swiftc "${web_flags[@]}" "$web_root/msgblast/App/AppUpdater.swift" "$web_root/scripts/fixtures/web_broadcast_lifecycle.swift" -o "$web_tmp/lifecycle"
+xcrun swiftc "${web_flags[@]}" "$web_root/msgblast/App/AppUpdater.swift" "$web_root/scripts/fixtures/design_fixture_stub.swift" "$web_root/scripts/fixtures/web_broadcast_lifecycle.swift" -o "$web_tmp/lifecycle"
 "$web_tmp/lifecycle"

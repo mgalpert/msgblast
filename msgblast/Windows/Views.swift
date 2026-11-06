@@ -28,49 +28,6 @@ struct AgentAvatar: View {
     }
 }
 
-struct ConversationHeaderControls {
-    var enabled = true
-    let selected: Bool
-    let included: Bool
-    let selectConversation: () -> Void
-    let toggleRecipient: () -> Void
-}
-
-struct ContactHeader: View {
-    let agent: Agent?
-    let name: String
-    let destination: String
-    var controls: ConversationHeaderControls?
-    var removeFromView: (() -> Void)?
-    var body: some View {
-        VStack(spacing: 2) {
-            if let controls {
-                Button(action: controls.selectConversation) {
-                    AgentAvatar(agent: agent, name: name, size: 38)
-                        .overlay { if controls.selected { Circle().stroke(.blue, lineWidth: 2).padding(-3) } }
-                }.buttonStyle(.plain).disabled(!controls.enabled).accessibilityLabel("Select \(agent?.name ?? name) conversation")
-                    .accessibilityValue(controls.selected ? "Selected" : "Not selected")
-                Button(action: controls.toggleRecipient) {
-                    Text(name).font(.system(size: 13, weight: .semibold)).padding(.horizontal, 11).padding(.vertical, 5)
-                }.buttonStyle(.plain).disabled(!controls.enabled)
-                    .background(controls.included ? Color.blue.opacity(0.25) : Color.clear, in: Capsule())
-                    .accessibilityLabel("Shared recipient \(agent?.name ?? name)")
-                    .accessibilityValue(controls.included ? "Included" : "Excluded")
-                    .help(controls.included ? "Exclude from shared sends" : "Include in shared sends")
-            } else {
-                AgentAvatar(agent: agent, name: name, size: 38)
-                Text(name).font(.system(size: 13, weight: .semibold))
-                    .padding(.horizontal, 11).padding(.vertical, 5)
-                    .background(.regularMaterial, in: Capsule())
-            }
-        }.frame(height: 78).help(destination)
-            .frame(maxWidth: .infinity).contentShape(Rectangle())
-            .contextMenu {
-                if let removeFromView { Button("Remove from view", action: removeFromView) }
-            }
-    }
-}
-
 struct MessageText: NSViewRepresentable {
     let text: String
     let outgoing: Bool
@@ -84,7 +41,7 @@ struct MessageText: NSViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true
-        view.font = .systemFont(ofSize: 14)
+        view.font = .systemFont(ofSize: Space.bodyText)
         return view
     }
     func updateNSView(_ view: NSTextView, context: Context) {
@@ -115,34 +72,40 @@ struct MessageInput: View {
     @State private var attachmentError: String?
     private var unavailable: Bool { disabled || importing }
     private var hasContent: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty }
+    /// Messages' field: a capsule in the text background with a hairline edge.
+    private var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: Space.fieldHeight / 2, style: .continuous) }
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: Space.tight) {
             if !attachments.isEmpty { AttachmentDraftStrip(attachments: attachments, disabled: unavailable, remove: removeAttachment) }
-            HStack(alignment: .bottom, spacing: 9) {
+            HStack(alignment: .bottom, spacing: Space.gap) {
                 if attachmentsEnabled { AttachmentComposer(disabled: unavailable, add: addAttachments, importing: $importing) }
-                HStack(alignment: .bottom, spacing: 8) {
+                HStack(alignment: .bottom, spacing: 0) {
                     MessageEditor(text: $text, accessibilityName: accessibilityName, attachmentsEnabled: attachmentsEnabled && !unavailable, importAttachment: { selection in
                         importing = true
                         Task { await addAttachments(selection); importing = false }
                     }, send: { if !unavailable && hasContent { send() } }, focusRequest: focusRequest)
                         .overlay(alignment: .topLeading) {
-                            if text.isEmpty { Text(placeholder).font(.system(size: 14)).foregroundStyle(Color(nsColor: .placeholderTextColor)).padding(.top, 2).allowsHitTesting(false).accessibilityHidden(true) }
+                            if text.isEmpty { Text(placeholder).font(.system(size: Space.bodyText)).foregroundStyle(Color(nsColor: .placeholderTextColor)).padding(.top, Space.hairline).allowsHitTesting(false).accessibilityHidden(true) }
                         }
                     if hasContent {
-                        Button(action: send) { Image(systemName: "arrow.up").font(.system(size: 12, weight: .semibold)).frame(width: 22, height: 22) }
-                            .buttonStyle(.plain).foregroundStyle(.white)
-                            .background(unavailable ? Color.gray : Color.blue, in: Circle())
+                        Button(action: send) {
+                            Image(systemName: "arrow.up.circle.fill").font(.system(size: Space.fieldHeight - Space.gap))
+                                .foregroundStyle(unavailable ? Color.secondary : Color.accentColor)
+                        }
+                            .buttonStyle(.plain)
                             .accessibilityLabel(sendLabel)
                             .accessibilityHint(sendDisabledReason ?? "")
                             .help(sendDisabledReason ?? "\(sendLabel) (Return or ⌘Return; ⇧Return for a new line)")
                             .disabled(unavailable)
                     }
                 }
-                .padding(.leading, 14).padding(.trailing, 7).padding(.vertical, 5)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 23))
+                .padding(.leading, Space.fieldTextInset).padding(.trailing, Space.tight).padding(.vertical, Space.tight)
+                .frame(minHeight: Space.fieldHeight)
+                .background(fieldShape.fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(fieldShape.stroke(Color(nsColor: .separatorColor), lineWidth: 1))
             }
         }
-        .overlay { if dropTarget { RoundedRectangle(cornerRadius: 18).stroke(.blue, lineWidth: 2) } }
+        .overlay { if dropTarget { fieldShape.stroke(.blue, lineWidth: 2) } }
         .onDrop(of: [.fileURL, .image], isTargeted: $dropTarget) { providers in
             guard attachmentsEnabled, !unavailable else { return false }
             importProviders(providers); return true
@@ -221,26 +184,34 @@ struct MainView: View {
                         .accessibilityValue(selection == .discover ? "Selected" : "Not selected")
                 }
                 Section("Comparisons") {
-                ForEach(model.state.comparisons) { comparison in
-                    Button { model.coordinator?.open(comparison.id) } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "bubble.left.and.bubble.right.fill").font(.title3).foregroundStyle(.secondary).frame(width: 32)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text((comparison.members.map(\.name) + comparison.resolvedWebAgentIDs.map { model.webAgents.name(for: $0) }).joined(separator: ", ")).fontWeight(.semibold).lineLimit(1)
-                                Text(comparison.prompt).foregroundStyle(.secondary).lineLimit(2)
-                            }
-                        }.padding(.horizontal, 10).padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(selectedComparisonID == comparison.id ? sidebarSelectionColor : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                        .foregroundStyle(Color.primary)
-                        .listRowBackground(Color.clear)
-                        .accessibilityValue(selectedComparisonID == comparison.id ? "Selected" : "Not selected")
-                }
+                    ForEach(model.state.comparisons) { comparison in
+                        Button { model.coordinator?.open(comparison.id) } label: {
+                            HStack(spacing: Space.gap) {
+                                comparisonAvatars(comparison)
+                                VStack(alignment: .leading, spacing: Space.tight) {
+                                    Text((comparison.members.map(\.name) + comparison.resolvedWebAgentIDs.map { model.webAgents.name(for: $0) }).joined(separator: ", ")).fontWeight(.semibold).lineLimit(1)
+                                    Text(comparison.prompt).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }.padding(.horizontal, Space.gap).padding(.vertical, Space.gap)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(selectedComparisonID == comparison.id ? sidebarSelectionColor : Color.clear, in: RoundedRectangle(cornerRadius: Space.gap))
+                                .contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .foregroundStyle(Color.primary)
+                            .listRowBackground(Color.clear)
+                            .accessibilityValue(selectedComparisonID == comparison.id ? "Selected" : "Not selected")
+                    }
                     if model.state.comparisons.isEmpty { Text("No comparisons").foregroundStyle(.secondary) }
                 }
             }.listStyle(.sidebar).navigationTitle("msgblast")
+                .toolbar {
+                    // Compose sits over the conversation list, as in Messages.
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { model.requestNewBlast() } label: { Image(systemName: "square.and.pencil") }
+                            .help("New Blast").accessibilityLabel("New Blast")
+                            .disabled(!model.canStartNewBlast)
+                    }
+                }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 8) {
                         UpdateSidebar(updater: updater)
@@ -259,14 +230,15 @@ struct MainView: View {
                 if model.state.onboarding != nil {
                     let unresolved = model.onboarding.setupReminderNames
                     if !unresolved.isEmpty {
-                    HStack {
-                        Text("Finish connecting \(unresolved.joined(separator: ", ")).").foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Connect agents") {
-                            if !model.onboarding.unresolvedMessageAgents.isEmpty { model.onboarding.reviewMessagesAgents() }
-                            else { model.onboarding.resume() }
-                        }
-                    }.padding(18).background(.bar)
+                        HStack(spacing: Space.gap) {
+                            Text("Finish connecting \(unresolved.joined(separator: ", ")).").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Spacer()
+                            Button("Connect") {
+                                if !model.onboarding.unresolvedMessageAgents.isEmpty { model.onboarding.reviewMessagesAgents() }
+                                else { model.onboarding.resume() }
+                            }.buttonStyle(.borderless).controlSize(.small)
+                        }.padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
+                        Divider()
                     }
                 }
                 if model.usesMessages { MessagesAccessBanner(model: model) }
@@ -287,22 +259,6 @@ struct MainView: View {
         .alert("msgblast", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
-        .toolbar {
-            if selection == .discover {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        model.requestNewBlast()
-                    } label: {
-                        Label("New Blast", systemImage: "square.and.pencil")
-                            .labelStyle(.titleAndIcon)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                    }
-                    .help("New Blast").accessibilityLabel("New Blast")
-                    .disabled(!model.canStartNewBlast)
-                }
-            }
-        }
     }
     private func sidebarLabel(_ title: String, systemImage: String, selected: Bool) -> some View {
         HStack(spacing: 10) {
@@ -319,12 +275,40 @@ struct MainView: View {
     }
 
     private var demoControls: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: Space.inset) {
             Label(model.webAgents.fixture ? "Local fixture · no real sends" : "Live web agents · simulated Messages", systemImage: "testtube.2").foregroundStyle(.orange)
             Toggle("Simulate one failure", isOn: $model.demoFailureOnce).toggleStyle(.checkbox)
             Spacer()
             Button("Reset sample data") { model.resetDemo() }
-        }.font(.caption).padding(12).disabled(model.busy)
+        }.font(.caption).padding(.horizontal, Space.screen).padding(.vertical, Space.tight).disabled(model.busy)
+    }
+
+    /// The comparison's agents as Messages shows a group: the first two avatars overlapped,
+    /// the second ringed in the window background; a single agent fills the frame.
+    private func comparisonAvatars(_ comparison: Comparison) -> some View {
+        let members: [(agent: Agent?, name: String)] = comparison.members.map { member in
+            (agent: model.state.agents.first { $0.id == member.id }, name: member.name)
+        }
+        let web: [(agent: Agent?, name: String)] = comparison.resolvedWebAgentIDs.map { id in
+            (agent: model.webAgents.session(for: id).map { AgentArtwork.agent(for: $0) }, name: model.webAgents.name(for: id))
+        }
+        let agents = members + web
+        let frame = Space.avatarList + Space.gap
+        return ZStack(alignment: .topLeading) {
+            if agents.count == 1 {
+                AgentAvatar(agent: agents[0].agent, name: agents[0].name, size: frame)
+            } else {
+                ForEach(Array(agents.prefix(2).enumerated()), id: \.offset) { offset, entry in
+                    AgentAvatar(agent: entry.agent, name: entry.name, size: Space.avatarGroup)
+                        .background {
+                            if offset == 1 { Circle().fill(Color(nsColor: .windowBackgroundColor)).padding(-Space.hairline) }
+                        }
+                        .offset(x: offset == 0 ? 0 : Space.gap, y: offset == 0 ? 0 : Space.gap)
+                }
+            }
+        }
+        .frame(width: frame, height: frame, alignment: .topLeading)
+        .accessibilityHidden(true)
     }
 }
 
@@ -333,11 +317,25 @@ private struct MessagesAccessBanner: View {
     @ObservedObject var guide: MessagesAccessGuide
     init(model: AppModel) { self.model = model; guide = model.accessGuide }
     var body: some View {
-        if !model.databaseAvailable || guide.flow.isActive || guide.flow.stage == .verified {
-            MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable).padding(18).help(model.databaseStatus)
-            if model.permissionGuidePreview {
-                Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
-            }
+        if guide.flow.isActive {
+            // The guided permission flow is a transient wizard; it keeps its card.
+            MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable).padding(Space.screen).help(model.databaseStatus)
+        } else if !model.databaseAvailable {
+            // One line, as Messages reports a missing account: the status, the full text behind an ⓘ, and the two actions.
+            HStack(spacing: Space.gap) {
+                Image(systemName: "lock.fill").foregroundStyle(.secondary)
+                Text(model.databaseStatus).font(.callout).lineLimit(1).truncationMode(.tail)
+                DetailButton(detail: model.databaseStatus)
+                Spacer()
+                Button("Allow Full Disk Access") { guide.start() }.controlSize(.small)
+                    .accessibilityIdentifier("enable-messages-history-permission")
+                    .background(PermissionSourceAnchor(guide: guide))
+                Button("Check Again") { model.refresh() }.controlSize(.small)
+            }.padding(.horizontal, Space.screen).padding(.vertical, Space.gap)
+            Divider()
+        }
+        if (guide.flow.isActive || !model.databaseAvailable) && model.permissionGuidePreview {
+            Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
         }
     }
 }
@@ -346,34 +344,42 @@ struct ConversationView: View {
     @ObservedObject var model: AppModel
     let comparisonID: UUID
     let memberID: UUID
-    var headerControls: ConversationHeaderControls?
+    /// Whether this member receives the workspace's next message, and the click that toggles it.
+    var recipient: (included: Bool, toggle: () -> Void)? = nil
+    /// False when the workspace owns the one compose bar.
+    var showsComposer = true
     var removeFromView: (() -> Void)?
     var body: some View {
         if let comparison = model.comparison(comparisonID), let member = comparison.members.first(where: { $0.id == memberID }) {
             VStack(spacing: 0) {
-                ContactHeader(agent: model.state.agents.first { $0.id == member.id }, name: member.name + (model.demo ? " (Demo)" : ""), destination: member.chat.handle, controls: headerControls, removeFromView: removeFromView)
-                    .frame(maxWidth: .infinity).background(.bar)
-                    .disabled(model.busy || model.webBroadcastBusy)
-                if let error = member.error { Text(error).font(.caption).foregroundStyle(.orange).padding(12) }
+                ColumnHeader(agent: model.state.agents.first { $0.id == member.id }, name: member.name + (model.demo ? " (Demo)" : ""),
+                             included: recipient?.included ?? true,
+                             enabled: recipient != nil && comparison.endedAt == nil && !(model.busy || model.webBroadcastBusy),
+                             detail: member.chat.handle, toggle: { recipient?.toggle() }) {
+                    Button("Open in Messages") { model.openMessages(member) }
+                    if let removeFromView { Button("Remove from View", action: removeFromView) }
+                }
+                if let error = member.error { NoticeRow(error, systemImage: "exclamationmark.circle", detail: error, attention: true) }
                 if member.submission == .ready && !model.busy {
-                    Button("Submit unsent recipients") { Task { await model.submit(comparisonID, retry: false) } }.disabled(comparison.endedAt != nil || model.busy).padding(8)
+                    NoticeRow(text: "Not sent yet", attention: true) {
+                        Button("Submit unsent recipients") { Task { await model.submit(comparisonID, retry: false) } }.disabled(comparison.endedAt != nil || model.busy)
+                    }
                 }
                 if member.submission.canRetry {
-                    Button("Retry only failed recipients") { Task { await model.submit(comparisonID, retry: true) } }.disabled(comparison.endedAt != nil || model.busy).padding(8)
+                    NoticeRow(text: "Not sent to every recipient", systemImage: "exclamationmark.circle", attention: true) {
+                        Button("Retry only failed recipients") { Task { await model.submit(comparisonID, retry: true) } }.disabled(comparison.endedAt != nil || model.busy)
+                    }
                 }
-                if !model.databaseAvailable { Text(model.databaseStatus).font(.caption).foregroundStyle(.orange).padding(12) }
-                if let headerControls {
-                    TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
-                        .contentShape(Rectangle())
-                        .simultaneousGesture(TapGesture().onEnded { if !model.busy { headerControls.selectConversation() } })
-                } else {
-                    TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
+                if !model.databaseAvailable { NoticeRow(model.databaseStatus, detail: model.databaseStatus, attention: true) }
+                TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
+                if showsComposer {
+                    MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || (model.webBroadcastBusy && !model.webBroadcastInputsFinished) || member.anchor == nil) {
+                        Task { await model.followUp(comparisonID, only: memberID) }
+                    }.padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
+                    FollowUpStatus(model: model, comparison: comparison, only: memberID).disabled(comparison.endedAt != nil)
+                        .padding(.horizontal, Space.barEdge).padding(.bottom, Space.barV)
                 }
-                MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || (model.webBroadcastBusy && !model.webBroadcastInputsFinished) || member.anchor == nil) {
-                    Task { await model.followUp(comparisonID, only: memberID) }
-                }.padding(12)
-                FollowUpStatus(model: model, comparison: comparison, only: memberID).disabled(comparison.endedAt != nil)
-            }.frame(minWidth: 320, minHeight: 320).background(Color(nsColor: .textBackgroundColor))
+            }.frame(minWidth: Space.columnMin, minHeight: Space.columnMin).background(Color(nsColor: .textBackgroundColor))
         }
     }
     private var privateDraft: Binding<String> {
@@ -397,49 +403,32 @@ struct TranscriptView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                LazyVStack(alignment: .leading, spacing: 3) {
+                // Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs are 8 pt
+                // apart, and a time header has 12 pt above and below. Rows set their own side
+                // insets. A plain stack, not a lazy one, so row heights are exact while following
+                // the newest message.
+                VStack(alignment: .leading, spacing: 0) {
                     if transcript.isEmpty {
-                        Text(member.anchor == nil ? "Waiting for Messages…" : "History unavailable").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30)
+                        Text(member.anchor == nil ? "Waiting for Messages…" : "History unavailable")
+                            .font(.system(size: Space.bodyText)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section)
                     }
+                    let lastOutgoingID = transcript.last(where: { $0.outgoing })?.id
                     ForEach(Array(transcript.enumerated()), id: \.element.id) { offset, message in
-                        if offset == 0 || message.date.timeIntervalSince(transcript[offset - 1].date) > 300 {
-                            Text(timestamp(message.date))
-                                .font(.caption2.weight(.medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 10)
+                        let previous = offset == 0 ? nil : transcript[offset - 1]
+                        let next = offset + 1 < transcript.count ? transcript[offset + 1] : nil
+                        let header = ThreadFormat.showsTimeHeader(message.date, previous: previous?.date)
+                        // Messages groups a run by sender and time only; a reply link does not split it.
+                        let continues = !header && previous.map { $0.outgoing == message.outgoing } == true
+                        let endsRun = next.map { ThreadFormat.showsTimeHeader($0.date, previous: message.date) || $0.outgoing != message.outgoing } ?? true
+                        if header { ThreadTimeHeader(date: message.date, first: offset == 0) }
+                        ThreadRow(mine: message.outgoing, firstOfRun: !continues, lastOfRun: endsRun,
+                                  sender: sender(for: message), status: status(for: message, lastOutgoingID: lastOutgoingID)) {
+                            bubbleColumn(message, tail: endsRun, maxWidth: geometry.size.width * Space.bubbleMax)
                         }
-                        VStack(alignment: .trailing, spacing: 3) {
-                            HStack(alignment: .bottom, spacing: 0) {
-                                if message.outgoing { Spacer(minLength: geometry.size.width * 0.25) }
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ForEach(message.attachments) { file in AttachmentView(attachment: file) }
-                                    if let payload = message.businessPayload {
-                                        BusinessChoicesView(model: model, message: message, member: member, payload: payload)
-                                    } else if let preview = message.linkPreview {
-                                        if !preview.remainingText.isEmpty {
-                                            textBubble(message, text: preview.remainingText, tail: false)
-                                        }
-                                        RichLinkView(store: model.linkPreviews, url: preview.url)
-                                    } else if !message.text.isEmpty {
-                                        textBubble(message, text: message.text, tail: offset == transcript.count - 1 || transcript[offset + 1].outgoing != message.outgoing || transcript[offset + 1].date.timeIntervalSince(message.date) > 300 || transcript[offset + 1].replyTo != message.replyTo)
-                                    }
-                                }
-                                .overlay(alignment: message.outgoing ? .topLeading : .topTrailing) {
-                                    if !message.reactions.isEmpty {
-                                        ReactionBadge(reactions: message.reactions).offset(x: message.outgoing ? -12 : 12, y: -23)
-                                    }
-                                }
-                                .padding(.top, message.reactions.isEmpty ? 0 : 23)
-                                if !message.outgoing { Spacer(minLength: geometry.size.width * 0.25) }
-                            }
-                            if message.outgoing, message.delivery == .failed {
-                                Text("Not Delivered").font(.caption2.weight(.medium)).foregroundStyle(.red)
-                                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.bottom, 4)
-                            } else if message.outgoing, message.delivery == .delivered, message.id == transcript.last(where: { $0.outgoing })?.id {
-                                Text("Delivered").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.bottom, 4)
-                            }
-                        }.padding(.top, offset > 0 && transcript[offset - 1].outgoing != message.outgoing ? 6 : 0).id(message.id)
+                        .padding(.top, header || previous == nil ? 0 : continues ? Space.run : Space.runGap)
+                        .id(message.id)
                     }
-                }.padding(.horizontal, 20).padding(.bottom, 10)
+                }.padding(.vertical, Space.gap)
                 Color.clear.frame(height: 1).id(bottomID)
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in
@@ -470,40 +459,46 @@ struct TranscriptView: View {
         }
         }
     }
-    private func textBubble(_ message: Message, text: String, tail: Bool) -> some View {
-        MessageText(text: text, outgoing: message.outgoing).fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 12).padding(.vertical, 6.5)
-            .foregroundStyle(message.outgoing ? Color.white : Color.primary)
-            .background(message.outgoing ? Color(nsColor: .systemBlue) : MessageAppearance.incomingBubbleColor, in: MessageBubble(outgoing: message.outgoing, tail: tail))
+    /// Replies are named and signed with the member's avatar; your own rows carry neither.
+    private func sender(for message: Message) -> (name: String, avatar: AnyView)? {
+        guard !message.outgoing else { return nil }
+        return (member.name, AnyView(AgentAvatar(agent: model.state.agents.first { $0.id == member.id }, name: member.name, size: Space.avatarThread)))
     }
-    private func timestamp(_ date: Date) -> String {
-        let time = date.formatted(date: .omitted, time: .shortened)
-        if Calendar.current.isDateInToday(date) { return "Today \(time)" }
-        if Calendar.current.isDateInYesterday(date) { return "Yesterday \(time)" }
-        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) + " at " + time
+    private func status(for message: Message, lastOutgoingID: Int64?) -> (text: String, color: Color)? {
+        guard message.outgoing else { return nil }
+        if message.delivery == .failed { return ("Not Delivered", .red) }
+        if message.delivery == .delivered, message.id == lastOutgoingID { return ("Delivered", .secondary) }
+        return nil
     }
-}
-
-struct MessageBubble: Shape {
-    let outgoing: Bool
-    let tail: Bool
-    func path(in rect: CGRect) -> Path {
-        let w = rect.width, h = rect.height, r = min(15.0, rect.height / 2), c = r * 0.55228475
-        guard tail else { return Path(roundedRect: rect, cornerRadius: r) }
-        var bubble = Path()
-        bubble.move(to: CGPoint(x: r, y: 0))
-        bubble.addLine(to: CGPoint(x: w - r, y: 0))
-        bubble.addCurve(to: CGPoint(x: w, y: r), control1: CGPoint(x: w - r + c, y: 0), control2: CGPoint(x: w, y: r - c))
-        bubble.addLine(to: CGPoint(x: w, y: h - r))
-        bubble.addCurve(to: CGPoint(x: w - 8, y: h), control1: CGPoint(x: w, y: h - 7), control2: CGPoint(x: w - 8, y: h - 6))
-        bubble.addCurve(to: CGPoint(x: w - 6.5, y: h + 4), control1: CGPoint(x: w - 8, y: h + 1), control2: CGPoint(x: w - 7, y: h + 3))
-        bubble.addCurve(to: CGPoint(x: w - 15, y: h), control1: CGPoint(x: w - 6.5, y: h + 5), control2: CGPoint(x: w - 13, y: h + 2))
-        bubble.addLine(to: CGPoint(x: r, y: h))
-        bubble.addCurve(to: CGPoint(x: 0, y: h - r), control1: CGPoint(x: r - c, y: h), control2: CGPoint(x: 0, y: h - r + c))
-        bubble.addLine(to: CGPoint(x: 0, y: r))
-        bubble.addCurve(to: CGPoint(x: r, y: 0), control1: CGPoint(x: 0, y: r - c), control2: CGPoint(x: r - c, y: 0))
-        bubble.closeSubpath()
-        return outgoing ? bubble : bubble.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: rect.width, ty: 0))
+    /// The bubble column: attachments, business choices, a link preview with its remaining
+    /// text, or the text bubble; reactions overlap the top corner away from the tail.
+    private func bubbleColumn(_ message: Message, tail: Bool, maxWidth: CGFloat) -> some View {
+        VStack(alignment: message.outgoing ? .trailing : .leading, spacing: Space.tight) {
+            ForEach(message.attachments) { file in AttachmentView(attachment: file) }
+            if let payload = message.businessPayload {
+                BusinessChoicesView(model: model, message: message, member: member, payload: payload)
+            } else if let preview = message.linkPreview {
+                if !preview.remainingText.isEmpty {
+                    ThreadBubble(mine: message.outgoing, tail: false, maxWidth: maxWidth) {
+                        MessageText(text: preview.remainingText, outgoing: message.outgoing).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                RichLinkView(store: model.linkPreviews, url: preview.url)
+            } else if !message.text.isEmpty {
+                ThreadBubble(mine: message.outgoing, tail: tail, maxWidth: maxWidth) {
+                    MessageText(text: message.text, outgoing: message.outgoing).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .overlay(alignment: message.outgoing ? .topLeading : .topTrailing) {
+            if !message.reactions.isEmpty {
+                // It dips only into the bubble's top inset, so it never covers the first line.
+                ReactionBadge(reactions: message.reactions)
+                    .offset(x: message.outgoing ? -Space.bubbleH : Space.bubbleH, y: -(Space.reactionPill - Space.bubbleV))
+            }
+        }
+        // Room for the part of a reaction pill above the bubble.
+        .padding(.top, message.reactions.isEmpty ? 0 : Space.reactionPill - Space.bubbleV)
     }
 }
 
@@ -523,17 +518,23 @@ struct FollowUpStatus: View {
                 }
             }
             if !failures.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(failures) { member in
-                        Text("\(member.name): \(attempt.errors[member.id.uuidString] ?? attempt.states[member.id.uuidString]?.label ?? "Pending")").font(.caption).foregroundStyle(.orange)
-                    }
+                // One line: who was not reached; each reason behind the ⓘ. The bar spaces it.
+                HStack(spacing: Space.tight) {
+                    Image(systemName: "exclamationmark.circle")
+                    Text("Not sent to \(failures.map(\.name).formatted(.list(type: .and)))").lineLimit(1)
+                    DetailButton(detail: failures.map { member in
+                        "\(member.name): \(attempt.errors[member.id.uuidString] ?? attempt.states[member.id.uuidString]?.label ?? "Pending")"
+                    }.joined(separator: "\n"))
+                    Spacer()
                     if attempt.states.values.contains(.failed) {
-                        Button("Retry failed follow-up recipients") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id) } }.disabled(model.busy)
+                        Button("Retry") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id) } }.disabled(model.busy)
                     }
                     if attempt.states.values.contains(.ready) && !model.busy {
-                        Button("Resume unsent follow-up recipients") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id, resumeUnsent: true) } }.disabled(model.busy)
+                        Button("Resume") { Task { await model.followUp(comparison.id, only: only, retry: attempt.id, resumeUnsent: true) } }.disabled(model.busy)
                     }
-                }.padding(.horizontal, 12).padding(.bottom, 8)
+                }
+                .font(.caption).foregroundStyle(.orange)
+                .buttonStyle(.borderless).controlSize(.small)
             }
         }
     }
@@ -544,14 +545,15 @@ struct FloatingComposer: View {
     let comparisonID: UUID
     var body: some View {
         if let comparison = model.comparison(comparisonID) {
-            VStack(spacing: 12) {
-                HStack(spacing: 6) {
+            VStack(spacing: Space.inset) {
+                HStack(spacing: Space.gap) {
                     ConversationNavigation(comparison: comparison) { memberID in model.coordinator?.focus(comparisonID, memberID: memberID) }
                     Button { model.coordinator?.tile(comparisonID) } label: { Image(systemName: "rectangle.split.3x1") }
                         .buttonStyle(.bordered).help("Tile conversation windows").accessibilityLabel("Tile windows")
-                }
+                }.controlSize(.small)
                 SharedComposer(model: model, comparisonID: comparisonID)
-            }.padding(16).frame(minWidth: 440, idealWidth: 520, maxWidth: .infinity)
+                    .padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
+            }.padding(Space.screen).frame(minWidth: 440, idealWidth: 520, maxWidth: .infinity)
                 .onChange(of: comparison.allAttachmentsDraft?.count ?? 0) { _, count in model.coordinator?.fitComposer(comparisonID, hasAttachments: count > 0) }
                 .onAppear { model.coordinator?.fitComposer(comparisonID, hasAttachments: !(comparison.allAttachmentsDraft ?? []).isEmpty) }
         }
@@ -563,7 +565,7 @@ struct ConversationNavigation: View {
     let focus: (UUID) -> Void
     var body: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 8) {
+            HStack(spacing: Space.gap) {
                 ForEach(comparison.members) { member in
                     Button(member.name) { focus(member.id) }
                         .buttonStyle(.bordered).buttonBorderShape(.capsule)
@@ -596,129 +598,53 @@ struct SharedComposer: View {
     }
 }
 
+/// The one-window Messages-only comparison: the group's pinned prompt, the members' columns
+/// and one compose bar for the checked recipients. Details and capture live in the window's
+/// toolbar (`WindowCoordinator.addSummaryToolbar`).
 struct ComparisonWorkspace: View {
     @ObservedObject var model: AppModel
     let comparisonID: UUID
     @State private var hiddenMembers: Set<UUID> = []
+    @State private var pinnedExpanded = false
     var body: some View {
         if let comparison = model.comparison(comparisonID) {
             let shownMembers = comparison.members.filter { !hiddenMembers.contains($0.id) }
             let selection = comparison.recipientSelection ?? ConversationRecipients()
             let recipients = selection.recipientIDs(in: comparison.members)
-            GeometryReader { geometry in
-                let columnWidth = max(320, geometry.size.width / CGFloat(max(1, shownMembers.count)))
-                ScrollViewReader { proxy in
-                    VStack(spacing: 0) {
-                        GeometryReader { columns in
-                            ScrollView(.horizontal) {
-                                HStack(spacing: 0) {
-                                    ForEach(shownMembers) { member in
-                                        ConversationView(model: model, comparisonID: comparisonID, memberID: member.id, headerControls: ConversationHeaderControls(enabled: comparison.endedAt == nil, selected: selection.selectedConversation == member.id, included: recipients.contains(member.id), selectConversation: {
-                                            var updated = selection
-                                            updated.selectConversation(member.id)
-                                            model.setRecipients(updated, for: comparisonID)
-                                        }, toggleRecipient: {
-                                            var updated = selection
-                                            updated.toggleRecipient(member.id, in: comparison.members)
-                                            model.setRecipients(updated, for: comparisonID)
-                                        }), removeFromView: {
-                                            var updated = selection
-                                            if recipients.contains(member.id) { updated.toggleRecipient(member.id, in: comparison.members) }
-                                            model.setRecipients(updated, for: comparisonID)
-                                            hiddenMembers.insert(member.id)
-                                        })
-                                            .frame(width: columnWidth, height: columns.size.height)
-                                            .overlay(alignment: .trailing) {
-                                                if member.id != shownMembers.last?.id {
-                                                    Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1)
-                                                }
-                                            }
-                                            .overlay {
-                                                if selection.selectedConversation == member.id {
-                                                    Rectangle().stroke(.blue.opacity(0.5), lineWidth: 1).allowsHitTesting(false)
-                                                }
-                                            }
-                                            .id(member.id)
-                                    }
-                                }
+            VStack(spacing: 0) {
+                if shownMembers.count > 1, !comparison.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    PinnedPromptRow(text: comparison.prompt, expanded: $pinnedExpanded)
+                }
+                GeometryReader { columns in
+                    let count = shownMembers.count
+                    let columnWidth = max(Space.columnMin, (columns.size.width - CGFloat(max(0, count - 1))) / CGFloat(max(1, count)))
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 0) {
+                            ForEach(shownMembers) { member in
+                                if member.id != shownMembers.first?.id { Divider() }
+                                ConversationView(model: model, comparisonID: comparisonID, memberID: member.id,
+                                                 recipient: (recipients.contains(member.id), {
+                                                     var updated = selection
+                                                     updated.toggleRecipient(member.id, in: comparison.members)
+                                                     model.setRecipients(updated, for: comparisonID)
+                                                 }),
+                                                 showsComposer: false, removeFromView: {
+                                                     var updated = selection
+                                                     if recipients.contains(member.id) { updated.toggleRecipient(member.id, in: comparison.members) }
+                                                     model.setRecipients(updated, for: comparisonID)
+                                                     hiddenMembers.insert(member.id)
+                                                 })
+                                    .frame(width: columnWidth, height: columns.size.height)
+                                    .id(member.id)
                             }
                         }
-                        Divider()
-                        VStack(spacing: 12) {
-                            RecipientPills(model: model, comparison: comparison, showMember: { hiddenMembers.remove($0) }).disabled(comparison.endedAt != nil)
-                            SharedComposer(model: model, comparisonID: comparisonID, recipientIDs: recipients)
-                                .disabled(model.webBroadcastBusy)
-                        }.padding(16).frame(maxWidth: .infinity).background(.bar)
-                    }
-                    .onChange(of: selection.selectedConversation) { _, memberID in
-                        if let memberID { withAnimation { proxy.scrollTo(memberID, anchor: .center) } }
                     }
                 }
+                SharedComposer(model: model, comparisonID: comparisonID, recipientIDs: recipients)
+                    .disabled(model.webBroadcastBusy)
+                    .padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
             }.background(Color(nsColor: .textBackgroundColor))
         }
-    }
-}
-
-struct RecipientPills: View {
-    @ObservedObject var model: AppModel
-    let comparison: Comparison
-    var showMember: (UUID) -> Void = { _ in }
-    var body: some View {
-        let selection = comparison.recipientSelection ?? ConversationRecipients()
-        let recipientSet = Set(selection.recipientIDs(in: comparison.members))
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                Text("Send to").font(.caption).foregroundStyle(.secondary)
-                ForEach(comparison.members) { member in
-                    let included = recipientSet.contains(member.id)
-                    Button {
-                        var updated = selection
-                        updated.toggleRecipient(member.id, in: comparison.members)
-                        model.setRecipients(updated, for: comparison.id)
-                        showMember(member.id)
-                    } label: {
-                        Text(member.name).font(.system(size: 13, weight: .medium)).fixedSize()
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                    }.buttonStyle(.plain)
-                        .background(included ? Color.blue.opacity(0.25) : Color.clear, in: Capsule())
-                        .accessibilityLabel("Recipient \(member.name)")
-                        .accessibilityValue(included ? "Selected" : "Not selected")
-                        .help(included ? "Exclude \(member.name) from this message" : "Include \(member.name) in this message")
-                        .disabled(model.busy || model.webBroadcastBusy)
-                }
-                ForEach(model.recipientWebSessions(for: comparison), id: \.id) { session in
-                    let joined = comparison.resolvedWebAgentIDs.contains(session.id)
-                    Button {
-                        model.coordinator?.prepareJoiningWebAgent(comparison.id)
-                        if joined { return }
-                        model.webBroadcastBusy = true
-                        model.webAgents.select(session, selected: true)
-                        session.connect()
-                        Task { @MainActor in
-                            _ = await model.joinWebAgent(session, comparisonID: comparison.id)
-                            model.webBroadcastBusy = false
-                        }
-                    } label: {
-                        Label(session.name, systemImage: joined ? "bubble.left" : "plus.circle").font(.system(size: 13, weight: .medium))
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                    }.buttonStyle(.plain)
-                        .accessibilityLabel(joined ? "Open \(session.name) conversation" : "Add \(session.name) to conversation")
-                        .help(joined ? "Open this conversation" : "Add \(session.name) with the original ask and shared follow-ups")
-                        .disabled(model.busy || model.webBroadcastBusy || !session.isEnabled)
-                }
-                ForEach(model.showcaseMessageAgents.filter { agent in !comparison.members.contains(where: { $0.id == agent.id }) }) { agent in
-                    Button {
-                        Task { await model.addAgent(agent, to: comparison.id); model.coordinator?.open(comparison.id) }
-                    } label: {
-                        Label(agent.name, systemImage: "plus.circle").font(.system(size: 13, weight: .medium))
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                    }.buttonStyle(.plain)
-                        .accessibilityLabel("Add \(agent.name) to conversation")
-                        .help("Add \(agent.name) with the original ask and shared follow-ups")
-                        .disabled(model.busy || model.webBroadcastBusy || model.route(agent) == nil)
-                }
-            }
-        }.scrollIndicators(.hidden).frame(height: 36)
     }
 }
 
