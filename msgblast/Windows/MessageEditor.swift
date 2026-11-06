@@ -4,7 +4,7 @@ import msgblastCore
 
 enum MessageTextMeasurement {
     static func size(_ text: String, width: CGFloat) -> CGSize {
-        let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 14)])
+        let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: Space.bodyText)])
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: max(1, width), height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
@@ -52,7 +52,7 @@ struct MessageEditor: NSViewRepresentable {
         view.textContainer?.widthTracksTextView = true
         view.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         view.registerForDraggedTypes([.fileURL, .png, .tiff, .string])
-        view.font = .systemFont(ofSize: 14); view.textColor = .labelColor
+        view.font = .systemFont(ofSize: Space.bodyText); view.textColor = .labelColor
         view.insertionPointColor = .labelColor
         view.delegate = context.coordinator
         view.setAccessibilityLabel(accessibilityName)

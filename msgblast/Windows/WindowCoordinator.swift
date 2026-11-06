@@ -162,12 +162,21 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, NSToolbarItem.Identifier("captureChat"), NSToolbarItem.Identifier("summarize")]
+        [.flexibleSpace, NSToolbarItem.Identifier("details"), NSToolbarItem.Identifier("captureChat"), NSToolbarItem.Identifier("summarize")]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier.rawValue == "details",
+           let id = UUID(uuidString: String(toolbar.identifier.dropFirst("summarize:".count))) {
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Details"
+            let view = NSHostingView(rootView: ComparisonDetailsButton(model: model, comparisonID: id).frame(width: 36, height: 28))
+            view.frame.size = NSSize(width: 36, height: 28)
+            item.view = view
+            return item
+        }
         if identifier.rawValue == "captureChat",
            let id = UUID(uuidString: String(toolbar.identifier.dropFirst("summarize:".count))) {
             let item = NSToolbarItem(itemIdentifier: identifier)

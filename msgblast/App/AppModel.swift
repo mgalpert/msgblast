@@ -62,6 +62,10 @@ final class AppModel: ObservableObject {
     }
     @Published var webComparisonRequest = UUID()
     @Published var newBlastRequest = UUID()
+    #if DEBUG
+    /// Design review: a Debug-only request from `DesignFixture` that the workspace view acts on.
+    @Published var designRequest: DesignRequest?
+    #endif
     private(set) var newBlastShowsChat = false
     @Published var contactResults: [Agent] = []
     @Published var contactQuery = ""
@@ -94,7 +98,7 @@ final class AppModel: ObservableObject {
     }
     var permissionGuidePreview: Bool {
         #if DEBUG
-        demo && (ProcessInfo.processInfo.arguments.contains("--permission-guide-preview") || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true)
+        demo && (ProcessInfo.processInfo.arguments.contains("--permission-guide-preview") || DesignFixture.simulatesMessagesDenial || Bundle.main.object(forInfoDictionaryKey: "msgblastPermissionGuidePreview") as? Bool == true)
         #else
         false
         #endif
