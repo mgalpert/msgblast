@@ -733,8 +733,16 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
                 var label = "-"; var kids: [Any] = []
                 if let v = e as? NSView { label = v.accessibilityLabel() ?? "nil"; kids = v.subviews + (v.accessibilityChildren() ?? []) }
                 else if let v = e as? NSAccessibilityElement { label = v.accessibilityLabel() ?? "nil"; kids = v.accessibilityChildren() ?? [] }
-                FileHandle.standardError.write("AXDUMP \(type(of: e)) label=\(label) kids=\(kids.count) role=\((e as? NSAccessibilityProtocol)?.accessibilityRole()?.rawValue ?? "?")\n".data(using: .utf8)!)
-                queue.append(contentsOf: kids)
+                if let v = e as? NSView {
+                    let val = (v.accessibilityValue() as? String) ?? (v.accessibilityValue().map { "\($0)" } ?? "nil")
+                    let tip = v.toolTip ?? "nil"
+                    let title = v.accessibilityTitle() ?? "nil"
+                    let ident = v.accessibilityIdentifier()
+                    if val != "nil" || tip != "nil" || title != "nil" || !ident.isEmpty {
+                        FileHandle.standardError.write("AXDUMP2 \(type(of: e)) value=\(val.prefix(80)) tip=\(tip) title=\(title) id=\(ident)\n".data(using: .utf8)!)
+                    }
+                }
+                queue.append(contentsOf: (e as? NSView)?.subviews ?? [])
             }
         }
         try await waitUntil {
