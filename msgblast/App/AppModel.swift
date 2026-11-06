@@ -62,6 +62,7 @@ final class AppModel: ObservableObject {
     }
     @Published var webComparisonRequest = UUID()
     @Published var newBlastRequest = UUID()
+    @Published var gptLiveNavigationRequest: GPTLiveNavigationRequest?
     private(set) var newBlastShowsChat = false
     @Published var contactResults: [Agent] = []
     @Published var contactQuery = ""
