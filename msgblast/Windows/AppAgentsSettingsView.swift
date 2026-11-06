@@ -15,7 +15,7 @@ struct AppAgentsSettingsView: View {
         if !accessReady {
             Text("Enable app access in Permissions to connect.").font(.caption).foregroundStyle(.secondary)
         }
-        ForEach(web.sessions.filter { $0.provider.desktopApp != nil }, id: \.id) { session in
+        ForEach(web.sessions.filter { $0.provider.desktopApp != nil }.sorted { $0.provider.name.localizedStandardCompare($1.provider.name) == .orderedAscending }, id: \.id) { session in
             AppAgentSettingsRow(model: model, session: session, busy: busy, accessReady: accessReady)
         }
         .task { model.onboarding.refreshDesktopInstallations() }
