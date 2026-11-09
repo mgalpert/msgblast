@@ -1396,6 +1396,31 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
     }
     @MainActor
+    func testChatGPTAndDotsSendWithoutTakingTheForeground() async throws {
+        for kind in [ChatGPTAppKind.chatgpt, .dots] {
+            let f = try fixture(kind: kind, followup: true)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let storage = f.directory.appendingPathComponent("workspace.json")
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+            workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+            workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in })
+            // A foreground-capable driver: any lease would capture the msgblast window first.
+            let driver = DesktopAppConversation(executable: f.executable, delivery: .foreground, captureHostWindow: {
+                XCTFail("\(kind) sends must not take the foreground"); throw CancellationError()
+            })
+            let session = WebAgentSession(provider: kind == .dots ? .dotsApp : .chatgptApp, storageURL: storage, fixture: false, museApp: .shared,
+                                          desktopApps: client, desktopDriver: driver, chatgptApp: f.adapter())
+            defer { session.beginShutdown() }
+            let attempt = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+            XCTAssertEqual(attempt?.status, .observed, session.error ?? "")
+            XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "bring_to_front" })
+        }
+    }
+
+    @MainActor
     func testChatGPTLateRepliesRecoverInitialAndFollowUpWithoutResending() async throws {
         for followup in [false, true] {
             let f = try fixture(followup: followup)
