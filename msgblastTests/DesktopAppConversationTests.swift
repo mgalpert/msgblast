@@ -827,6 +827,30 @@ final class DesktopAppConversationTests: XCTestCase {
     private func decode(_ elements: [[String: Any]]) throws -> DesktopAppSnapshot {
         try JSONDecoder().decode(DesktopAppSnapshot.self, from: JSONSerialization.data(withJSONObject: ["elements": [element("AXSplitter", "Resize sidebar")] + elements, "elements_complete": true]))
     }
+    func testPromptsCoveringTheComposerAskForTheUserInsteadOfInput() throws {
+        // Trees captured on 2026-11-09: Claude's model promotion, the Dot's contact
+        // setup, and Grok Bot's update gate. Each must stop before any input.
+        func assertNeedsYou(_ app: String, _ read: () throws -> Any) {
+            XCTAssertThrowsError(try read(), app) { XCTAssertTrue($0.localizedDescription.hasPrefix("\(app) needs you:"), $0.localizedDescription) }
+        }
+        let promo = ClaudeAXNode(role: "AXWindow", children: [.init(role: "AXWebArea", label: "New session - Claude", children: [
+            .init(role: "AXHeading", label: "Tackle your toughest challenges with Fable 5.2"),
+            .init(role: "AXButton", label: "Try Fable 5.2"), .init(role: "AXButton", label: "Later"), .init(role: "AXButton", label: "Close")
+        ])])
+        assertNeedsYou("Claude") { try ClaudeAppObservation(root: promo) }
+        let contact = ChatGPTAXNode(role: "AXWindow", label: "taco", children: [.init(role: "AXWebArea", label: "taco", url: "app://-/index.html", children: [
+            .init(role: "AXHeading", label: "Contact your dot anywhere"), .init(role: "AXTabGroup", label: "Contact methods"),
+            .init(role: "AXTextField", label: "Country code"), .init(role: "AXTextField", label: "Phone number")
+        ])])
+        assertNeedsYou("Dots") { try ChatGPTAppObservation(root: contact) }
+        let update = try JSONDecoder().decode(DesktopAppSnapshot.self, from: JSONSerialization.data(withJSONObject: ["elements": [
+            ["role": "AXWindow", "label": "Grok Bot"], ["role": "AXHeading", "label": "Update ready"],
+            ["role": "AXStaticText", "value": "Restart to finish. It takes a few seconds."],
+            ["role": "AXButton", "label": "Restart to update", "element_token": "restart"], ["role": "AXLink", "label": "Download the latest version"]
+        ]]))
+        assertNeedsYou("Grok Bot") { try update.conversation(app: .grokBot) }
+        assertNeedsYou("Grok Bot") { try update.grokBots() }
+    }
 }
 
 /// Runs the real adapter/process boundary. The executable below only consumes a

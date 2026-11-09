@@ -42,6 +42,22 @@ enum DesktopAppError: LocalizedError {
     } }
 }
 
+/// Prompts that cover an app's composer. msgblast stops instead of clicking through them.
+enum DesktopInterstitial {
+    static func check(_ app: DesktopAppProvider, controls: [(role: String, label: String)]) throws {
+        func has(_ role: String, _ matches: (String) -> Bool) -> Bool { controls.contains { $0.role == role && matches($0.label) } }
+        let prompt: String? = switch app {
+        case .claude where has("AXButton", { $0 == "Later" }) && has("AXButton", { $0.hasPrefix("Try ") }): "a model promotion"
+        case .dots where has("AXHeading", { $0 == "Contact your dot anywhere" }): "its contact setup"
+        case .grokBot where has("AXButton", { $0 == "Restart to update" }): "an update that needs a restart"
+        default: nil
+        }
+        if let prompt {
+            throw DesktopAppError.unavailable("\(app.name) needs you: it is showing \(prompt). Finish or dismiss it in \(app.name), then send again. Nothing was sent.")
+        }
+    }
+}
+
 struct DesktopAppSnapshot: Decodable, Sendable {
     struct Element: Decodable, Sendable {
         struct Frame: Decodable, Equatable, Sendable { let x: Double; let y: Double; let w: Double; let h: Double }
@@ -115,6 +131,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     }
     func conversation(app: DesktopAppProvider) throws -> String {
         try checkReadable()
+        try DesktopInterstitial.check(app, controls: body.map { ($0.role, $0.label ?? "") })
         let headings = body.filter { $0.role == "AXHeading" }.compactMap(\.label).filter { !$0.isEmpty }
         switch app {
         case .wabi:
@@ -138,6 +155,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     }
     func grokBots() throws -> [(name: String, element: Element)] {
         try checkReadable()
+        try DesktopInterstitial.check(.grokBot, controls: body.map { ($0.role, $0.label ?? "") })
         guard let end = body.firstIndex(where: { $0.role == "AXSplitter" && $0.label == "Resize sidebar" }) else {
             guard body.contains(where: { $0.role == "AXWebArea" }) else { throw DesktopAppError.incompleteSnapshot }
             throw DesktopAppError.unavailable("Grok Bot's bot list is unavailable. Open its sidebar and refresh the bots.")
