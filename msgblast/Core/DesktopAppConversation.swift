@@ -606,8 +606,9 @@ actor DesktopAppConversation {
         var arguments = ["session": session]
         if let screenshotURL { arguments["screenshot_out_file"] = screenshotURL.path }
         // The driver's one-second default can stop in a virtualized sidebar,
-        // before it reaches the composer. Keep the complete read bounded.
-        return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40, "timeout_ms": 10_000], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
+        // before it reaches the composer. A long Dots DM walks about 6,500
+        // nodes at depth 42. Keep the complete read bounded.
+        return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 20_000, "max_depth": 60, "timeout_ms": 10_000], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
     private func grokDraftAgrees(_ composer: (element: DesktopAppSnapshot.Element, draft: String), with draft: String) -> Bool {
         let value = composer.element.value ?? ""
