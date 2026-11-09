@@ -1,15 +1,15 @@
 import Foundation
 
 public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, museApp, grokBotApp, wabi, geminiApp, chatgptApp, dotsApp, claudeApp
+    case muse, chatgpt, claude, grok, codexCLI, claudeCode, dots, grokbot, os3, hark, museApp, grokBotApp, wabi, geminiApp, chatgptApp, dotsApp, claudeApp, claudeDuetApp
     public static let webDefaults: [Self] = [.muse, .chatgpt, .claude, .grok]
     public static let settingsOnlyWebProviders: [Self] = [.muse, .chatgpt, .claude, .dots, .grok]
     public static let optionalProviders: [Self] = [.codexCLI, .claudeCode]
-    public static let desktopProviders: [Self] = [.chatgptApp, .dotsApp, .claudeApp, .museApp, .grokBotApp, .wabi]
+    public static let desktopProviders: [Self] = [.chatgptApp, .dotsApp, .claudeApp, .claudeDuetApp, .museApp, .grokBotApp, .wabi]
     // Retain Gemini's Codable identity and saved data while native support is deferred.
     public var isAvailableInBuild: Bool { self != .geminiApp }
     public var desktopApp: DesktopAppProvider? {
-        switch self { case .museApp: .muse; case .grokBotApp: .grokBot; case .wabi: .wabi; case .geminiApp: .gemini; case .chatgptApp: .chatgpt; case .dotsApp: .dots; case .claudeApp: .claude; default: nil }
+        switch self { case .museApp: .muse; case .grokBotApp: .grokBot; case .wabi: .wabi; case .geminiApp: .gemini; case .chatgptApp: .chatgpt; case .dotsApp: .dots; case .claudeApp: .claude; case .claudeDuetApp: .claudeDuet; default: nil }
     }
     public var id: String { rawValue }
     public var supportsSharedSubmissions: Bool { self != .hark }
@@ -24,7 +24,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self { case .codexCLI: .codex; case .claudeCode: .claude; default: nil }
     }
     public var name: String {
-        switch self { case .muse: "Muse Web"; case .chatgpt: "ChatGPT Web"; case .claude: "Claude Web"; case .grok: "Grok Web"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots Web"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3 Web"; case .hark: "Hark Web"; case .museApp: "Muse"; case .grokBotApp: "Grok Bot"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT"; case .dotsApp: "Dots"; case .claudeApp: "Claude" }
+        switch self { case .muse: "Muse Web"; case .chatgpt: "ChatGPT Web"; case .claude: "Claude Web"; case .grok: "Grok Web"; case .codexCLI: "Codex CLI"; case .claudeCode: "Claude Code"; case .dots: "Dots Web"; case .grokbot: "Grok Bot"; case .os3: "rabbit OS3 Web"; case .hark: "Hark Web"; case .museApp: "Muse"; case .grokBotApp: "Grok Bot"; case .wabi: "Wabi"; case .geminiApp: "Gemini"; case .chatgptApp: "ChatGPT"; case .dotsApp: "Dots"; case .claudeApp: "Claude"; case .claudeDuetApp: "Claude Duet" }
     }
     public var homeURL: URL {
         switch self {
@@ -32,6 +32,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
         case .dots, .dotsApp: URL(string: "https://chatgpt.com/dots")!
         case .chatgpt, .chatgptApp, .codexCLI: URL(string: "https://chatgpt.com/")!
         case .claude, .claudeApp, .claudeCode: URL(string: "https://claude.ai/new")!
+        case .claudeDuetApp: URL(string: "https://claude.ai/messages")!
         case .grok: URL(string: "https://grok.com/")!
         case .grokbot, .grokBotApp: URL(string: "https://x.ai/bot")!
         case .hark: URL(string: "https://hark.com/chat")!
@@ -45,7 +46,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     var localConversationDirectoryName: String {
         switch self { case .codexCLI: "chatgpt"; case .claudeCode: "claude"; default: rawValue }
     }
-    public var sharesOneConversation: Bool { self == .os3 || self == .dotsApp || (desktopApp != nil && ![.museApp, .geminiApp, .chatgptApp, .dotsApp, .claudeApp].contains(self)) }
+    public var sharesOneConversation: Bool { self == .os3 || self == .dotsApp || self == .claudeDuetApp || (desktopApp != nil && ![.museApp, .geminiApp, .chatgptApp, .dotsApp, .claudeApp, .claudeDuetApp].contains(self)) }
     public var newChatURL: URL { self == .muse ? URL(string: "https://muse.ai/thread/new")! : homeURL }
     public func isSavedConversation(_ url: URL) -> Bool {
         guard isChatURL(url), url.query == nil, url.fragment == nil else { return false }
@@ -68,7 +69,7 @@ public enum WebProvider: String, CaseIterable, Codable, Identifiable, Sendable {
               url.port == nil || url.port == 443 else { return false }
         let path = url.path
         switch self {
-        case .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp: return false
+        case .codexCLI, .claudeCode, .grokbot, .museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp, .claudeDuetApp: return false
         case .muse:
             return url.query == nil && url.fragment == nil && (path == "/thread/new" ||
                 path.range(of: #"^/thread/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$"#, options: .regularExpression) != nil)

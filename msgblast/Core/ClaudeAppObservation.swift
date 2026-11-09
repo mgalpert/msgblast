@@ -4,7 +4,8 @@ import CryptoKit
 enum ClaudeChatURL {
     static func isChat(_ url: URL) -> Bool {
         guard url.scheme == "https", url.host == "claude.ai", url.port == nil, url.user == nil,
-              url.password == nil, url.query == nil, url.fragment == nil, url.absoluteString == "https://claude.ai" + url.path else { return false }
+              url.password == nil, url.query == nil, url.fragment == nil, url.absoluteString == "https://claude.ai" + url.path,
+              url.path != "/messages" else { return false }
         return url.path.range(of: #"^/chat/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"#, options: .regularExpression) != nil
     }
     static func isNew(_ url: URL) -> Bool { url.absoluteString == "https://claude.ai/new" }

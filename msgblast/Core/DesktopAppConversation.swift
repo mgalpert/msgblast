@@ -4,15 +4,15 @@ import Foundation
 import ImageIO
 
 public enum DesktopAppProvider: String, Codable, Sendable {
-    case muse, grokBot, wabi, gemini, chatgpt, dots, claude
-    public var name: String { switch self { case .muse: "Muse"; case .grokBot: "Grok Bot"; case .wabi: "Wabi"; case .gemini: "Gemini"; case .chatgpt: "ChatGPT"; case .dots: "Dots"; case .claude: "Claude" } }
+    case muse, grokBot, wabi, gemini, chatgpt, dots, claude, claudeDuet
+    public var name: String { switch self { case .muse: "Muse"; case .grokBot: "Grok Bot"; case .wabi: "Wabi"; case .gemini: "Gemini"; case .chatgpt: "ChatGPT"; case .dots: "Dots"; case .claude: "Claude"; case .claudeDuet: "Claude Duet" } }
     var bundleIDs: [String] { switch self {
         case .muse: ["com.meta.endo"]
         case .grokBot: ["com.anysphere.sand"]
         case .wabi: ["ai.wabi.desktop"]
         case .gemini: ["com.google.GeminiMacOS"]
         case .chatgpt, .dots: ["com.openai.codex", "com.openai.chat"]
-        case .claude: ["com.anthropic.claudefordesktop"]
+        case .claude, .claudeDuet: ["com.anthropic.claudefordesktop"]
     } }
     var bundleID: String { bundleIDs[0] }
     public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi, .claude].contains(self) }
@@ -129,7 +129,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
             if headers.count == 1, let name = headers[0].label, !name.isEmpty { return name }
             guard headings.count == 1 else { throw DesktopAppError.unavailable("Open one Grok Bot conversation before connecting.") }
             return headings[0]
-        case .gemini, .chatgpt, .dots, .claude:
+        case .gemini, .chatgpt, .dots, .claude, .claudeDuet:
             throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.")
         case .muse:
             // The Muse heading is shared by its main chat and every side chat.
@@ -594,7 +594,7 @@ actor DesktopAppConversation {
         let candidates = windows.windows.filter {
             ($0.layer ?? 0) == 0 && $0.bounds.width >= 400 && $0.bounds.height >= 400 &&
             ($0.is_on_screen != false || !($0.space_ids ?? []).isEmpty) &&
-            ([DesktopAppProvider.gemini, .chatgpt, .dots, .claude].contains(app) || !($0.title ?? "").isEmpty) &&
+            ([DesktopAppProvider.gemini, .chatgpt, .dots, .claude, .claudeDuet].contains(app) || !($0.title ?? "").isEmpty) &&
             $0.title != "Log in"
         }
         guard candidates.count == 1, let window = candidates.first else {
@@ -694,6 +694,7 @@ actor DesktopAppConversation {
                onReceipt: @Sendable (DesktopAppSnapshot.GrokHistoryAnchor) async throws -> Void = { _ in },
                onSubmitted: @Sendable () async throws -> Void = {},
                releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
+        if app == .claudeDuet { throw DesktopAppError.unavailable("Claude Duet sending is not available yet.") }
         guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !prompt.unicodeScalars.contains(where: { ($0.value < 32 && $0.value != 10) || $0.value == 127 }) else {

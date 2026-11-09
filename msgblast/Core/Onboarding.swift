@@ -1,7 +1,7 @@
 import Foundation
 
 public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Sendable, Hashable {
-    case chatgptApp, dotsApp, claudeApp, chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, geminiApp, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
+    case chatgptApp, dotsApp, claudeApp, claudeDuetApp, chatgpt, claude, grokbot, muse, museApp, grokBotApp, wabi, geminiApp, instinct, fo, szn, grok, codexCLI, claudeCode, openclaw, dots, hermes, os3, hark, poke, otherMessages
 
     public static var offeredChoices: [Self] { allCases.filter { choice in
         choice != .grokbot && (choice.provider.map { $0.isAvailableInBuild && !WebProvider.settingsOnlyWebProviders.contains($0) } ?? true)
@@ -25,6 +25,7 @@ public enum OnboardingChoice: String, CaseIterable, Codable, Identifiable, Senda
         case .chatgptApp: .chatgptApp
         case .dotsApp: .dotsApp
         case .claudeApp: .claudeApp
+        case .claudeDuetApp: .claudeDuetApp
         case .chatgpt: .chatgpt
         case .claude: .claude
         case .grokbot: .grokbot

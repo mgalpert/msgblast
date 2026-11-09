@@ -6,14 +6,15 @@ final class NativeProviderRegistrationTests: XCTestCase {
         let pairs: [(WebProvider, WebProvider, DesktopAppProvider)] = [
             (.chatgptApp, .chatgpt, .chatgpt),
             (.dotsApp, .dots, .dots),
-            (.claudeApp, .claude, .claude)
+            (.claudeApp, .claude, .claude),
+            (.claudeDuetApp, .claude, .claudeDuet)
         ]
         let websiteStateNames = Set(WebProvider.webDefaults.map(\.storageFilename) + [WebProvider.dots.storageFilename])
         for (native, website, app) in pairs {
             XCTAssertEqual(native.desktopApp, app)
             XCTAssertTrue(native.usesNativeConversation)
             XCTAssertFalse(native.supportsCopies)
-            XCTAssertEqual(native.sharesOneConversation, native == .dotsApp)
+            XCTAssertEqual(native.sharesOneConversation, native == .dotsApp || native == .claudeDuetApp)
             XCTAssertTrue(WebProvider.desktopProviders.contains(native))
             XCTAssertFalse(websiteStateNames.contains(native.storageFilename))
             XCTAssertNotEqual(native.storageFilename, website.storageFilename)
@@ -23,7 +24,7 @@ final class NativeProviderRegistrationTests: XCTestCase {
             XCTAssertFalse(native.acceptsReceipt(from: website.newChatURL, at: website.newChatURL))
             XCTAssertEqual(try JSONDecoder().decode(WebProvider.self, from: JSONEncoder().encode(website)), website)
         }
-        XCTAssertEqual(Set(pairs.map { $0.0.storageFilename }).count, 3)
+        XCTAssertEqual(Set(pairs.map { $0.0.storageFilename }).count, 4)
     }
 
     func testNativeOnlyOnboardingSkipsBrowserImportAndPreservesDistinctWebsiteChoices() throws {

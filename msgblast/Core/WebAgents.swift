@@ -26,9 +26,9 @@ public final class WebAgents: ObservableObject {
             ($0.isSending || $0.incompleteDesktopAttempt != nil) }
     }
     public var displayed: [WebAgentSession] {
-        let hasBothSavedChats = Self.hasConflictingNativeRecipients(archivedAgents.map(\.provider))
+        let conflicting = Self.conflictingProviders(archivedAgents.map(\.provider))
         return sessions.filter { ($0.isEnabled && $0.state.selected) || (!$0.isEnabled && archivedAgents.contains($0.id)) ||
-            (hasBothSavedChats && archivedAgents.contains($0.id) && [.chatgptApp, .dotsApp].contains($0.provider)) }
+            (archivedAgents.contains($0.id) && conflicting.contains($0.provider)) }
     }
     public var comparisonID: UUID? { workspaceSession.state.comparisonID }
     public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false) {
@@ -75,11 +75,10 @@ public final class WebAgents: ObservableObject {
         }
         for session in sessions { observe(session) }
         setComparison(workspaceSession.state.comparisonID)
-        // Older saved selections may contain both recipients. Keep ChatGPT
-        // selected on startup; the user can switch to Dots at any time.
-        if sessions.contains(where: { $0.provider == .chatgptApp && $0.isEnabled && $0.state.selected }),
-           let dots = sessions.first(where: { $0.provider == .dotsApp && $0.isEnabled && $0.state.selected }) {
-            dots.updateState { $0.selected = false }
+        // Older saved selections may contain both recipients of one app. Keep the first provider in each pair.
+        for pair in Self.sharedNativeApps {
+            let selected = pair.compactMap { provider in sessions.first { $0.provider == provider && $0.isEnabled && $0.state.selected } }
+            for extra in selected.dropFirst() { extra.updateState { $0.selected = false } }
         }
     }
     private func observe(_ session: WebAgentSession) {
@@ -139,21 +138,27 @@ public final class WebAgents: ObservableObject {
     }
     public func restoreSelection(forAgentIDs agents: [WebAgentID]) {
         archivedAgents = Set(agents)
-        let firstSharedApp = agents.first { [.chatgptApp, .dotsApp].contains($0.provider) && session(for: $0)?.isEnabled == true }
+        let blocked = Set(Self.sharedNativeApps.flatMap { pair in
+            agents.filter { pair.contains($0.provider) && session(for: $0)?.isEnabled == true }.dropFirst().map(\.provider)
+        })
         for session in sessions {
-            let selected = session.isEnabled && archivedAgents.contains(session.id) &&
-                (![.chatgptApp, .dotsApp].contains(session.provider) || session.id == firstSharedApp)
+            let selected = session.isEnabled && archivedAgents.contains(session.id) && !blocked.contains(session.provider)
             session.updateState { $0.selected = selected }
         }
     }
-    /// ChatGPT and Dots use the same native app and cannot be recipients together.
+    private static let sharedNativeApps: [[WebProvider]] = [[.chatgptApp, .dotsApp], [.claudeApp, .claudeDuetApp]]
+    private static func conflictingProviders(_ providers: [WebProvider]) -> Set<WebProvider> {
+        let present = Set(providers)
+        return Set(sharedNativeApps.filter { $0.allSatisfy(present.contains) }.flatMap { $0 })
+    }
+    /// ChatGPT and Dots, and Claude and Claude Duet, each share one native app and cannot be recipients together.
     public static func hasConflictingNativeRecipients(_ providers: [WebProvider]) -> Bool {
-        providers.contains(.chatgptApp) && providers.contains(.dotsApp)
+        !conflictingProviders(providers).isEmpty
     }
     public func select(_ session: WebAgentSession, selected: Bool) {
         guard !selected || (session.isEnabled && !isBusyForSelection(session)) else { return }
-        if selected, [.chatgptApp, .dotsApp].contains(session.provider) {
-            for other in sessions where other !== session && [.chatgptApp, .dotsApp].contains(other.provider) && other.provider != session.provider && other.state.selected {
+        if selected, let pair = Self.sharedNativeApps.first(where: { $0.contains(session.provider) }) {
+            for other in sessions where other !== session && pair.contains(other.provider) && other.provider != session.provider && other.state.selected {
                 other.updateState { $0.selected = false }
             }
         }
@@ -301,11 +306,13 @@ public final class WebAgents: ObservableObject {
                             onInputsFinished: @escaping @MainActor @Sendable () -> Void = {},
                             onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {}) async -> [WebAgentID: WebSendAttempt] {
         guard !hasConflictingNativeRecipients(sessions.map(\.provider)) else {
+            let providers = sessions.map(\.provider)
+            let detail = providers.contains(.chatgptApp) && providers.contains(.dotsApp) ? "Choose ChatGPT or Dots before sending." : "Choose Claude or Claude Duet before sending."
             var rejected: [WebAgentID: WebSendAttempt] = [:]
             for session in sessions {
                 var attempt = WebSendAttempt(text: text, status: .notSent)
                 attempt.comparisonID = comparisonID
-                attempt.detail = "Choose ChatGPT or Dots before sending."
+                attempt.detail = detail
                 rejected[session.id] = attempt
             }
             return rejected

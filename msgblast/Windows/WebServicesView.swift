@@ -49,7 +49,8 @@ struct AgentsWorkspaceView: View {
     private var sharedSendDisabledReason: String? {
         guard !busy else { return nil }
         if WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) {
-            return "Choose ChatGPT or Dots."
+            let providers = selectedWebSessions.map(\.provider)
+            return providers.contains(.chatgptApp) && providers.contains(.dotsApp) ? "Choose ChatGPT or Dots." : "Choose Claude or Claude Duet."
         }
         if !preparingDesktopSessions.isEmpty {
             return "Getting \(preparingDesktopSessions.map(\.name).formatted(.list(type: .and))) ready…"
