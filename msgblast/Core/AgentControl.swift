@@ -65,6 +65,11 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
     func controlAgents() -> [AgentControlAgent]
     func controlComparisons() -> [Comparison]
     func controlTranscript(_ comparison: Comparison) -> [AgentControlTurn]
+    var controlEvents: AgentControlEvents { get }
+}
+
+public struct AgentControlWaitResult: Codable, Equatable, Sendable {
+    public var events: [AgentControlEvent], next: Int
 }
 
 @MainActor public enum AgentControl {
@@ -80,11 +85,14 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}}}"#),
         AgentControlTool(name: "msgblast_comparison_read", title: "Read a comparison",
                          summary: "A comparison's prompt, each agent's submission state, and the conversation so far.",
-                         access: .readOnly, inputSchema: #"{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}"#)
+                         access: .readOnly, inputSchema: #"{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}"#),
+        AgentControlTool(name: "msgblast_blast_wait", title: "Wait for replies",
+                         summary: "Waits up to timeoutSeconds for events after cursor `after` (replies, busy or ready agents, send results, new Messages-agent messages, finished reports). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
+                         access: .readOnly, inputSchema: #"{"type":"object","properties":{"after":{"type":"integer","minimum":0},"comparisonId":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":0,"maximum":300}}}"#)
     ]
 
     /// Runs one tool. Arguments and the result are JSON.
-    public static func call(_ name: String, arguments: Data, access: AgentControlAccess, host: AgentControlHost) throws -> Data {
+    public static func call(_ name: String, arguments: Data, access: AgentControlAccess, host: AgentControlHost) async throws -> Data {
         guard let tool = tools.first(where: { $0.name == name }) else { throw AgentControlError.unknownTool(name) }
         guard access >= tool.access else { throw AgentControlError.needsAccess(tool.access) }
         let input = try arguments.isEmpty ? Arguments() : decode(arguments)
@@ -97,6 +105,8 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
             return try encoder.encode(host.controlAgents().filter { $0.visible || input.includeHidden == true })
         case "msgblast_comparisons_list":
             return try encoder.encode(comparisons(host, query: input.query, limit: input.limit ?? 20))
+        case "msgblast_blast_wait":
+            return try await encoder.encode(wait(host, after: input.after, comparisonID: input.comparisonId, timeout: input.timeoutSeconds ?? 60))
         default:
             return try encoder.encode(comparison(host, id: input.id))
         }
@@ -104,6 +114,7 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
 
     private struct Arguments: Decodable {
         var includeHidden: Bool?, query: String?, limit: Int?, id: String?
+        var after: Int?, comparisonId: String?, timeoutSeconds: Int?
     }
 
     private static func decode(_ data: Data) throws -> Arguments {
@@ -125,6 +136,19 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
             .sorted { $0.created > $1.created }
             .prefix(limit)
             .map { AgentControlComparisonSummary(id: $0.id, title: $0.title, created: $0.created, ended: $0.endedAt, agents: names($0, agents: agents)) }
+    }
+
+    private static func wait(_ host: AgentControlHost, after: Int?, comparisonID: String?, timeout: Int) async throws -> AgentControlWaitResult {
+        guard (0...300).contains(timeout) else { throw AgentControlError.invalidArguments("timeoutSeconds must be 0 to 300") }
+        let feed = host.controlEvents
+        let start = after ?? feed.cursor
+        var comparison: UUID?
+        if let comparisonID {
+            guard let id = UUID(uuidString: comparisonID) else { throw AgentControlError.invalidArguments("comparisonId is not a comparison id") }
+            comparison = id
+        }
+        let events = await feed.wait(after: start, comparisonID: comparison, timeout: .seconds(timeout))
+        return AgentControlWaitResult(events: events, next: events.last?.seq ?? max(start, feed.cursor))
     }
 
     private static func comparison(_ host: AgentControlHost, id: String?) throws -> AgentControlComparison {

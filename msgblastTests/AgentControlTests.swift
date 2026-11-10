@@ -4,6 +4,7 @@ import XCTest
 @MainActor final class AgentControlTests: XCTestCase {
     private final class Host: AgentControlHost {
         var comparisons: [Comparison] = []
+        let controlEvents = AgentControlEvents()
         func controlStatus() -> AgentControlStatus { AgentControlStatus(version: "1.0", permissions: ["contacts": true], busyAgents: []) }
         func controlAgents() -> [AgentControlAgent] {
             [AgentControlAgent(id: AgentGridID.web(.chatgptApp).id, name: "ChatGPT", kind: "app", visible: true, selected: true, busy: false),
@@ -22,9 +23,13 @@ import XCTest
         return result
     }
 
-    private func call(_ name: String, _ arguments: String = "", access: AgentControlAccess = .readOnly, host: Host) throws -> Any {
-        let data = try AgentControl.call(name, arguments: Data(arguments.utf8), access: access, host: host)
+    private func call(_ name: String, _ arguments: String = "", host: Host) async throws -> Any {
+        let data = try await AgentControl.call(name, arguments: Data(arguments.utf8), access: .readOnly, host: host)
         return try JSONSerialization.jsonObject(with: data)
+    }
+
+    private func refusal(_ name: String, _ arguments: String = "", host: Host) async -> AgentControlError? {
+        do { _ = try await call(name, arguments, host: host); return nil } catch { return error as? AgentControlError }
     }
 
     func testCatalogHasUniqueNamesAndValidSchemas() throws {
@@ -35,12 +40,14 @@ import XCTest
         }
     }
 
-    func testUnknownToolAndBadArgumentsAreRefused() {
+    func testUnknownToolAndBadArgumentsAreRefused() async {
         let host = Host()
-        XCTAssertThrowsError(try call("msgblast_nope", host: host)) { XCTAssertEqual($0 as? AgentControlError, .unknownTool("msgblast_nope")) }
-        XCTAssertThrowsError(try call("msgblast_comparisons_list", #"{"limit":0}"#, host: host))
-        XCTAssertThrowsError(try call("msgblast_comparisons_list", #"{"limit":"ten"}"#, host: host)) {
-            guard case .invalidArguments = $0 as? AgentControlError else { return XCTFail("\($0)") }
+        let unknown = await refusal("msgblast_nope", host: host)
+        XCTAssertEqual(unknown, .unknownTool("msgblast_nope"))
+        let zero = await refusal("msgblast_comparisons_list", #"{"limit":0}"#, host: host)
+        let text = await refusal("msgblast_comparisons_list", #"{"limit":"ten"}"#, host: host)
+        for error in [zero, text] {
+            guard case .invalidArguments = error else { return XCTFail("\(String(describing: error))") }
         }
     }
 
@@ -49,34 +56,66 @@ import XCTest
         XCTAssertLessThan(AgentControlAccess.sendToAgents, .full)
     }
 
-    func testAgentsListHidesHiddenAgentsUnlessAsked() throws {
+    func testAgentsListHidesHiddenAgentsUnlessAsked() async throws {
         let host = Host()
-        XCTAssertEqual((try call("msgblast_agents_list", host: host) as? [[String: Any]])?.count, 1)
-        XCTAssertEqual((try call("msgblast_agents_list", #"{"includeHidden":true}"#, host: host) as? [[String: Any]])?.count, 2)
+        let shown = try await call("msgblast_agents_list", host: host) as? [[String: Any]]
+        let all = try await call("msgblast_agents_list", #"{"includeHidden":true}"#, host: host) as? [[String: Any]]
+        XCTAssertEqual(shown?.count, 1)
+        XCTAssertEqual(all?.count, 2)
     }
 
-    func testComparisonsListIsNewestFirstFilteredAndLimited() throws {
+    func testComparisonsListIsNewestFirstFilteredAndLimited() async throws {
         let host = Host()
         host.comparisons = [comparison("Plan a weekend in Big Sur", created: Date(timeIntervalSince1970: 1)),
                             comparison("Best espresso machine", created: Date(timeIntervalSince1970: 3)),
                             comparison("Weekend in Tahoe", created: Date(timeIntervalSince1970: 2))]
-        let all = try XCTUnwrap(try call("msgblast_comparisons_list", host: host) as? [[String: Any]])
+        let all = try XCTUnwrap(try await call("msgblast_comparisons_list", host: host) as? [[String: Any]])
         XCTAssertEqual(all.map { $0["title"] as? String }, ["Best espresso machine", "Weekend in Tahoe", "Plan a weekend in Big Sur"])
         XCTAssertEqual(all.first?["agents"] as? [String], ["Fo", "ChatGPT"])
-        let weekend = try XCTUnwrap(try call("msgblast_comparisons_list", #"{"query":"WEEKEND","limit":1}"#, host: host) as? [[String: Any]])
+        let weekend = try XCTUnwrap(try await call("msgblast_comparisons_list", #"{"query":"WEEKEND","limit":1}"#, host: host) as? [[String: Any]])
         XCTAssertEqual(weekend.map { $0["title"] as? String }, ["Weekend in Tahoe"])
     }
 
-    func testComparisonReadReturnsSubmissionsAndTurns() throws {
+    func testComparisonReadReturnsSubmissionsAndTurns() async throws {
         let host = Host()
         let saved = comparison("Plan a weekend", created: Date(timeIntervalSince1970: 0))
         host.comparisons = [saved]
-        let read = try XCTUnwrap(try call("msgblast_comparison_read", #"{"id":"\#(saved.id.uuidString.lowercased())"}"#, host: host) as? [String: Any])
+        let read = try XCTUnwrap(try await call("msgblast_comparison_read", #"{"id":"\#(saved.id.uuidString.lowercased())"}"#, host: host) as? [String: Any])
         XCTAssertEqual(read["prompt"] as? String, "Plan a weekend")
         XCTAssertEqual(read["submissions"] as? [String: String], ["Fo": "ready"])
         XCTAssertEqual((read["turns"] as? [[String: Any]])?.first?["text"] as? String, "Try the coast.")
-        XCTAssertThrowsError(try call("msgblast_comparison_read", #"{"id":"missing"}"#, host: host)) {
-            XCTAssertEqual($0 as? AgentControlError, .notFound("missing"))
+        let missing = await refusal("msgblast_comparison_read", #"{"id":"missing"}"#, host: host)
+        XCTAssertEqual(missing, .notFound("missing"))
+    }
+
+    func testWaitReturnsEarlierEventsAtOnceAndFiltersByComparison() async throws {
+        let host = Host()
+        let blast = UUID()
+        host.controlEvents.publish(.replyArrived, comparisonID: blast, agent: "Fo")
+        host.controlEvents.publish(.agentReady, comparisonID: UUID(), agent: "ChatGPT")
+        let result = try XCTUnwrap(try await call("msgblast_blast_wait", #"{"after":0,"comparisonId":"\#(blast.uuidString)","timeoutSeconds":0}"#, host: host) as? [String: Any])
+        XCTAssertEqual((result["events"] as? [[String: Any]])?.map { $0["kind"] as? String }, ["replyArrived"])
+        XCTAssertEqual(result["next"] as? Int, 1)
+    }
+
+    func testWaitWakesOnANewEventAndTimesOutEmpty() async throws {
+        let host = Host()
+        Task { @MainActor in
+            try await Task.sleep(for: .milliseconds(50))
+            host.controlEvents.publish(.sendResult, agent: "Fo", detail: "submitted")
         }
+        let woke = try XCTUnwrap(try await call("msgblast_blast_wait", #"{"timeoutSeconds":5}"#, host: host) as? [String: Any])
+        XCTAssertEqual((woke["events"] as? [[String: Any]])?.first?["detail"] as? String, "submitted")
+        let empty = try XCTUnwrap(try await call("msgblast_blast_wait", #"{"after":1,"timeoutSeconds":0}"#, host: host) as? [String: Any])
+        XCTAssertEqual((empty["events"] as? [Any])?.count, 0)
+        XCTAssertEqual(empty["next"] as? Int, 1)
+    }
+
+    func testFeedKeepsOnlyRecentEvents() {
+        let feed = AgentControlEvents()
+        for _ in 0..<(AgentControlEvents.retained + 5) { feed.publish(.agentBusy) }
+        XCTAssertEqual(feed.events.count, AgentControlEvents.retained)
+        XCTAssertEqual(feed.events.first?.seq, 6)
+        XCTAssertEqual(feed.cursor, AgentControlEvents.retained + 5)
     }
 }
