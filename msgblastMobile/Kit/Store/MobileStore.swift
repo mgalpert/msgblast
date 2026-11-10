@@ -22,16 +22,18 @@ public final class MobileStore: ObservableObject {
     private let database: LocalDatabase
     private var saveTask: Task<Void, Never>?
 
-    public init(database: LocalDatabase) {
+    /// Throws when saved state cannot be read or decoded, so it is never replaced with an
+    /// empty store. Only a value that was never saved starts empty.
+    public init(database: LocalDatabase) throws {
         self.database = database
-        projection = database.value(ProjectionState.self, "projection") ?? ProjectionState()
-        commands = database.value([UUID: CommandRecord].self, "commands") ?? [:]
-        drafts = database.value([String: String].self, "drafts") ?? [:]
-        lastOpened = database.value([UUID: Date].self, "lastOpened") ?? [:]
-        unreadSince = database.value(Date.self, "unreadSince")
-        replyTo = database.value([UUID: String].self, "replyTo") ?? [:]
-        let refs = database.value([String].self, "avatarRefs") ?? []
-        avatars = Dictionary(uniqueKeysWithValues: refs.compactMap { ref in database.data(Self.avatarKey(ref)).map { (ref, $0) } })
+        projection = try database.value(ProjectionState.self, "projection") ?? ProjectionState()
+        commands = try database.value([UUID: CommandRecord].self, "commands") ?? [:]
+        drafts = try database.value([String: String].self, "drafts") ?? [:]
+        lastOpened = try database.value([UUID: Date].self, "lastOpened") ?? [:]
+        unreadSince = try database.value(Date.self, "unreadSince")
+        replyTo = try database.value([UUID: String].self, "replyTo") ?? [:]
+        let refs = try database.value([String].self, "avatarRefs") ?? []
+        avatars = Dictionary(uniqueKeysWithValues: try refs.compactMap { ref in try database.data(Self.avatarKey(ref)).map { (ref, $0) } })
         // A previous run may have ended mid-command: those are unconfirmed until the Mac says otherwise.
         CommandLedger.connectionLost(&commands)
     }
@@ -90,8 +92,9 @@ public final class MobileStore: ObservableObject {
     static func fileKey(_ turnID: String, _ index: Int, thumbnail: Bool) -> String { "file:\(thumbnail ? "thumb" : "full"):\(turnID):\(index)" }
     public func attachment(turnID: String, index: Int, thumbnail: Bool) -> (data: Data, type: String)? {
         let key = Self.fileKey(turnID, index, thumbnail: thumbnail)
-        guard let data = database.data(key) else { return nil }
-        return (data, database.value(String.self, key + ":type") ?? "application/octet-stream")
+        // A cached copy that cannot be read is fetched from the Mac again.
+        guard let data = try? database.data(key) else { return nil }
+        return (data, (try? database.value(String.self, key + ":type")) ?? "application/octet-stream")
     }
     public func storeAttachment(_ data: Data, type: String, turnID: String, index: Int, thumbnail: Bool) {
         let key = Self.fileKey(turnID, index, thumbnail: thumbnail)

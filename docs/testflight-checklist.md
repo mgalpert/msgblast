@@ -40,15 +40,18 @@ portal; items marked **this Mac** are local setup observed on 2026-10-30.
   (reason `CA92.1`) for app preferences, and
   `NSPrivacyAccessedAPICategoryFileTimestamp` (reason `C617.1`) if the SQLite
   store or attachment cache reads file dates. Declare no tracking and no
-  tracking domains. Collected data: none leaves the device except to the
-  user's own Mac; declare `NSPrivacyCollectedDataTypes` as empty.
+  tracking domains. Collected data: `NSPrivacyCollectedDataTypes` declares
+  `NSPrivacyCollectedDataTypeAudioData` (not linked, not tracking, app
+  functionality) because dictation can fall back to Apple's server speech
+  recognition; keep that entry. Nothing else leaves the device except to the
+  user's own Mac.
 - [ ] **repo** Confirm the marketing version and build for the first upload.
   The project default is `MARKETING_VERSION 0.1.0`, `CURRENT_PROJECT_VERSION
   1`. TestFlight requires each upload of the same version to carry a higher
-  build number. Decide now whether builds are bumped by editing
-  `generate_project.py` or passed to `xcodebuild` as
-  `CURRENT_PROJECT_VERSION=<n>` the way the Mac release workflow does, and
-  write the choice into this file.
+  build number. **Decision (project lead):** every TestFlight archive passes
+  the build number to `xcodebuild` as `CURRENT_PROJECT_VERSION=<n>`, the way
+  the Mac release workflow does. Do not edit `generate_project.py` or the
+  generated project to bump builds; its values stay development defaults.
 - [ ] **repo** The app icon is the canonical Icon Composer bundle compiled for
   iOS. Verify the archive's `Assets.car` carries the 1024 pt marketing icon
   (`assetutil --info` on the archived `Assets.car`), since App Store Connect
@@ -90,8 +93,11 @@ editing (`git archive HEAD | tar -x -C build/export`), as the local previews do.
     -configuration Release -destination 'generic/platform=iOS' \
     -archivePath build/msgblastMobile.xcarchive \
     DEVELOPMENT_TEAM=C4XLZBEPK8 CODE_SIGN_STYLE=Automatic \
+    CURRENT_PROJECT_VERSION=<n> \
     -allowProvisioningUpdates archive
   ```
+
+  `<n>` is higher than the last processed build for that marketing version.
 
 - [ ] Export and upload with an `ExportOptions.plist` whose `method` is
   `app-store-connect`, `destination` is `upload`, `teamID` is `C4XLZBEPK8`,
@@ -103,8 +109,9 @@ editing (`git archive HEAD | tar -x -C build/export`), as the local previews do.
     -exportPath build/testflight -allowProvisioningUpdates
   ```
 
-  Commit `scripts/ExportOptions-testflight.plist` once it works. Xcode
-  Organizer's Distribute App is the fallback for the first upload.
+  `scripts/ExportOptions-testflight.plist` is committed with these values; it
+  has not yet been used for a real upload. Xcode Organizer's Distribute App is
+  the fallback for the first upload.
 - [ ] Before uploading, run the same gates as a local reinstall: kit tests
   hosted on macOS, the Mac remote classes, the protocol tests, the Python
   suite, and a device smoke test of pairing, a send, and a reply.

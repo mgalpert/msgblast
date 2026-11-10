@@ -30,11 +30,11 @@ public final class MobileApp: ObservableObject {
     private var avatarsUnavailable: Set<String> = []
 
     public init(database: LocalDatabase, keys: DeviceKeyStore, defaults: UserDefaults = .standard,
-                makeTransport: ((MacEndpoint, Data) -> ClientTransport)? = nil) {
+                makeTransport: ((MacEndpoint, Data) -> ClientTransport)? = nil) throws {
         self.database = database
         self.defaults = defaults
-        store = MobileStore(database: database)
-        let saved = database.value(PairedMac.self, "pairedMac")
+        store = try MobileStore(database: database)
+        let saved = try database.value(PairedMac.self, "pairedMac")
         if let makeTransport {
             connection = MacConnection(paired: saved, keys: keys, savePaired: { database.setValue($0, "pairedMac") }, makeTransport: makeTransport)
         } else {
@@ -275,5 +275,17 @@ public final class MobileApp: ObservableObject {
         let staged = try await perform(.attachStaged(uploadID: id, sha256: Data(SHA256.hash(data: data))))
         guard staged.outcome == .applied, let attachment = staged.attachmentID else { throw RemotePairingError(message: staged.message ?? "Your Mac refused the file") }
         return attachment
+    }
+}
+
+/// Opening the phone's saved state. A file that cannot be read or decoded is a distinct
+/// failure, left untouched for a retry; only a missing file starts empty.
+public enum MobileLaunch {
+    case ready(MobileApp)
+    case loadFailed(String)
+
+    @MainActor public static func open(databaseURL: URL, keys: DeviceKeyStore, defaults: UserDefaults = .standard) -> MobileLaunch {
+        do { return .ready(try MobileApp(database: try LocalDatabase(url: databaseURL), keys: keys, defaults: defaults)) }
+        catch { return .loadFailed(String(describing: error)) }
     }
 }
