@@ -16,7 +16,7 @@ def is_instruction(path):
     if PurePosixPath(lower).name in NAMES:
         return True
     # A rules directory anywhere, or a symlink or submodule standing in for one.
-    return any(f'/{d}/' in f'/{lower}/' for d in RULE_DIRS) or '.cursor' in parts[-1:]
+    return any(f'/{d}/' in f'/{lower}/' for d in RULE_DIRS) or parts[-1:] in (('.cursor',), ('.claude',))
 
 
 def check(head):

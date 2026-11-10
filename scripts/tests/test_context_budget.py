@@ -49,6 +49,8 @@ class ContextTests(unittest.TestCase):
     def test_linked_rules_and_lfs_pointers_fail(self):
         result = self.check_tree({'docs/huge.md': 'a' * 9000}, [('.cursor/rules', '../docs')])
         self.assertEqual(result.returncode, 1, result.stdout)
+        result = self.check_tree({'docs/huge.md': 'a' * 9000}, [('.claude', 'docs')])
+        self.assertEqual(result.returncode, 1, result.stdout)
         pointer = 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 99999\n'
         self.assertEqual(self.check_tree({'AGENTS.md': pointer}).returncode, 1)
 
