@@ -105,9 +105,9 @@ public actor AgentControlMCPServer {
         }
         let text = (try? JSONSerialization.data(withJSONObject: result ?? NSNull(), options: [.sortedKeys, .fragmentsAllowed]))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
-        var reply: [String: Any] = ["content": [["type": "text", "text": text]], "isError": false]
-        if let object = result as? [String: Any] { reply["structuredContent"] = object }
-        return reply
+        var output: [String: Any] = ["content": [["type": "text", "text": text]], "isError": false]
+        if let object = result as? [String: Any] { output["structuredContent"] = object }
+        return output
     }
 
     /// One request on the app's socket. Throws only when the app cannot be reached.
