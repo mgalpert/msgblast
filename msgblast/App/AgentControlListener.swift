@@ -11,6 +11,7 @@ import msgblastCore
     @Published private(set) var error: String?
     private weak var host: AppModel?
     private var listener: NWListener?
+    lazy var tailnet = AgentControlTailnetListener(directory: socket.deletingLastPathComponent(), gate: gate, host: host)
 
     init(directory: URL, host: AppModel) {
         socket = directory.appendingPathComponent("agent-control.sock")
@@ -48,6 +49,7 @@ import msgblastCore
             listener.start(queue: .main)
             self.listener = listener
             error = gate.loadFailed ? "Saved outside-agent approvals could not be read, so every agent is refused." : nil
+            tailnet.noteLocal(true)
         } catch { self.error = error.localizedDescription }
     }
 
@@ -55,6 +57,7 @@ import msgblastCore
         listener?.cancel()
         listener = nil
         try? FileManager.default.removeItem(at: socket)
+        tailnet.noteLocal(false)
     }
 
     private func serve(_ connection: NWConnection) {
@@ -80,7 +83,7 @@ import msgblastCore
 
     private func answer(_ line: Data, on connection: NWConnection) async {
         guard let host else { return }
-        let reply = await AgentControlWire.respond(to: line, host: host, gate: gate, approve: approveOutsideAgent)
+        let reply = await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0) })
         connection.send(content: reply, completion: .contentProcessed { _ in })
     }
 }

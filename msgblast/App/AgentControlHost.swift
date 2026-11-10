@@ -43,12 +43,14 @@ extension AppModel: AgentControlHost {
     }
 }
 
-/// Asks the person, in msgblast, whether an outside agent on this Mac may use it.
-@MainActor func approveOutsideAgent(_ client: String) async -> AgentControlAccess? {
+/// Asks the person, in msgblast, whether an outside agent may use it. `overTailscale` is the remote HTTP path.
+@MainActor func approveOutsideAgent(_ client: String, overTailscale: Bool = false) async -> AgentControlAccess? {
     NSApp.activate(ignoringOtherApps: true)
     let alert = NSAlert()
     alert.messageText = "\(client) wants to use msgblast"
-    alert.informativeText = "It is an app on this Mac. Choose what it may do. You can change or remove this in Settings → Outside agents."
+    alert.informativeText = overTailscale
+        ? "It connects over your Tailscale network. Choose what it may do. You can change or remove this in Settings → Outside agents."
+        : "It is an app on this Mac. Choose what it may do. You can change or remove this in Settings → Outside agents."
     let levels = AgentControlAccess.allCases
     let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
     picker.addItems(withTitles: levels.map(\.label))
