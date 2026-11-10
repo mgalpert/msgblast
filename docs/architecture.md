@@ -26,6 +26,7 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Desktop app conversations | `msgblast/Core/EmbeddedCuaDriver.swift`, `DesktopAccessibility.swift`, `DesktopAppWorkflow.swift`, `DesktopAppConversation.swift`, and app profiles | Private embedded runtime, shared bounded native metadata capture and single-submit workflow, exact-window background input, and per-comparison destination/receipt checks |
 | Local CLI execution | `msgblast/Core/LocalPersonalAgent.swift`, `LocalAgentDetection.swift` | Executable/account detection, conversation adapters, restricted reports, and process cleanup |
 | Grok Bot | `msgblast/Core/GrokBot*.swift` | Webhook requests, secure storage, loopback replies, and bundled tunnel process |
+| Outside agents | `msgblast/Core/AgentControl*.swift`, `App/AgentControlHost.swift`, `App/AgentControlListener.swift`, `Windows/OutsideAgentsSettingsView.swift` under `msgblast/` | Tool catalog and access levels, wait-for-events feed, per-agent approvals, and the owner-only local socket in the build's support folder (off by default) |
 | Feedback | `Core/DiagnosticReport.swift`, `FeedbackSubmission.swift`, `Windows/FeedbackView.swift` under `msgblast/` | Explicit feedback note, allowed diagnostics, and private intake submission |
 | Download service | `download/` | Signed-feed verification and fixed latest.zip redirect |
 | Feedback handler | `feedback/` | Validated private R2 intake; template integrated into a separate production landing Worker |

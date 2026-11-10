@@ -44,8 +44,9 @@ public struct AgentControlStatus: Codable, Equatable, Sendable {
 }
 
 public struct AgentControlTurn: Codable, Equatable, Sendable {
-    public var agent: String, outgoing: Bool, text: String, date: Date
-    public init(agent: String, outgoing: Bool, text: String, date: Date) {
+    /// Nil for website and app turns, whose pages do not show a time.
+    public var agent: String, outgoing: Bool, text: String, date: Date?
+    public init(agent: String, outgoing: Bool, text: String, date: Date?) {
         self.agent = agent; self.outgoing = outgoing; self.text = text; self.date = date
     }
 }

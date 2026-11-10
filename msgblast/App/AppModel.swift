@@ -107,6 +107,8 @@ final class AppModel: ObservableObject {
     var lastTelemetryInventory: [String: Int]?
     var lastTelemetryActivityDay: Int?
     var telemetryTimer: Timer?
+    let controlEvents = AgentControlEvents()
+    lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     var database: MessagesDatabase?
     var timer: Timer?
@@ -151,6 +153,7 @@ final class AppModel: ObservableObject {
             return self.databaseAvailable
         }
         refresh()
+        _ = agentControl
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshIfChanged() } }
         Task { await telemetry.configure(storageLoadFailed ? nil : state.sharingConsent); telemetryHeartbeat() }
         if TelemetryCollector.endpoint(demo: demo) != nil {
