@@ -58,8 +58,12 @@ introduced `pull_request_target` workflow before that workflow exists there.
 
 ## Context and tool output
 
-The scope job also checks all tracked `AGENTS.md`, `CLAUDE.md`, and root
-`.cursor/rules/` files: 6 KiB per file, 24 KiB total, measured as UTF-8 bytes.
+The scope job also checks every tracked coding-agent instruction file, at any
+depth and in any letter case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`,
+`CLAUDE.local.md`, `GEMINI.md`, `.cursorrules`, `copilot-instructions.md`, and
+files under `.cursor/rules/` or `.claude/rules/`: 6 KiB per file, 24 KiB total,
+measured as stored bytes. Each must be a regular file, not a symlink, submodule
+or Git LFS pointer. Text pulled in through `@` imports is not counted.
 Keep detailed references in linked docs and load only relevant sections.
 
 Use the bounded runner for commands with potentially large output:
