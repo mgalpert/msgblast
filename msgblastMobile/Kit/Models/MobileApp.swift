@@ -137,6 +137,11 @@ public final class MobileApp: ObservableObject {
         store.storeAvatar(data, for: ref)
     }
 
+    public func markMessagesRead(conversationID: UUID, agentID: String) -> Bool {
+        let command = RemoteCommand(action: .markMessagesRead(conversationID: conversationID, agentID: agentID))
+        return (try? connection.send(command)) != nil
+    }
+
     /// Sends now and records it, or throws without queueing when disconnected.
     @discardableResult
     public func send(_ action: RemoteAction) throws -> RemoteCommand {
