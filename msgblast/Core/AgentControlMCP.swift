@@ -42,8 +42,8 @@ public actor AgentControlMCPServer {
                 if let requested, requested != Self.modernVersion {
                     throw Failure(code: -32022, message: "Unsupported protocol version", requested: requested)
                 }
-                let info = meta["io.modelcontextprotocol/clientInfo"] as? [String: Any]
-                let client = fixedClient ?? Self.name(info) ?? handshakeClient ?? "MCP client"
+                let reported = Self.name(meta["io.modelcontextprotocol/clientInfo"] as? [String: Any])
+                let client = fixedClient ?? reported ?? handshakeClient ?? "MCP client"
                 switch method {
                 case "server/discover": result = discover()
                 case "tools/list": result = try await listTools(client: client)
