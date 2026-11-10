@@ -40,8 +40,11 @@ portal; items marked **this Mac** are local setup observed on 2026-10-30.
   (reason `CA92.1`) for app preferences, and
   `NSPrivacyAccessedAPICategoryFileTimestamp` (reason `C617.1`) if the SQLite
   store or attachment cache reads file dates. Declare no tracking and no
-  tracking domains. Collected data: none leaves the device except to the
-  user's own Mac; declare `NSPrivacyCollectedDataTypes` as empty.
+  tracking domains. Collected data: `NSPrivacyCollectedDataTypes` declares
+  `NSPrivacyCollectedDataTypeAudioData` (not linked, not tracking, app
+  functionality) because dictation can fall back to Apple's server speech
+  recognition; keep that entry. Nothing else leaves the device except to the
+  user's own Mac.
 - [ ] **repo** Confirm the marketing version and build for the first upload.
   The project default is `MARKETING_VERSION 0.1.0`, `CURRENT_PROJECT_VERSION
   1`. TestFlight requires each upload of the same version to carry a higher

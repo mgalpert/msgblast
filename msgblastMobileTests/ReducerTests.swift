@@ -115,19 +115,75 @@ final class ReducerTests: XCTestCase {
     @MainActor func testStorePersistsDraftsCommandsAndProjection() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("mobile-store-\(UUID().uuidString).sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
-        let store = MobileStore(database: try LocalDatabase(url: url))
+        let store = try MobileStore(database: try LocalDatabase(url: url))
         for event in try RecordedFixtures.events("send") { store.handle(event) }
         let key = MobileStore.draftKey(conversation: nil, agentID: nil)
         store.setDraft("Unsent on this phone", for: key)
         let pending = RemoteCommand(action: .setKeepAwake(enabled: true))
         store.recordSent(pending)
         store.saveNow()
-        let reopened = MobileStore(database: try LocalDatabase(url: url))
+        let reopened = try MobileStore(database: try LocalDatabase(url: url))
         XCTAssertEqual(reopened.projection, store.projection)
         XCTAssertEqual(reopened.draft(key), "Unsent on this phone")
         XCTAssertEqual(reopened.commands[pending.clientCommandID]?.status, .unconfirmed, "A command without a result before quitting is unconfirmed")
         reopened.forgetMac()
         XCTAssertTrue(reopened.projection.conversations.isEmpty)
-        XCTAssertEqual(MobileStore(database: try LocalDatabase(url: url)).draft(key), "")
+        XCTAssertEqual(try MobileStore(database: try LocalDatabase(url: url)).draft(key), "")
+    }
+
+    // MARK: Opening saved state: only a missing file starts empty.
+
+    private func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("mobile-launch-\(UUID().uuidString)", isDirectory: true).appendingPathComponent("cache.sqlite")
+    }
+    private func launchDefaults() -> UserDefaults { UserDefaults(suiteName: "mobile-launch-\(UUID().uuidString)")! }
+
+    @MainActor func testAMissingFileStartsEmpty() throws {
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        guard case .ready(let app) = MobileLaunch.open(databaseURL: url, keys: MemoryDeviceKeyStore(), defaults: launchDefaults()) else { return XCTFail("A missing file starts empty") }
+        XCTAssertTrue(app.store.projection.conversations.isEmpty)
+        XCTAssertTrue(app.store.commands.isEmpty)
+        XCTAssertTrue(app.store.drafts.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @MainActor func testAValidFileRoundTrips() throws {
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        guard case .ready(let first) = MobileLaunch.open(databaseURL: url, keys: MemoryDeviceKeyStore(), defaults: launchDefaults()) else { return XCTFail("Opens") }
+        for event in try RecordedFixtures.events("send") { first.store.handle(event) }
+        let key = MobileStore.draftKey(conversation: nil, agentID: nil)
+        first.store.setDraft("Kept", for: key)
+        let pending = RemoteCommand(action: .setKeepAwake(enabled: true))
+        first.store.recordSent(pending)
+        first.store.saveNow()
+        guard case .ready(let second) = MobileLaunch.open(databaseURL: url, keys: MemoryDeviceKeyStore(), defaults: launchDefaults()) else { return XCTFail("Reopens") }
+        XCTAssertEqual(second.store.projection, first.store.projection)
+        XCTAssertFalse(second.store.projection.conversations.isEmpty)
+        XCTAssertEqual(second.store.draft(key), "Kept")
+        XCTAssertNotNil(second.store.commands[pending.clientCommandID])
+    }
+
+    @MainActor func testACorruptFileIsALoadFailureAndIsLeftUnchanged() throws {
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let garbage = Data(String(repeating: "not a sqlite database; ", count: 200).utf8)
+        try garbage.write(to: url)
+        for _ in 0..<2 { // The first launch and a retry.
+            guard case .loadFailed(let message) = MobileLaunch.open(databaseURL: url, keys: MemoryDeviceKeyStore(), defaults: launchDefaults()) else { return XCTFail("A corrupt file must not open as an empty store") }
+            XCTAssertFalse(message.isEmpty)
+            XCTAssertEqual(try Data(contentsOf: url), garbage, "The failed file is never written")
+        }
+    }
+
+    @MainActor func testUndecodableSavedStateIsALoadFailureAndIsLeftUnchanged() throws {
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        do { try LocalDatabase(url: url).set(Data("{not json".utf8), for: "projection") }
+        let before = try Data(contentsOf: url)
+        guard case .loadFailed = MobileLaunch.open(databaseURL: url, keys: MemoryDeviceKeyStore(), defaults: launchDefaults()) else { return XCTFail("Saved state that cannot be decoded must not become an empty store") }
+        XCTAssertEqual(try Data(contentsOf: url), before, "The failed file is never written")
     }
 }

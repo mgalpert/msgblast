@@ -51,7 +51,7 @@ enum DesignFixtures {
             database.setValue(projection(name), "projection")
         }
         let defaults = UserDefaults(suiteName: "msgblast-design-fixtures")!
-        let app = MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: defaults)
+        let app = try! MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: defaults)
         switch name {
         case .pairing, .pairingPaste: break
         case .reconnecting: app.connection.showDesignFixture(.reconnecting(attempt: 3, retryAt: now.addingTimeInterval(8)), lastHeard: now.addingTimeInterval(-130))
