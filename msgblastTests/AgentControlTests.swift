@@ -69,10 +69,12 @@ import XCTest
         host.comparisons = [comparison("Plan a weekend in Big Sur", created: Date(timeIntervalSince1970: 1)),
                             comparison("Best espresso machine", created: Date(timeIntervalSince1970: 3)),
                             comparison("Weekend in Tahoe", created: Date(timeIntervalSince1970: 2))]
-        let all = try XCTUnwrap(try await call("msgblast_comparisons_list", host: host) as? [[String: Any]])
+        let allReply = try await call("msgblast_comparisons_list", host: host)
+        let all = try XCTUnwrap(allReply as? [[String: Any]])
         XCTAssertEqual(all.map { $0["title"] as? String }, ["Best espresso machine", "Weekend in Tahoe", "Plan a weekend in Big Sur"])
         XCTAssertEqual(all.first?["agents"] as? [String], ["Fo", "ChatGPT"])
-        let weekend = try XCTUnwrap(try await call("msgblast_comparisons_list", #"{"query":"WEEKEND","limit":1}"#, host: host) as? [[String: Any]])
+        let weekendReply = try await call("msgblast_comparisons_list", #"{"query":"WEEKEND","limit":1}"#, host: host)
+        let weekend = try XCTUnwrap(weekendReply as? [[String: Any]])
         XCTAssertEqual(weekend.map { $0["title"] as? String }, ["Weekend in Tahoe"])
     }
 
@@ -80,7 +82,8 @@ import XCTest
         let host = Host()
         let saved = comparison("Plan a weekend", created: Date(timeIntervalSince1970: 0))
         host.comparisons = [saved]
-        let read = try XCTUnwrap(try await call("msgblast_comparison_read", #"{"id":"\#(saved.id.uuidString.lowercased())"}"#, host: host) as? [String: Any])
+        let readReply = try await call("msgblast_comparison_read", #"{"id":"\#(saved.id.uuidString.lowercased())"}"#, host: host)
+        let read = try XCTUnwrap(readReply as? [String: Any])
         XCTAssertEqual(read["prompt"] as? String, "Plan a weekend")
         XCTAssertEqual(read["submissions"] as? [String: String], ["Fo": "ready"])
         XCTAssertEqual((read["turns"] as? [[String: Any]])?.first?["text"] as? String, "Try the coast.")
@@ -93,7 +96,8 @@ import XCTest
         let blast = UUID()
         host.controlEvents.publish(.replyArrived, comparisonID: blast, agent: "Fo")
         host.controlEvents.publish(.agentReady, comparisonID: UUID(), agent: "ChatGPT")
-        let result = try XCTUnwrap(try await call("msgblast_blast_wait", #"{"after":0,"comparisonId":"\#(blast.uuidString)","timeoutSeconds":0}"#, host: host) as? [String: Any])
+        let resultReply = try await call("msgblast_blast_wait", #"{"after":0,"comparisonId":"\#(blast.uuidString)","timeoutSeconds":0}"#, host: host)
+        let result = try XCTUnwrap(resultReply as? [String: Any])
         XCTAssertEqual((result["events"] as? [[String: Any]])?.map { $0["kind"] as? String }, ["replyArrived"])
         XCTAssertEqual(result["next"] as? Int, 1)
     }
@@ -104,9 +108,11 @@ import XCTest
             try await Task.sleep(for: .milliseconds(50))
             host.controlEvents.publish(.sendResult, agent: "Fo", detail: "submitted")
         }
-        let woke = try XCTUnwrap(try await call("msgblast_blast_wait", #"{"timeoutSeconds":5}"#, host: host) as? [String: Any])
+        let wokeReply = try await call("msgblast_blast_wait", #"{"timeoutSeconds":5}"#, host: host)
+        let woke = try XCTUnwrap(wokeReply as? [String: Any])
         XCTAssertEqual((woke["events"] as? [[String: Any]])?.first?["detail"] as? String, "submitted")
-        let empty = try XCTUnwrap(try await call("msgblast_blast_wait", #"{"after":1,"timeoutSeconds":0}"#, host: host) as? [String: Any])
+        let emptyReply = try await call("msgblast_blast_wait", #"{"after":1,"timeoutSeconds":0}"#, host: host)
+        let empty = try XCTUnwrap(emptyReply as? [String: Any])
         XCTAssertEqual((empty["events"] as? [Any])?.count, 0)
         XCTAssertEqual(empty["next"] as? Int, 1)
     }
