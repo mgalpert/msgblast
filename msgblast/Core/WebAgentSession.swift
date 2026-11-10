@@ -1857,7 +1857,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 try await self.recordDesktopSubmission(attemptID: outgoingID)
                 await onConfirmedSubmission()
             }
-            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
+            let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp, claudeDuet] in
                 if fixture {
                     try await Task.sleep(for: .milliseconds(350))
                     if var saved = claudeBinding {
@@ -1955,7 +1955,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     })
                     return PersonalAgentReply(text: answer, sessionID: saved.kind == .dots ? "Your continuing dot" : "Dedicated ChatGPT chat")
                 }
-                if provider == .claudeDuetApp { throw DesktopAppError.unavailable("Claude Duet sending is not available yet.") }
+                if provider == .claudeDuetApp {
+                    let answer = try await claudeDuet.reply(text, onSubmitAction: submitAction, onSubmitted: submitted, releaseFocus: { _ = try? await sendFocus?.restore() }, onDelivery: { path in
+                        await MainActor.run { [weak self] in self?.desktopStatus = "Claude Duet sent · \(path)" }
+                    }, focus: desktopDriver)
+                    return PersonalAgentReply(text: answer, sessionID: "Claude Duet")
+                }
                 if let app = provider.desktopApp {
                     guard let binding else { throw WebSessionFailure.notSent("Connect an app conversation first.") }
                     return PersonalAgentReply(text: try await desktopDriver.reply(text, app: app, binding: binding, onSubmitAction: submitAction, onReceipt: { [weak self] anchor in

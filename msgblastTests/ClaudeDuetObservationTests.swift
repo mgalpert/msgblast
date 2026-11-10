@@ -124,12 +124,19 @@ final class ClaudeDuetObservationTests: XCTestCase {
         ]))) { error in XCTAssertTrue(error is ClaudeObservationError) }
     }
 
-    func testSendingIsNotAvailableYet() async {
+    func testSendingUsesTheDedicatedAdapter() async {
         do {
             _ = try await DesktopAppConversation.shared.reply("Hello", app: .claudeDuet, binding: .init(name: "Claude Duet"))
             XCTFail("Sending must fail closed")
         } catch {
-            XCTAssertEqual(error.localizedDescription, "Claude Duet sending is not available yet.")
+            XCTAssertEqual(error.localizedDescription, "This app requires its dedicated chat adapter.")
         }
+    }
+
+    func testRepeatedPromptNeedsANewCopyBeforeItsReplyCounts() {
+        let old: [ClaudeDuetMessage] = [.init(author: .user, text: prompt), .init(author: .agent, text: "ACK 1")]
+        XCTAssertEqual(ClaudeDuetObservation.agentReplies(after: prompt, in: old, sentAfter: 1), [])
+        let sent = old + [.init(author: .agent, text: "Unrelated update"), .init(author: .user, text: prompt), .init(author: .agent, text: "ACK 1 again")]
+        XCTAssertEqual(ClaudeDuetObservation.agentReplies(after: prompt, in: sent, sentAfter: 1), ["ACK 1 again"])
     }
 }

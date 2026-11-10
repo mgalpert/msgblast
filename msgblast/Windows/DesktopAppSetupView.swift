@@ -150,7 +150,7 @@ struct DesktopAppSetupView: View {
         case .wabi: return "Open Wabi and sign in. Your first prompt in each comparison starts a dedicated AI chat; follow-ups stay together."
         case .chatgpt, .claude: return "Sign in to \(app.name) once. msgblast opens the app when a conversation starts and keeps each comparison in its own chat."
         case .dots: return "Sign in to ChatGPT to connect your dot. msgblast opens the native app for you."
-        case .claudeDuet: return "Sign in to Claude to connect Claude Duet. msgblast opens the native app for you."
+        case .claudeDuet: return "Sign in to Claude and open Claude Duet once. msgblast sends to your ongoing Duet conversation in the Claude app."
         case .gemini: return "Open Gemini and sign in. Choose Chat or Task here; each comparison gets its own conversation."
         case .grokBot: return "Choose your bot below. msgblast will open it for you whenever you send a message."
         }

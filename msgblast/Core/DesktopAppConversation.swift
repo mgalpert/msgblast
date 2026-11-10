@@ -402,7 +402,8 @@ actor DesktopAppConversation {
         }
         let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         if envelope?["refusal"] != nil || envelope?["status"] as? String == "refused" || envelope?["effect"] as? String == "refused" || envelope?["isError"] as? Bool == true || envelope?["error"] != nil {
-            throw DesktopAppError.unavailable("App control refused this request. Review the app and msgblast permissions; nothing will be retried automatically.")
+            let code = ((envelope?["refusal"] as? [String: Any])?["code"] as? String).map { " (\($0))" } ?? ""
+            throw DesktopAppError.unavailable("App control refused this request\(code). Review the app and msgblast permissions; nothing will be retried automatically.")
         }
         return try JSONDecoder().decode(type, from: data)
     }
@@ -694,8 +695,7 @@ actor DesktopAppConversation {
                onReceipt: @Sendable (DesktopAppSnapshot.GrokHistoryAnchor) async throws -> Void = { _ in },
                onSubmitted: @Sendable () async throws -> Void = {},
                releaseFocus: @Sendable () async throws -> Void = {}) async throws -> String {
-        if app == .claudeDuet { throw DesktopAppError.unavailable("Claude Duet sending is not available yet.") }
-        guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
+        guard ![DesktopAppProvider.wabi, .gemini, .chatgpt, .dots, .claude, .claudeDuet].contains(app) else { throw DesktopAppError.unavailable("This app requires its dedicated chat adapter.") }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !prompt.unicodeScalars.contains(where: { ($0.value < 32 && $0.value != 10) || $0.value == 127 }) else {
             throw DesktopAppError.unavailable("Use plain text and newlines for the prompt. Nothing was typed.")

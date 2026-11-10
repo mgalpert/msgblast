@@ -1,6 +1,6 @@
 # Desktop app conversations
 
-Muse, Grok Bot, Wabi, ChatGPT, Dots, and Claude are optional agents with msgblast's native
+Muse, Grok Bot, Wabi, ChatGPT, Dots, Claude, and Claude Duet are optional agents with msgblast's native
 conversation pane. They use the pinned CuaDriver executable bundled in msgblast, running as a
 private embedded helper. No separate driver installation or CuaDriver app is
 required.
@@ -323,6 +323,25 @@ content are excluded from ChatGPT’s transcript. Screen Recording lets Cua focu
 these Electron message fields from fresh window geometry. Existing drafts and
 active replies are preserved. Model choices remain those selected in the native
 app. Unknown input outcomes are inspected without replaying the action.
+
+## Claude Duet
+
+Claude Duet is the ongoing conversation behind the sidebar item "Claude Duet, Preview"
+(`https://claude.ai/messages`) in the Claude app. Comparisons share that one
+conversation. Claude and Claude Duet cannot be recipients together. Sign in to
+Claude and open Claude Duet once; msgblast sends to that conversation.
+
+The composer is the text area labeled "Message Claude Duet". A user message is one
+whose right edge lines up with the composer's right edge. An agent message sits on
+the composer's left edge. Messages that arrived before the outgoing prompt are ignored.
+
+Sending types through the composer's element token in the background, then requires
+the draft to match. If background input is unavailable, or the draft is still empty,
+msgblast brings the Claude window forward, types with Claude's foreground input, and
+restores focus. A partial or unexpected draft stops the send. Nothing is cleared or
+retried. Submit presses the enabled Send button in the Duet page (`Send message` or
+`Send`), or Return on the composer when that button is absent. The receipt is the new
+user message equal to the prompt. An uncertain send is never retried or resent.
 
 ## Deferred Gemini support
 
