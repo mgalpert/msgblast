@@ -1,0 +1,27 @@
+{
+  "pr": 91,
+  "stack_base_sha": "9d0d09fa33cf48445d27e7f43f0d5ae270414677",
+  "head_sha": "06d1d56ddc36ffe40760c06dd1937ce8b2cbd2c1",
+  "date": "2026-11-10",
+  "authors": "Original commits by a Codex agent; merge 7e41488 and commit 06d1d56 by a Claude Opus agent",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code; two passes (7e41488, then 06d1d56)",
+  "verdict": "approve",
+  "trusted_context": "Base checkout plus base copy of the checker; head Swift blobs are linted as data with a temp config; the SwiftLint download is SHA-256 pinned and its version asserted. No head code runs.",
+  "first_pass_findings_fixed_in_06d1d56": [
+    "a .swift symlink or submodule was compiled but never measured; a new one now fails the check"
+  ],
+  "open_notes": [
+    "SwiftLint does not measure computed properties or closures, so complexity can be moved there",
+    "a budget is keyed by path, declaration first line and rule, so a different function with the same first line can inherit a deleted one's budget",
+    "copies are not aliased, so a copied file gets no budget (fails closed)",
+    "unusual head paths or non-UTF-8 blobs crash the check (fails closed)",
+    "a .swift symlink that already exists in the base can be retargeted; main has none today",
+    "the workflow's last step reruns the base's tests, so it adds nothing for the PR"
+  ],
+  "checks_run_locally_at_head": {
+    "test_swift_complexity.py": "7 tests OK with SwiftLint 0.65.1 (linux static build)",
+    "swift-complexity": "PASS, 0 new or worsened metrics, 106 existing",
+    "PR scope (against #90's head, as after #90 merges)": "PASS, 278 lines, all paths declared"
+  },
+  "limits": "Ran in a Linux cloud container, not on hosted macOS Actions."
+}
