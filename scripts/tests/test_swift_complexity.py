@@ -77,5 +77,25 @@ class ComplexityRatchetTests(unittest.TestCase):
         self.assertEqual(MODULE.regressions(before, after), [])
 
 
+class UnmeasuredSourceTests(unittest.TestCase):
+    def test_swift_symlinks_are_reported(self):
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            run = lambda *args: subprocess.run(["git", *args], cwd=directory, check=True,
+                                               capture_output=True)
+            run("init", "-q")
+            Path(directory, "Big.txt").write_text("func big() {}\n")
+            os.symlink("Big.txt", Path(directory, "Evil.swift"))
+            Path(directory, "Real.swift").write_text("func real() {}\n")
+            run("add", ".")
+            run("-c", "user.name=F", "-c", "user.email=f@example.invalid", "commit", "-qm", "x")
+            previous = os.getcwd()
+            os.chdir(directory)
+            try:
+                self.assertEqual(MODULE.unmeasured("HEAD"), {"Evil.swift"})
+            finally:
+                os.chdir(previous)
+
+
 if __name__ == "__main__":
     unittest.main()
