@@ -1,0 +1,30 @@
+{
+  "pr": 90,
+  "base_sha": "8fd9191f4838e5764f92330e24d0aa9d4b83451f",
+  "head_sha": "9d0d09fa33cf48445d27e7f43f0d5ae270414677",
+  "date": "2026-11-10",
+  "authors": "Original commits by a Codex agent; commits 509eabf and 9d0d09f by a Claude Opus agent",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code; two passes (509eabf, then 9d0d09f)",
+  "verdict": "approve with notes",
+  "first_pass_findings_fixed_in_9d0d09f": [
+    "pull_request_review trigger ran the workflow file from the PR merge ref, so a PR could replace the job; trigger removed, re-run the job after a Size-exception review",
+    "a comment review cannot be dismissed, so docs said 'dismissal revokes'; the owner's latest review on the head now decides and docs say so",
+    "reviews from deleted accounts (user null) crashed the check; guarded",
+    "a failed maintainer lookup crashed without a message; it now fails closed with a message",
+    "the owner path cannot tell the owner from an agent using the owner's credentials, and is off for org-owned repos; both documented"
+  ],
+  "open_notes": [
+    "collaborators?permission=push with a read-only GITHUB_TOKEN is unverified; if it returns 403 the owner exception never applies (fails closed)",
+    "a per-approver permission lookup error still raises (fails closed, no message)",
+    "any later owner review on the same head, even an empty one, revokes the owner's exception; re-post the line",
+    "binary or NUL-containing files count as 0 lines (predates this change)",
+    "'Scope: *' matches everything; human review must reject it (predates this change)",
+    "pull_request_target check runs are tied to the base context; confirm the ruleset sees 'PR scope' on the PR once merged"
+  ],
+  "checks_run_locally_at_head": {
+    "test_pr_scope.py": "7 tests OK",
+    "PR scope": "PASS, 342 lines (advisory over 250), 4 files, all in declared scope",
+    "swift-complexity": "PASS, SwiftLint 0.65.1 (linux static build), 0 new or worsened metrics"
+  },
+  "limits": "Checks ran in a Linux cloud container, not in hosted Actions; the GitHub API calls are exercised only by mocked tests."
+}
