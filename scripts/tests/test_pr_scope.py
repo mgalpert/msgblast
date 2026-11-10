@@ -82,6 +82,23 @@ class ApprovalTests(unittest.TestCase):
             self.assertFalse(check([review | replacement], {'reviewer': 'write', 'author': 'admin'}))
         self.assertFalse(check([review, review | dict(id=2, state='DISMISSED')], {'reviewer': 'write'}))
 
+    def test_owner_may_waive_size_only_in_a_solo_repository(self):
+        spec = importlib.util.spec_from_file_location('scope', SCRIPT)
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
+        review = dict(id=1, state='COMMENTED', commit_id='abc',
+                      user=dict(login='owner', type='User'), body='Size-exception: abc')
+        check = lambda reviews, maintainers: scope.owner_review(reviews, 'abc', 'owner', maintainers)
+        self.assertTrue(check([review], {'owner'}))
+        self.assertTrue(check([review | dict(state='APPROVED')], {'owner'}))
+        self.assertFalse(check([review], {'owner', 'teammate'}))
+        self.assertFalse(check([review], set()))
+        for replacement in [dict(commit_id='old'), dict(body='looks good'), dict(state='DISMISSED'),
+                            dict(state='CHANGES_REQUESTED'),
+                            dict(user=dict(login='owner', type='Bot')),
+                            dict(user=dict(login='someone', type='User'))]:
+            self.assertFalse(check([review | replacement], {'owner'}))
+
 
 if __name__ == '__main__':
     unittest.main()

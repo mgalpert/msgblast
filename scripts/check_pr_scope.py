@@ -26,6 +26,22 @@ def approved_review(reviews, head, author, permissions):
     )
 
 
+def owner_review(reviews, head, owner, maintainers):
+    """Solo repository: the owner may record the exception on their own PR.
+
+    GitHub forbids approving your own PR, so a comment review counts. It applies
+    only while the owner is the sole user with write, maintain, or admin access.
+    """
+    if set(maintainers) != {owner}:
+        return False
+    return any(
+        review['user']['login'] == owner and review['user']['type'] == 'User'
+        and review['state'] in {'APPROVED', 'COMMENTED'} and review['commit_id'] == head
+        and f'Size-exception: {head}' in (review.get('body') or '').splitlines()
+        for review in reviews
+    )
+
+
 def github_exception(repo, number, head, author):
     def api(path):
         return json.loads(subprocess.check_output(['gh', 'api', path]))
@@ -40,7 +56,20 @@ def github_exception(repo, number, head, author):
     logins = {r['user']['login'] for r in reviews if r['state'] == 'APPROVED'}
     permissions = {login: api(f'repos/{repo}/collaborators/{login}/permission')['permission']
                    for login in logins}
-    return approved_review(reviews, head, author, permissions)
+    if approved_review(reviews, head, author, permissions):
+        return True
+    owner = repo.split('/')[0]
+    if not any(r['user']['login'] == owner for r in reviews):
+        return False
+    maintainers = set()
+    page = 1
+    while True:
+        batch = api(f'repos/{repo}/collaborators?affiliation=all&permission=push&per_page=100&page={page}')
+        maintainers.update(c['login'] for c in batch if c.get('type') == 'User')
+        if len(batch) < 100:
+            break
+        page += 1
+    return owner_review(reviews, head, owner, maintainers)
 
 
 def main():
@@ -81,7 +110,7 @@ def main():
         if args.repo:
             approved = github_exception(args.repo, pr['number'], args.head, pr['user']['login'])
         if not approved:
-            failures.append('Exceeds 600 lines: split or obtain a write-access human approval with Size-exception: <head SHA>, then rerun.')
+            failures.append('Exceeds 600 lines: split, or obtain a Size-exception: <head SHA> review (another write-access human, or the owner of a solo repository), then rerun.')
     if not patterns:
         failures.append('Declare intended paths with one Scope: <path or glob> line per entry.')
     outside = [path for path in paths if not any(fnmatch.fnmatchcase(path, p) for p in patterns)]
