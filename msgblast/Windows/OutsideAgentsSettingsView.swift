@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import msgblastCore
 
@@ -11,6 +12,11 @@ struct OutsideAgentsSettingsView: View {
         Text("Agents such as Claude Code and Codex connect through the msgblast command. Each one asks you once, here in msgblast, and gets the level you choose.")
             .font(.caption).foregroundStyle(.secondary)
         if let error = listener.error { Text(error).font(.caption).foregroundStyle(.red) }
+        if listener.enabled {
+            LabeledContent("Terminal") {
+                Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
+            }
+        }
         ForEach(gate.approvals.keys.sorted(), id: \.self) { client in
             HStack {
                 Picker(client, selection: Binding(get: { gate.approvals[client] ?? .readOnly }, set: { try? gate.set($0, for: client) })) {
@@ -19,5 +25,10 @@ struct OutsideAgentsSettingsView: View {
                 Button("Remove") { try? gate.set(nil, for: client) }
             }
         }
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }
