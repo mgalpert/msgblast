@@ -1,0 +1,30 @@
+{
+  "pr": 92,
+  "stack_base_sha": "06d1d56ddc36ffe40760c06dd1937ce8b2cbd2c1",
+  "head_sha": "dc822f14d89dc58007b27cf8ab3532bc64406d7a",
+  "date": "2026-11-10",
+  "authors": "Original commits by a Codex agent; merge fe4d780 and commits 7e4e624 and dc822f1 by a Claude Opus agent",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code; three passes (fe4d780, 7e4e624, dc822f1)",
+  "verdict": "approve",
+  "trusted_context": "The budget check runs from the base checkout and reads head entries via git ls-tree and cat-file only; no head code runs.",
+  "findings_fixed": [
+    "a symlink or submodule at .cursor/rules, .cursor or .claude escaped the budget; only regular files now pass",
+    "matching was exact-case and limited to AGENTS.md, CLAUDE.md and root .cursor/rules; now any case and depth, adding AGENTS.override.md, CLAUDE.local.md, GEMINI.md, .cursorrules, copilot-instructions.md and .claude/rules",
+    "Git LFS pointers passed at about 130 bytes; now rejected",
+    "the stack merge dropped a comment in check_pr_scope.py; restored"
+  ],
+  "open_notes": [
+    "text pulled in through @ imports is not counted (documented)",
+    "not counted: .claude/skills, .claude/commands, .claude/agents, .github/instructions, .windsurfrules, .clinerules",
+    "not a ratchet: an over-limit file already on the base fails every PR",
+    "set -e hides the budget output when the scope check fails first",
+    "lean_run.py: merged single stream, no timeout or log cap, block-buffered log, a grandchild holding the pipe can block reads, first 100 KiB shown only"
+  ],
+  "checks_run_locally_at_head": {
+    "test_context_budget.py": "6 tests OK",
+    "context budget": "1 instruction file, 4172/24576 bytes, 0 failures",
+    "PR scope (against #91's head, as after #91 merges)": "PASS, 212 lines, all paths declared",
+    "swift-complexity": "PASS, 0 new or worsened metrics"
+  },
+  "limits": "Ran in a Linux cloud container, not hosted Actions."
+}
