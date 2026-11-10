@@ -368,12 +368,12 @@ final class PresenterTests: XCTestCase {
 
     @MainActor func testReplyLinksSurviveRelaunchAndForget() throws {
         let database = try LocalDatabase(url: nil)
-        let store = MobileStore(database: database)
+        let store = try MobileStore(database: database)
         let command = UUID()
         store.recordReply(command, quoting: "answer")
-        XCTAssertEqual(MobileStore(database: database).replyTo[command], "answer")
+        XCTAssertEqual(try MobileStore(database: database).replyTo[command], "answer")
         store.forgetMac()
-        XCTAssertTrue(MobileStore(database: database).replyTo.isEmpty)
+        XCTAssertTrue(try MobileStore(database: database).replyTo.isEmpty)
     }
 
     @MainActor func testEmojiSurviveTheReducerStoreAndPresenterUnchanged() throws {
@@ -392,10 +392,10 @@ final class PresenterTests: XCTestCase {
         let wire = try RemoteProtocol.decoder().decode(RemoteMessage.self, from: RemoteProtocol.encoder().encode(RemoteMessage.snapshot(snapshot)))
         guard case .snapshot(let received) = wire else { return XCTFail("Not a snapshot") }
         let database = try LocalDatabase(url: nil)
-        let store = MobileStore(database: database)
+        let store = try MobileStore(database: database)
         store.handle(.snapshot(received))
         store.saveNow()
-        let reloaded = MobileStore(database: database).projection
+        let reloaded = try MobileStore(database: database).projection
         for (index, text) in samples.enumerated() {
             XCTAssertEqual(reloaded.turns["t\(index)"]?.text, text)
             XCTAssertEqual(reloaded.turns["t\(index)"]?.text.unicodeScalars.map(\.value), text.unicodeScalars.map(\.value), "No normalization or escaping")
@@ -454,13 +454,13 @@ final class PresenterTests: XCTestCase {
 
     @MainActor func testFetchedAttachmentsAreCachedAndForgotten() throws {
         let database = try LocalDatabase(url: nil)
-        let store = MobileStore(database: database)
+        let store = try MobileStore(database: database)
         store.storeAttachment(Data([1, 2]), type: "image/jpeg", turnID: "m:1", index: 0, thumbnail: true)
         XCTAssertNil(store.attachment(turnID: "m:1", index: 0, thumbnail: false), "Thumbnails and full files are cached apart")
-        let cached = try XCTUnwrap(MobileStore(database: database).attachment(turnID: "m:1", index: 0, thumbnail: true))
+        let cached = try XCTUnwrap(try MobileStore(database: database).attachment(turnID: "m:1", index: 0, thumbnail: true))
         XCTAssertEqual(cached.data, Data([1, 2])); XCTAssertEqual(cached.type, "image/jpeg")
         store.forgetMac()
-        XCTAssertNil(MobileStore(database: database).attachment(turnID: "m:1", index: 0, thumbnail: true), "Forget This Mac clears the cache")
+        XCTAssertNil(try MobileStore(database: database).attachment(turnID: "m:1", index: 0, thumbnail: true), "Forget This Mac clears the cache")
     }
 
     func testPinnedPromptIsAGroupsSharedPromptOrADirectThreadsFirstMessage() {
@@ -501,13 +501,13 @@ final class PresenterTests: XCTestCase {
 
     @MainActor func testOpeningAConversationIsRememberedAndForgotten() throws {
         let database = try LocalDatabase(url: nil)
-        let store = MobileStore(database: database)
+        let store = try MobileStore(database: database)
         let id = UUID(), opened = Date(timeIntervalSince1970: 1_800_000_000)
         store.markOpened(id, at: opened)
         store.markOpened(id, at: opened.addingTimeInterval(-10))
-        XCTAssertEqual(MobileStore(database: database).lastOpened[id], opened, "Kept across launches; never moves back")
+        XCTAssertEqual(try MobileStore(database: database).lastOpened[id], opened, "Kept across launches; never moves back")
         store.forgetMac()
-        XCTAssertNil(MobileStore(database: database).lastOpened[id])
+        XCTAssertNil(try MobileStore(database: database).lastOpened[id])
     }
 
     func testBlockedLinesKeepTheMacsLongerReasonAsDetail() throws {
@@ -565,7 +565,7 @@ final class MobileAppTests: XCTestCase {
         for _ in 0..<400 { if until() { return }; try? await Task.sleep(for: .milliseconds(5)) }
     }
     private func makeApp(_ mac: FakeMac) throws -> MobileApp {
-        MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+        try MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
                   makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
     }
     /// Starts a send through `perform` and waits until the fake Mac holds it; the result stays pending.
@@ -667,7 +667,7 @@ final class MobileAppTests: XCTestCase {
         }
         mac.snapshot.agents = [agent("claude", ref), agent("copy", ref), agent("liar", lying), agent("old", "provider:grok"), agent("none", nil)]
         let database = try LocalDatabase(url: nil)
-        let app = MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+        let app = try MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
                             makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
         for _ in 0..<200 where app.store.avatar(ref) == nil { try await Task.sleep(for: .milliseconds(5)) }
@@ -680,10 +680,10 @@ final class MobileAppTests: XCTestCase {
         app.requestAvatars()
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(mac.commands.filter { if case .fetchAvatar = $0.action { true } else { false } }.count, 2, "No retry storm")
-        XCTAssertEqual(MobileStore(database: database).avatar(ref), image, "Cached across launches")
+        XCTAssertEqual(try MobileStore(database: database).avatar(ref), image, "Cached across launches")
         app.forgetMac()
         XCTAssertTrue(app.store.avatars.isEmpty)
-        XCTAssertNil(MobileStore(database: database).avatar(ref), "Forget This Mac clears the cache")
+        XCTAssertNil(try MobileStore(database: database).avatar(ref), "Forget This Mac clears the cache")
     }
 
     func testAnOlderMacLeavesInitials() async throws {
@@ -692,7 +692,7 @@ final class MobileAppTests: XCTestCase {
         mac.snapshot.agents = [AgentAvailability(agentID: "claude", product: .claude, form: .website, displayName: "Claude", avatarRef: "sha256:" + String(repeating: "a", count: 64),
             visibleInGrid: true, selectedForSharedSend: true, capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
             readiness: .ready, reasons: [], observedAt: fixedNow, source: .live)]
-        let app = MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+        let app = try MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
                             makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
         for _ in 0..<100 where !mac.commands.contains(where: { if case .fetchAvatar = $0.action { true } else { false } }) { try await Task.sleep(for: .milliseconds(5)) }
@@ -706,7 +706,7 @@ final class MobileAppTests: XCTestCase {
 
     func testRepairingReturnsOnlyOnceTheNewInboxIsReady() async throws {
         let mac = FakeMac()
-        let app = MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(),
+        let app = try MobileApp(database: try LocalDatabase(url: nil), keys: MemoryDeviceKeyStore(),
                             defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
                             makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")

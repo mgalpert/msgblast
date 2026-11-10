@@ -113,7 +113,7 @@ final class ConnectionTests: XCTestCase {
     func testAFailedPairingKeepsTheExistingPairingKeyAndCache() async throws {
         let mac = FakeMac()
         let keys = MemoryDeviceKeyStore()
-        let app = MobileApp(database: try LocalDatabase(url: nil), keys: keys, defaults: UserDefaults(suiteName: "pair-\(UUID().uuidString)")!,
+        let app = try MobileApp(database: try LocalDatabase(url: nil), keys: keys, defaults: UserDefaults(suiteName: "pair-\(UUID().uuidString)")!,
                             makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         let paired = try await app.pair(offer: mac.offer(), deviceName: "Phone")
         for _ in 0..<200 where app.store.projection.seq == nil { try await Task.sleep(for: .milliseconds(5)) }

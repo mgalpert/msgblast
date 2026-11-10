@@ -109,6 +109,87 @@ jobs:
       - name: Verify controller state and permission recovery across app restarts
         run: bash scripts/test_web_comparisons.sh build/updater-validation
 
+  mobile:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      REVIEW_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out the branch head
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+
+      - name: Show selected Xcode and simulators
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes available
+
+      - name: Run phone kit tests hosted on macOS
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild -project msgblast.xcodeproj -scheme msgblastMobileKit -configuration Debug \
+            -derivedDataPath build/mobile-macos -destination 'platform=macOS,arch=arm64' \
+            -resultBundlePath "$PWD/build/mobile-kit-tests.xcresult" \
+            test 2>&1 | tee build/mobile-kit-tests.log
+
+      - name: Build the iPhone app for the simulator without signing
+        run: |
+          set -o pipefail
+          xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile -configuration Debug \
+            -derivedDataPath build/mobile-sim -destination 'generic/platform=iOS Simulator' \
+            -resultBundlePath "$PWD/build/mobile-build.xcresult" \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build/mobile-build.log
+
+      - name: Run the iPhone scheme's tests on an available simulator
+        run: |
+          set -o pipefail
+          # Newest available iOS runtime, first iPhone on it; nothing is hard-coded.
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, re, sys
+          devices = json.load(sys.stdin)["devices"]
+          def version(runtime):
+              return [int(n) for n in re.findall(r"\d+", runtime.rsplit("iOS", 1)[-1])]
+          for runtime in sorted((r for r in devices if ".SimRuntime.iOS-" in r), key=version, reverse=True):
+              for device in devices[runtime]:
+                  if device.get("isAvailable") and device["name"].startswith("iPhone"):
+                      print(device["udid"]); sys.exit(0)
+          sys.exit("No available iPhone simulator")
+          ')
+          echo "Using simulator $udid"
+          xcrun simctl list devices available | grep "$udid"
+          xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile -configuration Debug \
+            -derivedDataPath build/mobile-sim -destination "platform=iOS Simulator,id=$udid" \
+            -resultBundlePath "$PWD/build/mobile-sim-tests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO test 2>&1 | tee build/mobile-sim-tests.log
+
+      - name: Write phone test failure details
+        if: failure()
+        run: |
+          set +e
+          for result in build/mobile-kit-tests.xcresult build/mobile-sim-tests.xcresult; do
+            if [ -d "$result" ]; then
+              xcrun xcresulttool get test-results tests --path "$result" > "${result%.xcresult}-results.txt"
+              xcrun xcresulttool get test-results summary --path "$result" > "${result%.xcresult}-summary.txt"
+            fi
+          done
+
+      - name: Upload phone results on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msgblast-mobile-tests-${{ env.REVIEW_SHA }}
+          path: |
+            build/mobile-*.xcresult
+            build/mobile-*.log
+            build/mobile-*-results.txt
+            build/mobile-*-summary.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
   preview:
     if: >-
       github.event_name == 'workflow_dispatch' ||

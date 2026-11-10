@@ -8,15 +8,25 @@ public final class LocalDatabase: @unchecked Sendable {
     private let lock = NSLock()
     public let url: URL?
 
-    /// Nil `url` keeps everything in memory (tests and previews).
+    /// Nil `url` keeps everything in memory (tests and previews). Only a missing file starts
+    /// empty; an existing file that cannot be read throws before anything is written to it.
     public init(url: URL?) throws {
         self.url = url
         if let url { try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true) }
         let path = url?.path ?? ":memory:"
         guard sqlite3_open_v2(path, &handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
-            throw LocalDatabaseError.open(String(cString: sqlite3_errmsg(handle)))
+            let message = String(cString: sqlite3_errmsg(handle))
+            sqlite3_close(handle); handle = nil
+            throw LocalDatabaseError.open(message)
         }
-        try execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB NOT NULL)")
+        do {
+            // Read first: a damaged file fails here, untouched, rather than in a write.
+            try execute("SELECT count(*) FROM sqlite_master")
+            try execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB NOT NULL)")
+        } catch {
+            sqlite3_close(handle); handle = nil
+            throw error
+        }
         if let url {
             // Cached conversations stay on this device.
             #if os(iOS)
@@ -34,14 +44,22 @@ public final class LocalDatabase: @unchecked Sendable {
         guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw LocalDatabaseError.query(String(cString: sqlite3_errmsg(handle))) }
     }
 
-    public func data(_ key: String) -> Data? {
-        lock.withLock {
+    /// Nil only when the key has no row; a failed read throws.
+    public func data(_ key: String) throws -> Data? {
+        try lock.withLock {
             var statement: OpaquePointer?
             defer { sqlite3_finalize(statement) }
-            guard sqlite3_prepare_v2(handle, "SELECT value FROM kv WHERE key = ?", -1, &statement, nil) == SQLITE_OK else { return nil }
+            guard sqlite3_prepare_v2(handle, "SELECT value FROM kv WHERE key = ?", -1, &statement, nil) == SQLITE_OK else {
+                throw LocalDatabaseError.query(String(cString: sqlite3_errmsg(handle)))
+            }
             sqlite3_bind_text(statement, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-            guard sqlite3_step(statement) == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else { return nil }
-            return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))
+            switch sqlite3_step(statement) {
+            case SQLITE_DONE: return nil
+            case SQLITE_ROW:
+                guard let bytes = sqlite3_column_blob(statement, 0) else { return Data() }
+                return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))
+            default: throw LocalDatabaseError.query(String(cString: sqlite3_errmsg(handle)))
+            }
         }
     }
 
@@ -62,8 +80,9 @@ public final class LocalDatabase: @unchecked Sendable {
         }
     }
 
-    public func value<T: Decodable>(_ type: T.Type, _ key: String) -> T? {
-        data(key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
+    /// Nil only when the key has no row; a failed read or decode throws.
+    public func value<T: Decodable>(_ type: T.Type, _ key: String) throws -> T? {
+        try data(key).map { try JSONDecoder().decode(T.self, from: $0) }
     }
     public func setValue<T: Encodable>(_ value: T?, _ key: String) {
         set(value.flatMap { try? JSONEncoder().encode($0) }, for: key)
