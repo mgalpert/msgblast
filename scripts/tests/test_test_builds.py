@@ -114,8 +114,9 @@ class TestBuildTests(unittest.TestCase):
             (resources / name).write_text("fixture")
         with patch.object(builds.builder, "run") as run:
             builds.builder.verify_universal_bundle(app)
-        self.assertEqual({call.args[0][-1] for call in run.call_args_list}, set(map(str, binaries)))
-        self.assertEqual({(call.args[0][3], call.args[0][-1]) for call in run.call_args_list},
+        self.assertEqual({call.args[0][2] for call in run.call_args_list}, set(map(str, binaries)))
+        self.assertEqual({call.args[0][3] for call in run.call_args_list}, {"-verify_arch"})
+        self.assertEqual({(call.args[0][-1], call.args[0][2]) for call in run.call_args_list},
                          {(arch, str(binary)) for arch in ("arm64", "x86_64") for binary in binaries})
         with patch.object(builds.builder, "run", side_effect=SystemExit("missing x86_64")), \
              self.assertRaisesRegex(SystemExit, "missing x86_64"):
