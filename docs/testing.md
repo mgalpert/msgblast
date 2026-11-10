@@ -168,6 +168,15 @@ lock; the Mac's name is replaced with "Demo Mac"). There are no phone UI tests y
 [Remote control](remote-control.md#ux-iteration-against-the-demo-mac) lists the
 manual simulator check.
 
+CI runs these on every PR in the `mobile` job of `.github/workflows/validate.yml`
+on the `xcode-27` runner: the kit tests hosted on macOS (the command above), an
+unsigned Debug build of `msgblastMobile` for `generic/platform=iOS Simulator`
+(`CODE_SIGNING_ALLOWED=NO`), and the `msgblastMobile` scheme's tests on the first
+available iPhone of the newest iOS simulator runtime, chosen at run time from
+`xcrun simctl list`. It uses no secrets or signing identity. On failure it uploads
+the `.xcresult` bundles, logs and failing-test details as
+`msgblast-mobile-tests-<sha>`.
+
 #### Design review fixtures
 
 Debug builds of the phone app open on simulated screens without pairing or any
