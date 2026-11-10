@@ -15,7 +15,7 @@ def git(*args):
 def approved_review(reviews, head, author, permissions):
     latest = {}
     for review in sorted(reviews, key=lambda item: item['id']):
-        if review['state'] != 'COMMENTED':
+        if review['state'] != 'COMMENTED' and review.get('user'):
             latest[review['user']['login']] = review
     return any(
         login != author and review['user']['type'] == 'User'
@@ -27,19 +27,23 @@ def approved_review(reviews, head, author, permissions):
 
 
 def owner_review(reviews, head, owner, maintainers):
-    """Solo repository: the owner may record the exception on their own PR.
+    """Solo user-owned repository: the owner may record the exception on their own PR.
 
     GitHub forbids approving your own PR, so a comment review counts. It applies
     only while the owner is the sole user with write, maintain, or admin access.
+    The owner's latest review on the head decides, so a later review without
+    the line revokes it.
     """
     if set(maintainers) != {owner}:
         return False
-    return any(
-        review['user']['login'] == owner and review['user']['type'] == 'User'
-        and review['state'] in {'APPROVED', 'COMMENTED'} and review['commit_id'] == head
-        and f'Size-exception: {head}' in (review.get('body') or '').splitlines()
-        for review in reviews
-    )
+    mine = [r for r in sorted(reviews, key=lambda item: item['id'])
+            if (r.get('user') or {}).get('login') == owner and r['commit_id'] == head
+            and r['state'] in {'APPROVED', 'COMMENTED', 'DISMISSED'}]
+    if not mine:
+        return False
+    review = mine[-1]
+    return (review['user']['type'] == 'User' and review['state'] in {'APPROVED', 'COMMENTED'}
+            and f'Size-exception: {head}' in (review.get('body') or '').splitlines())
 
 
 def github_exception(repo, number, head, author):
@@ -53,18 +57,22 @@ def github_exception(repo, number, head, author):
         if len(batch) < 100:
             break
         page += 1
-    logins = {r['user']['login'] for r in reviews if r['state'] == 'APPROVED'}
+    logins = {r['user']['login'] for r in reviews if r['state'] == 'APPROVED' and r.get('user')}
     permissions = {login: api(f'repos/{repo}/collaborators/{login}/permission')['permission']
                    for login in logins}
     if approved_review(reviews, head, author, permissions):
         return True
     owner = repo.split('/')[0]
-    if not any(r['user']['login'] == owner for r in reviews):
+    if not any((r.get('user') or {}).get('login') == owner for r in reviews):
         return False
     maintainers = set()
     page = 1
     while True:
-        batch = api(f'repos/{repo}/collaborators?affiliation=all&permission=push&per_page=100&page={page}')
+        try:
+            batch = api(f'repos/{repo}/collaborators?affiliation=all&permission=push&per_page=100&page={page}')
+        except subprocess.CalledProcessError:
+            print('Could not list maintainers; the owner exception cannot be confirmed.')
+            return False
         maintainers.update(c['login'] for c in batch if c.get('type') == 'User')
         if len(batch) < 100:
             break

@@ -98,6 +98,10 @@ class ApprovalTests(unittest.TestCase):
                             dict(user=dict(login='owner', type='Bot')),
                             dict(user=dict(login='someone', type='User'))]:
             self.assertFalse(check([review | replacement], {'owner'}))
+        later = review | dict(id=2, body='Actually, please split this.')
+        self.assertFalse(check([review, later], {'owner'}))
+        self.assertTrue(check([later | dict(id=0), review], {'owner'}))
+        self.assertTrue(check([review, dict(id=3, state='COMMENTED', commit_id='abc', user=None)], {'owner'}))
 
 
 if __name__ == '__main__':
