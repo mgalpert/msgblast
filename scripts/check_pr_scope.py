@@ -15,7 +15,7 @@ def git(*args):
 def approved_review(reviews, head, author, permissions):
     latest = {}
     for review in sorted(reviews, key=lambda item: item['id']):
-        if review['state'] != 'COMMENTED':
+        if review['state'] != 'COMMENTED' and review.get('user'):
             latest[review['user']['login']] = review
     return any(
         login != author and review['user']['type'] == 'User'
@@ -24,6 +24,26 @@ def approved_review(reviews, head, author, permissions):
         and permissions.get(login) in {'admin', 'maintain', 'write'}
         for login, review in latest.items()
     )
+
+
+def owner_review(reviews, head, owner, maintainers):
+    """Solo user-owned repository: the owner may record the exception on their own PR.
+
+    GitHub forbids approving your own PR, so a comment review counts. It applies
+    only while the owner is the sole user with write, maintain, or admin access.
+    The owner's latest review on the head decides, so a later review without
+    the line revokes it.
+    """
+    if set(maintainers) != {owner}:
+        return False
+    mine = [r for r in sorted(reviews, key=lambda item: item['id'])
+            if (r.get('user') or {}).get('login') == owner and r['commit_id'] == head
+            and r['state'] in {'APPROVED', 'COMMENTED', 'DISMISSED'}]
+    if not mine:
+        return False
+    review = mine[-1]
+    return (review['user']['type'] == 'User' and review['state'] in {'APPROVED', 'COMMENTED'}
+            and f'Size-exception: {head}' in (review.get('body') or '').splitlines())
 
 
 def github_exception(repo, number, head, author):
@@ -37,10 +57,27 @@ def github_exception(repo, number, head, author):
         if len(batch) < 100:
             break
         page += 1
-    logins = {r['user']['login'] for r in reviews if r['state'] == 'APPROVED'}
+    logins = {r['user']['login'] for r in reviews if r['state'] == 'APPROVED' and r.get('user')}
     permissions = {login: api(f'repos/{repo}/collaborators/{login}/permission')['permission']
                    for login in logins}
-    return approved_review(reviews, head, author, permissions)
+    if approved_review(reviews, head, author, permissions):
+        return True
+    owner = repo.split('/')[0]
+    if not any((r.get('user') or {}).get('login') == owner for r in reviews):
+        return False
+    maintainers = set()
+    page = 1
+    while True:
+        try:
+            batch = api(f'repos/{repo}/collaborators?affiliation=all&permission=push&per_page=100&page={page}')
+        except subprocess.CalledProcessError:
+            print('Could not list maintainers; the owner exception cannot be confirmed.')
+            return False
+        maintainers.update(c['login'] for c in batch if c.get('type') == 'User')
+        if len(batch) < 100:
+            break
+        page += 1
+    return owner_review(reviews, head, owner, maintainers)
 
 
 def main():
@@ -80,7 +117,7 @@ def main():
         if args.repo:
             approved = github_exception(args.repo, pr['number'], args.head, pr['user']['login'])
         if not approved:
-            failures.append('Exceeds 600 lines: split or obtain a write-access human approval with Size-exception: <head SHA>, then rerun.')
+            failures.append('Exceeds 600 lines: split, or obtain a Size-exception: <head SHA> review (another write-access human, or the owner of a solo repository), then rerun.')
     if not patterns:
         failures.append('Declare intended paths with one Scope: <path or glob> line per entry.')
     outside = [path for path in paths if not any(fnmatch.fnmatchcase(path, p) for p in patterns)]

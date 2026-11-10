@@ -33,8 +33,15 @@ request. Matching paths does not establish semantic scope or code quality.
 
 For an indivisible change over 600 lines, a different human with write, maintain,
 or admin access must approve the exact head commit with this standalone line in
-the review body: `Size-exception: <40-character head SHA>`. Review submissions, edits, and dismissals rerun the scope
-job. A new commit invalidates that exception; dismissal revokes it. An exception
+the review body: `Size-exception: <40-character head SHA>`. While a user-owned
+repository's owner is the only user with write, maintain, or admin access, the
+owner may instead submit that line in a review on their own PR (GitHub records
+it as a comment review, since authors cannot approve their own PRs); adding any
+other maintainer turns this off. The check cannot tell the owner from an agent
+using the owner's credentials, so only the owner may write that line. After the
+review, re-run the `PR scope` job; it reads reviews when it runs. A new commit
+invalidates the exception. Dismissal revokes an approval; a later owner review
+on the same head without the line revokes the owner's exception. An exception
 waives only the line ceiling, never declared scope or other checks.
 
 Local check (event JSON contains a `pull_request.body` string):

@@ -19,6 +19,17 @@ def git(*args):
     return subprocess.check_output(["git", *args])
 
 
+def unmeasured(revision):
+    """Swift paths that are symlinks or submodules: compiled, but never linted here."""
+    found = set()
+    for entry in git("ls-tree", "-rz", revision).split(b"\0"):
+        if entry:
+            metadata, path = entry.split(b"\t", 1)
+            if path.endswith(b".swift") and metadata.split()[0] in (b"120000", b"160000"):
+                found.add(path.decode())
+    return found
+
+
 def sources(revision):
     result = {}
     for entry in git("ls-tree", "-rz", revision).split(b"\0"):
@@ -107,7 +118,10 @@ def main():
     old = metrics(analyze(args.swiftlint, old_files), old_files)
     new = metrics(analyze(args.swiftlint, new_files), new_files, aliases)
     failures = regressions(old, new)
-    for (path, declaration, rule), value, previous in failures[:20]:
+    for path in sorted(unmeasured(args.head) - unmeasured(base)):
+        print(f"FAIL {path}: Swift symlink or submodule cannot be measured; commit the source file.")
+        failures.append(None)
+    for (path, declaration, rule), value, previous in [f for f in failures if f][:20]:
         print(f"FAIL {path}: {rule} {value} (base {previous or 'within limit'}): {declaration[:160]}")
     print(f"SwiftLint {VERSION}: {len(failures)} new/worsened metrics; {len(new)} existing metrics.")
     return bool(failures)
