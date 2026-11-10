@@ -5,6 +5,8 @@ import Foundation
 public enum AgentControlCLI {
     public enum Command: Equatable {
         case help
+        /// `msgblast mcp`: a stdio MCP server. The name overrides what the MCP client reports.
+        case mcp(client: String?)
         /// One newline-terminated request for the socket.
         case request(Data)
     }
@@ -13,7 +15,7 @@ public enum AgentControlCLI {
         public var stdout: String, stderr: String, status: Int32
     }
 
-    public static let commands: Set<String> = ["help", "status", "agents", "comparisons", "show", "wait", "tools", "call"]
+    public static let commands: Set<String> = ["help", "mcp", "status", "agents", "comparisons", "show", "wait", "tools", "call"]
     public static let unavailableStatus: Int32 = 5
     public static let usage = """
     usage: msgblast <command> [--client NAME] [--json]
@@ -25,6 +27,7 @@ public enum AgentControlCLI {
       wait [--after N] [--comparison ID] [--timeout SECONDS]
       tools                               Every tool and whether this agent may use it
       call TOOL [JSON]                    Run any msgblast tool
+      mcp                                 Serve MCP on stdin and stdout
 
     --client names the agent asking. msgblast asks the person once per name.
     Exit status: 0 done, 1 failed, 2 invalid, 3 not approved, 4 not found, 5 msgblast unreachable.
@@ -46,7 +49,8 @@ public enum AgentControlCLI {
             } else { words.append(word) }
         }
         let json = flags.contains("--json")
-        let client = options["--client"] ?? environment["MSGBLAST_CLIENT"] ?? (environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
+        let named = options["--client"] ?? environment["MSGBLAST_CLIENT"]
+        let client = named ?? (environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
         func call(_ tool: String, _ input: [String: Any]) throws -> (command: Command, json: Bool) {
             (.request(try line(["method": "tools/call", "client": client, "name": tool, "arguments": input])), json)
         }
@@ -57,6 +61,7 @@ public enum AgentControlCLI {
         }
         switch words.first {
         case nil, "help": return (.help, json)
+        case "mcp": return (.mcp(client: named), json)
         case "status": return try call("msgblast_status", [:])
         case "agents": return try call("msgblast_agents_list", ["includeHidden": flags.contains("--all")])
         case "comparisons":

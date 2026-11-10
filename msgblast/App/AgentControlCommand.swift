@@ -33,6 +33,8 @@ enum AgentControlCommand {
         case .help:
             print(AgentControlCLI.usage)
             return 0
+        case .mcp(let client):
+            return serve(client: client, socket: path)
         case .request(let line):
             guard let reply = try? AgentControlSocketClient.exchange(line, socket: path) else {
                 FileHandle.standardError.write(Data("msgblast is not running, or Settings → Outside agents is off.\n".utf8))
@@ -43,5 +45,32 @@ enum AgentControlCommand {
             FileHandle.standardError.write(Data(output.stderr.utf8))
             return output.status
         }
+    }
+
+    /// Reads JSON-RPC lines until stdin closes. Requests run concurrently, so a long wait never blocks a ping.
+    private static func serve(client: String?, socket path: String) -> Int32 {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let server = AgentControlMCPServer(version: version, client: client) { line in
+            try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global().async { continuation.resume(with: Result { try AgentControlSocketClient.exchange(line, socket: path) }) }
+            }
+        }
+        let output = LockedOutput()
+        let group = DispatchGroup()
+        while let line = readLine(strippingNewline: true) {
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            group.enter()
+            Task.detached {
+                if let reply = await server.handle(Data(line.utf8)) { output.write(reply) }
+                group.leave()
+            }
+        }
+        group.wait()
+        return 0
+    }
+
+    private final class LockedOutput: @unchecked Sendable {
+        private let lock = NSLock()
+        func write(_ data: Data) { lock.withLock { FileHandle.standardOutput.write(data) } }
     }
 }

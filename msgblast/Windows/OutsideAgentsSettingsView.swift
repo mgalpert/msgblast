@@ -13,6 +13,8 @@ struct OutsideAgentsSettingsView: View {
             .font(.caption).foregroundStyle(.secondary)
         if let error = listener.error { Text(error).font(.caption).foregroundStyle(.red) }
         if listener.enabled {
+            LabeledContent("Claude Code") { Button("Copy setup command") { copy(Self.setup("claude")) } }
+            LabeledContent("Codex") { Button("Copy setup command") { copy(Self.setup("codex")) } }
             LabeledContent("Terminal") {
                 Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
             }
@@ -25,6 +27,11 @@ struct OutsideAgentsSettingsView: View {
                 Button("Remove") { try? gate.set(nil, for: client) }
             }
         }
+    }
+
+    /// The command that adds msgblast as an MCP server to `claude` or `codex`. Each asks for approval on first use.
+    static func setup(_ tool: String, executable: String = AgentControlCommand.executable) -> String {
+        "\(tool) mcp add msgblast -- '\(executable.replacingOccurrences(of: "'", with: "'\\''"))' mcp"
     }
 
     private func copy(_ text: String) {

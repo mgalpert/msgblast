@@ -40,6 +40,8 @@ final class AgentControlCLITests: XCTestCase {
         XCTAssertEqual(try request(["status"])["client"] as? String, "Terminal")
         XCTAssertEqual(try request(["status"], environment: ["CLAUDECODE": "1"])["client"] as? String, "Claude Code")
         XCTAssertEqual(try request(["status"], environment: ["MSGBLAST_CLIENT": "Hermes", "CLAUDECODE": "1"])["client"] as? String, "Hermes")
+        XCTAssertEqual(try AgentControlCLI.parse(["mcp"], environment: ["CLAUDECODE": "1"]).command, .mcp(client: nil))
+        XCTAssertEqual(try AgentControlCLI.parse(["mcp", "--client", "Muse"], environment: [:]).command, .mcp(client: "Muse"))
         XCTAssertEqual(try AgentControlCLI.parse([], environment: [:]).command, .help)
     }
 
