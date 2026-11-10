@@ -66,7 +66,7 @@ enum AgentArtwork {
         .flatMap { try? Data(contentsOf: $0) }
     private static let webDefaultAvatars: [WebProvider: Data] = Dictionary(uniqueKeysWithValues:
         [WebProvider.chatgpt, .claude, .grok, .codexCLI, .claudeCode, .dots, .os3, .hark, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp, .claudeDuetApp, .museApp, .grokBotApp].compactMap { provider in
-            let resource = provider == .codexCLI ? "chatgpt" : provider == .claudeCode ? "claude" : provider == .dotsApp ? "dots" : provider == .claudeDuetApp ? "claudeApp" : provider.rawValue
+            let resource = provider == .codexCLI ? "chatgpt" : provider == .claudeCode ? "claude" : provider == .dotsApp ? "dots" : provider.rawValue
             let fileExtension = [.wabi, .geminiApp, .chatgptApp, .claudeApp, .claudeDuetApp, .museApp, .grokBotApp].contains(provider) ? "icns" : [.dots, .dotsApp].contains(provider) ? "pdf" : [.grok, .os3, .hark].contains(provider) ? "png" : "jpg"
             guard let url = bundle.url(forResource: resource, withExtension: fileExtension, subdirectory: "WebAgentIcons"),
                   let data = try? Data(contentsOf: url) else { return nil }

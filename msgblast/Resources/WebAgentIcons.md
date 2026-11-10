@@ -72,3 +72,7 @@ The Dots demo uses synthetic SVG and CSS artwork and local conversation replies.
 `WebAgentIcons/instinct.jpg` is the updated contact photo shared by Instinct, exported from the user's Contacts at their request on October 9, 2026. The JPEG is preserved unchanged (SHA-256: `c8b5cc54b618246582c37003b52d649e139200963ffb4c241d30965a7e25a1e4`). Only the artwork is bundled; the local contact export, addresses, and identifiers are excluded.
 
 `fo.jpg` and `szn.jpg` remain unchanged copies of the user's saved contact artwork retained in `docs/images/readme/agent-icons/`. Bundled artwork identifies choices before Contacts access. During Messages setup, a selected contact's own picture takes precedence, with bundled artwork as the fallback.
+
+## Claude Duet icon
+
+`WebAgentIcons/claudeDuetApp.icns` is rendered from the official Claude Duet app icon on Anthropic's [Claude Duet page](https://claude.com/product/claude-duet), retrieved November 9, 2026 from [`app-icon.svg`](https://claude.com/static/claude-duet/app-icon.svg) (SHA-256 `47bf15acfa29f729ac1d200377b0ac28c0d3a2dc53f49ba18c865c79f737f47b`). The SVG is drawn unchanged with AppKit at each standard icon size from 16 to 1024 pixels and packed with `iconutil` (icns SHA-256 `5f7776f9d0975d7b10e14a687752382669bb7b30273153d22c520e4a47e00fcf`). It identifies Claude Duet in onboarding, agent pickers, Settings, and chat headers; the existing circular avatar mask applies. Anthropic retains its artwork and trademark rights.
