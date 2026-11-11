@@ -1,0 +1,36 @@
+{
+  "pr": 94,
+  "base_sha": "0f35af59a2e599c2d964b044dbcdb2ee86dbc7ee",
+  "head_sha": "f056827e44265b9b7fcb49f25e9e72c31a7b32c2",
+  "date": "2026-11-11",
+  "authors": "Codex and other coding agents on the person's behalf; merge f056827 by a Claude Opus agent",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+  "verdict": "approve with notes",
+  "coverage": {
+    "read_fully": ["RemoteListener", "RemoteServer", "RemotePairing", "RemoteIdentity", "RemotePrivateFile", "RemoteCommandExecutor", "AppRemoteHost", "SharedSend", "SecureChannel", "Pairing", "Framing", "ClientDriver", "Transport", "TLSPin", "ConnectionController", "CommandLedger", "MobileStore", "LocalDatabase", "MobileApp", "PairedMac", "RemoteAvatars", "RemoteAttachmentFiles", "RemoteSettings", "RemoteService"],
+    "sampled": ["Projection.swift", "Commands.swift", "RemoteProtocol.swift", "AppModel follow-up"],
+    "not_read": ["views", "fixtures", "docs", "AvailabilityModel", "RemoteProjection", "KeepAwake", "MacPowerState"],
+    "method": "Read by hand; no Swift compiler. Python suite: 147 tests, 3 skipped, OK."
+  },
+  "verified_sound": [
+    "Binds only to Tailscale utun 100.64/10 or RFC1918 addresses, TLS 1.3, no peer-to-peer, Bonjour on LAN only",
+    "Pairing: 128-bit code, 120 s, single use, 5 attempts, HMAC bound to transcript, challenge and device key; Mac identity pinned before proof",
+    "One stored phone; replacement needs Mac confirmation; X25519/HKDF/ChaChaPoly session with strict counters",
+    "Size caps: 8 MB frame, 256 KB chunk, 25 MB upload, 64 KB avatar, 5 MB attachment; no phone-supplied path reaches the filesystem",
+    "Executor idempotent by command id; replays and queries never run; results stored before sending; phone never resends",
+    "Phone saves a command before sending; a failed load surfaces as loadFailed, never an empty store",
+    "Merged pbxproj includes both Remote* and AgentControl* sources and tests"
+  ],
+  "open_findings": [
+    "should-fix: a paired phone can open unlimited concurrent uploads (25 MB each) and an unbounded send queue (RemoteCommandExecutor.swift:175,198-209)",
+    "should-fix (latent): the in-memory 1000-entry ledger is shared with upload chunks and resets when remote control restarts, so a repeated send id could re-run (RemoteCommandExecutor.swift:167,192)",
+    "note: an unauthenticated host on the network can exhaust the pairing attempts or pending slots (RemotePairing.swift:96-99, RemoteServer.swift:275-283)",
+    "note: phone shows Connected after anotherClientConnected; retries forever after identity mismatch; loses a new key if storing it fails",
+    "note: any utun with 100.64/10 counts as Tailscale; vmnet-style RFC1918 counts as LAN",
+    "note: attachment fetch rebuilds the projection and decodes a full NSImage on the main actor",
+    "note: follow-up drops disabled agents but reports applied; per-agent statuses carry the truth",
+    "note: startListener adds a subscription per call (small leak)",
+    "question: draft cleared on applied even when every agent failed"
+  ],
+  "limits": "Not compiled or run here; native and mobile CI on this head are the build proof."
+}
