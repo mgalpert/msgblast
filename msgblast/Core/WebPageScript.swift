@@ -50,11 +50,23 @@ struct WebPageScript {
                          #"button[aria-label="send message"]"#,
                          #"[role="log"][aria-label="conversation"] > .dial-msg[data-render-id^="msg-"]"#,
                          #"button[aria-label="Settings"]"#)
+        case .alexaShopping:
+            selectors = (#"#nav-flyout-rufus #rufus-text-area"#,
+                         #"#nav-flyout-rufus #rufus-submit-button"#,
+                         #"#rufus-conversation-container .rufus-customer-text-wrap,#rufus-conversation-container [data-csa-c-content-id^="rufus-dsk-section-markdownSection-"]"#,
+                         #"#nav-link-accountList[data-nav-ref="nav_youraccount_btn"],#nav-link-accountList a[data-nav-ref="nav_youraccount_btn"]"#)
         }
         let config: [String: String] = ["name":provider.name,"provider":provider.rawValue,"host":provider.homeURL.host!,"editor":selectors.editor,"send":selectors.send,"messages":selectors.messages,"account":selectors.account]
         let json = String(data: try! JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]), encoding: .utf8)!
         return "const config = \(json);\n" + #"""
-        const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+        const visible = e => {
+            if(!e || !e.getClientRects().length || getComputedStyle(e).visibility==='hidden') return false;
+            if(config.provider!=='alexaShopping') return true;
+            const pane=e.closest('#nav-flyout-rufus');
+            if(!pane) return true;
+            const r=e.getBoundingClientRect(),bounds=pane.getBoundingClientRect();
+            return r.right>bounds.left && r.left<bounds.right && r.bottom>bounds.top && r.top<bounds.bottom;
+        };
         const all = selector => [...document.querySelectorAll(selector)].filter(visible);
         const unique = selector => { const es=all(selector); return es.length===1 ? es[0] : null; };
         const editor = () => unique(config.editor);
@@ -63,13 +75,14 @@ struct WebPageScript {
         // Kept in WebKit's isolated world, never in page storage. Node identities survive
         // visibility and history-order changes; replacing old nodes invalidates continuity.
         const observation = globalThis.__msgblastObservation ??= {ids:new WeakMap(),nextID:0,interrupted:false};
+        if(config.provider==='alexaShopping') observation.documentID??=crypto.randomUUID();
         if (!observation.listening) {
             observation.listening=true;
             for (const event of ['pointerdown','keydown','input','popstate'])
-                window.addEventListener(event,e=>{if(e.isTrusted) observation.interrupted=true;},true);
+                window.addEventListener(event,e=>{if(e.isTrusted) {observation.interrupted=true;if(config.provider==='alexaShopping')observation.interactionRevision=(observation.interactionRevision||0)+1;}},true);
         }
         const pathAllowed = () => location.protocol==='https:' && location.hostname===config.host &&
-            (config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
+            (config.provider==='alexaShopping' ? (['/','/ref=nav_logo','/ref=nav_signin'].includes(location.pathname) && !location.hash && [...new URLSearchParams(location.search).keys()].every(k=>['ref','ref_'].includes(k))) : config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
         const messages = () => [...document.querySelectorAll(config.messages)].filter(e => !e.parentElement?.closest(config.messages)).map(e => {
             let role=e.getAttribute('data-message-author-role') || e.getAttribute('data-message-role');
             let id=e.getAttribute('data-message-id') || e.closest('[data-message-id]')?.getAttribute('data-message-id');
@@ -82,15 +95,17 @@ struct WebPageScript {
             if (!role && config.provider==='claude') role=e.getAttribute('data-testid')==='user-message' ? 'user' : 'assistant';
             if (!role && config.provider==='grok') role=e.classList.contains('items-end') || e.closest('[data-role="user"],.items-end') ? 'user' : 'assistant';
             if (config.provider==='os3') { role=e.classList.contains('dial-user') ? 'user' : 'assistant'; id=e.dataset.renderId; }
+            if (config.provider==='alexaShopping') { role=e.matches('.rufus-customer-text-wrap') ? 'user' : 'assistant'; id=e.getAttribute('data-csa-c-group-id'); }
             const copy=(config.provider==='dots' ? e.querySelector('.message-text') || document.createElement('span') : e).cloneNode(true); copy.querySelectorAll('button,[role="button"],time').forEach(n=>n.remove());
             if (config.provider==='chatgpt') copy.querySelectorAll('h4[data-conversation-role]').forEach(n=>n.remove());
             if (config.provider==='os3') copy.querySelectorAll('.dial-meta,.dial-reaction').forEach(n=>n.remove());
             copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
             if (!observation.ids.has(e)) observation.ids.set(e,`node-${++observation.nextID}`);
-            return {id:id||observation.ids.get(e),role:role||'unknown',text:normalized(copy.textContent||'')};
+            return {id:id||(config.provider==='alexaShopping'?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:normalized(copy.textContent||'')};
         });
         const conversationLocation = () => {
             const url=new URL(location.href),params=[...url.searchParams];
+            if (config.provider==='alexaShopping' && pathAllowed()) return url.origin+'/';
             // Grok appends a response ID while staying in the same conversation.
             if (config.provider==='grok' && /^\/c\/[a-zA-Z0-9-]+\/?$/.test(url.pathname) && !url.hash &&
                 params.length===1 && params[0][0]==='rid' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(params[0][1])) url.search='';
@@ -98,14 +113,15 @@ struct WebPageScript {
         };
         const status = () => {
             const input=editor(); let reason='';
-            const login=all('button[data-testid="login-button"]').length>0 || all('button,a').some(e=>/^(log in|sign in|sign up|sign up for free)$/i.test(normalized(e.innerText||e.getAttribute('aria-label')||'')) || (config.provider==='dots' && /^(log in|sign in)$/i.test(e.getAttribute('aria-label')||'')));
+            const amazonLogin=config.provider==='alexaShopping' && (!!document.querySelector('#ap_email,#ap_password,#ap_email_login') || all('a#nav-link-accountList,#nav-link-accountList a').some(e=>/signin/.test(e.getAttribute('data-nav-ref')||'')));
+            const login=amazonLogin || all('button[data-testid="login-button"]').length>0 || all('button,a').some(e=>/^(log in|sign in|sign up|sign up for free)$/i.test(normalized(e.innerText||e.getAttribute('aria-label')||'')) || (config.provider==='dots' && /^(log in|sign in)$/i.test(e.getAttribute('aria-label')||'')));
             const account=document.querySelector(config.account);
             const signedIn=login ? false : account ? true : null;
             // Closed panels can stay rendered, marked aria-hidden or moved off-screen.
             const modal=all('[role="dialog"],[aria-modal="true"]').some(e=>{const r=e.getBoundingClientRect();
                 const offScreen=r.width>0 && r.height>0 && (r.right<=0 || r.bottom<=0 || r.left>=innerWidth || r.top>=innerHeight);
                 return e.getAttribute('aria-hidden')!=='true' && !offScreen;});
-            const generating=all('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"]').length>0;
+            const generating=all('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"],#rufus-loader-avatar:not(.rufus-visibility-hidden)').length>0;
             if (!pathAllowed()) reason=`Open a ${config.name} chat to send from MsgBlast.`;
             else if (login) reason=`Sign in to ${config.name} to send this request.`;
             // Responsive sidebars hide their account control without ending the session.
@@ -113,6 +129,7 @@ struct WebPageScript {
             else if (!account) reason=`${config.name}’s page layout is not recognized yet. Reload the page and try again.`;
             else if (modal) reason=`Finish the open dialog in ${config.name} first.`;
             else if (generating) reason=`Wait for ${config.name} to finish its current reply.`;
+            else if (config.provider==='alexaShopping' && !input) reason='Alexa Shopping is unavailable for this signed-in account, or its panel is closed. Open Alexa for shopping in Amazon.';
             else if (!input || input.disabled || input.readOnly || input.getAttribute('aria-disabled')==='true') reason=`Waiting for ${config.name}’s message field.`;
             return {url:conversationLocation(),ready:!reason,signedIn,reason:reason||`${config.name} chat ready`,draft:draft(input),draftAvailable:!!input,...(config.provider==='dots'?{signedOut:login && !all(config.account).length}:{})};
         };
@@ -121,7 +138,7 @@ struct WebPageScript {
             if (!current.ready || current.url!==expectedURL || current.draft!==preparedDraft || observation.interrupted)
                 return {ready:false,retryable:false,reason:`${config.name} changed during preparation. Review its draft; nothing was clicked.`};
             const candidates=all(config.send),send=candidates.length===1?candidates[0]:null;
-            const ready=!!send && !send.disabled && send.getAttribute('aria-disabled')!=='true';
+            const ready=!!send && !send.disabled && send.getAttribute('aria-disabled')!=='true' && !send.classList.contains('rufus-submit-button--disabled');
             return {ready,retryable:candidates.length<2,reason:`${config.name}’s Send control is unavailable. Review the prepared draft.`};
         };
         const inspect = () => ({...status(),messages:pathAllowed()?messages():[],submissionInterrupted:observation.interrupted});
@@ -131,6 +148,38 @@ struct WebPageScript {
     var inspect: String { provider == .muse ? MusePageScript.inspect : helpers + "\nreturn inspect();" }
     // Apply the initial pane layout once per document. A user's later choice wins.
     var configureInitialLayout: String {
+        if provider == .alexaShopping {
+            return helpers + #"""
+            if (!pathAllowed()) return;
+            if (status().signedIn===false) {
+                const login=unique('a#nav-link-accountList[href],#nav-link-accountList a[href]');
+                if (login && !observation.signInOpened) {
+                    const url=new URL(login.href,location.href);
+                    if (url.origin===location.origin && url.pathname==='/ap/signin') {
+                        observation.signInOpened=true;login.click();
+                    }
+                }
+                return;
+            }
+            if (!document.querySelector(config.account)) return;
+            if (!document.getElementById('msgblast-alexa-layout')) {
+                const style=document.createElement('style');style.id='msgblast-alexa-layout';
+                style.textContent=`
+                body:is(.rufus-docked-left,:has(#nav-rufus-disco[aria-expanded="true"]),:has(#nav-flyout-rufus.history-open)) {margin:0!important;padding:0!important;min-width:0!important;width:100vw!important;overflow:hidden!important}
+                body:is(.rufus-docked-left,:has(#nav-rufus-disco[aria-expanded="true"]),:has(#nav-flyout-rufus.history-open)) :is(#navbar,#gwm-Deck,#rhf,#navFooter,#shortcut-menu,#rufus-docked-resize-handle,#rufus-panel-resize-handle-unified) {display:none!important}
+                body:is(.rufus-docked-left,:has(#nav-rufus-disco[aria-expanded="true"]),:has(#nav-flyout-rufus.history-open)) #nav-flyout-rufus {position:fixed!important;inset:0!important;width:100vw!important;max-width:none!important;height:100vh!important;max-height:none!important;transform:none!important;z-index:10000!important;overflow:hidden!important;--expanded-container-width:100vw!important;--expanded-container-height:100vh!important}
+                body:is(.rufus-docked-left,:has(#nav-rufus-disco[aria-expanded="true"]),:has(#nav-flyout-rufus.history-open)) #rufus-container-overlay {width:100%!important;max-width:none!important;height:100%!important}
+                `;
+                document.head.append(style);
+            }
+            if (editor()) { observation.layoutConfigured=true; return; }
+            if (observation.layoutConfigured) return;
+            const toggle=document.getElementById('nav-rufus-disco');
+            if (!toggle || toggle.getAttribute('aria-expanded')==='true') return;
+            observation.layoutConfigured=true;
+            toggle.click();
+            """#
+        }
         guard provider == .chatgpt || provider == .dots else { return "return;" }
         return helpers + #"""
         if (observation.layoutConfigured) return;
@@ -199,6 +248,8 @@ struct WebPageScript {
         if (!before.ready) return {ok:false,reason:before.reason};
         if (before.draft.trim()) return {ok:false,reason:`${config.name} already has a draft. Send or clear it in the page first.`};
         const baseline=messages(),input=editor();
+        if (input instanceof HTMLTextAreaElement && input.maxLength>=0 && text.length>input.maxLength)
+            return {ok:false,reason:`This request exceeds ${config.name}’s ${input.maxLength}-character limit. Shorten it before sending.`};
         const existingConversationPaths=[...document.querySelectorAll('a[href]')].map(a=>new URL(a.href,location.href)).filter(u=>u.origin===location.origin).map(u=>u.pathname);
         if (input instanceof HTMLTextAreaElement) {
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,text);
@@ -233,8 +284,67 @@ struct WebPageScript {
         """#
     }
 
+    private var alexaShoppingFixture: String {
+        #"""
+        <!doctype html><html><head><style>
+        body{font:16px -apple-system;padding:24px}button,textarea{font:inherit;padding:10px;margin:8px}
+        textarea{display:block;width:85%}article{padding:14px;background:#eef7ff;margin:12px 0}
+        [hidden]{display:none!important}
+        </style></head><body>
+        <h2>Alexa Shopping Web</h2><p>Local fixture · no Amazon account or real sends</p>
+        <a href="/">Amazon home</a><div id="nav-link-accountList"><a data-nav-ref="nav_youraccount_btn">Fixture account</a></div>
+        <div id="chat"><div id="navbar"><button id="nav-rufus-disco" aria-label="Open Alexa panel" aria-expanded="false">Alexa for shopping</button>
+        <input id="twotabsearchtextbox" placeholder="Search Amazon"></div>
+        <div id="nav-flyout-rufus" hidden><h3>alexa for shopping</h3>
+        <button id="rufus-panel-header-overflow-button" aria-label="Alexa overflow menu">•••</button>
+        <div id="menu" hidden><button id="rufus-chat-history-ingress-button">Chat history</button><button id="rufus-new-chat-ingress-button">New chat</button></div>
+        <div id="rufus-container-overlay" style="position:absolute;top:0;bottom:0;left:100%;right:auto;background:white;z-index:2;overflow:auto"><button id="rufus-panel-header-new-chat" aria-label="Start a new chat">Start a new chat</button><button id="history-back">Back</button><div id="rufus-react-chat-history-renderer"><div id="history-rows"></div></div><div class="rufus-end-of-chat-history">End of chat history</div></div>
+        <div id="rufus-conversation-container"></div><textarea id="rufus-text-area" maxlength="500" placeholder="Ask a shopping question"></textarea>
+        <button id="rufus-submit-button" aria-label="Submit" class="rufus-submit-button--disabled">Send</button></div>
+        <button onclick="document.getElementById('nav-link-accountList').hidden=true;chat.hidden=true;login.hidden=false">Sign out of fixture</button></div>
+        <div id="login" hidden><p>Sign in to continue.</p><button data-testid="login-button" onclick="document.getElementById('nav-link-accountList').hidden=false;chat.hidden=false;login.hidden=true">Sign in to fixture</button></div>
+        <script>
+        const panel=document.getElementById('nav-flyout-rufus'),toggle=document.getElementById('nav-rufus-disco'),input=document.getElementById('rufus-text-area'),send=document.getElementById('rufus-submit-button'),transcript=document.getElementById('rufus-conversation-container');
+        toggle.onclick=()=>{panel.hidden=!panel.hidden;toggle.setAttribute('aria-expanded',String(!panel.hidden));};
+        document.getElementById('rufus-panel-header-overflow-button').onclick=()=>{menu.hidden=!menu.hidden;};
+        let current=localStorage.getItem('alexaFixtureCurrent')||'';
+        const threads=()=>JSON.parse(localStorage.getItem('alexaFixtureThreads')||'{}');
+        const save=()=>{if(current){const all=threads();all[current]=transcript.innerHTML;localStorage.setItem('alexaFixtureThreads',JSON.stringify(all));localStorage.setItem('alexaFixtureCurrent',current);}};
+        const historyPanel=document.getElementById('rufus-container-overlay');
+        const showChat=()=>{panel.classList.remove('history-open');historyPanel.classList.remove('overlay-slide-in');historyPanel.style.left='100%';transcript.hidden=false;input.hidden=false;send.hidden=false;menu.hidden=true;};
+        const newChat=()=>{current='';transcript.innerHTML='';showChat();};
+        const render=html=>{transcript.innerHTML=html;transcript.querySelectorAll('[data-csa-c-group-id]').forEach(e=>{const id='markdownSection-'+crypto.randomUUID();e.setAttribute('data-csa-c-group-id',id);e.setAttribute('data-csa-c-content-id','rufus-dsk-section-'+id);});};
+        render(threads()[current]||'');
+        document.getElementById('rufus-new-chat-ingress-button').onclick=newChat;
+        document.getElementById('rufus-panel-header-new-chat').onclick=newChat;
+        document.getElementById('history-back').onclick=showChat;
+        document.getElementById('rufus-chat-history-ingress-button').onclick=()=>{
+            menu.hidden=true;transcript.hidden=true;input.hidden=true;send.hidden=true;historyPanel.style.left='0';historyPanel.classList.add('overlay-slide-in');panel.classList.add('history-open');document.body.classList.add('rufus-docked-left');toggle.setAttribute('aria-expanded','false');
+            const rows=document.getElementById('history-rows');rows.innerHTML='<div role="status">Loading chat history</div>';
+            setTimeout(()=>{rows.innerHTML='';
+            for(const [id,html] of Object.entries(threads()).reverse()){
+                const item=document.createElement('div');item.tabIndex=5;
+                const row=document.createElement('button');row.type='button';row.setAttribute('role','button');row.textContent='Saved fixture chat '+id+' November 10 • Web';
+                setTimeout(()=>row.setAttribute('data-csa-c-group-id','conversationThread-'+crypto.randomUUID()),250);
+                row.onclick=event=>{showChat();setTimeout(()=>{current=id;render(html);localStorage.setItem('alexaFixtureCurrent',current);if(!event.isTrusted){panel.hidden=true;toggle.setAttribute('aria-expanded','false');}},150);};item.append(row);rows.append(item);
+            }
+            },250);
+        };
+        input.oninput=()=>send.classList.toggle('rufus-submit-button--disabled',!input.value.trim());
+        send.onclick=()=>{
+            if(send.classList.contains('rufus-submit-button--disabled'))return;
+            current||='conversationThread-'+crypto.randomUUID();
+            const text=input.value,user=document.createElement('article');user.className='rufus-customer-text-wrap';user.textContent=text;transcript.append(user);
+            input.value='';input.oninput();save();
+            setTimeout(()=>{const reply=document.createElement('article'),id='markdownSection-'+crypto.randomUUID();reply.setAttribute('data-csa-c-content-id','rufus-dsk-section-'+id);reply.setAttribute('data-csa-c-group-id',id);reply.textContent='Simulated Alexa reply: '+text;transcript.append(reply);save();},350);
+        };
+        </script></body></html>
+        """#
+    }
+
     var fixture: String {
         if provider == .muse { return MusePageScript.fixture }
+        if provider == .alexaShopping { return alexaShoppingFixture }
         let input: String = switch provider {
         case .dots: #"<div contenteditable="true" role="textbox" aria-label="Message" data-composer-markdown></div>"#
         case .claude: #"<div class="ProseMirror" role="textbox" aria-label="Message Claude" contenteditable="true"></div>"#

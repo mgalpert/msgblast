@@ -109,7 +109,7 @@ public struct BrowserLoginImporter: Sendable {
         guard let store = selectedStores(in: source).first(where: { $0.databaseURL.map(Self.storeID) == profileID }) else {
             throw BrowserLoginImportError.storeUnavailable
         }
-        let hosts = Set(websites.compactMap { $0.homeURL.host?.lowercased() })
+        let hosts = Set(websites.map { $0.browserCookieHost.lowercased() })
         let query = BrowserCookieQuery(domains: hosts.sorted(), domainMatch: .suffix)
 
         do {
@@ -130,7 +130,7 @@ public struct BrowserLoginImporter: Sendable {
             let now = Date()
             var imported: [WebProvider: [HTTPCookie]] = [:]
             for provider in websites {
-                guard let host = provider.homeURL.host?.lowercased() else { continue }
+                let host = provider.browserCookieHost.lowercased()
                 imported[provider] = records.compactMap { record in
                     guard Self.matches(domain: record.domain, websiteHost: host),
                           record.expires.map({ $0 > now }) ?? true else { return nil }

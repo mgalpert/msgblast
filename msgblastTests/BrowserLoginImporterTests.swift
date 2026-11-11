@@ -7,6 +7,30 @@ import Security
 @testable import msgblastCore
 
 final class BrowserLoginImporterTests: XCTestCase {
+    @MainActor
+    func testAlexaImportsAmazonParentDomainCookiesIntoItsOwnWebsiteSession() async throws {
+        let home = try fixtureHome(); defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent("Library/Cookies/Cookies.binarycookies")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fixture = safariFixture([
+            (".amazon.com", "session", "/", "synthetic-amazon-session", future, 5),
+            ("www.amazon.com", "host", "/", "synthetic-host-cookie", future, 1),
+            ("evilamazon.com", "lookalike", "/", "unrelated", future, 1),
+            (".chatgpt.com", "other-provider", "/", "unrelated", future, 1),
+        ])
+        try fixture.write(to: file)
+        let importer = BrowserLoginImporter(homeDirectories: [home])
+        let profile = try XCTUnwrap(importer.profiles(in: .safari).first)
+        let result = try importer.readCookies(in: .safari, profileID: profile.id, providers: [.alexaShopping])
+        let cookies = try XCTUnwrap(result.cookies[.alexaShopping])
+        XCTAssertEqual(Set(cookies.map(\.name)), ["session", "host"])
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: home.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        let count = try await session.registerBrowserCookies(cookies)
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(try Data(contentsOf: file), fixture)
+    }
+
     func testEncryptedChromiumFixtureUsesPinnedReaderWithoutKeychainAccess() throws {
         let home = try fixtureHome(); defer { try? FileManager.default.removeItem(at: home) }
         ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
@@ -92,6 +116,9 @@ final class BrowserLoginImporterTests: XCTestCase {
         INSERT INTO cookies VALUES('evilchatgpt.com','lookalike','/','unrelated-fixture',0,1,1,1,'');
         INSERT INTO cookies VALUES('claude.ai','other-provider','/','unrelated-fixture',0,1,1,1,'');
         INSERT INTO cookies VALUES('chatgpt.com','expired','/','expired-fixture',11644473601000000,1,1,1,'');
+        INSERT INTO cookies VALUES('.amazon.com','amazon-session','/','synthetic-amazon-session',0,1,1,2,'');
+        INSERT INTO cookies VALUES('www.amazon.com','amazon-host','/','synthetic-amazon-host',0,1,1,2,'');
+        INSERT INTO cookies VALUES('evilamazon.com','amazon-lookalike','/','unrelated',0,1,1,2,'');
         """)
         let before = try Data(contentsOf: file)
         let tracker = SnapshotTracker()
@@ -103,11 +130,12 @@ final class BrowserLoginImporterTests: XCTestCase {
             XCTAssertEqual(directoryPermissions?.intValue, 0o700)
             XCTAssertEqual(filePermissions?.intValue, 0o600)
             let records = try Self.plaintextRecords(at: file)
-            XCTAssertFalse(records.contains { ["partitioned", "lookalike", "other-provider"].contains($0.name) })
+            XCTAssertFalse(records.contains { ["partitioned", "lookalike", "other-provider", "amazon-lookalike"].contains($0.name) })
             return records
         })
         let profile = try XCTUnwrap(importer.profiles(in: .chrome).first)
-        let result = try importer.readCookies(in: .chrome, profileID: profile.id, providers: [.chatgpt, .dots])
+        let result = try importer.readCookies(in: .chrome, profileID: profile.id, providers: [.chatgpt, .dots, .alexaShopping])
+        XCTAssertEqual(Set(result.cookies[.alexaShopping, default: []].map(\.name)), ["amazon-session", "amazon-host"])
         let cookies = try XCTUnwrap(result.cookies[.chatgpt])
         XCTAssertEqual(Set(cookies.map(\.name)), ["host", "domain", "none", "subdomain"])
         XCTAssertEqual(cookies.first { $0.name == "host" }?.domain, "chatgpt.com")

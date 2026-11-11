@@ -170,7 +170,7 @@ Info.plist, entitlements, frameworks, resources, and helper.
 
 ## Accounts, permissions, and state
 
-Muse, ChatGPT, Claude, Grok, Dots, and rabbit OS3 use embedded websites. Sign in
+Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, and Alexa Shopping use embedded websites. Sign in
 inside the app for live web use. Codex CLI and Claude Code are separate optional
 agents enabled in Settings; they use their installed CLI's authentication and
 configuration. Neither a CLI nor a provider account is needed to build or use Demo.

@@ -4,6 +4,133 @@ import WebKit
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testAlexaShoppingSignedOutSetupOpensAmazonSignInInsteadOfTheStorefront() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.webView.callAsyncJavaScript("""
+            document.getElementById('chat').hidden=true;
+            const account=document.getElementById('nav-link-accountList');
+            account.outerHTML='<a id="nav-link-accountList" href="/ap/signin?openid.return_to=%2F" data-nav-ref="nav_signin">Hello, sign in</a>';
+            document.getElementById('nav-link-accountList').onclick=event=>{
+                event.preventDefault();history.replaceState({},'',event.currentTarget.href);
+                document.getElementById('login').hidden=false;
+            };
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.webView.url?.path, "/ap/signin")
+        XCTAssertEqual(session.snapshot.signedIn, false)
+        XCTAssertFalse(session.isReadyForOnboarding)
+    }
+
+    func testAlexaShoppingRequiresSignInAndOpensOnlyItsChatComposer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        XCTAssertTrue(session.isReadyForOnboarding)
+        _ = try await session.webView.callAsyncJavaScript("history.replaceState({}, '', '/ref=nav_logo')", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        let comparison = UUID()
+        let sent = await session.send("Compare reusable water bottle materials", comparisonID: comparison)
+        XCTAssertEqual(sent?.status, .observed, sent?.detail ?? "Missing receipt")
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["Compare reusable water bottle materials"])
+        let search = try await session.webView.callAsyncJavaScript("return document.getElementById('twotabsearchtextbox').value", arguments: [:], in: nil, contentWorld: .page)
+        XCTAssertEqual(search as? String, "")
+        let originalView = session.webView
+        session.updateState { $0.comparisonID = UUID() }
+        XCTAssertTrue(session.webView === originalView, "Changing comparisons must preserve Amazon’s selected chat")
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-panel-header-overflow-button').click();document.getElementById('rufus-new-chat-ingress-button').click()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.messages.isEmpty)
+        try await openAlexaFixtureHistory(session)
+        _ = try await session.webView.callAsyncJavaScript("document.querySelector('#history-rows button').click();", arguments: [:], in: nil, contentWorld: .page)
+        for _ in 0..<40 {
+            let reopened = try await session.webView.callAsyncJavaScript("return panel.hidden", arguments: [:], in: nil, contentWorld: .page) as? Bool
+            if reopened == true { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('nav-rufus-disco').click()", arguments: [:], in: nil, contentWorld: .page)
+        try await waitFor { session.snapshot.messages.filter { $0.role == "user" }.count == 1 }
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-text-area').value='Keep my private draft'", arguments: [:], in: nil, contentWorld: .page)
+        let blocked = await session.send("Must not replace draft", comparisonID: comparison)
+        XCTAssertEqual(blocked?.status, .notSent)
+        XCTAssertEqual(session.snapshot.draft, "Keep my private draft")
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-text-area').value='';chat.hidden=true;login.hidden=false;document.getElementById('nav-link-accountList').hidden=true", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.snapshot.signedIn, false)
+        XCTAssertFalse(session.isReadyForOnboarding)
+        let signedOut = await session.send("Must not send while signed out", comparisonID: comparison)
+        XCTAssertEqual(signedOut?.status, .notSent)
+    }
+
+    func testAlexaShoppingDistinguishesUnavailablePanelAndPreservesLongRequests() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let tooLong = await session.send(String(repeating: "x", count: 501))
+        XCTAssertEqual(tooLong?.status, .notSent)
+        XCTAssertTrue(tooLong?.detail?.contains("500-character") == true)
+        XCTAssertFalse(session.snapshot.hasDraft)
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('nav-flyout-rufus').remove();document.getElementById('nav-rufus-disco').remove()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.snapshot.signedIn, true)
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertFalse(session.isReadyForOnboarding)
+        XCTAssertTrue(session.snapshot.reason.contains("unavailable"))
+    }
+
+    func testAlexaShoppingNewDocumentCannotReuseAnEarlierSubmissionReceipt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appendingPathComponent("alexa.json")
+        let first = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        first.connect()
+        try await waitFor { first.snapshot.ready }
+        let previous = await first.send("First fixture request", comparisonID: UUID())
+        XCTAssertEqual(previous?.status, .observed)
+        first.beginShutdown()
+        let reopened = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        defer { reopened.beginShutdown() }
+        reopened.connect()
+        try await waitFor { reopened.snapshot.ready }
+        let next = await reopened.send("Another fixture request", comparisonID: UUID())
+        XCTAssertEqual(next?.status, .observed, next?.detail ?? "Missing receipt")
+        XCTAssertNotEqual(next?.messageID, previous?.messageID)
+        var ambiguous = WebSendAttempt(text: "Another fixture request", status: .uncertain)
+        ambiguous.comparisonID = reopened.state.comparisonID
+        ambiguous.receiptContext = WebReceiptContext(originalURL: WebProvider.alexaShopping.homeURL, baseline: [], existingPaths: [], candidateURL: WebProvider.alexaShopping.homeURL)
+        reopened.updateState { $0.attempts = [ambiguous] }
+        try await waitFor { reopened.snapshot.messages.contains { $0.role == "assistant" } }
+        await reopened.refresh()
+        XCTAssertEqual(reopened.state.attempts.first?.status, .uncertain, "Amazon’s home URL cannot prove the original chat after reload")
+        XCTAssertFalse(reopened.canLinkCurrentConversation, "An earlier message cannot resolve an attempt without its original document identity")
+    }
+
+    func testAlexaShoppingAcceptsOnlyAmazonHomeAndKeepsItsOwnSavedIdentity() throws {
+        let provider = WebProvider.alexaShopping
+        XCTAssertEqual(provider.homeURL.absoluteString, "https://www.amazon.com/")
+        XCTAssertTrue(OnboardingChoice.offeredChoices.contains(.alexaShopping))
+        XCTAssertEqual(try JSONDecoder().decode(WebProvider.self, from: JSONEncoder().encode(provider)), provider)
+        for address in ["https://www.amazon.com/", "https://www.amazon.com/ref=nav_logo", "https://www.amazon.com/?ref_=nav_signin"] {
+            let url = try XCTUnwrap(URL(string: address))
+            XCTAssertTrue(provider.isChatURL(url))
+            XCTAssertEqual(provider.canonicalConversationURL(url), provider.homeURL)
+        }
+        for address in ["https://www.amazon.com/ap/signin", "https://www.amazon.com/gp/cart/view.html", "https://www.amazon.com/s?k=bottles", "https://www.amazon.com.evil.test/", "http://www.amazon.com/", "https://www.amazon.com/#other"] {
+            XCTAssertFalse(provider.isChatURL(try XCTUnwrap(URL(string: address))), address)
+        }
+    }
+
     func testCurrentGrokComboboxAndAccountMenuAllowSimultaneousBroadcast() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -625,6 +752,16 @@ final class WebServiceTests: XCTestCase {
     private func makeSession() throws -> WebAgentSession {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MsgBlast-WebTests-\(UUID())")
         return WebAgentSession(provider: .muse, storageURL: directory.appendingPathComponent("web.json"), fixture: true)
+    }
+
+    private func openAlexaFixtureHistory(_ session: WebAgentSession) async throws {
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-panel-header-overflow-button').click();document.getElementById('rufus-chat-history-ingress-button').click()", arguments: [:], in: nil, contentWorld: .page)
+        for _ in 0..<40 {
+            let loaded = try await session.webView.callAsyncJavaScript("return !!document.querySelector('#history-rows button') && !document.querySelector('#history-rows [role=status]')", arguments: [:], in: nil, contentWorld: .page) as? Bool
+            if loaded == true { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("Fixture history did not finish loading")
     }
 
     private func waitFor(file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool) async throws {

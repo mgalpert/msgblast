@@ -25,6 +25,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = websiteDataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        if provider == .alexaShopping {
+            configuration.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+        }
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
@@ -163,7 +166,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var isReadyForOnboarding: Bool {
         guard isEnabled, connected, !storageFailed, !loading else { return false }
         if provider.usesNativeConversation { return snapshot.ready }
-        return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true
+        return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true && (provider != .alexaShopping || snapshot.draftAvailable == true)
     }
 
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
@@ -305,7 +308,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard state.conversationURLs.isEmpty, state.comparisonID == nil, state.dotsURL == nil else {
             throw WebSessionFailure.notSent("Sign in to the account used by your saved conversations.")
         }
-        let host = provider.homeURL.host!
+        let host = provider.browserCookieHost
         let belongsToProvider: (HTTPCookie) -> Bool = { cookie in
             let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
             return BrowserLoginImporter.matches(domain: domain, websiteHost: host)
@@ -373,7 +376,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .grokbot && grokBotReplyURL == nil { grokBotConnectionReady = nil }
         if provider.usesNativeConversation { connect(); Task { await refresh() }; return }
         if !connected { connect() }
-        else if fixture { loadComparisonChat() }
+        else if fixture || (provider == .alexaShopping && webView.url == nil) { loadComparisonChat() }
         else { webView.reload() }
     }
 
@@ -450,6 +453,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               let url = provider.canonicalConversationURL(current),
               webView.url.flatMap(provider.canonicalConversationURL) == url,
               (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
+        if provider == .alexaShopping,
+           receiptGenerations[attempt.id]?.matches(currentPage()) != true,
+           manualRecoveryScopes[attempt.id]?.page.matches(currentPage()) != true { return false }
         if let saved = state.conversationURLs[comparison.uuidString], provider.canonicalConversationURL(saved) != url { return false }
         if let candidate = attempt.pinnedConversationURL, candidate != url { return false }
         if provider.sharesOneConversation, hasCompetingUnresolvedAttempt(for: attempt) { return false }
@@ -821,7 +827,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         let generation = page.generation
         do {
-            if (provider == .chatgpt || provider == .dots) && !isSending && provider.isChatURL(url) {
+            if (provider == .chatgpt || provider == .dots || provider == .alexaShopping) && !isSending && provider.isChatURL(url) {
                 _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: [:], in: nil, contentWorld: .defaultClient)
                 guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
             }
@@ -1097,7 +1103,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             let baseline = try JSONDecoder().decode([WebPageMessage].self, from: JSONSerialization.data(withJSONObject: messages))
             let existingPaths = Set(paths)
-            attempt.receiptContext = WebReceiptContext(originalURL: url, baseline: baseline, existingPaths: existingPaths)
+            attempt.receiptContext = WebReceiptContext(originalURL: provider == .alexaShopping ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
             receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
             if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
@@ -1159,7 +1165,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard snapshot.submissionInterrupted != true, let current = URL(string: snapshot.url) else { return invalidate() }
         // Across reloads/restarts only the already pinned candidate can be recovered.
         let pinned = attempt.pinnedConversationURL
-        guard receiptGenerations[attempt.id]?.matches(page) == true || pinned != nil else { return invalidate() }
+        guard receiptGenerations[attempt.id]?.matches(page) == true || (provider != .alexaShopping && pinned != nil) else { return invalidate() }
         if !provider.sharesOneConversation, context.originalURL == provider.newChatURL, current == context.originalURL { return false }
         guard provider.acceptsReceipt(from: context.originalURL, at: current), let url = provider.canonicalConversationURL(current),
               pinned == nil || pinned == url,
