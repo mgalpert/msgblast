@@ -1878,3 +1878,77 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
     }
 
 }
+
+/// ChatGPT 26.1103.60933 trees, pruned from the native app's accessibility tree. Real nesting, roles and classes; text and names are synthetic.
+final class ChatGPTCurrentLayoutTests: XCTestCase {
+    private static let chat = #"""
+{"role":"AXWindow","label":"Acknowledge background","subrole":"AXStandardWindow","children":[{"role":"AXGroup","label":"Acknowledge background","children":[{"role":"AXGroup","children":[{"role":"AXScrollArea","children":[{"role":"AXWebArea","label":"Acknowledge background","url":"app://-/index.html","children":[{"role":"AXGroup","id":"root","children":[{"role":"AXGroup","children":[{"role":"AXGroup","subrole":"AXLandmarkComplementary","children":[{"role":"AXGroup","id":"app-shell-sidebar","children":[{"role":"AXGroup","label":"Home","subrole":"AXLandmarkNavigation","children":[{"role":"AXGroup","children":[{"role":"AXPopUpButton","label":"Switch mode, current mode: ChatGPT"},{"role":"AXCheckBox","label":"View activity, needs attention","value":"0","subrole":"AXToggleButton"},{"role":"AXPopUpButton","label":"Search"},{"role":"AXButton","label":"New chat","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":131}},{"role":"AXList","subrole":"AXContentList","children":[{"role":"AXGroup","children":[{"role":"AXButton","label":"Example Dot 1 unread message","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":162}}]}]}]}]}]}]},{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":[{"role":"AXGroup","subrole":"AXEmptyGroup"},{"role":"AXGroup","classes":["WorkspaceContent-dnr6uY"],"children":[{"role":"AXGroup","classes":["MainContentViewport-OinMfT"],"children":[{"role":"AXGroup","classes":["MainContentFrame-sss8BP","self-end"],"children":[{"role":"AXGroup","label":"Conversation","subrole":"AXLandmarkRegion","children":[{"role":"AXGroup","classes":["transcriptContent-l_FOQD"],"children":[{"role":"AXGroup","children":[{"role":"AXSplitter","label":"Today 3:11 PM"},{"role":"AXHeading","label":"You said:","value":"4","classes":["sr-only"],"children":[{"role":"AXStaticText","value":"You said:"}]},{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Reply with exactly: ACK background"}]},{"role":"AXButton","label":"Copy message","frame":{"h":26,"w":27,"x":1261,"y":212}},{"role":"AXButton","label":"Share prompt","frame":{"h":30,"w":31,"x":1289,"y":210}},{"role":"AXButton","label":"Edit message","frame":{"h":26,"w":27,"x":1321,"y":212}},{"role":"AXHeading","label":"ChatGPT said:","value":"4","classes":["sr-only"],"children":[{"role":"AXStaticText","value":"ChatGPT said:"}]},{"role":"AXGroup","children":[{"role":"AXStaticText","value":"ACK background"}]},{"role":"AXButton","label":"Copy","frame":{"h":26,"w":27,"x":611,"y":281}},{"role":"AXCheckBox","label":"Read aloud","value":"0","subrole":"AXToggleButton"},{"role":"AXButton","label":"Share","frame":{"h":26,"w":27,"x":667,"y":281}},{"role":"AXPopUpButton","label":"Regenerate response"},{"role":"AXPopUpButton","label":"More actions"}]}]},{"role":"AXGroup","children":[{"role":"AXTextArea","label":"Ask ChatGPT","value":"Ask ChatGPT\n","focused":true,"children":[{"role":"AXGroup","classes":["placeholder"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Ask ChatGPT"}]}]}]}]}]}]}]}]}],"id":"_r_61p_"}]}]}]}]}]}]}]}
+"""#
+    private static let dots = #"""
+{"role":"AXWindow","label":"Example Dot","subrole":"AXStandardWindow","children":[{"role":"AXGroup","label":"Example Dot","children":[{"role":"AXGroup","children":[{"role":"AXScrollArea","children":[{"role":"AXWebArea","label":"Example Dot","url":"app://-/index.html","children":[{"role":"AXGroup","id":"root","children":[{"role":"AXGroup","children":[{"role":"AXGroup","subrole":"AXLandmarkComplementary","children":[{"role":"AXGroup","id":"app-shell-sidebar","children":[{"role":"AXGroup","label":"Home","subrole":"AXLandmarkNavigation","children":[{"role":"AXGroup","children":[{"role":"AXPopUpButton","label":"Switch mode, current mode: ChatGPT"},{"role":"AXCheckBox","label":"View activity, needs attention","value":"0","subrole":"AXToggleButton"},{"role":"AXPopUpButton","label":"Search"},{"role":"AXButton","label":"New chat","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":131}},{"role":"AXList","subrole":"AXContentList","children":[{"role":"AXGroup","children":[{"role":"AXButton","label":"Example Dot 1 unread message","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":162}}]}]}]}]}]}]},{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":[{"role":"AXGroup","subrole":"AXEmptyGroup"},{"role":"AXGroup","classes":["WorkspaceContent-dnr6uY"],"children":[{"role":"AXGroup","classes":["MainContentViewport-OinMfT"],"children":[{"role":"AXGroup","classes":["MainContentFrame-sss8BP","self-end"],"children":[{"role":"AXGroup","children":[{"role":"AXGroup","classes":["self-end"],"children":[{"role":"AXGroup","subrole":"AXLandmarkMain","children":[{"role":"AXGroup","classes":["message-list"],"children":[{"role":"AXGroup","subrole":"AXDocumentArticle","classes":["message-row","self"],"children":[{"role":"AXGroup","classes":["message-bubble-wrap"],"children":[{"role":"AXGroup","classes":["message-bubble-surface"],"children":[{"role":"AXGroup","classes":["message-bubble"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Synthetic prompt from msgblast"}]}]}]}]}]},{"role":"AXGroup","subrole":"AXDocumentArticle","classes":["message-row"],"children":[{"role":"AXGroup","classes":["message-bubble-wrap"],"children":[{"role":"AXGroup","children":[{"role":"AXGroup","classes":["message-bubble-surface"],"children":[{"role":"AXGroup","classes":["message-bubble"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Synthetic Dot answer"},{"role":"AXGroup","subrole":"AXStrongStyleGroup","children":[{"role":"AXStaticText"}]},{"role":"AXStaticText"},{"role":"AXLink","label":"Synthetic notice","url":"https://example.com/notice","children":[{"role":"AXStaticText"}]}]}]}]},{"role":"AXGroup","label":"Message actions","children":[{"role":"AXGroup","children":[{"role":"AXButton","label":"Choose a reaction","frame":{"h":28,"w":29,"x":1259,"y":803}}]},{"role":"AXButton","label":"Reply","frame":{"h":28,"w":29,"x":1287,"y":803}}]}]}]}]}]},{"role":"AXGroup","children":[{"role":"AXTextArea","label":"Message","value":"Send a message\n","focused":true,"children":[{"role":"AXGroup","classes":["placeholder"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Send a message"}]}]}]}]}]}]},{"role":"AXGroup","children":[{"role":"AXPopUpButton","label":"Open Example Dot’s profile"}]}]}]}]}]}],"id":"_r_61p_"}]}]}]}]}]}]}]}
+"""#
+
+    func testChatTranscriptAndComposerAreReadFromTheCurrentLayout() throws {
+        let native = try ChatGPTAppObservation(root: tree(Self.chat))
+        XCTAssertEqual(native.kind, .chatgpt)
+        XCTAssertEqual(native.title, "Acknowledge background")
+        XCTAssertEqual(native.draft, "")
+        XCTAssertEqual(native.messages, [
+            .init(role: .user, text: "Reply with exactly: ACK background"),
+            .init(role: .assistant, text: "ACK background")
+        ])
+    }
+
+    func testDotConversationAndSidebarEntryAreReadFromTheCurrentLayout() throws {
+        let native = try ChatGPTAppObservation(root: tree(Self.dots))
+        XCTAssertEqual(native.kind, .dots)
+        XCTAssertEqual(native.title, "Example Dot")
+        XCTAssertEqual(native.messages.map(\.text), ["Synthetic prompt from msgblast", "Synthetic Dot answer"])
+        XCTAssertEqual(native.messages.map(\.role), [.user, .assistant])
+        XCTAssertEqual(native.unreadDotReplyCount, 1)
+        XCTAssertEqual(try ChatGPTAppNavigation(root: tree(Self.chat)).dotButton().label, "Example Dot 1 unread message")
+    }
+
+    func testCurrentLayoutRequiresExactlyOnePanelAndOneDot() throws {
+        let secondSurface = Self.dots.replacingOccurrences(of: #""classes":["message-list"]"#, with: #""subrole":"AXLandmarkMain","classes":["message-list","MainContentSurface-Second"]"#)
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(secondSurface)))
+        let removedPanel = Self.chat.replacingOccurrences(of: "MainContentSurface-EnuIYE", with: "Other-EnuIYE")
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(removedPanel)))
+        let dot = #"{"role":"AXButton","label":"Example Dot 1 unread message","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":162}}"#
+        let other = #"{"role":"AXButton","classes":["sidebar-item"],"label":"Other Dot","frame":{"x":0,"y":0,"w":10,"h":10}}"#
+        let secondDot = Self.chat.replacingOccurrences(of: dot, with: dot + "," + other)
+        XCTAssertThrowsError(try ChatGPTAppNavigation(root: tree(secondDot)).dotButton())
+        let composer = #"{"role":"AXTextArea","label":"Ask ChatGPT","value":"Ask ChatGPT\n","focused":true,"children":[{"role":"AXGroup","classes":["placeholder"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Ask ChatGPT"}]}]}]}"#
+        let nestedComposer = #"{"role":"AXWebArea","url":"app://-/index.html","children":["# + composer + "]}"
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(Self.chat.replacingOccurrences(of: composer, with: nestedComposer))))
+    }
+
+    private func tree(_ json: String) throws -> ChatGPTAXNode {
+        try node(JSONSerialization.jsonObject(with: Data(json.utf8)))
+    }
+
+    private func node(_ raw: Any) throws -> ChatGPTAXNode {
+        guard let object = raw as? [String: Any] else { throw NSError(domain: "ChatGPTCurrentLayoutTests", code: 1) }
+        let frame: DesktopAppSnapshot.Element.Frame?
+        if let box = object["frame"] as? [String: Any] {
+            guard let x = box["x"] as? NSNumber, let y = box["y"] as? NSNumber, let w = box["w"] as? NSNumber, let h = box["h"] as? NSNumber else {
+                throw NSError(domain: "ChatGPTCurrentLayoutTests", code: 2)
+            }
+            frame = .init(x: x.doubleValue, y: y.doubleValue, w: w.doubleValue, h: h.doubleValue)
+        } else {
+            frame = nil
+        }
+        return .init(role: object["role"] as? String ?? "",
+                     label: object["label"] as? String ?? "",
+                     value: object["value"] as? String,
+                     id: object["id"] as? String ?? "",
+                     subrole: object["subrole"] as? String ?? "",
+                     classes: object["classes"] as? [String] ?? [],
+                     url: object["url"] as? String ?? "",
+                     selectedText: object["selectedText"] as? String,
+                     enabled: object["enabled"] as? Bool ?? true,
+                     focused: object["focused"] as? Bool ?? false,
+                     frame: frame,
+                     children: try (object["children"] as? [Any] ?? []).map(node))
+    }
+}

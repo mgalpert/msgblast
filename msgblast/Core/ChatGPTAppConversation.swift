@@ -161,8 +161,7 @@ actor ChatGPTAppConversation {
         }
         if binding.kind == .dots {
             if native.kind != .dots {
-                let header = try native.unique(native.nodes.filter { $0.children.contains(where: { $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") }) })
-                let dot = try native.unique(header.children.filter { $0.role == "AXButton" && $0.classes.contains("sidebar-item") && $0.label != "New chat" && $0.visible })
+                let dot = try ChatGPTAppNavigation(validatedNodes: native.nodes).dotButton()
                 try await action(control: dot, target: target, session: session, expected: native)
                 native = try await read(target)
             }

@@ -131,7 +131,8 @@ struct ChatGPTAppNavigation: Sendable {
     func dotButton() throws -> ChatGPTAXNode {
         let headers = nodes.filter { $0.children.contains { $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") } }
         guard headers.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s Dot navigation is unavailable.") }
-        let buttons = headers[0].children.filter { $0.role == "AXButton" && $0.classes.contains("sidebar-item") && $0.label != "New chat" && $0.visible && $0.enabled }
+        let listed = headers[0].children.filter { $0.role == "AXList" }.flatMap(\.children).flatMap(\.children)
+        let buttons = (headers[0].children + listed).filter { $0.role == "AXButton" && $0.classes.contains("sidebar-item") && $0.label != "New chat" && $0.visible && $0.enabled }
         guard buttons.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s Dot navigation is unavailable or ambiguous.") }
         return buttons[0]
     }
@@ -189,19 +190,18 @@ struct ChatGPTAppObservation: Sendable {
             generating = false; messages = []; return
         }
         codexBootstrap = false
-        let panels = nodes.filter { $0.id.hasSuffix("-chat-panel") }
+        // ChatGPT 26.1103 dropped the -chat-panel id and marks the conversation with MainContentSurface.
+        let panels = nodes.filter { $0.id.hasSuffix("-chat-panel") || ($0.subrole == "AXLandmarkMain" && $0.classes.contains { $0.hasPrefix("MainContentSurface-") }) }
         let initialDotSetup = nodes.filter { $0.role == "AXHeading" && $0.label == "Create your dot" }.count == 1
         let dotComputerSetup = nodes.filter { $0.role == "AXHeading" && $0.label == "Choose where your dot can work" }.count == 1
             && nodes.filter { $0.role == "AXCheckBox" && $0.label == "Your local computer" }.count == 1
             && nodes.filter { $0.role == "AXButton" && $0.label == "Continue" }.count == 1
-        if panels.isEmpty,
-           initialDotSetup || dotComputerSetup,
+        if initialDotSetup || dotComputerSetup,
            nodes.filter({ $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") }).count == 1,
            !nodes.contains(where: { ["AXTextArea", "AXTextField"].contains($0.role) }) {
             composer = nil; kind = .dots; draft = ""; generating = false; messages = []; return
         }
-        if panels.isEmpty,
-           nodes.filter({ $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") }).count == 1,
+        if nodes.filter({ $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") }).count == 1,
            nodes.filter({ $0.role == "AXButton" && $0.label == "Your dot" && $0.classes.contains("sidebar-item") }).count == 1,
            !nodes.contains(where: { ["AXTextArea", "AXTextField", "AXHeading"].contains($0.role) }) {
             throw ChatGPTObservationError.transient
@@ -233,7 +233,7 @@ struct ChatGPTAppObservation: Sendable {
                 }
             }
         } else {
-            let transcripts = panel.filter { $0.classes.contains(where: { $0.hasPrefix("_transcriptContent_") }) }
+            let transcripts = panel.filter { $0.classes.contains(where: { $0.hasPrefix("_transcriptContent_") || $0.hasPrefix("transcriptContent-") }) }
             guard transcripts.count <= 1 else { throw DesktopAppError.unavailable("ChatGPT’s transcript is ambiguous.") }
             var result: [ChatGPTMessage] = []
             for turn in transcripts.first?.children ?? [] {
