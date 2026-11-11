@@ -166,16 +166,41 @@ public extension RemoteCommandHost {
 public final class RemoteCommandExecutor {
     public static let ledgerCapacity = 1000
     public static let maximumUploadChunks = 128
+    /// Partial uploads held at once; starting another drops the least recently used one.
+    public static let maximumConcurrentUploads = 4
+    /// Bytes held across all partial uploads; going over drops the least recently used others.
+    public static let maximumBufferedUploadBytes = 2 * RemoteProtocol.maximumAttachmentBytes
+    /// Sends and preparations waiting behind the running one; more are refused, never dropped.
+    public static let maximumQueuedSends = 8
     private weak var host: (any RemoteCommandHost)?
     private var ledger: [UUID: RemoteCommandResult] = [:]
     private var ledgerOrder: [UUID] = []
     private var inProgress: Set<UUID> = []
     private var sendQueue: [(RemoteCommand, (RemoteCommandResult) -> Void)] = []
     private var sending = false
+    /// Bumped by `attach`, so a send taken from the queue before a restart never reaches the new host.
+    private var hostGeneration = 0
     private var uploads: [UUID: Upload] = [:]
+    /// Partial uploads, least recently used first.
+    private var uploadOrder: [UUID] = []
     private struct Upload { var filename: String; var count: Int; var chunks: [Int: Data] = [:]; var bytes = 0 }
 
     public init(host: any RemoteCommandHost) { self.host = host }
+
+    /// Points a kept executor at a new host when remote control restarts, so the ledger
+    /// survives the restart and a repeated send id still never runs twice.
+    /// Sends still queued from before the restart are refused, never run on the new host.
+    public func attach(_ host: any RemoteCommandHost) {
+        let stale = sendQueue
+        sendQueue = []
+        for (command, reply) in stale { finish(reject(command, .failed, "Remote control restarted on your Mac"), reply) }
+        self.host = host
+        hostGeneration += 1
+        discardUploads()
+    }
+
+    public var bufferedUploadBytes: Int { uploads.values.reduce(0) { $0 + $1.bytes } }
+    public var partialUploadCount: Int { uploads.count }
 
     public var queuedSendCount: Int { sendQueue.count }
     public var isSending: Bool { sending }
@@ -193,6 +218,9 @@ public final class RemoteCommandExecutor {
         if inProgress.contains(id) { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Already running on your Mac", replayed: true)); return }
         if command.action.isSerial {
             if let rejection = command.action.isSend ? checkSend(command) : checkPrepare(command) { finish(rejection, reply); return }
+            guard sendQueue.count < Self.maximumQueuedSends else {
+                reply(reject(command, .macBusy, "Too many requests waiting on your Mac. Try again soon")); return
+            }
             inProgress.insert(id)
             if sending { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Waiting for the previous request")) }
             sendQueue.append((command, reply))
@@ -200,7 +228,11 @@ public final class RemoteCommandExecutor {
             return
         }
         inProgress.insert(id)
-        Task { @MainActor in self.finish(await self.apply(command), reply) }
+        // Chunks are repeatable and short-lived; keeping them out of the ledger stops a
+        // 128-chunk upload from pushing send results out of it.
+        let record: Bool
+        if case .uploadAttachmentChunk = command.action { record = false } else { record = true }
+        Task { @MainActor in self.finish(await self.apply(command), reply, record: record) }
     }
 
     /// Convenience for tests and the in-memory transport: the final result only.
@@ -215,9 +247,10 @@ public final class RemoteCommandExecutor {
         }
     }
 
-    private func finish(_ result: RemoteCommandResult, _ reply: (RemoteCommandResult) -> Void) {
+    private func finish(_ result: RemoteCommandResult, _ reply: (RemoteCommandResult) -> Void, record: Bool = true) {
         let id = result.clientCommandID
         inProgress.remove(id)
+        guard record else { reply(result); return }
         ledger[id] = result
         ledgerOrder.append(id)
         if ledgerOrder.count > Self.ledgerCapacity { ledger[ledgerOrder.removeFirst()] = nil }
@@ -228,10 +261,12 @@ public final class RemoteCommandExecutor {
         guard !sending, !sendQueue.isEmpty else { return }
         sending = true
         let (command, reply) = sendQueue.removeFirst()
+        let generation = hostGeneration
         Task { @MainActor in
             // Re-check at the head of the queue: the Mac may have locked or started its own send.
             let result: RemoteCommandResult
-            if let rejection = command.action.isSend ? self.checkSend(command, atHead: true) : self.checkPrepare(command, atHead: true) { result = rejection }
+            if generation != self.hostGeneration { result = self.reject(command, .failed, "Remote control restarted on your Mac") }
+            else if let rejection = command.action.isSend ? self.checkSend(command, atHead: true) : self.checkPrepare(command, atHead: true) { result = rejection }
             else { result = await self.runSend(command) }
             self.finish(result, reply)
             self.sending = false
@@ -439,7 +474,7 @@ public final class RemoteCommandExecutor {
         case .attachStaged(let uploadID, let digest):
             guard let upload = uploads[uploadID], upload.chunks.count == upload.count else { return reject(command, .attachmentRejected, "Upload incomplete. Add it again") }
             let data = (0..<upload.count).reduce(into: Data()) { $0.append(upload.chunks[$1]!) }
-            uploads[uploadID] = nil
+            dropUpload(uploadID)
             guard Data(SHA256.hash(data: data)) == digest else { return reject(command, .attachmentRejected, "Upload failed. Add it again") }
             do { return outcome(command, .applied(), attachmentID: try host.stageAttachment(data, filename: upload.filename)) }
             catch { return reject(command, .attachmentRejected, error.localizedDescription) }
@@ -457,18 +492,37 @@ public final class RemoteCommandExecutor {
     private func receive(_ command: RemoteCommand, uploadID: UUID, filename: String, index: Int, count: Int, data: Data) -> RemoteCommandResult {
         guard let name = Self.cleanFilename(filename) else { return reject(command, .attachmentRejected, "That file name can't be used") }
         guard count > 0, count <= Self.maximumUploadChunks, index >= 0, index < count, !data.isEmpty, data.count <= RemoteProtocol.maximumAttachmentChunkBytes else {
-            uploads[uploadID] = nil
+            dropUpload(uploadID)
             return reject(command, .attachmentRejected, "Upload failed. Add it again")
         }
         var upload = uploads[uploadID] ?? Upload(filename: name, count: count)
-        guard upload.filename == name, upload.count == count else { uploads[uploadID] = nil; return reject(command, .attachmentRejected, "Upload failed. Add it again") }
+        guard upload.filename == name, upload.count == count else { dropUpload(uploadID); return reject(command, .attachmentRejected, "Upload failed. Add it again") }
         upload.bytes += data.count - (upload.chunks[index]?.count ?? 0)
-        guard upload.bytes <= RemoteProtocol.maximumAttachmentBytes else { uploads[uploadID] = nil; return reject(command, .attachmentRejected, "Files are limited to 25 MB") }
+        guard upload.bytes <= RemoteProtocol.maximumAttachmentBytes else { dropUpload(uploadID); return reject(command, .attachmentRejected, "Files are limited to 25 MB") }
         upload.chunks[index] = data
         uploads[uploadID] = upload
+        touchUpload(uploadID)
         return outcome(command, .applied())
     }
 
+    /// Marks an upload most recently used, then drops the least recently used others until
+    /// the count and byte caps hold. A dropped upload fails at `attachStaged` and is re-added.
+    private func touchUpload(_ id: UUID) {
+        uploadOrder.removeAll { $0 == id }
+        uploadOrder.append(id)
+        var total = bufferedUploadBytes
+        while let oldest = uploadOrder.first, oldest != id,
+              uploads.count > Self.maximumConcurrentUploads || total > Self.maximumBufferedUploadBytes {
+            total -= uploads[oldest]?.bytes ?? 0
+            dropUpload(oldest)
+        }
+    }
+
+    private func dropUpload(_ id: UUID) {
+        uploads[id] = nil
+        uploadOrder.removeAll { $0 == id }
+    }
+
     /// Drops partial uploads when the client disconnects.
-    public func discardUploads() { uploads = [:] }
+    public func discardUploads() { uploads = [:]; uploadOrder = [] }
 }

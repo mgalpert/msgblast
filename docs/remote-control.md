@@ -113,10 +113,16 @@ duplicate-send and unresolved-attempt guard applies:
 Rules the Mac enforces:
 
 - Each command has a `clientCommandID`. A replay returns the stored or in-progress
-  result and never repeats the action. The ledger is in memory only.
+  result and never repeats the action. The ledger is in memory only, holds the last
+  1,000 results, and survives turning remote control off and on (not an app quit).
+  Upload chunks stay out of it, so a large file never pushes a send out.
 - Sends run one at a time, so Mac app requests stay serial across commands. A send
   that waits is answered `accepted`, then re-checked when it starts; if the Mac
-  user started a send meanwhile it is refused (`macBusy`), never retried.
+  user started a send meanwhile it is refused (`macBusy`), never retried. At most 8
+  wait behind the running one; more are refused (`macBusy`). Sends still waiting
+  when remote control restarts are refused, never run.
+- The Mac holds at most 4 partial uploads and 50 MB across them. Going over drops
+  the least recently used upload, which then fails at attach and is added again.
 - Nothing is retried. A phone that loses the connection mid-send must show the
   send as unconfirmed.
 - A remote command never opens a Contacts prompt, never takes or clears the Mac's
