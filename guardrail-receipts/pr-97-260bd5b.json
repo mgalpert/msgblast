@@ -1,0 +1,26 @@
+{
+  "pr": 97,
+  "base_sha": "0f35af59a2e599c2d964b044dbcdb2ee86dbc7ee",
+  "head_sha": "260bd5b3b9b25c160b30ba0c6dafa9132823fed1",
+  "previous_head": "416e481df7399cee560c2e1ed581f94f56347c9e",
+  "previous_receipt": "guardrail-receipts/pr-97-416e481.json",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Add outside agent settings to settings PR' thread, at the owner's request (show the MCP URL in Settings)",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "scope": "delta review of git diff 416e481 260bd5b (3 files, about 45 lines); 416e481 was approved in the previous receipt",
+  "verified": [
+    "OutsideAgentsSettingsView.setup output is byte-identical after factoring mcpCommand(executable:); quoting unchanged",
+    "No compile problems found: default arguments, Self.mcpCommand() use, LabeledContent with VStack, conditional branches in Group",
+    "Visible text shows only 'msgblast mcp', never the executable path; the full path goes only to the clipboard",
+    "Docs labels match the UI: MCP server URL, Copy URL, Copy header, Settings → Outside agents"
+  ],
+  "findings": [],
+  "minor_notes": [
+    "docs/architecture.md wording and line wrap could match the UI label exactly",
+    "The long Tailscale URL could squeeze on a narrow window; check visually",
+    "accessibility identifier outside-agents-mcp-url is not used by a test yet"
+  ],
+  "limits": "No Swift toolchain in the review environment; compile and UI tests are covered by native CI and the Mac evidence run"
+}
