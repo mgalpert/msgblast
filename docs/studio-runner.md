@@ -28,7 +28,8 @@ off the Studio:
    GitHub's `xcode-27` runner anyway.
 
 Signing, release, and `pull_request_target` workflows never use the Studio.
-Anyone with write access can still run code there, and runs share one build
+Anyone with write access can still run code there, including code that edits
+the runner's `.env` to drop the hook for later jobs, and runs share one build
 cache, so give write access only to people you trust with that machine.
 
 ## One-time setup on the Studio
@@ -70,6 +71,12 @@ cache, so give write access only to people you trust with that machine.
    ```
 
    Reinstall it the same way whenever the hook changes on `main`.
+   The hook only guards anything if the runner actually runs it. After the
+   first job, open its log and check that "Set up runner" or the first step
+   shows `Studio runner accepted`. If that line is missing, the hook is not
+   installed and fork code would not be refused, so turn the variable off
+   until it is. The hook needs `/usr/bin/python3`, which comes with the Xcode
+   command line tools.
 6. In Settings, Actions, General, under "Approval for running fork pull request
    workflows from contributors", choose "Require approval for all external
    contributors". Check that it is saved before the next step.
