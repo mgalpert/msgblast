@@ -746,6 +746,8 @@ final class MobileAppTests: XCTestCase {
         XCTAssertTrue(onDisk.unresolvedCommandIDs.contains(id))
 
         first.connection.stop()
+        func sends() -> Int { mac.commands.filter { $0.action.kind == "sendPrivate" }.count }
+        let sentBeforeRelaunch = sends()
         mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
         let relaunched = try launch()
         XCTAssertEqual(relaunched.store.commands[id]?.status, .unconfirmed, "Shown as unconfirmed until the Mac answers")
@@ -753,7 +755,7 @@ final class MobileAppTests: XCTestCase {
         await settle { relaunched.store.commands[id]?.status == .applied }
         XCTAssertEqual(relaunched.store.commands[id]?.status, .applied, "The relaunch asked about it")
         XCTAssertTrue(mac.commands.contains { $0.action == .queryCommand(clientCommandID: id) })
-        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendPrivate" }.count, 1, "Never sent a second time")
+        XCTAssertEqual(sends(), sentBeforeRelaunch, "The relaunch only asks; it never resends")
     }
 
     func testAvatarsAreFetchedOnceCachedAndClearedByForget() async throws {
