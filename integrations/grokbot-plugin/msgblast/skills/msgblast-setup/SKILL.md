@@ -5,7 +5,7 @@ description: Help a person connect Grok Bot to msgblast on their Mac over Tailsc
 
 # msgblast setup for Grok Bot
 
-msgblast runs on the person's Mac and listens for HTTP MCP on that Mac's Tailscale addresses. You cannot add the connector yourself. Guide the person. Wait for them to paste the setup text.
+msgblast runs on the person's Mac and listens for HTTP MCP on that Mac's Tailscale addresses. You cannot add the connector yourself. Guide the person, and ask them to paste only the Server URL.
 
 ## Check Tailscale
 

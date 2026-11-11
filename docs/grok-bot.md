@@ -59,7 +59,7 @@ On a personal tailnet, Grok Bot's device has the person's own tailnet access. A 
 The Tailscale card shows three lines.
 
 - "Tailscale isn't connected on this Mac." Open Tailscale on this Mac and sign in. "Connected as" followed by the MagicDNS name means that name was found.
-- "HTTPS certificates are off for this tailnet." msgblast keeps using `http://`. If Grok Bot asks for `https://`, an admin can turn certificates on in the Tailscale admin console under DNS. "HTTPS certificates are on for this tailnet" means that array is set. msgblast still does not serve `https://`.
+- "HTTPS certificates are off for this tailnet." This line is information only. msgblast uses `http://`, and Tailscale encrypts the connection, so nothing needs changing. Turning certificates on does not make msgblast serve `https://`. "HTTPS certificates are on for this tailnet" means that array is set.
 - "No Grok Bot device on your tailnet yet" means the Tailscale plugin is not connected. In Grok Bot, use Connect apps → Your plugins → Tailscale → Authenticate. "A Grok Bot device is on your tailnet" means that device is visible and has not called yet. Copy the setup block and add the connector, then ask for `msgblast_status`. "Grok Bot last called …" means a request passed the key check. Approve it in msgblast if the prompt is waiting.
 
 ## Troubleshooting
