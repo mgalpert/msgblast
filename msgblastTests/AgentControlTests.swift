@@ -45,8 +45,9 @@ import XCTest
     }
 
     func testAccessLevelsAreOrdered() {
-        XCTAssertLessThan(AgentControlAccess.readOnly, .sendToAgents)
-        XCTAssertLessThan(AgentControlAccess.sendToAgents, .full)
+        XCTAssertEqual(AgentControlAccess.allCases.map(\.label), ["Read only", "Full access"])
+        XCTAssertLessThan(AgentControlAccess.readOnly, .full)
+        XCTAssertNil(try? JSONDecoder().decode([String: AgentControlAccess].self, from: Data(#"{"Codex":1}"#.utf8)))
     }
 
     func testAgentsListHidesHiddenAgentsUnlessAsked() throws {

@@ -1,11 +1,12 @@
 import Foundation
 
 /// How much an outside agent may do. Approval in msgblast picks one level per agent.
+/// Raw values are saved; 1 was a removed middle level and must never read as Full access.
 public enum AgentControlAccess: Int, Codable, CaseIterable, Comparable, Sendable {
-    case readOnly, sendToAgents, full
+    case readOnly = 0, full = 2
     public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
     public var label: String {
-        switch self { case .readOnly: "Read only"; case .sendToAgents: "Send to my agents"; case .full: "Full access" }
+        switch self { case .readOnly: "Read only"; case .full: "Full access" }
     }
 }
 
