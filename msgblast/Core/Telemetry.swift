@@ -131,7 +131,7 @@ public actor TelemetryCollector {
         self.session = session ?? URLSession(configuration: config, delegate: NoTelemetryRedirects(), delegateQueue: nil)
     }
     public static func endpoint(bundle: Bundle = .main, demo: Bool) -> URL? {
-        guard !demo, ["com.msgblast.mac", "com.msgblast.development"].contains(bundle.bundleIdentifier ?? ""),
+        guard !demo, bundle.bundleIdentifier == AppBundleIdentity.production || AppBundleIdentity.isDevelopment(bundle.bundleIdentifier),
               let configured = bundle.object(forInfoDictionaryKey: "msgblastTelemetryEndpoint") as? String,
               configured == "https://msgblast.app/api/telemetry" else { return nil }
         return URL(string: configured)

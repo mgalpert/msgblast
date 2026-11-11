@@ -51,6 +51,7 @@ final class UpdateTests: XCTestCase {
         XCTAssertFalse(configuration("http://updates.example.com/appcast.xml").isEnabled)
         XCTAssertFalse(configuration(id: "com.msgblast.discover-preview").isEnabled)
         XCTAssertFalse(configuration("https://updates.msgblast.app/appcast.xml", id: "com.msgblast.development").isEnabled)
+        XCTAssertFalse(configuration("https://updates.msgblast.app/appcast.xml", id: "com.msgblast.development.remote").isEnabled)
         XCTAssertFalse(configuration("https://updates.msgblast.app/appcast.xml", id: "com.msgblast.demo", demo: true).isEnabled)
         XCTAssertFalse(configuration(demo: true).isEnabled)
         XCTAssertFalse(configuration(args: ["--demo"]).isEnabled)

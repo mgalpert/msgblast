@@ -139,8 +139,26 @@ The build embeds the official CuaDriver **0.38.0** executable at
 `Contents/Helpers/cua-driver`, pinned by URL and SHA-256 in `scripts/cua-driver.json`.
 Only the exact regular executable is extracted; the standalone app, SDK library,
 and Node runtime are excluded. Build signing includes this nested executable.
-The app launches the helper directly with `serve --embedded`, keeping it in
-msgblast's responsibility chain. Provider authentication remains in each app.
+The app launches the helper directly with `serve --embedded --no-overlay`, keeping
+it in msgblast's responsibility chain. `--no-overlay` turns off the driver's
+agent-cursor overlay, which is on by default and otherwise leaves a transparent
+full-screen `cua-driver` window on screen for as long as the helper runs.
+
+"The app is still updating its controls" means msgblast could not read the app's
+accessibility tree completely, so it sent no input. Several checks lead to that
+message: too many nodes or levels, a read slower than 3 seconds, a node with no
+role or one that disappeared, an Accessibility error, the window not found, or the
+window frame or web address changing during the read. To see which one fired, run
+this in Terminal and then use Reconnect or send again:
+
+```sh
+log stream --level info --predicate 'category == "desktop-accessibility"'
+```
+
+Each line names the app and the check, with counts and roles only, never the app's
+text. A failed app control call ("App control could not complete this request")
+logs the tool name and exit status the same way; the driver's own message is kept
+private in the log. Provider authentication remains in each app.
 The driver is not downloaded or discovered from PATH at runtime. Before reusing
 a daemon, msgblast checks the host's current Accessibility and Screen Recording
 grants. An observed grant or revocation starts a fresh private generation; calls
