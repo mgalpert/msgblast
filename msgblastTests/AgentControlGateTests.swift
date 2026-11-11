@@ -221,7 +221,8 @@ import XCTest
         XCTAssertTrue(pause.started)
         flag.live = false
         pause.finish(.full)
-        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: await pending.value) as? [String: Any])
+        let reply = await pending.value
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: reply) as? [String: Any])
         XCTAssertEqual((body["error"] as? [String: Any])?["code"] as? String, "unavailable")
         XCTAssertEqual(host.statusCalls, 0)
         // The person's choice in the prompt is still kept.
