@@ -209,98 +209,128 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $captureLayout.sidebarVisibility) {
-            List {
-                Section {
-                    Button { showAgentGrid() } label: {
-                        sidebarLabel("Agents", systemImage: "person.2.fill", selected: showingAgents)
-                    }.buttonStyle(.plain).accessibilityLabel("Agents")
-                        .accessibilityValue(showingAgents ? "Selected" : "Not selected")
-                    Button { selection = .discover } label: {
-                        sidebarLabel("Discover", systemImage: "safari", selected: selection == .discover)
-                    }.buttonStyle(.plain).accessibilityLabel("Discover")
-                        .accessibilityValue(selection == .discover ? "Selected" : "Not selected")
-                }
-                Section("Comparisons") {
-                ForEach(model.state.comparisons) { comparison in
-                    Button { model.coordinator?.open(comparison.id) } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "bubble.left.and.bubble.right.fill").font(.title3).foregroundStyle(.secondary).frame(width: 32)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text((comparison.members.map(\.name) + comparison.resolvedWebAgentIDs.map { model.webAgents.name(for: $0) }).joined(separator: ", ")).fontWeight(.semibold).lineLimit(1)
-                                Text(comparison.prompt).foregroundStyle(.secondary).lineLimit(2)
-                            }
-                        }.padding(.horizontal, 10).padding(.vertical, 8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(selectedComparisonID == comparison.id ? sidebarSelectionColor : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                        .foregroundStyle(Color.primary)
-                        .listRowBackground(Color.clear)
-                        .accessibilityValue(selectedComparisonID == comparison.id ? "Selected" : "Not selected")
-                }
-                    if model.state.comparisons.isEmpty { Text("No comparisons").foregroundStyle(.secondary) }
-                }
-            }.listStyle(.sidebar).navigationTitle("msgblast")
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 8) {
-                        UpdateSidebar(updater: updater)
-                        WhatsNewSidebar()
-                    }.padding(12)
-                        .background(Color(nsColor: .windowBackgroundColor))
-                        .overlay(alignment: .top) { Divider() }
-                }
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 330)
+            sidebar
         } detail: {
-            if selection == .discover {
-                DiscoverView(model: model).navigationTitle("")
-            } else {
+            detail
+        }
+        .frame(minWidth: 760, minHeight: 560)
+        .background(ConversationCloseBridge(model: model, comparisonID: selectedComparisonID))
+        .tint(.blue)
+        .focusedSceneValue(\.mainWindowActions, mainWindowActions)
+        .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat }
+        .onChange(of: model.webComparisonRequest) { _, _ in selection = .agents; showingComparison = true }
+        .alert("msgblast", isPresented: errorPresented) {
+            Button("OK") { model.error = nil }
+        } message: { Text(model.error ?? "") }
+        .toolbar { discoverToolbar }
+    }
+
+    private var sidebar: some View {
+        List {
+            Section {
+                Button { showAgentGrid() } label: {
+                    sidebarLabel("Agents", systemImage: "person.2.fill", selected: showingAgents)
+                }.buttonStyle(.plain).accessibilityLabel("Agents")
+                    .accessibilityValue(showingAgents ? "Selected" : "Not selected")
+                Button { selection = .discover } label: {
+                    sidebarLabel("Discover", systemImage: "safari", selected: selection == .discover)
+                }.buttonStyle(.plain).accessibilityLabel("Discover")
+                    .accessibilityValue(selection == .discover ? "Selected" : "Not selected")
+            }
+            Section("Comparisons") {
+                ForEach(model.state.comparisons) { comparison in comparisonRow(comparison) }
+                if model.state.comparisons.isEmpty { Text("No comparisons").foregroundStyle(.secondary) }
+            }
+        }.listStyle(.sidebar).navigationTitle("msgblast")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 8) {
+                    UpdateSidebar(updater: updater)
+                    WhatsNewSidebar()
+                }.padding(12)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .overlay(alignment: .top) { Divider() }
+            }
+            .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 330)
+    }
+
+    private func comparisonRow(_ comparison: Comparison) -> some View {
+        let selected: Bool = selectedComparisonID == comparison.id
+        return Button { model.coordinator?.open(comparison.id) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "bubble.left.and.bubble.right.fill").font(.title3).foregroundStyle(.secondary).frame(width: 32)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(comparisonTitle(comparison)).fontWeight(.semibold).lineLimit(1)
+                    Text(comparison.prompt).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }.padding(.horizontal, 10).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(selected ? sidebarSelectionColor : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .foregroundStyle(Color.primary)
+            .listRowBackground(Color.clear)
+            .accessibilityValue(selected ? "Selected" : "Not selected")
+    }
+
+    private func comparisonTitle(_ comparison: Comparison) -> String {
+        let memberNames: [String] = comparison.members.map(\.name)
+        let webNames: [String] = comparison.resolvedWebAgentIDs.map { model.webAgents.name(for: $0) }
+        return (memberNames + webNames).joined(separator: ", ")
+    }
+
+    @ViewBuilder private var detail: some View {
+        if selection == .discover {
+            DiscoverView(model: model).navigationTitle("")
+        } else {
             VStack(spacing: 0) {
                 if model.demo { demoControls }
-                if model.state.onboarding != nil {
-                    let unresolved = model.onboarding.setupReminderNames
-                    if !unresolved.isEmpty {
-                    HStack {
-                        Text("Finish connecting \(unresolved.joined(separator: ", ")).").foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Connect agents") {
-                            if !model.onboarding.unresolvedMessageAgents.isEmpty { model.onboarding.reviewMessagesAgents() }
-                            else { model.onboarding.resume() }
-                        }
-                    }.padding(18).background(.bar)
-                    }
-                }
+                if model.state.onboarding != nil { setupReminder }
                 if model.usesMessages { MessagesAccessBanner(model: model) }
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
-            }
         }
-        .frame(minWidth: 760, minHeight: 560)
-        .background(ConversationCloseBridge(model: model, comparisonID: selection == .agents && showingComparison ? web.comparisonID : nil))
-        .tint(.blue)
-        .focusedSceneValue(\.mainWindowActions, model.error != nil ? nil : MainWindowActions(
+    }
+
+    @ViewBuilder private var setupReminder: some View {
+        let unresolved: [String] = model.onboarding.setupReminderNames
+        if !unresolved.isEmpty {
+            HStack {
+                Text("Finish connecting \(unresolved.joined(separator: ", ")).").foregroundStyle(.secondary)
+                Spacer()
+                Button("Connect agents") {
+                    if !model.onboarding.unresolvedMessageAgents.isEmpty { model.onboarding.reviewMessagesAgents() }
+                    else { model.onboarding.resume() }
+                }
+            }.padding(18).background(.bar)
+        }
+    }
+
+    private var mainWindowActions: MainWindowActions? {
+        guard model.error == nil else { return nil }
+        return MainWindowActions(
             newBlast: { model.requestNewBlast() },
             showAgents: { showAgentGrid() },
             showDiscover: { selection = .discover },
-            canStartBlast: model.canStartNewBlast))
-        .onChange(of: model.newBlastRequest) { _, _ in selection = .agents; showingComparison = model.newBlastShowsChat }
-        .onChange(of: model.webComparisonRequest) { _, _ in selection = .agents; showingComparison = true }
-        .alert("msgblast", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
-            Button("OK") { model.error = nil }
-        } message: { Text(model.error ?? "") }
-        .toolbar {
-            if selection == .discover {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        model.requestNewBlast()
-                    } label: {
-                        Label("New Blast", systemImage: "square.and.pencil")
-                            .labelStyle(.titleAndIcon)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                    }
-                    .help("New Blast").accessibilityLabel("New Blast")
-                    .disabled(!model.canStartNewBlast)
+            canStartBlast: model.canStartNewBlast)
+    }
+
+    private var errorPresented: Binding<Bool> {
+        Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })
+    }
+
+    @ToolbarContentBuilder private var discoverToolbar: some ToolbarContent {
+        if selection == .discover {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    model.requestNewBlast()
+                } label: {
+                    Label("New Blast", systemImage: "square.and.pencil")
+                        .labelStyle(.titleAndIcon)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
                 }
+                .help("New Blast").accessibilityLabel("New Blast")
+                .disabled(!model.canStartNewBlast)
             }
         }
     }

@@ -282,16 +282,7 @@ struct OnboardingView: View {
             }
         } label: {
             HStack(spacing: 14) {
-                if let provider = choice.provider {
-                    AgentAvatar(agent: AgentArtwork.agent(for: setup.session(for: provider)), name: choice.name, size: 44)
-                } else if let runtime = choice.runtime {
-                    AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.runtimeAvatar(for: runtime)), name: choice.name, size: 44)
-                } else if choice == .otherMessages {
-                    Image(systemName: "message.fill").font(.system(size: 26)).foregroundStyle(.green)
-                        .frame(width: 44, height: 44)
-                } else {
-                    AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice)), name: choice.name, size: 44)
-                }
+                choiceAvatar(choice)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(choice == .otherMessages ? "Another Messages agent" : choice.name)
                         .font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
@@ -314,8 +305,31 @@ struct OnboardingView: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }.buttonStyle(.plain).accessibilityLabel(canInstall ? "Install \(choice.name)" : "Choose \(choice.name)")
             .accessibilityIdentifier("onboarding-choice-\(choice.rawValue)")
-            .accessibilityValue(!installed ? "Not installed" : !available && choice.isMessages && (setup.state.approvedPermissionSections ?? []).contains(.messaging) ? "Not found in Messages. \(selectionStatus)" : !available ? "Permission required. \(selectionStatus)" : desktop != nil ? "Installed. \(selectionStatus)" : selectionStatus)
+            .accessibilityValue(choiceAccessibilityValue(choice, installed: installed, available: available, desktop: desktop != nil, selectionStatus: selectionStatus))
             .disabled(!available && !selected && !canInstall)
+    }
+
+    @ViewBuilder private func choiceAvatar(_ choice: OnboardingChoice) -> some View {
+        if let provider = choice.provider {
+            AgentAvatar(agent: AgentArtwork.agent(for: setup.session(for: provider)), name: choice.name, size: 44)
+        } else if let runtime = choice.runtime {
+            AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.runtimeAvatar(for: runtime)), name: choice.name, size: 44)
+        } else if choice == .otherMessages {
+            Image(systemName: "message.fill").font(.system(size: 26)).foregroundStyle(.green)
+                .frame(width: 44, height: 44)
+        } else {
+            AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice)), name: choice.name, size: 44)
+        }
+    }
+
+    private func choiceAccessibilityValue(_ choice: OnboardingChoice, installed: Bool, available: Bool, desktop: Bool, selectionStatus: String) -> String {
+        if !installed { return "Not installed" }
+        if !available && choice.isMessages && (setup.state.approvedPermissionSections ?? []).contains(.messaging) {
+            return "Not found in Messages. \(selectionStatus)"
+        }
+        if !available { return "Permission required. \(selectionStatus)" }
+        if desktop { return "Installed. \(selectionStatus)" }
+        return selectionStatus
     }
 
 }
