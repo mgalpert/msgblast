@@ -26,6 +26,8 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Desktop app conversations | `msgblast/Core/EmbeddedCuaDriver.swift`, `DesktopAccessibility.swift`, `DesktopAppWorkflow.swift`, `DesktopAppConversation.swift`, and app profiles | Private embedded runtime, shared bounded native metadata capture and single-submit workflow, exact-window background input, and per-comparison destination/receipt checks |
 | Local CLI execution | `msgblast/Core/LocalPersonalAgent.swift`, `LocalAgentDetection.swift` | Executable/account detection, conversation adapters, restricted reports, and process cleanup |
 | Grok Bot | `msgblast/Core/GrokBot*.swift` | Webhook requests, secure storage, loopback replies, and bundled tunnel process |
+| Remote control | `msgblast/RemoteProtocol/`, `msgblast/Core/Remote/`, `msgblast/Remote/`, `Windows/RemoteSettingsView.swift`, `scripts/remote_client/` | Phone wire protocol framework, pairing, TLS/Tailscale/LAN listener, availability, projection, command execution through AppModel. See [Remote control](remote-control.md) |
+| Outside agents | `msgblast/Core/AgentControl*.swift`, `App/AgentControlHost.swift`, `App/AgentControlListener.swift`, `App/AgentControlTailnetListener.swift`, `App/AgentControlTailnetConnection.swift`, `App/AgentControlCommand.swift`, `Windows/OutsideAgentsSettingsView.swift` under `msgblast/` | Tool catalog and access levels, wait-for-events feed, per-agent approvals, and the owner-only local socket in the build's support folder (off by default). Running the app executable with a command (`msgblast status`, `msgblast mcp`) acts as the `msgblast` command and the stdio MCP server, speaking MCP 2026-07-28 and the older `initialize` handshake. An optional Tailscale HTTP endpoint lets Grok Bot call the same tools |
 | Feedback | `Core/DiagnosticReport.swift`, `FeedbackSubmission.swift`, `Windows/FeedbackView.swift` under `msgblast/` | Explicit feedback note, allowed diagnostics, and private intake submission |
 | Download service | `download/` | Signed-feed verification and fixed latest.zip redirect |
 | Feedback handler | `feedback/` | Validated private R2 intake; template integrated into a separate production landing Worker |
@@ -67,6 +69,26 @@ Connections use separate transports:
 | Websites | Muse, ChatGPT, Claude, Grok, Dots, rabbit OS3, and Hark inside persistent WebKit stores |
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
+| Remote control (optional) | One paired phone over Tailscale or the LAN, encrypted end to end; the Mac executes every send |
+| Grok Bot over Tailscale | Optional HTTP MCP bound only to this Mac's Tailscale addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`). Off unless Outside agents and the Tailscale toggle are both on |
+
+Grok Bot can join the tailnet and call remote MCP over HTTP. When both toggles are
+on, msgblast listens on each Tailscale address on `utun` interfaces that are up:
+IPv4 `100.64.0.0/10` and IPv6 `fd7a:115c:a1e0::/48`. Each listener's required local
+endpoint is that address. It never binds a wildcard, loopback, or Funnel, and it
+rebinds when the addresses change. The server URL is
+`http://<MagicDNS name>:<port>/mcp` (default port 47480). The name is `Self.DNSName`
+from `tailscale status --json`, without the trailing dot. If the name is missing,
+the URL uses this Mac's `100.x` address and Settings says so. The token travels in
+`Authorization: Bearer`; `/mcp/<token>` is only a fallback when that header is
+absent. One token per client, and the only client is Grok Bot. The file
+`outside-agents-tailnet.json` (mode 0600, beside `outside-agents.json`) stores the
+SHA-256 hash, never the token. The plaintext stays in memory only until relaunch.
+An unreadable file refuses every token and is not overwritten. Requests are POST.
+GET and DELETE return 405 with `Allow: POST`. Any `Origin` header is 403. A
+notification is 202 with an empty body. A request is 200 JSON. The approval prompt
+runs only after a valid token, and its text says the client is on the tailnet.
+Removing the agent revokes its hash. The MCP client name is "Grok Bot (Tailscale)", so it never shares an approval with a local client. Settings reads one `tailscale status --json` for the MagicDNS name, whether `CertDomains` is non-empty, and whether a peer name contains "grokbot", and it copies a setup block while the key is in memory. See [Grok Bot over Tailscale](grok-bot.md).
 
 For an installed, enabled App Agent with a known destination, the first explicit
 send opens the app and checks its conversation without requiring a separate
@@ -144,7 +166,9 @@ sending into a different saved conversation.
 send attempts/anchors, window frames, and staged attachment references. It does
 not import the user's entire Messages history. Staged attachments live beneath
 the selected app support folder. Web/CLI providers additionally retain their
-per-provider session files and comparison/session identifiers.
+per-provider session files and comparison/session identifiers. Remote control
+adds only `remote-identity.json`, `remote-device.json`, and `remote-settings.json`
+(owner-only); its projection of conversations is derived and never persisted.
 
 | Build | App support folder |
 | --- | --- |
@@ -185,7 +209,8 @@ state with a fresh empty model. See [update recovery](update-recovery.md).
 
 `scripts/generate_project.py` is the source of the committed Xcode project and
 shared `msgblast` scheme. It enumerates app Swift files recursively and test files
-in the test directories, separates Core into a framework, registers icons and
+in the test directories, separates Core and the remote wire protocol
+(`msgblast/RemoteProtocol/`, also buildable for iOS) into frameworks, registers icons and
 resources, pins Sparkle, and adds the cloudflared build phase. Update the generator
 for build-setting/resource changes rather than only editing generated output.
 

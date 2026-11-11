@@ -166,6 +166,7 @@ private struct BlastCommands: Commands {
 @main
 enum msgblastMain {
     @MainActor static func main() {
+        AgentControlCommand.runIfRequested()
         #if DEBUG
         if UpdateProbe.isLocalFixture {
             if ProcessInfo.processInfo.arguments.contains("--update-probe") { UpdateProbe.run() }
@@ -195,7 +196,11 @@ private final class AppStartup: ObservableObject {
             bundleURL: Bundle.main.bundleURL,
             homeURL: FileManager.default.homeDirectoryForCurrentUser, development: development)
         model = needsInstallation ? nil : AppModel()
-        if let model { model.coordinator = WindowCoordinator(model: model) }
+        if let model {
+            model.coordinator = WindowCoordinator(model: model)
+            // Loads remote control settings; listens only if the user turned it on.
+            _ = model.remote
+        }
         // Keep comparison menus in sync without constructing the model for an
         // uninstalled copy (its initializer starts Messages history polling).
         observation = model?.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }

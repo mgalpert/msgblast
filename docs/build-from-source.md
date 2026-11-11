@@ -67,27 +67,57 @@ The first run needs network access for pinned Sparkle, cloudflared, and CuaDrive
 It builds both variants by default; `--variant development` or `--variant demo`
 builds just one.
 
+Local previews are stamped by default with the local time as `YYYYMMDD-HHMM`.
+A build at 10:18 on 29 October 2026 writes `msgblast Dev 20261029-1018.app` and
+`msgblast Demo 20261029-1018.app`. Finder shows those same names,
+`msgblastBuildStamp` in Info.plist is `20261029-1018`, and the ZIPs are
+`msgblast-dev-<12-character sha>-20261029-1018.zip` and
+`msgblast-demo-<12-character sha>-20261029-1018.zip`. The remote variant is
+`msgblast Dev Remote 20261029-1018.app` with ZIP
+`msgblast-dev-remote-<12-character sha>-20261029-1018.zip`. Bundle IDs stay
+`com.msgblast.development`, `com.msgblast.demo`, and
+`com.msgblast.development.remote`, and the support folders stay `msgblast-Dev`,
+`msgblast-Demo`, and `msgblast-Dev-Remote`. Pass `--build-stamp none` to reproduce
+the CI names (`msgblast Dev.app`, `msgblast Demo.app`, and
+`msgblast Dev Remote.app`).
+
+`--variant development-remote` builds a third app, **msgblast Dev Remote**
+(`com.msgblast.development.remote`, saved state in
+`~/Library/Application Support/msgblast-Dev-Remote`), for live testing with the
+phone app. It works like msgblast Dev but keeps its own permissions, preferences and
+saved state, so it never touches an existing msgblast Dev. It is only built when you
+ask for it by name.
+
+Ad-hoc preview builds lose their Accessibility and Screen Recording grants on every
+rebuild, because their designated requirement is a code hash. Mac app agents such as
+Muse then report a permission error, or that the app is still updating its controls.
+Re-grant both after each rebuild, or re-sign the packaged preview with an Apple
+Development identity so the requirement stays stable across rebuilds signed the same way.
+
 | App | Icon / bundle ID | Behavior | Saved app state |
 | --- | --- | --- | --- |
-| `build/contributor-preview/msgblast Dev.app` | Blue-green / `com.msgblast.development` | Live accounts and Messages; production updates disabled | `~/Library/Application Support/msgblast-Dev` |
-| `build/contributor-preview/msgblast Demo.app` | Blue / `com.msgblast.demo` | Simulated conversations/accounts; production updates disabled | `~/Library/Application Support/msgblast-Demo` |
+| `build/contributor-preview/msgblast Dev 20261029-1018.app` | Blue-green / `com.msgblast.development` | Live accounts and Messages; production updates disabled | `~/Library/Application Support/msgblast-Dev` |
+| `build/contributor-preview/msgblast Demo 20261029-1018.app` | Blue / `com.msgblast.demo` | Simulated conversations/accounts; production updates disabled | `~/Library/Application Support/msgblast-Demo` |
+
+The stamp in the table is an example. Open the filename this build wrote.
 
 Start with Demo:
 
 ```sh
-open "build/contributor-preview/msgblast Demo.app"
+open "build/contributor-preview/msgblast Demo 20261029-1018.app"
 ```
 
 It uses sample Cedar, Lumen, and Orbit conversations and does not invoke installed
 provider CLIs or send real Messages. Rebuild after changes. Quit a running preview
-before rebuilding its output. These bundle IDs and support folders are shared by
-other local builds of the same variant; a separate output directory alone does
-not create a new state profile.
+before replacing it. A default rebuild writes a new stamped filename beside the
+previous one; delete the superseded copy and open the new path. These bundle IDs
+and support folders are shared by other local builds of the same variant; a
+separate output directory alone does not create a new state profile.
 
 For live integration work, open Dev when you intend to use real accounts:
 
 ```sh
-open "build/contributor-preview/msgblast Dev.app"
+open "build/contributor-preview/msgblast Dev 20261029-1018.app"
 ```
 
 Do not pass `--demo` or `--isolated-demo` to Dev. Its separate state does not make
@@ -142,6 +172,22 @@ settings out of the PR. They do not authorize live sends or production state res
 
 An unbundled `swift run` is not the supported GUI setup: Xcode registers the icon,
 Info.plist, entitlements, frameworks, resources, and helper.
+
+## iOS controller app
+
+`msgblastMobile` is the phone app for [remote control](remote-control.md). It needs
+the iOS 26 or later simulator runtime from Xcode. No team is committed; choose your
+own team in Xcode to run it on a device.
+
+```sh
+xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile -configuration Debug \
+  -derivedDataPath build/ios-mobile -destination 'platform=iOS Simulator,name=iPhone 17' build
+```
+
+Its logic is in `msgblastMobileKit`, which also builds for macOS. See
+[Testing](testing.md#remote-control) for its tests and
+[Remote control](remote-control.md#ux-iteration-against-the-demo-mac) for running it
+against the Demo profile.
 
 ## Dependencies and generated files
 
@@ -243,12 +289,12 @@ release defaults or the updater ZIP:
 python3 -m venv build/installer-venv
 build/installer-venv/bin/pip install -r scripts/installer-requirements.txt
 build/installer-venv/bin/python scripts/build_installer.py \
-  'build/contributor-preview/msgblast Demo.app' \
+  'build/contributor-preview/msgblast Demo 20261029-1018.app' \
   build/msgblast-demo-remotion.dmg --style remotion
 ```
 
 Build the isolated preview apps first using the command above. Choose an unused
-DMG output filename. The mounted volume contains the real blue `msgblast Demo.app`
+DMG output filename. The mounted volume contains that real blue Demo app
 and an Applications alias, positioned on the white static background. Inspect
 that separate volume without overwriting `/Applications/msgblast.app`; Demo has
 fixture mode, separate state and disabled updates. See
