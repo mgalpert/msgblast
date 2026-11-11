@@ -16,7 +16,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       PYTHONDONTWRITEBYTECODE: '1'
       BEFORE_SHA: d71d582c15b4a4f8b04dd3a64a8a1befa4208c7b
-      AFTER_SHA: 68024ba22ac592a48b39bd30956542d08df5754d
+      AFTER_SHA: b010b4cec7354147649f0994aa63d8a66d500758
       OUT: ${{ github.workspace }}/compare-out
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -79,6 +79,15 @@ jobs:
             mkdir -p "$OUT/$side-attachments"
             xcrun xcresulttool export attachments --path "$OUT/$side-ui.xcresult" --output-path "$OUT/$side-attachments" || true
           done
+
+      - name: Diff the onboarding choice screenshots
+        continue-on-error: true
+        run: |
+          for side in before after; do
+            file=$(python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(next(a['exportedFileName'] for t in m for a in t.get('attachments', []) if a.get('suggestedHumanReadableName','').startswith('Apps enabled and Messages unavailable')))" "$OUT/$side-attachments/manifest.json")
+            cp "$OUT/$side-attachments/$file" "$OUT/$side-onboarding-choices.png"
+          done
+          swift .github/compare/image_diff.swift "$OUT/before-onboarding-choices.png" "$OUT/after-onboarding-choices.png" "$OUT/onboarding-choices-diff.png" | tee "$OUT/onboarding-choices-diff.txt"
 
       - name: Upload comparison
         if: always()

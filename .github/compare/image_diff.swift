@@ -17,18 +17,20 @@ guard before.width == after.width, before.height == after.height else {
     print("size differs: \(before.width)x\(before.height) vs \(after.width)x\(after.height)")
     exit(0)
 }
-var differing = 0
+var differing: [(Int, Int)] = []
 var diff = after.bytes
 for pixel in 0..<(before.width * before.height) {
     let i = pixel * 4
     if before.bytes[i..<i + 4] != after.bytes[i..<i + 4] {
-        differing += 1
+        differing.append((pixel % before.width, pixel / before.width))
         diff[i] = 255; diff[i + 1] = 0; diff[i + 2] = 0; diff[i + 3] = 255
     } else {
-        diff[i + 3] = 60
+        let gray = UInt8(200 + (Int(after.bytes[i]) + Int(after.bytes[i + 1]) + Int(after.bytes[i + 2])) / 3 / 5)
+        diff[i] = gray; diff[i + 1] = gray; diff[i + 2] = gray; diff[i + 3] = 255
     }
 }
-print("\(before.width)x\(before.height): \(differing) differing pixels")
+print("\(before.width)x\(before.height): \(differing.count) differing pixels")
+print("first differing (x, y): \(differing.prefix(20).map { "(\($0.0), \($0.1))" }.joined(separator: " "))")
 diff.withUnsafeMutableBytes { buffer in
     let context = CGContext(data: buffer.baseAddress, width: before.width, height: before.height, bitsPerComponent: 8, bytesPerRow: before.width * 4,
                             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
