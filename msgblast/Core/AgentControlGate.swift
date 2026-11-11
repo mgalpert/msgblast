@@ -101,7 +101,7 @@ public enum AgentControlWire {
         guard let access = await gate.access(for: client, approve: approve) else {
             return reply(id, error: "notApproved", notApproved(client, gate: gate))
         }
-        guard isLive() else { return reply(id, error: "unavailable", "Outside agents is off in msgblast. Nothing was run.") }
+        guard isLive() else { return reply(id, error: "unavailable", "msgblast closed this session, because Outside agents was switched off or its key changed. Nothing was run.") }
         switch request["method"] as? String {
         case "tools/list": return reply(id, result: ["tools": toolList(access)])
         case "tools/call": return await call(request, id: id, access: access, host: host, client: client)
