@@ -33,18 +33,33 @@ public struct AgentControlEvent: Codable, Equatable, Sendable {
         events.filter { $0.seq > after && (comparisonID == nil || $0.comparisonID == comparisonID) }
     }
 
+    /// Waits held at once. A new wait past this ends the oldest one early with no events,
+    /// so a client that opens waits in a loop cannot grow memory without bound.
+    public static let maximumWaiters = 32
+    public var waiterCount: Int { waiters.count }
+    private var waiterOrder: [UUID] = []
+
     /// Events after `after`, waiting up to `timeout` for the first one. Empty on timeout.
     public func wait(after: Int, comparisonID: UUID?, timeout: Duration) async -> [AgentControlEvent] {
         let ready = matching(after: after, comparisonID: comparisonID)
-        guard ready.isEmpty else { return ready }
+        guard ready.isEmpty, timeout > .zero else { return ready }
         let id = UUID()
-        return await withCheckedContinuation { continuation in
+        var sleeper: Task<Void, Never>?
+        let found = await withCheckedContinuation { continuation in
+            waiterOrder.removeAll { waiters[$0] == nil }
+            while waiterOrder.count >= Self.maximumWaiters, let oldest = waiterOrder.first {
+                waiterOrder.removeFirst()
+                waiters.removeValue(forKey: oldest)?.resume([])
+            }
             waiters[id] = (after, comparisonID, { continuation.resume(returning: $0) })
-            Task { @MainActor in
+            waiterOrder.append(id)
+            sleeper = Task { @MainActor in
                 try? await Task.sleep(for: timeout)
-                guard let waiter = self.waiters.removeValue(forKey: id) else { return }
+                guard !Task.isCancelled, let waiter = self.waiters.removeValue(forKey: id) else { return }
                 waiter.resume([])
             }
         }
+        sleeper?.cancel()
+        return found
     }
 }
