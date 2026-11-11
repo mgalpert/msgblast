@@ -63,32 +63,52 @@ public final class LocalDatabase: @unchecked Sendable {
         }
     }
 
-    public func set(_ data: Data?, for key: String) {
-        lock.withLock {
+    /// Throws when the row could not be written: prepare, bind or step failed.
+    public func set(_ data: Data?, for key: String) throws {
+        try lock.withLock {
             var statement: OpaquePointer?
             defer { sqlite3_finalize(statement) }
             let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-            if let data {
-                guard sqlite3_prepare_v2(handle, "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", -1, &statement, nil) == SQLITE_OK else { return }
-                sqlite3_bind_text(statement, 1, key, -1, transient)
-                _ = data.withUnsafeBytes { sqlite3_bind_blob(statement, 2, $0.baseAddress, Int32($0.count), transient) }
-            } else {
-                guard sqlite3_prepare_v2(handle, "DELETE FROM kv WHERE key = ?", -1, &statement, nil) == SQLITE_OK else { return }
-                sqlite3_bind_text(statement, 1, key, -1, transient)
+            func check(_ code: Int32, _ expected: Int32 = SQLITE_OK) throws {
+                guard code == expected else { throw LocalDatabaseError.write(String(cString: sqlite3_errmsg(handle))) }
             }
-            sqlite3_step(statement)
+            if let data {
+                try check(sqlite3_prepare_v2(handle, "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", -1, &statement, nil))
+                try check(sqlite3_bind_text(statement, 1, key, -1, transient))
+                // An empty value is a zero-length blob; a nil pointer would bind NULL.
+                try check(data.isEmpty ? sqlite3_bind_zeroblob(statement, 2, 0)
+                          : data.withUnsafeBytes { sqlite3_bind_blob(statement, 2, $0.baseAddress, Int32($0.count), transient) })
+            } else {
+                try check(sqlite3_prepare_v2(handle, "DELETE FROM kv WHERE key = ?", -1, &statement, nil))
+                try check(sqlite3_bind_text(statement, 1, key, -1, transient))
+            }
+            try check(sqlite3_step(statement), SQLITE_DONE)
         }
     }
+
+    /// Tests: every later write fails in SQLite, as a full disk or I/O error would.
+    func failWrites() throws { try execute("PRAGMA query_only = 1") }
 
     /// Nil only when the key has no row; a failed read or decode throws.
     public func value<T: Decodable>(_ type: T.Type, _ key: String) throws -> T? {
         try data(key).map { try JSONDecoder().decode(T.self, from: $0) }
     }
-    public func setValue<T: Encodable>(_ value: T?, _ key: String) {
-        set(value.flatMap { try? JSONEncoder().encode($0) }, for: key)
+    /// Throws when the value cannot be encoded or written; nil deletes the row.
+    public func setValue<T: Encodable>(_ value: T?, _ key: String) throws {
+        let data: Data?
+        do { data = try value.map { try JSONEncoder().encode($0) } } catch { throw LocalDatabaseError.write("Could not encode \(key): \(error)") }
+        try set(data, for: key)
     }
 
     public func removeAll() { lock.withLock { _ = sqlite3_exec(handle, "DELETE FROM kv", nil, nil, nil) } }
 }
 
-public enum LocalDatabaseError: Error, Equatable { case open(String), query(String) }
+public enum LocalDatabaseError: Error, Equatable, LocalizedError {
+    case open(String), query(String), write(String)
+    public var errorDescription: String? {
+        switch self {
+        case .write: "This iPhone couldn't save the message, so it wasn't sent. Try again."
+        case .open, .query: nil
+        }
+    }
+}

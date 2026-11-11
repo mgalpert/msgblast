@@ -37,21 +37,23 @@ struct MsgblastMobileApp: App {
                 }
             }
             .onOpenURL { url in if url.scheme == RemotePairingOffer.scheme { incomingLink = url.absoluteString } }
-            .onChange(of: scenePhase) { _, phase in
-                guard !Self.designFixture, let app = launch.app else { return }
-                switch phase {
-                // `connect()` keeps a session that is still up, so coming back never loses a send in flight.
-                case .active: backgroundFinish.resume(); app.connection.startBrowsing(); app.connection.connect()
-                case .background:
-                    app.store.saveNow()
-                    if app.hasPendingSends { backgroundFinish.begin(app) } else { app.connection.stop() }
-                default: break
-                }
-            }
+            .onChange(of: scenePhase) { _, phase in scenePhaseChanged(phase) }
             .task {
                 // Simulator and UX iteration: `-pairLink msgblast://pair?offer=…` pairs at launch.
                 if let link = UserDefaults.standard.string(forKey: "pairLink"), let app = launch.app, app.connection.pairedMac == nil { incomingLink = link }
             }
+        }
+    }
+
+    private func scenePhaseChanged(_ phase: ScenePhase) {
+        guard !Self.designFixture, let app = launch.app else { return }
+        switch phase {
+        // `connect()` keeps a session that is still up, so coming back never loses a send in flight.
+        case .active: backgroundFinish.resume(); app.connection.startBrowsing(); app.connection.connect()
+        case .background:
+            app.store.saveNow()
+            if app.hasPendingSends { backgroundFinish.begin(app) } else { app.connection.stop() }
+        default: break
         }
     }
 }

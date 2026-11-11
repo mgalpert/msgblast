@@ -53,53 +53,72 @@ public final class RemoteClientDriver {
         var outgoing: [Data] = [], events: [Event] = []
         for payload in try decoder.append(bytes) {
             guard channel != nil else {
-                switch try RemoteProtocol.decoder().decode(RemoteHandshakeMessage.self, from: payload) {
-                case .serverHello(let server):
-                    switch mode {
-                    case .pair(let offer, _, _): channel = try handshake.complete(with: server, pinnedIdentityKeyHash: offer.identityKeySHA256)
-                    case .resume(_, _, let key): channel = try handshake.complete(with: server, pinnedIdentityKey: key)
-                    }
-                    macIdentityKey = server.identityKey
-                    if case .resume(let deviceID, let key, _) = mode {
-                        outgoing.append(try frame(.authenticate(RemoteAuthenticate(deviceID: deviceID, signature: try key.remoteSignature(for: channel!.transcript)))))
-                    }
-                case .error(let error): events.append(.error(error))
-                case .hello: throw RemoteProtocolError.unexpectedMessage("hello")
-                }
+                try receiveHandshake(payload, outgoing: &outgoing, events: &events)
                 continue
             }
             var channel = channel!
             let message = try channel.open(payload)
             self.channel = channel
-            switch message {
-            case .pairChallenge(let challenge):
-                guard case .pair(let offer, let name, let key) = mode else { throw RemoteProtocolError.unexpectedMessage("pairChallenge") }
-                let publicKey = key.publicKeyX963
-                let proof = RemoteHandshake.pairingProof(code: offer.code, challenge: challenge.challenge, transcript: channel.transcript, devicePublicKey: publicKey)
-                let signature = try key.remoteSignature(for: RemoteHandshake.pairingSignedData(transcript: channel.transcript, challenge: challenge.challenge))
-                outgoing.append(try frame(.pairResponse(RemotePairResponse(deviceName: name, devicePublicKey: publicKey, proof: proof, signature: signature))))
-            case .pairComplete(let complete):
-                authenticated = true
-                events.append(.paired(complete, macIdentityKey: macIdentityKey ?? Data()))
-                outgoing.append(try frame(.subscribe(sinceSeq: sinceSeq)))
-            case .authenticated(let id):
-                authenticated = true
-                events.append(.authenticated(deviceID: id))
-                outgoing.append(try frame(.subscribe(sinceSeq: sinceSeq)))
-            case .snapshot(let snapshot):
-                if snapshot.partIndex == snapshot.partCount - 1 { sinceSeq = snapshot.seq }
-                events.append(.snapshot(snapshot))
-            case .events(let list, let latest):
-                sinceSeq = latest
-                events.append(.events(list, latestSeq: latest))
-            case .commandResult(let result): events.append(.commandResult(result))
-            case .pong(let nonce, let seq): events.append(.pong(nonce: nonce, seq: seq))
-            case .ping(let nonce): outgoing.append(try frame(.pong(nonce: nonce, seq: sinceSeq ?? 0)))
-            case .error(let error): events.append(.error(error))
-            case .pairResponse, .authenticate, .subscribe, .command, .unknown: break
-            }
+            let answered = try receiveSessionReply(message, transcript: channel.transcript, outgoing: &outgoing, events: &events)
+            if !answered { receiveUpdate(message, events: &events) }
         }
         return (outgoing, events)
+    }
+
+    /// Snapshots, events, results, pongs and errors: reported to the caller, never answered.
+    private func receiveUpdate(_ message: RemoteMessage, events: inout [Event]) {
+        switch message {
+        case .snapshot(let snapshot):
+            if snapshot.partIndex == snapshot.partCount - 1 { sinceSeq = snapshot.seq }
+            events.append(.snapshot(snapshot))
+        case .events(let list, let latest):
+            sinceSeq = latest
+            events.append(.events(list, latestSeq: latest))
+        case .commandResult(let result): events.append(.commandResult(result))
+        case .pong(let nonce, let seq): events.append(.pong(nonce: nonce, seq: seq))
+        case .error(let error): events.append(.error(error))
+        case .pairChallenge, .pairComplete, .authenticated, .ping, .pairResponse, .authenticate, .subscribe, .command, .unknown: break
+        }
+    }
+
+    /// A plaintext frame before the session keys exist.
+    private func receiveHandshake(_ payload: Data, outgoing: inout [Data], events: inout [Event]) throws {
+        switch try RemoteProtocol.decoder().decode(RemoteHandshakeMessage.self, from: payload) {
+        case .serverHello(let server):
+            switch mode {
+            case .pair(let offer, _, _): channel = try handshake.complete(with: server, pinnedIdentityKeyHash: offer.identityKeySHA256)
+            case .resume(_, _, let key): channel = try handshake.complete(with: server, pinnedIdentityKey: key)
+            }
+            macIdentityKey = server.identityKey
+            if case .resume(let deviceID, let key, _) = mode {
+                outgoing.append(try frame(.authenticate(RemoteAuthenticate(deviceID: deviceID, signature: try key.remoteSignature(for: channel!.transcript)))))
+            }
+        case .error(let error): events.append(.error(error))
+        case .hello: throw RemoteProtocolError.unexpectedMessage("hello")
+        }
+    }
+
+    /// Pairing, authentication and pings, which the driver answers itself. False for other messages.
+    private func receiveSessionReply(_ message: RemoteMessage, transcript: Data, outgoing: inout [Data], events: inout [Event]) throws -> Bool {
+        switch message {
+        case .pairChallenge(let challenge):
+            guard case .pair(let offer, let name, let key) = mode else { throw RemoteProtocolError.unexpectedMessage("pairChallenge") }
+            let publicKey = key.publicKeyX963
+            let proof = RemoteHandshake.pairingProof(code: offer.code, challenge: challenge.challenge, transcript: transcript, devicePublicKey: publicKey)
+            let signature = try key.remoteSignature(for: RemoteHandshake.pairingSignedData(transcript: transcript, challenge: challenge.challenge))
+            outgoing.append(try frame(.pairResponse(RemotePairResponse(deviceName: name, devicePublicKey: publicKey, proof: proof, signature: signature))))
+        case .pairComplete(let complete):
+            authenticated = true
+            events.append(.paired(complete, macIdentityKey: macIdentityKey ?? Data()))
+            outgoing.append(try frame(.subscribe(sinceSeq: sinceSeq)))
+        case .authenticated(let id):
+            authenticated = true
+            events.append(.authenticated(deviceID: id))
+            outgoing.append(try frame(.subscribe(sinceSeq: sinceSeq)))
+        case .ping(let nonce): outgoing.append(try frame(.pong(nonce: nonce, seq: sinceSeq ?? 0)))
+        default: return false
+        }
+        return true
     }
 }
 

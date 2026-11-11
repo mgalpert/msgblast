@@ -48,6 +48,31 @@ final class RemoteProjectionTests: XCTestCase {
         XCTAssertEqual(Set(state.attempts.map(\.status)), [.submitted, .uncertain, .waiting])
     }
 
+    /// The phone's unread dot for an app, website, CLI or bot reply needs the agent, the role and a
+    /// transcript position that only grows: the Mac's transcripts carry no time.
+    func testTranscriptRepliesCarryWhatUnreadNeeds() throws {
+        let (base, comparison, _) = fixture()
+        var input = base
+        let cid = comparison.id.uuidString
+        func turn(_ state: RemoteProjectionState, _ id: String) throws -> RemoteTurn { try XCTUnwrap(state.turns.first { $0.id == id }, id) }
+        let draft = try turn(RemoteProjectionBuilder.state(from: input), "w:claude:\(cid):1")
+        XCTAssertEqual(draft.agentID, "claude")
+        XCTAssertEqual(draft.role, .assistant)
+        XCTAssertEqual(draft.ordinal, 1)
+        XCTAssertNil(draft.created, "A website transcript has no time on the Mac; the phone reads it by position")
+        input.webHistories[comparison.id]?[.claude]?.append(contentsOf: [WebPageMessage(id: "node-3", role: "user", text: "More?"),
+                                                                       WebPageMessage(id: "node-4", role: "assistant", text: "Later")])
+        input.webHistories[comparison.id]?[.codexCLI]?.append(WebPageMessage(id: "uuid-b", role: "assistant", text: "Native again"))
+        let after = RemoteProjectionBuilder.state(from: input)
+        XCTAssertEqual(try turn(after, "w:claude:\(cid):1").ordinal, 1, "An earlier reply keeps its position")
+        let newer = try turn(after, "w:claude:\(cid):3")
+        XCTAssertEqual(newer.agentID, "claude")
+        XCTAssertEqual(newer.role, .assistant)
+        XCTAssertGreaterThan(newer.ordinal, draft.ordinal, "A newer reply is further along its agent's transcript")
+        XCTAssertGreaterThan(try turn(after, "w:codexCLI:\(cid):uuid-b").ordinal, try turn(after, "w:codexCLI:\(cid):uuid-a").ordinal, "Native transcripts too")
+        XCTAssertEqual(try turn(after, "w:codexCLI:\(cid):uuid-b").agentID, "codexCLI")
+    }
+
     func testTapbacksAttachToTheirTurnsAndUpdateThem() throws {
         var (input, comparison, member) = fixture()
         let journal = RemoteChangeJournal(capacity: 50, startingSeq: 0)

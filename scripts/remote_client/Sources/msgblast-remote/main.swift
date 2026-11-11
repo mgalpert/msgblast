@@ -156,68 +156,79 @@ final class Session: @unchecked Sendable {
     func handle(_ event: RemoteClientDriver.Event) {
         record(event)
         switch event {
-        case .paired(let complete, let macKey):
-            guard let offer = pairingOffer, case .pair(_, _, let key) = modeKey else { return }
-            state = ClientState(macName: complete.macName, deviceID: complete.deviceID, deviceKey: (key as! P256.Signing.PrivateKey).rawRepresentation,
-                                macIdentityKey: macKey, host: chosenHost, port: offer.port, spkiSHA256: offer.spkiSHA256, sinceSeq: nil)
-            saveState(state!)
-            print("Paired with \(complete.macName) as device \(complete.deviceID). State saved to \(statePath.path).")
-            onAuthenticated?(self)
+        case .paired(let complete, let macKey): handlePaired(complete, macKey: macKey)
         case .authenticated(let id):
             print("Connected to \(state?.macName ?? "Mac") as \(id).")
             onAuthenticated?(self)
-        case .snapshot(let snapshot):
-            if json { printJSON(snapshot) } else {
-                if snapshot.partIndex == 0 {
-                    let status = snapshot.macStatus
-                    print("Snapshot seq \(snapshot.seq) · \(status.macName) (\(status.variant.rawValue)) · \(status.locked ? "LOCKED" : "unlocked") · \(status.awake ? "awake" : "asleep") · keep-awake \(status.keepAwakeHeld ? "held" : "not held") · iMessage sends \(status.messagesSendsAllowed ? "on" : "off")")
-                    print("Agents (\(snapshot.agents.count)), grid: \(snapshot.grid.visibleAgentIDs.joined(separator: ", "))")
-                    snapshot.agents.forEach { print(describe($0)) }
-                    print("Conversations (\(snapshot.conversations.count)):")
-                    for conversation in snapshot.conversations.prefix(20) {
-                        print("  \(conversation.id) · \(conversation.title) · \(conversation.agentIDs.count) agents · \(conversation.endedAt == nil ? "active" : "ended")\(conversation.canEnd ? "" : " · end needs Mac") · unresolved \(conversation.unresolvedAttemptCount)")
-                    }
-                }
-                print("Turns in part \(snapshot.partIndex + 1)/\(snapshot.partCount): \(snapshot.turns.count) · attempts: \(snapshot.attempts.count)")
-            }
-            if snapshot.partIndex == snapshot.partCount - 1 {
-                snapshotSeen = true
-                persistSeq()
-                if once && pendingCommand == nil { exit(0) }
-            }
-        case .events(let events, let latest):
-            for event in events {
-                if json { printJSON(event); continue }
-                switch event.change {
-                case .turnUpsert(let turn): print("[\(event.seq)] turn \(turn.agentID ?? "you") \(turn.role.rawValue): \(turn.text.prefix(160))")
-                case .attemptUpsert(let attempt): print("[\(event.seq)] attempt \(attempt.agentID) → \(attempt.status.rawValue)\(attempt.detail.map { " (\($0))" } ?? "")")
-                case .agentUpsert(let agent): print("[\(event.seq)] agent\n" + describe(agent))
-                case .macStatus(let status): print("[\(event.seq)] Mac \(status.locked ? "locked" : "unlocked"), \(status.awake ? "awake" : "asleep"), keep-awake \(status.keepAwakeHeld ? "held" : "not held"), sending \(status.sendingAgentIDs)")
-                case .conversationUpsert(let conversation): print("[\(event.seq)] conversation \(conversation.id) \(conversation.title)")
-                default: print("[\(event.seq)] \(event.change.kind)")
-                }
-            }
-            driver.sinceSeq = latest
-            persistSeq()
-            if events.isEmpty && !json { print("Up to date at seq \(latest).") }
-            // A resumed session starts with the missed events (possibly none).
-            if once && pendingCommand == nil && !snapshotSeen { exit(0) }
-        case .commandResult(let result):
-            if json { printJSON(result) } else {
-                print("Command \(result.clientCommandID): \(result.outcome.rawValue)\(result.code.map { " [\($0.rawValue)]" } ?? "")\(result.replayed ? " (replayed)" : "")\(result.message.map { " – \($0)" } ?? "")")
-                if let id = result.conversationID { print("  conversation \(id)") }
-                for (agent, status) in result.agentStatuses.sorted(by: { $0.key < $1.key }) { print("  \(agent): \(status.rawValue)") }
-                if let id = result.attachmentID { print("  attachment \(id)") }
-            }
-            if result.outcome != .accepted, result.clientCommandID == pendingCommand?.clientCommandID {
-                let code: Int32 = result.outcome == .applied ? 0 : 2
-                pendingCommand = nil
-                if linger > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + linger) { exit(code) } } else { exit(code) }
-            }
+        case .snapshot(let snapshot): showSnapshot(snapshot)
+        case .events(let events, let latest): showEvents(events, latest: latest)
+        case .commandResult(let result): showCommandResult(result)
         case .pong(let nonce, let seq): print("pong \(nonce) seq \(seq)")
         case .error(let error):
             print("Mac says \(error.code.rawValue): \(error.message)")
             if error.code != .macLocked { exit(3) }
+        }
+    }
+    func handlePaired(_ complete: RemotePairComplete, macKey: Data) {
+        guard let offer = pairingOffer, case .pair(_, _, let key) = modeKey else { return }
+        state = ClientState(macName: complete.macName, deviceID: complete.deviceID, deviceKey: (key as! P256.Signing.PrivateKey).rawRepresentation,
+                            macIdentityKey: macKey, host: chosenHost, port: offer.port, spkiSHA256: offer.spkiSHA256, sinceSeq: nil)
+        saveState(state!)
+        print("Paired with \(complete.macName) as device \(complete.deviceID). State saved to \(statePath.path).")
+        onAuthenticated?(self)
+    }
+    func showSnapshot(_ snapshot: RemoteSnapshot) {
+        if json { printJSON(snapshot) } else {
+            if snapshot.partIndex == 0 {
+                let status = snapshot.macStatus
+                print("Snapshot seq \(snapshot.seq) · \(status.macName) (\(status.variant.rawValue)) · \(status.locked ? "LOCKED" : "unlocked") · \(status.awake ? "awake" : "asleep") · keep-awake \(status.keepAwakeHeld ? "held" : "not held") · iMessage sends \(status.messagesSendsAllowed ? "on" : "off")")
+                print("Agents (\(snapshot.agents.count)), grid: \(snapshot.grid.visibleAgentIDs.joined(separator: ", "))")
+                snapshot.agents.forEach { print(describe($0)) }
+                print("Conversations (\(snapshot.conversations.count)):")
+                for conversation in snapshot.conversations.prefix(20) {
+                    print("  \(conversation.id) · \(conversation.title) · \(conversation.agentIDs.count) agents · \(conversation.endedAt == nil ? "active" : "ended")\(conversation.canEnd ? "" : " · end needs Mac") · unresolved \(conversation.unresolvedAttemptCount)")
+                }
+            }
+            print("Turns in part \(snapshot.partIndex + 1)/\(snapshot.partCount): \(snapshot.turns.count) · attempts: \(snapshot.attempts.count)")
+        }
+        if snapshot.partIndex == snapshot.partCount - 1 {
+            snapshotSeen = true
+            persistSeq()
+            if once && pendingCommand == nil { exit(0) }
+        }
+    }
+    func showEvents(_ events: [RemoteEvent], latest: UInt64) {
+        for event in events {
+            if json { printJSON(event); continue }
+            showChange(event)
+        }
+        driver.sinceSeq = latest
+        persistSeq()
+        if events.isEmpty && !json { print("Up to date at seq \(latest).") }
+        // A resumed session starts with the missed events (possibly none).
+        if once && pendingCommand == nil && !snapshotSeen { exit(0) }
+    }
+    func showChange(_ event: RemoteEvent) {
+        switch event.change {
+        case .turnUpsert(let turn): print("[\(event.seq)] turn \(turn.agentID ?? "you") \(turn.role.rawValue): \(turn.text.prefix(160))")
+        case .attemptUpsert(let attempt): print("[\(event.seq)] attempt \(attempt.agentID) → \(attempt.status.rawValue)\(attempt.detail.map { " (\($0))" } ?? "")")
+        case .agentUpsert(let agent): print("[\(event.seq)] agent\n" + describe(agent))
+        case .macStatus(let status): print("[\(event.seq)] Mac \(status.locked ? "locked" : "unlocked"), \(status.awake ? "awake" : "asleep"), keep-awake \(status.keepAwakeHeld ? "held" : "not held"), sending \(status.sendingAgentIDs)")
+        case .conversationUpsert(let conversation): print("[\(event.seq)] conversation \(conversation.id) \(conversation.title)")
+        default: print("[\(event.seq)] \(event.change.kind)")
+        }
+    }
+    func showCommandResult(_ result: RemoteCommandResult) {
+        if json { printJSON(result) } else {
+            print("Command \(result.clientCommandID): \(result.outcome.rawValue)\(result.code.map { " [\($0.rawValue)]" } ?? "")\(result.replayed ? " (replayed)" : "")\(result.message.map { " – \($0)" } ?? "")")
+            if let id = result.conversationID { print("  conversation \(id)") }
+            for (agent, status) in result.agentStatuses.sorted(by: { $0.key < $1.key }) { print("  \(agent): \(status.rawValue)") }
+            if let id = result.attachmentID { print("  attachment \(id)") }
+        }
+        if result.outcome != .accepted, result.clientCommandID == pendingCommand?.clientCommandID {
+            let code: Int32 = result.outcome == .applied ? 0 : 2
+            pendingCommand = nil
+            if linger > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + linger) { exit(code) } } else { exit(code) }
         }
     }
     var modeKey: RemoteClientDriver.Mode!
@@ -230,17 +241,22 @@ final class Session: @unchecked Sendable {
     }
 }
 
+/// The `send` verb's command, read from the remaining arguments.
+func sendCommandFromArguments() -> RemoteCommand {
+    guard let to = option("--to") else { fail("send needs --to AGENT") }
+    let conversation = option("--conversation").map { UUID(uuidString: $0) ?? { fail("Bad conversation id") }() }
+    let isPrivate = flag("--private")
+    let text = arguments.joined(separator: " ")
+    let agents = to.split(separator: ",").map(String.init)
+    if isPrivate { return RemoteCommand(action: .sendPrivate(conversationID: conversation, agentID: agents[0], text: text, attachmentIDs: [])) }
+    if let conversation { return RemoteCommand(action: .sendShared(conversationID: conversation, text: text, agentIDs: agents, attachmentIDs: [])) }
+    return RemoteCommand(action: .createConversation(text: text, agentIDs: agents, attachmentIDs: []))
+}
+
 func command(for verb: String) -> RemoteCommand? {
     switch verb {
     case "send":
-        guard let to = option("--to") else { fail("send needs --to AGENT") }
-        let conversation = option("--conversation").map { UUID(uuidString: $0) ?? { fail("Bad conversation id") }() }
-        let isPrivate = flag("--private")
-        let text = arguments.joined(separator: " ")
-        let agents = to.split(separator: ",").map(String.init)
-        if isPrivate { return RemoteCommand(action: .sendPrivate(conversationID: conversation, agentID: agents[0], text: text, attachmentIDs: [])) }
-        if let conversation { return RemoteCommand(action: .sendShared(conversationID: conversation, text: text, agentIDs: agents, attachmentIDs: [])) }
-        return RemoteCommand(action: .createConversation(text: text, agentIDs: agents, attachmentIDs: []))
+        return sendCommandFromArguments()
     case "end":
         guard let id = option("--conversation").flatMap(UUID.init(uuidString:)) else { fail("end needs --conversation UUID") }
         return RemoteCommand(action: .endConversation(conversationID: id))

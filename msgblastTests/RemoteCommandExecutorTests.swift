@@ -383,6 +383,21 @@ final class RemoteCommandExecutorTests: XCTestCase {
         XCTAssertEqual(host.keepAwake, [true])
         do { let result = await executor.execute(RemoteCommand(action: .requestReport(conversationID: ended))); XCTAssertEqual(result.code, .unknownConversation) }
     }
+
+    func testAStuckPreparationReturnsByTheDeadline() async {
+        // Preparation that ignores cancellation, like a page that never finishes loading.
+        let stuck = Task { await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in DispatchQueue.global().asyncAfter(deadline: .now() + 3) { done.resume() } } }
+        let start = ContinuousClock.now
+        await RemoteDeadline.wait(for: stuck, until: start + .milliseconds(100))
+        let elapsed = ContinuousClock.now - start
+        XCTAssertGreaterThanOrEqual(elapsed, .milliseconds(50), "Waited for the deadline")
+        XCTAssertLessThan(elapsed, .seconds(1), "Returns at the deadline without waiting for the stuck work")
+
+        let quick = Task {}
+        let quickStart = ContinuousClock.now
+        await RemoteDeadline.wait(for: quick, until: quickStart + .seconds(5))
+        XCTAssertLessThan(ContinuousClock.now - quickStart, .seconds(1), "Finished work returns before the deadline")
+    }
 }
 
 private extension RemoteAction {

@@ -78,71 +78,14 @@ struct ConversationView: View {
         let turns = presenter.turns(in: conversationID, selection: selection)
         let pinned = presenter.pinnedPrompt(for: conversationID, selection: selection)
         return ScrollViewReader { proxy in
-            ScrollView {
-                // Messages anchors the thread to the bottom: a short thread sits just above the
-                // compose bar (the spacer takes the slack), a long one scrolls as usual.
-                VStack(alignment: .leading, spacing: 0) {
-                    // A submitted request shows as typing below; the row is for Stop or review.
-                    ForEach(conversation.incompleteAttempts.filter { ![.waiting, .submitted].contains(app.store.projection.attempts[$0.attemptID]?.status) }, id: \.attemptID) { incomplete in
-                        incompleteRow(incomplete).padding(.bottom, Space.gap).padding(.horizontal, Space.screen)
-                    }
-                    Spacer(minLength: 0)
-                // Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs (and
-                // anything after a status row) are 8 pt apart, and a time header has 12 pt
-                // above and below. Rows set their own edges: bubbles sit 16 pt from the screen,
-                // a group's incoming avatar 8 pt. A plain stack, not a lazy one: estimated row
-                // heights made a long thread's height swing while it scrolled to its newest
-                // message, and it opened blank.
-                VStack(alignment: .leading, spacing: 0) {
-                    let latestMine = turns.last { $0.role == .user }?.id
-                    let isGroup = conversation.agentIDs.count > 1 && selection.count != 1
-                    ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
-                        let previous = index == 0 ? nil : turns[index - 1]
-                        let next = index + 1 < turns.count ? turns[index + 1] : nil
-                        let header = turn.created.flatMap { ProjectionPresenter.timeHeader($0, previous: previous?.created) }
-                        let nextHeader = next?.created.flatMap { ProjectionPresenter.timeHeader($0, previous: turn.created) }
-                        if let header {
-                            Text(header).font(.scaled(Space.threadCaption, weight: .semibold, relativeTo: .caption2)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
-                                .padding(.top, index == 0 ? 0 : Space.separator).padding(.bottom, Space.separator)
-                        }
-                        let afterStatus = previous.map { $0.role == .user && !presenter.visibleChips(for: $0, selection: selection, isLatest: $0.id == latestMine, expanded: expanded.contains($0.id)).isEmpty } == true
-                        let continues = header == nil && !afterStatus && previous.map { Self.sameSender($0, turn) } == true
-                        let endsRun = nextHeader != nil || next.map { Self.sameSender(turn, $0) } != true
-                        bubble(turn, firstOfRun: !continues, lastOfRun: endsRun, isGroup: isGroup, isLatest: turn.id == latestMine, isPinned: turn.id == pinned?.id)
-                            .padding(.top, header != nil || previous == nil ? 0 : continues ? Space.run : Space.runGap)
-                            .id(turn.id)
-                    }
-                    ForEach(presenter.typingAgents(in: conversationID, selection: selection), id: \.self) { agent in
-                        TypingBubble(app: app, agentID: agent, name: presenter.shortName(agent), showsAvatar: isGroup)
-                            .padding(.leading, isGroup ? Space.threadAvatarEdge : Space.screen)
-                            .padding(.top, Space.runGap).id("typing-\(agent)")
-                    }
-                    if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap).padding(.horizontal, Space.screen) }
-                    if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section) }
-                }
-                Color.clear.frame(height: 0).id(Self.bottomID)
-                }
-                .padding(.vertical, Space.gap)
-                .frame(minHeight: visibleHeight, alignment: .bottom)
-                .coordinateSpace(.named(Self.threadSpace))
-            }
+            ScrollView { threadStack(conversation, turns: turns, pinned: pinned) }
             .scrollDismissesKeyboard(.interactively)
             // Content fades under the bars rather than tinting them (a photo under the header
             // must not turn the bar its colour).
             .scrollEdgeEffectStyle(.soft, for: .top)
             // Groups: the prompt that formed the group, pinned while it is scrolled away, in a
             // safe-area bar so the thread fades under it like under the navigation bar.
-            .safeAreaBar(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    if let pinned, showsPinnedRow {
-                        PinnedPromptRow(text: pinned.text, expanded: $pinnedExpanded)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pinnedRowHeight = $0 }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-                .animation(.snappy, value: showsPinnedRow)
-                .onChange(of: pinned != nil && !pinnedOnScreen, initial: true) { _, value in showsPinnedRow = value }
-            }
+            .safeAreaBar(edge: .top, spacing: 0) { pinnedBar(pinned) }
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .onScrollGeometryChange(for: ThreadGeometry.self) { geometry in
                 // `containerSize` is the area between the bars; `visibleRect` spans the insets too,
@@ -153,54 +96,17 @@ struct ConversationView: View {
                                settled: geometry.contentInsets.top > 0,
                                visibleTop: geometry.visibleRect.minY + geometry.contentInsets.top,
                                visibleBottom: geometry.visibleRect.maxY - geometry.contentInsets.bottom)
-            } action: { old, new in
-                visibleHeight = max(0, new.visible)
-                visibleSpan = new.visibleTop...max(new.visibleTop, new.visibleBottom)
-                guard new.settled else { return }
-                // Open on the newest message: a short thread is already bottom-aligned by the
-                // spacer; a long one scrolls to its end once.
-                if !openedAtBottom {
-                    openedAtBottom = true
-                    atBottom = true
-                    if new.content > new.visible + 1 { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
-                    return
-                }
-                // Rows measured late (the list is lazy) grew the thread: stay on the newest one.
-                if old.content != new.content, atBottom {
-                    proxy.scrollTo(Self.bottomID, anchor: .bottom)
-                    return
-                }
-                // The keyboard or the compose bar changed the visible height: keep the newest
-                // message in view, but only if the reader was already there.
-                if old.visible != new.visible, atBottom {
-                    withAnimation(.snappy) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
-                    return
-                }
-                atBottom = new.distanceFromBottom <= 40
-            }
+            } action: { old, new in scrollGeometryChanged(from: old, to: new, proxy: proxy) }
             .onChange(of: turns.last?.id) { _, _ in
                 if atBottom { withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }
                 app.store.markOpened(conversationID)
             }
-            .onChange(of: scrollTarget) { _, id in
-                guard let id else { return }
-                // Leaving the newest message: rows that load on the way must not pull it back.
-                atBottom = false
-                withAnimation(.snappy) { proxy.scrollTo(id, anchor: scrollAnchor) }
-                scrollAnchor = .center
-                scrollTarget = nil
-            }
+            .onChange(of: scrollTarget) { _, id in scrollToTarget(id, proxy: proxy) }
             .onChange(of: presenter.typingAgents(in: conversationID, selection: selection)) { _, _ in
                 if atBottom { withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) } }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            if conversation.endedAt == nil {
-                ComposeBar(app: app, conversationID: conversationID,
-                           recipients: .constant(ProjectionPresenter.recipients(selection: selection, members: conversation.agentIDs)), replyTo: $replyTo,
-                           selection: conversation.agentIDs.count > 1 ? $selection : nil, focusRequest: focusRequest, onSent: { _ in })
-            }
-        }
+        .safeAreaInset(edge: .bottom) { composeBar(conversation) }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: messagesToMarkRead(turns), initial: true) { _, turns in
@@ -213,39 +119,10 @@ struct ConversationView: View {
         .onAppear {
             app.store.markOpened(conversationID)
             if startFocused { focusRequest += 1 }
-            #if DEBUG
-            // Design review: `MSGBLAST_FIXTURE_DETAILS` opens the Details sheet.
-            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DETAILS"] != nil { showingDetails = true }
-            // `MSGBLAST_FIXTURE_REPLY` starts a reply to the first Claude response;
-            // `MSGBLAST_FIXTURE_FILTER=<id>,<id>` selects agents in the header.
-            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_REPLY"] != nil {
-                replyTo = presenter.turns(in: conversationID, agentID: nil).first { $0.role == .assistant && $0.agentID == "claude" }
-            }
-            // `MSGBLAST_FIXTURE_PHOTO` opens the first shared photo in the viewer.
-            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_PHOTO"] != nil, let first = presenter.sharedContent(in: conversationID).photos.first {
-                opening = .photo(first)
-            }
-            if let agents = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FILTER"] { selection = Set(agents.split(separator: ",").map(String.init)) }
-            // `MSGBLAST_FIXTURE_SCROLL=photo` scrolls the first message with photos up under the header:
-            // The message after it goes to the top, so the photos and the file row sit under the bars.
-            let all = presenter.turns(in: conversationID, agentID: nil)
-            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_SCROLL"] == "photo",
-               let index = all.firstIndex(where: { $0.attachments.contains { $0.mimeType?.hasPrefix("image/") == true } }), index + 1 < all.count {
-                Task { try? await Task.sleep(for: .seconds(1.5)); scrollAnchor = .top; scrollTarget = all[index + 1].id }
-            }
-            #endif
+            applyDesignFixtures()
         }
         // Reply mode narrows the selection to that agent and restores it after.
-        .onChange(of: replyTo) { old, value in
-            if let agent = value?.agentID {
-                if old == nil { savedSelection = selection }
-                selection = [agent]
-                focusRequest += 1
-            } else if old != nil {
-                selection = savedSelection ?? []
-                savedSelection = nil
-            }
-        }
+        .onChange(of: replyTo) { old, value in replyChanged(from: old, to: value) }
         .toolbar {
             // Messages' header: avatars over a pill that opens Details (agents, report, end).
             ToolbarItem(placement: .principal) {
@@ -259,6 +136,158 @@ struct ConversationView: View {
         .sheet(item: $details) { summary in RequestDetailsSheet(summary: summary, name: presenter.name(summary.agentID)) }
     }
 
+    /// Messages anchors the thread to the bottom: a short thread sits just above the
+    /// compose bar (the spacer takes the slack), a long one scrolls as usual.
+    private func threadStack(_ conversation: RemoteConversation, turns: [RemoteTurn], pinned: RemoteTurn?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // A submitted request shows as typing below; the row is for Stop or review.
+            ForEach(conversation.incompleteAttempts.filter { ![.waiting, .submitted].contains(app.store.projection.attempts[$0.attemptID]?.status) }, id: \.attemptID) { incomplete in
+                incompleteRow(incomplete).padding(.bottom, Space.gap).padding(.horizontal, Space.screen)
+            }
+            Spacer(minLength: 0)
+            turnStack(conversation, turns: turns, pinned: pinned)
+            Color.clear.frame(height: 0).id(Self.bottomID)
+        }
+        .padding(.vertical, Space.gap)
+        .frame(minHeight: visibleHeight, alignment: .bottom)
+        .coordinateSpace(.named(Self.threadSpace))
+    }
+
+    /// Messages' rhythm: a sender's run is 2 pt apart and ends in a tail, runs (and
+    /// anything after a status row) are 8 pt apart, and a time header has 12 pt
+    /// above and below. Rows set their own edges: bubbles sit 16 pt from the screen,
+    /// a group's incoming avatar 8 pt. A plain stack, not a lazy one: estimated row
+    /// heights made a long thread's height swing while it scrolled to its newest
+    /// message, and it opened blank.
+    private func turnStack(_ conversation: RemoteConversation, turns: [RemoteTurn], pinned: RemoteTurn?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let latestMine = turns.last { $0.role == .user }?.id
+            let isGroup = conversation.agentIDs.count > 1 && selection.count != 1
+            ForEach(Array(turns.enumerated()), id: \.element.id) { index, _ in
+                turnRow(index, turns: turns, isGroup: isGroup, latestMine: latestMine, pinned: pinned)
+            }
+            ForEach(presenter.typingAgents(in: conversationID, selection: selection), id: \.self) { agent in
+                TypingBubble(app: app, agentID: agent, name: presenter.shortName(agent), showsAvatar: isGroup)
+                    .padding(.leading, isGroup ? Space.threadAvatarEdge : Space.screen)
+                    .padding(.top, Space.runGap).id("typing-\(agent)")
+            }
+            if let actionError { Text(actionError).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity).padding(.top, Space.gap).padding(.horizontal, Space.screen) }
+            if conversation.endedAt != nil { Text("Ended").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, Space.section) }
+        }
+    }
+
+    /// One turn: its time header when one is due, then its bubble.
+    @ViewBuilder private func turnRow(_ index: Int, turns: [RemoteTurn], isGroup: Bool, latestMine: String?, pinned: RemoteTurn?) -> some View {
+        let turn = turns[index]
+        let previous = index == 0 ? nil : turns[index - 1]
+        let next = index + 1 < turns.count ? turns[index + 1] : nil
+        let header = turn.created.flatMap { ProjectionPresenter.timeHeader($0, previous: previous?.created) }
+        let nextHeader = next?.created.flatMap { ProjectionPresenter.timeHeader($0, previous: turn.created) }
+        if let header {
+            Text(header).font(.scaled(Space.threadCaption, weight: .semibold, relativeTo: .caption2)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                .padding(.top, index == 0 ? 0 : Space.separator).padding(.bottom, Space.separator)
+        }
+        let afterStatus = previous.map { $0.role == .user && !presenter.visibleChips(for: $0, selection: selection, isLatest: $0.id == latestMine, expanded: expanded.contains($0.id)).isEmpty } == true
+        let continues = header == nil && !afterStatus && previous.map { Self.sameSender($0, turn) } == true
+        let endsRun = nextHeader != nil || next.map { Self.sameSender(turn, $0) } != true
+        bubble(turn, firstOfRun: !continues, lastOfRun: endsRun, isGroup: isGroup, isLatest: turn.id == latestMine, isPinned: turn.id == pinned?.id)
+            .padding(.top, header != nil || previous == nil ? 0 : continues ? Space.run : Space.runGap)
+            .id(turn.id)
+    }
+
+    /// The pinned prompt row, shown while the prompt's own text is off screen.
+    private func pinnedBar(_ pinned: RemoteTurn?) -> some View {
+        VStack(spacing: 0) {
+            if let pinned, showsPinnedRow {
+                PinnedPromptRow(text: pinned.text, expanded: $pinnedExpanded)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pinnedRowHeight = $0 }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: showsPinnedRow)
+        .onChange(of: pinned != nil && !pinnedOnScreen, initial: true) { _, value in showsPinnedRow = value }
+    }
+
+    private func scrollGeometryChanged(from old: ThreadGeometry, to new: ThreadGeometry, proxy: ScrollViewProxy) {
+        visibleHeight = max(0, new.visible)
+        visibleSpan = new.visibleTop...max(new.visibleTop, new.visibleBottom)
+        guard new.settled else { return }
+        // Open on the newest message: a short thread is already bottom-aligned by the
+        // spacer; a long one scrolls to its end once.
+        if !openedAtBottom {
+            openedAtBottom = true
+            atBottom = true
+            if new.content > new.visible + 1 { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+            return
+        }
+        // Rows measured late (the list is lazy) grew the thread: stay on the newest one.
+        if old.content != new.content, atBottom {
+            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+            return
+        }
+        // The keyboard or the compose bar changed the visible height: keep the newest
+        // message in view, but only if the reader was already there.
+        if old.visible != new.visible, atBottom {
+            withAnimation(.snappy) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+            return
+        }
+        atBottom = new.distanceFromBottom <= 40
+    }
+
+    private func scrollToTarget(_ id: String?, proxy: ScrollViewProxy) {
+        guard let id else { return }
+        // Leaving the newest message: rows that load on the way must not pull it back.
+        atBottom = false
+        withAnimation(.snappy) { proxy.scrollTo(id, anchor: scrollAnchor) }
+        scrollAnchor = .center
+        scrollTarget = nil
+    }
+
+    @ViewBuilder private func composeBar(_ conversation: RemoteConversation) -> some View {
+        if conversation.endedAt == nil {
+            ComposeBar(app: app, conversationID: conversationID,
+                       recipients: .constant(ProjectionPresenter.recipients(selection: selection, members: conversation.agentIDs)), replyTo: $replyTo,
+                       selection: conversation.agentIDs.count > 1 ? $selection : nil, focusRequest: focusRequest, onSent: { _ in })
+        }
+    }
+
+    /// Reply mode narrows the selection to that agent and restores it after.
+    private func replyChanged(from old: RemoteTurn?, to value: RemoteTurn?) {
+        if let agent = value?.agentID {
+            if old == nil { savedSelection = selection }
+            selection = [agent]
+            focusRequest += 1
+        } else if old != nil {
+            selection = savedSelection ?? []
+            savedSelection = nil
+        }
+    }
+
+    /// Design review only; does nothing in release builds.
+    private func applyDesignFixtures() {
+        #if DEBUG
+        // Design review: `MSGBLAST_FIXTURE_DETAILS` opens the Details sheet.
+        if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DETAILS"] != nil { showingDetails = true }
+        // `MSGBLAST_FIXTURE_REPLY` starts a reply to the first Claude response;
+        // `MSGBLAST_FIXTURE_FILTER=<id>,<id>` selects agents in the header.
+        if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_REPLY"] != nil {
+            replyTo = presenter.turns(in: conversationID, agentID: nil).first { $0.role == .assistant && $0.agentID == "claude" }
+        }
+        // `MSGBLAST_FIXTURE_PHOTO` opens the first shared photo in the viewer.
+        if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_PHOTO"] != nil, let first = presenter.sharedContent(in: conversationID).photos.first {
+            opening = .photo(first)
+        }
+        if let agents = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FILTER"] { selection = Set(agents.split(separator: ",").map(String.init)) }
+        // `MSGBLAST_FIXTURE_SCROLL=photo` scrolls the first message with photos up under the header:
+        // The message after it goes to the top, so the photos and the file row sit under the bars.
+        let all = presenter.turns(in: conversationID, agentID: nil)
+        if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_SCROLL"] == "photo",
+           let index = all.firstIndex(where: { $0.attachments.contains { $0.mimeType?.hasPrefix("image/") == true } }), index + 1 < all.count {
+            Task { try? await Task.sleep(for: .seconds(1.5)); scrollAnchor = .top; scrollTarget = all[index + 1].id }
+        }
+        #endif
+    }
+
     private static let bottomID = "thread-bottom"
     private static let threadSpace = "thread"
 
@@ -268,9 +297,6 @@ struct ConversationView: View {
     /// sits beside the last bubble of the run, and the run starts with the sender's name.
     private func bubble(_ turn: RemoteTurn, firstOfRun: Bool, lastOfRun: Bool, isGroup: Bool, isLatest: Bool, isPinned: Bool = false) -> some View {
         let mine = turn.role == .user
-        let text = turn.text.isEmpty ? turn.attachments.map(\.filename).joined(separator: ", ") : turn.text
-        let all = mine ? presenter.chips(for: turn, selection: selection) : []
-        let notSent = all.first { $0.state == .notSent }
         let showsAvatar = isGroup && !mine
         let maxBubble = width * Space.bubbleMax
         let avatarColumn = showsAvatar ? Space.avatarThread + Space.beside : 0
@@ -282,115 +308,141 @@ struct ConversationView: View {
                     .padding(.bottom, Space.attached)
             }
             if mine, let quoted = replyPresenter.quotedTurn(for: turn), let agent = quoted.agentID {
-                // The response this message replied to, as Messages shows a quote.
-                Button { scrollTarget = quoted.id } label: {
-                    HStack(spacing: Space.gap) {
-                        RoundedRectangle(cornerRadius: 1).fill(.tint).frame(width: Space.hairline)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(presenter.shortName(agent)).font(.scaled(Space.quoteText, weight: .semibold, relativeTo: .caption2))
-                            Text(quoted.text.components(separatedBy: .newlines).first ?? "").font(.scaled(Space.quoteText, relativeTo: .caption2)).lineLimit(1)
-                        }
-                        .foregroundStyle(.secondary)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: maxBubble, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .padding(.bottom, Space.quoteGap)
-                .accessibilityLabel("Reply to \(presenter.shortName(agent)): \(quoted.text)")
+                quoteButton(quoted, agent: agent, maxBubble: maxBubble)
             }
-            HStack(alignment: mine ? .center : .bottom, spacing: Space.beside) {
-                if showsAvatar {
-                    if lastOfRun, let agent = turn.agentID {
-                        AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarThread)
-                    } else {
-                        Color.clear.frame(width: Space.avatarThread, height: 1)
-                    }
-                }
-                // Messages' Not Delivered mark sits at the bubble's leading edge.
-                if let notSent { ChipView(chip: notSent, showsName: false, iconOnly: true, retry: retry(turn, notSent)) }
-                if SharedContent.isEmojiOnly(text) {
-                    // Messages: one to three emoji, nothing else, large and without a bubble.
-                    Text(text).font(.largeTitle).textSelection(.enabled)
-                        .contextMenu { emojiMenu(turn: turn, mine: mine, text: text) }
-                } else {
-                MaxWidth(width: maxBubble) {
-                    Text(LinkedText.attributed(text, mine: mine))
-                        // Where the prompt's text sits in the thread (not its photos), so the
-                        // pinned row shows while the text is away. Content coordinates stay valid
-                        // after the row unloads.
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.threadSpace)) } action: { frame in
-                            if isPinned { pinnedFrame = frame }
-                        }
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, Space.bubbleH).padding(.vertical, Space.bubbleV)
-                        .background(BubbleShape(mine: mine, tail: lastOfRun).fill(mine ? Color("Bubble") : Color(.secondarySystemBackground)))
-                        .foregroundStyle(mine ? .white : .primary)
-                        .contentShape(.contextMenuPreview, BubbleShape(mine: mine, tail: false))
-                        .contextMenu {
-                            // Replies to a response; your own messages offer Copy only, so nothing is sent twice by accident.
-                            if !mine, turn.agentID != nil, app.store.projection.conversations[conversationID]?.endedAt == nil {
-                                Button("Reply", systemImage: "arrowshape.turn.up.left") { replyTo = turn }
-                            }
-                            Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
-                        }
-                        .onTapGesture {
-                            guard mine else { return }
-                            withAnimation(.snappy) { if expanded.contains(turn.id) { expanded.remove(turn.id) } else { expanded.insert(turn.id) } }
-                        }
-                }
-                // Tapbacks overlap the top corner away from the tail: top-left on yours,
-                // top-right on a reply. They are never messages of their own.
-                .overlay(alignment: mine ? .topLeading : .topTrailing) {
-                    if let reactions = presenter.reactionSummary(for: turn) {
-                        // It dips only into the bubble's top inset, so it never covers the
-                        // first line, however large the text.
-                        ReactionStack(summary: reactions)
-                            .offset(x: mine ? -Space.gap : Space.gap, y: -(reactionPill - Space.bubbleV))
-                    }
-                }
-                }
-            }
-            // Room for the part of a tapback pill above the bubble, at every size.
-            .padding(.top, turn.reactions?.isEmpty == false ? reactionPill - Space.bubbleV : 0)
+            bubbleRow(turn, mine: mine, showsAvatar: showsAvatar, lastOfRun: lastOfRun, isPinned: isPinned, maxBubble: maxBubble)
             if !turn.attachments.isEmpty {
-                // Photos inline (up to 240 pt), other files as a row; both open on tap.
-                let files = turn.attachments.enumerated().map { index, file in
-                    SharedAttachment(turnID: turn.id, index: index, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount,
-                                     agentID: mine ? nil : turn.agentID, date: turn.created)
-                }
-                VStack(alignment: mine ? .trailing : .leading, spacing: Space.tight) {
-                    ForEach(files) { file in
-                        if file.isImage {
-                            Button { opening = .photo(file) } label: {
-                                AttachmentThumbnail(app: app, file: file)
-                                    .frame(width: Space.inlinePhoto, height: Space.inlinePhoto * 3 / 4)
-                                    .clipShape(RoundedRectangle(cornerRadius: Space.cornerBubble, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            Button { opening = .document(file) } label: {
-                                Label(file.filename, systemImage: "doc").font(.caption).lineLimit(1)
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                    }
-                }
-                .padding(.leading, avatarColumn)
-                .padding(.top, Space.tight)
+                attachmentStack(turn, mine: mine)
+                    .padding(.leading, avatarColumn)
+                    .padding(.top, Space.tight)
             }
             if mine {
-                let visible = presenter.visibleChips(for: turn, selection: selection, isLatest: isLatest, expanded: expanded.contains(turn.id))
-                if !visible.isEmpty {
-                    StatusGlyphRow(app: app, chips: visible, retry: { chip in chip.state == .notSent ? retry(turn, chip) : nil })
-                        .padding(.top, Space.attached)
-                }
+                statusRow(turn, isLatest: isLatest)
             }
         }
         .padding(.leading, showsAvatar ? Space.threadAvatarEdge : Space.screen)
         .padding(.trailing, Space.screen)
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
+    }
+
+    /// The response this message replied to, as Messages shows a quote.
+    private func quoteButton(_ quoted: RemoteTurn, agent: String, maxBubble: CGFloat) -> some View {
+        Button { scrollTarget = quoted.id } label: {
+            HStack(spacing: Space.gap) {
+                RoundedRectangle(cornerRadius: 1).fill(.tint).frame(width: Space.hairline)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(presenter.shortName(agent)).font(.scaled(Space.quoteText, weight: .semibold, relativeTo: .caption2))
+                    Text(quoted.text.components(separatedBy: .newlines).first ?? "").font(.scaled(Space.quoteText, relativeTo: .caption2)).lineLimit(1)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: maxBubble, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, Space.quoteGap)
+        .accessibilityLabel("Reply to \(presenter.shortName(agent)): \(quoted.text)")
+    }
+
+    /// The avatar slot, the Not Delivered mark and the bubble (or large emoji) on one line.
+    private func bubbleRow(_ turn: RemoteTurn, mine: Bool, showsAvatar: Bool, lastOfRun: Bool, isPinned: Bool, maxBubble: CGFloat) -> some View {
+        let text = turn.text.isEmpty ? turn.attachments.map(\.filename).joined(separator: ", ") : turn.text
+        let all = mine ? presenter.chips(for: turn, selection: selection) : []
+        let notSent = all.first { $0.state == .notSent }
+        return HStack(alignment: mine ? .center : .bottom, spacing: Space.beside) {
+            if showsAvatar {
+                if lastOfRun, let agent = turn.agentID {
+                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarThread)
+                } else {
+                    Color.clear.frame(width: Space.avatarThread, height: 1)
+                }
+            }
+            // Messages' Not Delivered mark sits at the bubble's leading edge.
+            if let notSent { ChipView(chip: notSent, showsName: false, iconOnly: true, retry: retry(turn, notSent)) }
+            if SharedContent.isEmojiOnly(text) {
+                // Messages: one to three emoji, nothing else, large and without a bubble.
+                Text(text).font(.largeTitle).textSelection(.enabled)
+                    .contextMenu { emojiMenu(turn: turn, mine: mine, text: text) }
+            } else {
+                textBubble(turn, text: text, mine: mine, lastOfRun: lastOfRun, isPinned: isPinned, maxBubble: maxBubble)
+            }
+        }
+        // Room for the part of a tapback pill above the bubble, at every size.
+        .padding(.top, turn.reactions?.isEmpty == false ? reactionPill - Space.bubbleV : 0)
+    }
+
+    /// The text bubble: selectable, with Reply and Copy, tapbacks on its top corner.
+    private func textBubble(_ turn: RemoteTurn, text: String, mine: Bool, lastOfRun: Bool, isPinned: Bool, maxBubble: CGFloat) -> some View {
+        MaxWidth(width: maxBubble) {
+            Text(LinkedText.attributed(text, mine: mine))
+                // Where the prompt's text sits in the thread (not its photos), so the
+                // pinned row shows while the text is away. Content coordinates stay valid
+                // after the row unloads.
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.threadSpace)) } action: { frame in
+                    if isPinned { pinnedFrame = frame }
+                }
+                .font(.body)
+                .textSelection(.enabled)
+                .padding(.horizontal, Space.bubbleH).padding(.vertical, Space.bubbleV)
+                .background(BubbleShape(mine: mine, tail: lastOfRun).fill(mine ? Color("Bubble") : Color(.secondarySystemBackground)))
+                .foregroundStyle(mine ? .white : .primary)
+                .contentShape(.contextMenuPreview, BubbleShape(mine: mine, tail: false))
+                .contextMenu {
+                    // Replies to a response; your own messages offer Copy only, so nothing is sent twice by accident.
+                    if !mine, turn.agentID != nil, app.store.projection.conversations[conversationID]?.endedAt == nil {
+                        Button("Reply", systemImage: "arrowshape.turn.up.left") { replyTo = turn }
+                    }
+                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+                }
+                .onTapGesture {
+                    guard mine else { return }
+                    withAnimation(.snappy) { if expanded.contains(turn.id) { expanded.remove(turn.id) } else { expanded.insert(turn.id) } }
+                }
+        }
+        // Tapbacks overlap the top corner away from the tail: top-left on yours,
+        // top-right on a reply. They are never messages of their own.
+        .overlay(alignment: mine ? .topLeading : .topTrailing) {
+            if let reactions = presenter.reactionSummary(for: turn) {
+                // It dips only into the bubble's top inset, so it never covers the
+                // first line, however large the text.
+                ReactionStack(summary: reactions)
+                    .offset(x: mine ? -Space.gap : Space.gap, y: -(reactionPill - Space.bubbleV))
+            }
+        }
+    }
+
+    /// Photos inline (up to 240 pt), other files as a row; both open on tap.
+    private func attachmentStack(_ turn: RemoteTurn, mine: Bool) -> some View {
+        let files = turn.attachments.enumerated().map { index, file in
+            SharedAttachment(turnID: turn.id, index: index, filename: file.filename, mimeType: file.mimeType, byteCount: file.byteCount,
+                             agentID: mine ? nil : turn.agentID, date: turn.created)
+        }
+        return VStack(alignment: mine ? .trailing : .leading, spacing: Space.tight) {
+            ForEach(files) { file in
+                if file.isImage {
+                    Button { opening = .photo(file) } label: {
+                        AttachmentThumbnail(app: app, file: file)
+                            .frame(width: Space.inlinePhoto, height: Space.inlinePhoto * 3 / 4)
+                            .clipShape(RoundedRectangle(cornerRadius: Space.cornerBubble, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button { opening = .document(file) } label: {
+                        Label(file.filename, systemImage: "doc").font(.caption).lineLimit(1)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+        }
+    }
+
+    /// Your message's send status, when any of it is showing.
+    @ViewBuilder private func statusRow(_ turn: RemoteTurn, isLatest: Bool) -> some View {
+        let visible = presenter.visibleChips(for: turn, selection: selection, isLatest: isLatest, expanded: expanded.contains(turn.id))
+        if !visible.isEmpty {
+            StatusGlyphRow(app: app, chips: visible, retry: { chip in chip.state == .notSent ? retry(turn, chip) : nil })
+                .padding(.top, Space.attached)
+        }
     }
 
     /// The long-press menu for a large emoji message: Reply to a response, Copy.

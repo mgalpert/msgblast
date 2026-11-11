@@ -11,7 +11,8 @@ struct InboxView: View {
     var launchScreen: LaunchScreen = .inbox
 
     private var presenter: ProjectionPresenter {
-        ProjectionPresenter(state: app.store.projection, commands: app.store.commands, lastOpened: app.store.lastOpened, unreadSince: app.store.unreadSince)
+        ProjectionPresenter(state: app.store.projection, commands: app.store.commands, lastOpened: app.store.lastOpened, unreadSince: app.store.unreadSince,
+                            readPositions: app.store.readPositions)
     }
 
     /// The row's title: the conversation's own (its first prompt, or the name it was given), for

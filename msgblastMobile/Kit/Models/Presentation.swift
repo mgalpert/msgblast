@@ -115,10 +115,14 @@ public struct ProjectionPresenter: Sendable {
     /// When each conversation was last opened on this phone, and when unread tracking began.
     public let lastOpened: [UUID: Date]
     public let unreadSince: Date?
+    /// Each agent's transcript position when the conversation was last opened, for undated replies.
+    public let readPositions: [UUID: [String: Int]]
     /// Replies made from this phone: command id → quoted turn id.
     public let replyTo: [UUID: String]
-    public init(state: ProjectionState, commands: [UUID: CommandRecord] = [:], lastOpened: [UUID: Date] = [:], unreadSince: Date? = nil, replyTo: [UUID: String] = [:]) {
-        self.state = state; self.commands = commands; self.lastOpened = lastOpened; self.unreadSince = unreadSince; self.replyTo = replyTo
+    public init(state: ProjectionState, commands: [UUID: CommandRecord] = [:], lastOpened: [UUID: Date] = [:], unreadSince: Date? = nil,
+                readPositions: [UUID: [String: Int]] = [:], replyTo: [UUID: String] = [:]) {
+        self.state = state; self.commands = commands; self.lastOpened = lastOpened; self.unreadSince = unreadSince
+        self.readPositions = readPositions; self.replyTo = replyTo
     }
 
     /// The response one of your turns replied to: a reply is a private send to that agent,
@@ -166,7 +170,7 @@ public struct ProjectionPresenter: Sendable {
                             // A direct row already shows the agent; only group previews name who replied.
                             preview: yours?.text ?? reply.map { conversation.agentIDs.count == 1 ? $0.text : "\(shortName($0.agentID ?? "")): \($0.text)" } ?? conversation.prompt, lastActivity: activity,
                             unconfirmed: conversation.unresolvedAttemptCount + unconfirmedCommands, ended: conversation.endedAt != nil,
-                            unread: isUnread(conversation.id, latestReply: reply?.created), fromYou: yours != nil)
+                            unread: isUnread(conversation.id), fromYou: yours != nil)
         }
         .sorted { ($0.lastActivity, $1.id.uuidString) > ($1.lastActivity, $0.id.uuidString) }
     }
@@ -196,6 +200,24 @@ public struct ProjectionPresenter: Sendable {
         guard let latestReply else { return false }
         let seen = [lastOpened[conversation], unreadSince].compactMap { $0 }.max() ?? .distantPast
         return latestReply > seen
+    }
+
+    /// Any reply this phone has not seen: a dated one newer than the last opening, or an undated
+    /// transcript reply (Mac app, website, CLI, bot) past its agent's position at the last opening.
+    public func isUnread(_ conversation: UUID) -> Bool {
+        let replies = state.turns.values.filter { $0.conversationID == conversation && $0.role == .assistant }
+        if isUnread(conversation, latestReply: replies.compactMap(\.created).max()) { return true }
+        return replies.contains { $0.created == nil && isUnreadByPosition($0) }
+    }
+
+    /// Before this phone kept positions for a conversation, its undated replies count as new only
+    /// when the conversation itself began after the last opening (or after tracking began).
+    func isUnreadByPosition(_ reply: RemoteTurn) -> Bool {
+        guard let agentID = reply.agentID else { return false }
+        guard let read = readPositions[reply.conversationID] else {
+            return isUnread(reply.conversationID, latestReply: state.conversations[reply.conversationID]?.created)
+        }
+        return reply.ordinal > read[agentID] ?? -1
     }
 
     /// Which chips a turn shows, as Messages shows delivery only where it matters: all of

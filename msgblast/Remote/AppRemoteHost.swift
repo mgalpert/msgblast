@@ -110,48 +110,60 @@ final class AppRemoteHost: RemoteCommandHost {
 
     private func send(_ plan: RemoteSendPlan, files: [MessageAttachment]) async -> RemoteHostResult {
         switch plan.kind {
-        case .newConversation:
-            let (recipients, sessions) = split(plan.agentIDs)
-            if sessions.isEmpty {
-                guard let id = await model.startBlast(text: plan.text, attachments: files, recipientIDs: Set(recipients), interactive: false) else {
-                    return .rejected(.failed, "Not sent")
-                }
-                return .applied(conversationID: id, statuses: statuses(id))
-            }
-            let text = plan.text
-            return await sharedSendWaitingForReadiness(SharedSendRequest(sessions: sessions, recipients: Set(recipients), existingID: nil, draft: text, attachments: [],
-                                                                         currentDraft: { text }, clearDraft: {}, interactive: false), followUpsBefore: nil)
-        case .sharedFollowUp:
-            guard let id = plan.conversationID, let comparison = model.comparison(id) else { return .rejected(.unknownConversation, "This conversation is gone from your Mac") }
-            let targets = plan.agentIDs.isEmpty
-                ? comparison.members.map { RemoteAgentIDs.messages($0.id) } + comparison.resolvedWebAgentIDs.filter { $0.provider.supportsSharedSubmissions }.map(\.id)
-                : plan.agentIDs
-            let (recipients, sessions) = split(targets)
-            let before = comparison.followUps.count
-            let text = plan.text
-            return await sharedSendWaitingForReadiness(SharedSendRequest(sessions: sessions.filter(\.isEnabled), recipients: Set(recipients), existingID: id, draft: text,
-                                                                         attachments: files, currentDraft: { text }, clearDraft: {}, interactive: false), followUpsBefore: before)
-        case .privateMessage:
-            guard let agentID = plan.agentIDs.first else { return .rejected(.invalidCommand, "Choose an agent") }
-            if let member = RemoteAgentIDs.messagesAgent(agentID) {
-                guard let id = plan.conversationID else {
-                    guard let created = await model.startBlast(text: plan.text, attachments: files, recipientIDs: [member], interactive: false) else { return .rejected(.failed, "Not sent") }
-                    return .applied(conversationID: created, statuses: statuses(created))
-                }
-                guard let comparison = model.comparison(id), comparison.members.contains(where: { $0.id == member }) else {
-                    return .rejected(.invalidCommand, "That agent isn't in this conversation")
-                }
-                let before = comparison.followUps.count
-                await model.followUpWithSuppliedDraft(id, only: member, recipients: nil, text: plan.text, attachments: files, newAttemptID: nil)
-                guard (model.comparison(id)?.followUps.count ?? before) > before else { return .rejected(.failed, "Not sent") }
-                return .applied(conversationID: id, statuses: statuses(id, followUpsBefore: before))
-            }
-            guard let session = session(agentID) else { return .rejected(.unknownAgent, "That agent is gone from your Mac") }
-            model.webBroadcastBusy = true
-            let (id, attempt) = await model.sendDirect(plan.text, to: session, existingID: plan.conversationID, interactive: false)
-            guard let attempt else { return .rejected(.failed, "Not sent", conversationID: id) }
-            return .applied(conversationID: id, statuses: [agentID: RemoteAttemptStatus(rawValue: attempt.status.rawValue) ?? .uncertain])
+        case .newConversation: return await sendNewConversation(plan, files: files)
+        case .sharedFollowUp: return await sendSharedFollowUp(plan, files: files)
+        case .privateMessage: return await sendPrivateMessage(plan, files: files)
         }
+    }
+
+    private func sendNewConversation(_ plan: RemoteSendPlan, files: [MessageAttachment]) async -> RemoteHostResult {
+        let (recipients, sessions) = split(plan.agentIDs)
+        if sessions.isEmpty {
+            guard let id = await model.startBlast(text: plan.text, attachments: files, recipientIDs: Set(recipients), interactive: false) else {
+                return .rejected(.failed, "Not sent")
+            }
+            return .applied(conversationID: id, statuses: statuses(id))
+        }
+        let text = plan.text
+        return await sharedSendWaitingForReadiness(SharedSendRequest(sessions: sessions, recipients: Set(recipients), existingID: nil, draft: text, attachments: [],
+                                                                     currentDraft: { text }, clearDraft: {}, interactive: false), followUpsBefore: nil)
+    }
+
+    private func sendSharedFollowUp(_ plan: RemoteSendPlan, files: [MessageAttachment]) async -> RemoteHostResult {
+        guard let id = plan.conversationID, let comparison = model.comparison(id) else { return .rejected(.unknownConversation, "This conversation is gone from your Mac") }
+        let targets = plan.agentIDs.isEmpty
+            ? comparison.members.map { RemoteAgentIDs.messages($0.id) } + comparison.resolvedWebAgentIDs.filter { $0.provider.supportsSharedSubmissions }.map(\.id)
+            : plan.agentIDs
+        let (recipients, sessions) = split(targets)
+        let before = comparison.followUps.count
+        let text = plan.text
+        return await sharedSendWaitingForReadiness(SharedSendRequest(sessions: sessions.filter(\.isEnabled), recipients: Set(recipients), existingID: id, draft: text,
+                                                                     attachments: files, currentDraft: { text }, clearDraft: {}, interactive: false), followUpsBefore: before)
+    }
+
+    private func sendPrivateMessage(_ plan: RemoteSendPlan, files: [MessageAttachment]) async -> RemoteHostResult {
+        guard let agentID = plan.agentIDs.first else { return .rejected(.invalidCommand, "Choose an agent") }
+        if let member = RemoteAgentIDs.messagesAgent(agentID) { return await sendPrivateToMessagesMember(plan, member: member, files: files) }
+        guard let session = session(agentID) else { return .rejected(.unknownAgent, "That agent is gone from your Mac") }
+        model.webBroadcastBusy = true
+        let (id, attempt) = await model.sendDirect(plan.text, to: session, existingID: plan.conversationID, interactive: false)
+        guard let attempt else { return .rejected(.failed, "Not sent", conversationID: id) }
+        return .applied(conversationID: id, statuses: [agentID: RemoteAttemptStatus(rawValue: attempt.status.rawValue) ?? .uncertain])
+    }
+
+    /// A private message to one Messages member: a new conversation, or a follow-up in this one.
+    private func sendPrivateToMessagesMember(_ plan: RemoteSendPlan, member: UUID, files: [MessageAttachment]) async -> RemoteHostResult {
+        guard let id = plan.conversationID else {
+            guard let created = await model.startBlast(text: plan.text, attachments: files, recipientIDs: [member], interactive: false) else { return .rejected(.failed, "Not sent") }
+            return .applied(conversationID: created, statuses: statuses(created))
+        }
+        guard let comparison = model.comparison(id), comparison.members.contains(where: { $0.id == member }) else {
+            return .rejected(.invalidCommand, "That agent isn't in this conversation")
+        }
+        let before = comparison.followUps.count
+        await model.followUpWithSuppliedDraft(id, only: member, recipients: nil, text: plan.text, attachments: files, newAttemptID: nil)
+        guard (model.comparison(id)?.followUps.count ?? before) > before else { return .rejected(.failed, "Not sent") }
+        return .applied(conversationID: id, statuses: statuses(id, followUpsBefore: before))
     }
 
     static let readinessWait: Duration = .seconds(20)
@@ -215,12 +227,7 @@ final class AppRemoteHost: RemoteCommandHost {
         let webAgents = model.webAgents
         // The Mac composer does the same when it shows these agents: open their chats, never launch apps.
         let preparing = Task { await RemoteErrorCapture.$current.withValue(capture) { _ = await webAgents.prepareComparison(id, for: sessions, startNativeApps: false) } }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await preparing.value }
-            group.addTask { try? await Task.sleep(until: deadline) }
-            await group.next()
-            group.cancelAll()
-        }
+        await RemoteDeadline.wait(for: preparing, until: deadline)
         let waiting = await notReadyReasons(sessions, timeout: max(.zero, deadline - ContinuousClock.now))
         return waiting.isEmpty ? .applied(conversationID: id) : .rejected(.notReady, "Not every agent was ready", conversationID: id, reasons: waiting)
     }

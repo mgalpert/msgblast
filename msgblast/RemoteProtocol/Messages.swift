@@ -115,26 +115,48 @@ public enum RemoteMessage: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try c.decode(String.self, forKey: .kind)
+        if let message = try Self.decodeSessionMessage(kind, from: c) {
+            self = message
+        } else {
+            self = try Self.decodeTrafficMessage(kind, from: c)
+        }
+    }
+    /// Pairing, authentication, subscription and snapshots; nil for any other kind.
+    private static func decodeSessionMessage(_ kind: String, from c: KeyedDecodingContainer<CodingKeys>) throws -> RemoteMessage? {
         switch kind {
-        case "pairChallenge": self = .pairChallenge(try c.decode(RemotePairChallenge.self, forKey: .payload))
-        case "pairResponse": self = .pairResponse(try c.decode(RemotePairResponse.self, forKey: .payload))
-        case "pairComplete": self = .pairComplete(try c.decode(RemotePairComplete.self, forKey: .payload))
-        case "authenticate": self = .authenticate(try c.decode(RemoteAuthenticate.self, forKey: .payload))
-        case "authenticated": self = .authenticated(deviceID: try c.decode(UUID.self, forKey: .deviceID))
-        case "subscribe": self = .subscribe(sinceSeq: try c.decodeIfPresent(UInt64.self, forKey: .sinceSeq))
-        case "snapshot": self = .snapshot(try c.decode(RemoteSnapshot.self, forKey: .payload))
-        case "events": self = .events(events: try c.decode([RemoteEvent].self, forKey: .events), latestSeq: try c.decode(UInt64.self, forKey: .latestSeq))
-        case "command": self = .command(try c.decode(RemoteCommand.self, forKey: .payload))
-        case "commandResult": self = .commandResult(try c.decode(RemoteCommandResult.self, forKey: .payload))
-        case "ping": self = .ping(nonce: try c.decode(UInt64.self, forKey: .nonce))
-        case "pong": self = .pong(nonce: try c.decode(UInt64.self, forKey: .nonce), seq: try c.decode(UInt64.self, forKey: .seq))
-        case "error": self = .error(try c.decode(RemoteErrorMessage.self, forKey: .payload))
-        default: self = .unknown(kind: kind)
+        case "pairChallenge": return .pairChallenge(try c.decode(RemotePairChallenge.self, forKey: .payload))
+        case "pairResponse": return .pairResponse(try c.decode(RemotePairResponse.self, forKey: .payload))
+        case "pairComplete": return .pairComplete(try c.decode(RemotePairComplete.self, forKey: .payload))
+        case "authenticate": return .authenticate(try c.decode(RemoteAuthenticate.self, forKey: .payload))
+        case "authenticated": return .authenticated(deviceID: try c.decode(UUID.self, forKey: .deviceID))
+        case "subscribe": return .subscribe(sinceSeq: try c.decodeIfPresent(UInt64.self, forKey: .sinceSeq))
+        case "snapshot": return .snapshot(try c.decode(RemoteSnapshot.self, forKey: .payload))
+        default: return nil
+        }
+    }
+    /// Events, commands, pings and errors; any other kind is kept as `unknown`.
+    private static func decodeTrafficMessage(_ kind: String, from c: KeyedDecodingContainer<CodingKeys>) throws -> RemoteMessage {
+        switch kind {
+        case "events": return .events(events: try c.decode([RemoteEvent].self, forKey: .events), latestSeq: try c.decode(UInt64.self, forKey: .latestSeq))
+        case "command": return .command(try c.decode(RemoteCommand.self, forKey: .payload))
+        case "commandResult": return .commandResult(try c.decode(RemoteCommandResult.self, forKey: .payload))
+        case "ping": return .ping(nonce: try c.decode(UInt64.self, forKey: .nonce))
+        case "pong": return .pong(nonce: try c.decode(UInt64.self, forKey: .nonce), seq: try c.decode(UInt64.self, forKey: .seq))
+        case "error": return .error(try c.decode(RemoteErrorMessage.self, forKey: .payload))
+        default: return .unknown(kind: kind)
         }
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(kind, forKey: .kind)
+        switch self {
+        case .pairChallenge, .pairResponse, .pairComplete, .authenticate, .authenticated, .subscribe, .snapshot:
+            try encodeSessionFields(into: &c)
+        case .events, .command, .commandResult, .ping, .pong, .error, .unknown:
+            try encodeTrafficFields(into: &c)
+        }
+    }
+    private func encodeSessionFields(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
         switch self {
         case .pairChallenge(let v): try c.encode(v, forKey: .payload)
         case .pairResponse(let v): try c.encode(v, forKey: .payload)
@@ -143,13 +165,18 @@ public enum RemoteMessage: Codable, Hashable, Sendable {
         case .authenticated(let id): try c.encode(id, forKey: .deviceID)
         case .subscribe(let since): try c.encodeIfPresent(since, forKey: .sinceSeq)
         case .snapshot(let v): try c.encode(v, forKey: .payload)
+        default: break
+        }
+    }
+    private func encodeTrafficFields(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        switch self {
         case .events(let events, let latest): try c.encode(events, forKey: .events); try c.encode(latest, forKey: .latestSeq)
         case .command(let v): try c.encode(v, forKey: .payload)
         case .commandResult(let v): try c.encode(v, forKey: .payload)
         case .ping(let nonce): try c.encode(nonce, forKey: .nonce)
         case .pong(let nonce, let seq): try c.encode(nonce, forKey: .nonce); try c.encode(seq, forKey: .seq)
         case .error(let v): try c.encode(v, forKey: .payload)
-        case .unknown: break
+        default: break
         }
     }
 }

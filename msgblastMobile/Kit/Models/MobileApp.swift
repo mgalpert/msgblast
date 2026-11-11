@@ -36,9 +36,9 @@ public final class MobileApp: ObservableObject {
         store = try MobileStore(database: database)
         let saved = try database.value(PairedMac.self, "pairedMac")
         if let makeTransport {
-            connection = MacConnection(paired: saved, keys: keys, savePaired: { database.setValue($0, "pairedMac") }, makeTransport: makeTransport)
+            connection = MacConnection(paired: saved, keys: keys, savePaired: { try? database.setValue($0, "pairedMac") }, makeTransport: makeTransport)
         } else {
-            connection = MacConnection(paired: saved, keys: keys, savePaired: { database.setValue($0, "pairedMac") })
+            connection = MacConnection(paired: saved, keys: keys, savePaired: { try? database.setValue($0, "pairedMac") })
         }
         keepAwake = defaults.object(forKey: "keepAwake") as? Bool ?? true
         lastConnectionState = connection.state
@@ -99,13 +99,14 @@ public final class MobileApp: ObservableObject {
             return
         }
         store.handle(event)
-        if case .commandResult(let result) = event, waiting[result.clientCommandID] != nil {
+        if case .commandResult(let result) = event, awaitsResult(result.clientCommandID) || requeries[result.clientCommandID] != nil {
             if result.outcome != .accepted {
                 requeries.removeValue(forKey: result.clientCommandID)?.task.cancel()
                 waiting.removeValue(forKey: result.clientCommandID)?.resume(returning: result)
             } else if result.replayed {
                 // Still running on the Mac after a reconnect: its final result goes only to the
-                // session that submitted it, so this session asks again until it is final.
+                // session that submitted it, so this session asks again until it is final. This
+                // includes a send restored after a relaunch, which has no waiter. Only queried, never resent.
                 scheduleRequery(result.clientCommandID)
             }
         }
@@ -142,12 +143,14 @@ public final class MobileApp: ObservableObject {
         return (try? connection.send(command)) != nil
     }
 
-    /// Sends now and records it, or throws without queueing when disconnected.
+    /// Records it (saved before it leaves, so a relaunch can still ask about it) and sends now,
+    /// or throws without queueing when disconnected. A record that cannot be written throws
+    /// before anything is sent.
     @discardableResult
     public func send(_ action: RemoteAction) throws -> RemoteCommand {
         let command = RemoteCommand(action: action)
-        try connection.send(command)
-        store.recordSent(command)
+        try store.recordSent(command)
+        do { try connection.send(command) } catch { store.discardUnsent(command.clientCommandID); throw error }
         return command
     }
 
@@ -171,6 +174,9 @@ public final class MobileApp: ObservableObject {
         }
     }
 
+    /// A waiter in this run, or a recorded command (for example restored after a relaunch) not yet final.
+    private func awaitsResult(_ id: UUID) -> Bool { waiting[id] != nil || store.commands[id]?.isFinal == false }
+
     private func scheduleRequery(_ id: UUID) {
         guard !requeryDelays.isEmpty else { return }
         let attempt = requeries[id]?.attempt ?? 0
@@ -178,7 +184,7 @@ public final class MobileApp: ObservableObject {
         let delay = requeryDelays[min(attempt, requeryDelays.count - 1)]
         let task = Task { [weak self] in
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, self.waiting[id] != nil, self.connection.state.canSend else { return }
+            guard !Task.isCancelled, let self, self.awaitsResult(id), self.connection.state.canSend else { return }
             try? self.connection.send(RemoteCommand(action: .queryCommand(clientCommandID: id)))
         }
         requeries[id] = (task, attempt + 1)

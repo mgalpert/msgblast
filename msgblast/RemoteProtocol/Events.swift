@@ -35,35 +35,61 @@ public enum RemoteChange: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try c.decode(String.self, forKey: .kind)
+        if let change = try Self.decodePayloadChange(kind, from: c) {
+            self = change
+        } else {
+            self = try Self.decodeRemovalChange(kind, from: c)
+        }
+    }
+    /// Changes that carry a `payload`; nil for any other kind.
+    private static func decodePayloadChange(_ kind: String, from c: KeyedDecodingContainer<CodingKeys>) throws -> RemoteChange? {
         switch kind {
-        case "macStatus": self = .macStatus(try c.decode(MacStatus.self, forKey: .payload))
-        case "grid": self = .grid(try c.decode(RemoteGrid.self, forKey: .payload))
-        case "agentUpsert": self = .agentUpsert(try c.decode(AgentAvailability.self, forKey: .payload))
-        case "agentRemove": self = .agentRemove(id: try c.decode(String.self, forKey: .id))
-        case "conversationUpsert": self = .conversationUpsert(try c.decode(RemoteConversation.self, forKey: .payload))
-        case "conversationRemove": self = .conversationRemove(id: try c.decode(UUID.self, forKey: .id))
-        case "turnUpsert": self = .turnUpsert(try c.decode(RemoteTurn.self, forKey: .payload))
-        case "turnRemove": self = .turnRemove(id: try c.decode(String.self, forKey: .id))
-        case "attemptUpsert": self = .attemptUpsert(try c.decode(RemoteAttempt.self, forKey: .payload))
-        case "attemptRemove": self = .attemptRemove(id: try c.decode(String.self, forKey: .id))
-        default: self = .unknown(kind: kind)
+        case "macStatus": return .macStatus(try c.decode(MacStatus.self, forKey: .payload))
+        case "grid": return .grid(try c.decode(RemoteGrid.self, forKey: .payload))
+        case "agentUpsert": return .agentUpsert(try c.decode(AgentAvailability.self, forKey: .payload))
+        case "conversationUpsert": return .conversationUpsert(try c.decode(RemoteConversation.self, forKey: .payload))
+        case "turnUpsert": return .turnUpsert(try c.decode(RemoteTurn.self, forKey: .payload))
+        case "attemptUpsert": return .attemptUpsert(try c.decode(RemoteAttempt.self, forKey: .payload))
+        default: return nil
+        }
+    }
+    /// Removals by `id`; any other kind is kept as `unknown`.
+    private static func decodeRemovalChange(_ kind: String, from c: KeyedDecodingContainer<CodingKeys>) throws -> RemoteChange {
+        switch kind {
+        case "agentRemove": return .agentRemove(id: try c.decode(String.self, forKey: .id))
+        case "conversationRemove": return .conversationRemove(id: try c.decode(UUID.self, forKey: .id))
+        case "turnRemove": return .turnRemove(id: try c.decode(String.self, forKey: .id))
+        case "attemptRemove": return .attemptRemove(id: try c.decode(String.self, forKey: .id))
+        default: return .unknown(kind: kind)
         }
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(kind, forKey: .kind)
         switch self {
+        case .macStatus, .grid, .agentUpsert, .conversationUpsert, .turnUpsert, .attemptUpsert: try encodePayload(into: &c)
+        case .agentRemove, .conversationRemove, .turnRemove, .attemptRemove: try encodeRemovedID(into: &c)
+        case .unknown: break
+        }
+    }
+    private func encodePayload(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        switch self {
         case .macStatus(let value): try c.encode(value, forKey: .payload)
         case .grid(let value): try c.encode(value, forKey: .payload)
         case .agentUpsert(let value): try c.encode(value, forKey: .payload)
-        case .agentRemove(let id): try c.encode(id, forKey: .id)
         case .conversationUpsert(let value): try c.encode(value, forKey: .payload)
-        case .conversationRemove(let id): try c.encode(id, forKey: .id)
         case .turnUpsert(let value): try c.encode(value, forKey: .payload)
-        case .turnRemove(let id): try c.encode(id, forKey: .id)
         case .attemptUpsert(let value): try c.encode(value, forKey: .payload)
+        default: break
+        }
+    }
+    private func encodeRemovedID(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        switch self {
+        case .agentRemove(let id): try c.encode(id, forKey: .id)
+        case .conversationRemove(let id): try c.encode(id, forKey: .id)
+        case .turnRemove(let id): try c.encode(id, forKey: .id)
         case .attemptRemove(let id): try c.encode(id, forKey: .id)
-        case .unknown: break
+        default: break
         }
     }
 }
