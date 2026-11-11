@@ -46,8 +46,10 @@ jobs:
     # A Mac Studio runner is used only when the owner turns it on with the
     # MSGBLAST_STUDIO_RUNNER repository variable, and only for pushes to main,
     # manual runs, and pull requests from branches in this repository. Pull
-    # requests from forks always use the GitHub-hosted xcode-27 runner, so
-    # outside code never runs on the Studio. Unset the variable to fall back.
+    # requests from forks use the GitHub-hosted xcode-27 runner. A pull request
+    # can edit this line, so the Studio's own job-started hook
+    # (scripts/ci/studio-job-started.sh) is what refuses fork code there.
+    # Unset the variable to fall back.
     runs-on: ${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
     timeout-minutes: 60
     env:
@@ -219,8 +221,10 @@ jobs:
     # A Mac Studio runner is used only when the owner turns it on with the
     # MSGBLAST_STUDIO_RUNNER repository variable, and only for pushes to main,
     # manual runs, and pull requests from branches in this repository. Pull
-    # requests from forks always use the GitHub-hosted xcode-27 runner, so
-    # outside code never runs on the Studio. Unset the variable to fall back.
+    # requests from forks use the GitHub-hosted xcode-27 runner. A pull request
+    # can edit this line, so the Studio's own job-started hook
+    # (scripts/ci/studio-job-started.sh) is what refuses fork code there.
+    # Unset the variable to fall back.
     runs-on: ${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
     timeout-minutes: 90
     env:

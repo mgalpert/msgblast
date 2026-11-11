@@ -89,6 +89,9 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertIn('if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then', native)
         self.assertIn('$HOME/Library/Caches/msgblast-ci/$RUNNER_NAME/DerivedData', native)
         self.assertIn('derived="$PWD/build/updater-validation"', native)
+        self.assertIn("scripts/ci/studio-job-started.sh", native)
+        docs = (ROOT / "docs/studio-runner.md").read_text()
+        self.assertIn("ACTIONS_RUNNER_HOOK_JOB_STARTED", docs)
         self.assertLess(native.index("MSGBLAST_DERIVED_DATA=$derived"), native.index("xcodebuild -project"))
         for workflow in ("release-adhoc.yml", "stable-dev.yml", "test-build.yml", "verify-signing.yml",
                          "code-quality.yml", "pr-scope.yml", "pr-evidence.yml"):

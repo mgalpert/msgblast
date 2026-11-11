@@ -11,15 +11,25 @@ everything runs on GitHub-hosted runners exactly as before.
 
 ## Who can run code on the Studio
 
-This repository is public. The Studio runs only:
+This repository is public, and GitHub warns that a self-hosted runner on a
+public repository can be made to run code from a fork: a pull request can
+edit `runs-on` in its own copy of the workflow. Three things keep fork code
+off the Studio:
 
-- pushes to `main`,
-- manual runs (`workflow_dispatch`), which need write access,
-- pull requests whose branch is in this repository, which also need write access.
+1. **The job-started hook (the real guard).** The runner runs
+   `scripts/ci/studio-job-started.sh` from a copy installed outside the
+   repository before every job. It allows only pushes to `main`, manual runs,
+   and pull requests whose branch is in this repository, and fails anything
+   else before a single step runs. A pull request cannot change the installed copy.
+2. **Approval for outside contributors.** GitHub will not start any workflow
+   from an outside contributor's fork until you approve it. Before approving,
+   check that the PR does not touch `.github/`.
+3. **The `runs-on` expression.** Unedited workflows send fork pull requests to
+   GitHub's `xcode-27` runner anyway.
 
-Pull requests from forks always go to the GitHub-hosted runner, because the
-`runs-on` expression checks `head.repo.full_name == github.repository`. The
-signing, release, and `pull_request_target` workflows never use the Studio.
+Signing, release, and `pull_request_target` workflows never use the Studio.
+Anyone with write access can still run code there, and runs share one build
+cache, so give write access only to people you trust with that machine.
 
 ## One-time setup on the Studio
 
@@ -48,10 +58,22 @@ signing, release, and `pull_request_target` workflows never use the Studio.
 
    `svc.sh` installs a LaunchAgent, so the runner starts whenever the runner
    user is logged in. The runner page should show it as Idle.
-5. In Settings, Actions, General, under "Approval for running fork pull request
+5. Install the job-started hook so the runner user cannot change it. From a
+   checkout of `main`, an admin installs a root-owned copy, then the runner
+   user points the runner at it from the runner's folder:
+
+   ```
+   sudo install -d -o root -g wheel -m 755 /usr/local/libexec/msgblast-runner
+   sudo install -o root -g wheel -m 555 scripts/ci/studio-job-started.sh /usr/local/libexec/msgblast-runner/
+   echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/libexec/msgblast-runner/studio-job-started.sh" >> .env
+   ./svc.sh stop && ./svc.sh start
+   ```
+
+   Reinstall it the same way whenever the hook changes on `main`.
+6. In Settings, Actions, General, under "Approval for running fork pull request
    workflows from contributors", choose "Require approval for all external
-   contributors".
-6. In Settings, Secrets and variables, Actions, Variables, add the repository
+   contributors". Check that it is saved before the next step.
+7. In Settings, Secrets and variables, Actions, Variables, add the repository
    variable `MSGBLAST_STUDIO_RUNNER` with the value `true`.
 
 ## Running more than one PR at a time
