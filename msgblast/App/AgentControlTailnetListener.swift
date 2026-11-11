@@ -95,6 +95,7 @@ import msgblastCore
         let previousPlain = plaintext
         guard let issued = store.issue(AgentControlTailnet.grokBotClient) else { return }
         plaintext = issued
+        lastCalled = nil
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -104,7 +105,7 @@ import msgblastCore
         let previous = store
         let previousPlain = plaintext
         store.revoke(client)
-        if client == AgentControlTailnet.grokBotClient { plaintext = nil }
+        if client == AgentControlTailnet.grokBotClient { plaintext = nil; lastCalled = nil }
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 

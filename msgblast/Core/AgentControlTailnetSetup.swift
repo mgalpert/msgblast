@@ -7,12 +7,13 @@ public enum AgentControlTailnetSetup {
         ["msgblast MCP server for Grok Bot", "Server URL: \(url)", "Header: Authorization: Bearer \(key)"].joined(separator: "\n")
     }
 
-    /// Tailscale, HTTPS certificates, then whether Grok Bot has called. Each line starts with ✓ or ⚠︎.
+    /// Tailscale, HTTPS certificates, then whether Grok Bot has called. Each line starts with ✓ or ⚠︎,
+    /// except certificates off, which is information only (ℹ︎): msgblast serves http:// either way.
     public static func lines(magicName: String?, httpsEnabled: Bool, grokBotPeer: Bool, lastCalled: Date?, now: Date = Date()) -> [String] {
         let tailscale = mark(magicName.map { !$0.isEmpty } ?? false, magicName.flatMap { $0.isEmpty ? nil : "Connected as \($0)" } ?? "Tailscale isn't connected on this Mac.")
-        let https = mark(httpsEnabled, httpsEnabled
-            ? "HTTPS certificates are on for this tailnet."
-            : "HTTPS certificates are off for this tailnet. If Grok Bot asks for an https:// address, an admin can turn them on in the Tailscale admin console under DNS.")
+        let https = httpsEnabled
+            ? mark(true, "HTTPS certificates are on for this tailnet.")
+            : "\u{2139}\u{FE0E} HTTPS certificates are off for this tailnet. Nothing to change: msgblast uses http://, and Tailscale encrypts the connection."
         let seen: String
         if let lastCalled {
             seen = mark(true, "Grok Bot last called \(relative(lastCalled, now: now)).")
