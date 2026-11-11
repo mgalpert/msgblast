@@ -39,28 +39,8 @@ public actor AgentControlMCPServer {
             return Self.encode(["jsonrpc": "2.0", "id": id, "error": ["code": -32600, "message": "method must be a string."]])
         }
         let params = message["params"] as? [String: Any] ?? [:]
-        let meta = params["_meta"] as? [String: Any] ?? [:]
         do {
-            var result: [String: Any]
-            switch method {
-            case "initialize": result = initialize(params)
-            case "ping": result = [:]
-            default:
-                let requested = meta["io.modelcontextprotocol/protocolVersion"] as? String
-                if let requested, requested != Self.modernVersion {
-                    throw Failure(code: -32022, message: "Unsupported protocol version", requested: requested)
-                }
-                let reported = Self.name(meta["io.modelcontextprotocol/clientInfo"] as? [String: Any])
-                let client = fixedClient ?? reported ?? handshakeClient ?? "MCP client"
-                switch method {
-                case "server/discover": result = discover()
-                case "tools/list": result = try await listTools(client: client)
-                case "tools/call": result = try await callTool(params, client: client)
-                default: throw Failure(code: -32601, message: "msgblast has no method \(method).")
-                }
-                if requested != nil { result["resultType"] = "complete" }
-            }
-            return Self.encode(["jsonrpc": "2.0", "id": id, "result": result])
+            return Self.encode(["jsonrpc": "2.0", "id": id, "result": try await result(method, params: params)])
         } catch let failure as Failure {
             var error: [String: Any] = ["code": failure.code, "message": failure.message]
             if let requested = failure.requested { error["data"] = ["supported": [Self.modernVersion] + Self.legacyVersions, "requested": requested] }
@@ -68,6 +48,28 @@ public actor AgentControlMCPServer {
         } catch {
             return Self.encode(["jsonrpc": "2.0", "id": id, "error": ["code": -32603, "message": "msgblast could not handle \(method)."]])
         }
+    }
+
+    /// The result of one request. Modern requests carry their version and client in `_meta`.
+    private func result(_ method: String, params: [String: Any]) async throws -> [String: Any] {
+        if method == "initialize" { return initialize(params) }
+        if method == "ping" { return [:] }
+        let meta = params["_meta"] as? [String: Any] ?? [:]
+        let requested = meta["io.modelcontextprotocol/protocolVersion"] as? String
+        if let requested, requested != Self.modernVersion {
+            throw Failure(code: -32022, message: "Unsupported protocol version", requested: requested)
+        }
+        let reported = Self.name(meta["io.modelcontextprotocol/clientInfo"] as? [String: Any])
+        let client = fixedClient ?? reported ?? handshakeClient ?? "MCP client"
+        var result: [String: Any]
+        switch method {
+        case "server/discover": result = discover()
+        case "tools/list": result = try await listTools(client: client)
+        case "tools/call": result = try await callTool(params, client: client)
+        default: throw Failure(code: -32601, message: "msgblast has no method \(method).")
+        }
+        if requested != nil { result["resultType"] = "complete" }
+        return result
     }
 
     private var serverInfo: [String: Any] { ["name": "msgblast", "title": "msgblast", "version": version] }
