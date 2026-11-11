@@ -180,10 +180,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         selectWebFixtureRecipients(app)
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["Muse"].waitForExistence(timeout: 5))
-        app.typeKey(",", modifierFlags: .command)
-        let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        app.staticTexts["settings-page-cli"].click()
+        let settings = openSettingsPage(app, "cli")
         for name in ["Codex CLI", "Claude Code"] {
             XCTAssertTrue(settings.staticTexts["Enable \(name)"].waitForExistence(timeout: 5))
             let toggle = settings.switches["Enable \(name)"]
@@ -247,10 +244,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["Claude Code"].exists)
         XCTAssertFalse(app.staticTexts["Your local accounts (simulated)"].exists)
         capture(app, name: "Featured grid with optional CLI setup — isolated fixture")
-        app.typeKey(",", modifierFlags: .command)
-        let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        app.staticTexts["settings-page-cli"].click()
+        let settings = openSettingsPage(app, "cli")
         for name in ["Codex CLI", "Claude Code"] {
             let toggle = settings.switches["Enable \(name)"]
             XCTAssertTrue(toggle.waitForExistence(timeout: 5))
@@ -440,7 +434,16 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["Check Muse connection"].exists)
     }
 
+    /// Opens Settings and selects a sidebar page.
     @MainActor
+    private func openSettingsPage(_ app: XCUIApplication, _ page: String) -> XCUIElement {
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        app.staticTexts["settings-page-\(page)"].click()
+        return settings
+    }
+
     private func capture(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         attachment.name = name
