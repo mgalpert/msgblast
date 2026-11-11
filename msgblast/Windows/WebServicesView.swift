@@ -340,145 +340,17 @@ struct AgentsWorkspaceView: View {
             Task { await model.start(recipientIDs: recipients) }
             return
         }
-        let originalDraft = model.state.draft
         let submittedDraftRevision = model.sharedDraftRevision.value
-        let sentAttachments = attachments
-        let broadcastCreated = Date()
-        let existingID = showingComparison ? nativeComparison?.id : nil
-        let nativeOnly = !sessions.isEmpty && sessions.allSatisfy { $0.provider.desktopApp != nil }
-        guard let broadcast = model.beginSharedWebBroadcast(nativeOnly: nativeOnly, comparisonID: existingID) else { return }
+        let request = SharedSendRequest(sessions: sessions, recipients: recipients, existingID: showingComparison ? nativeComparison?.id : nil,
+                                        draft: model.state.draft, attachments: attachments, currentDraft: { model.state.draft },
+                                        shouldClearDraft: { model.sharedDraftRevision.value == submittedDraftRevision },
+                                        clearDraft: { model.setSharedDraft("") })
+        guard let broadcast = model.beginSharedSend(request) else { return }
         showingComparison = true
         Task { @MainActor in
-            defer { model.finishSharedWebBroadcast(broadcast) }
-            let needsSignIn = await web.signInRequired(for: sessions)
-            if !needsSignIn.isEmpty {
+            if case .signInRequired(let needsSignIn) = await model.sendShared(request, broadcast: broadcast) {
                 signInProviders = needsSignIn
                 showingConnectionIntro = true
-                return
-            }
-            // New comparisons and already-joined native apps can prepare one
-            // recipient at a time while Messages submits independently.
-            let progressiveNative = nativeOnly &&
-                (existingID.map { id in sessions.allSatisfy { model.comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } } ?? true)
-            let comparisonID: UUID
-            var readySessions: [WebAgentSession] = []
-            var unsent: [WebAgentID: WebSendAttempt] = [:]
-            var planned: [WebAgentID: UUID] = [:]
-            if progressiveNative {
-                if let existingID { comparisonID = existingID }
-                else {
-                    guard let id = await model.prepareWebComparison(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), recipientIDs: recipients, agents: sessions.map(\.id)) else { return }
-                    comparisonID = id
-                }
-            } else {
-                guard let preparation = await web.prepareComparisonRecipients(existingID, for: sessions, startNativeApps: true, allowSavedPrivateDraft: true, foregroundPreparation: true),
-                      existingID.flatMap({ model.comparison($0)?.endedAt }) == nil else { return }
-                readySessions = sessions.filter { preparation[$0.id] == true }
-                let failedSessions = sessions.filter { preparation[$0.id] != true }
-                // Website sign-in and joining an existing comparison retain their explicit setup flow.
-                guard failedSessions.allSatisfy({ $0.provider.desktopApp != nil }),
-                      existingID.map({ id in failedSessions.allSatisfy { model.comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } }) ?? true,
-                      !readySessions.isEmpty || !recipients.isEmpty else { return }
-                let failures = failedSessions.map { ($0, $0.error ?? $0.snapshot.reason) }
-                if let existingID { comparisonID = existingID }
-                else {
-                    guard let id = await model.prepareWebComparison(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), recipientIDs: recipients, agents: sessions.map(\.id)) else { return }
-                    comparisonID = id
-                }
-                if existingID != nil {
-                    for session in readySessions where model.comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) != true {
-                        guard await model.joinWebAgent(session, comparisonID: comparisonID) else { return }
-                    }
-                }
-                for (session, reason) in failures {
-                    guard let attempt = session.recordUnsentPreparation(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), comparisonID: comparisonID, reason: reason) else { return }
-                    unsent[session.id] = attempt
-                }
-            }
-            guard model.bindSharedWebBroadcast(broadcast, to: comparisonID), model.comparison(comparisonID)?.endedAt == nil else { return }
-            if let i = model.index(comparisonID) {
-                let previous = model.state.comparisons[i].resolvedWebAgentIDs
-                model.state.comparisons[i].setWebAgents(previous + sessions.map(\.id))
-                do { try model.save() } catch { model.error = error.localizedDescription; return }
-            }
-            do { try model.freezeSharedContext(comparisonID) } catch { model.error = error.localizedDescription; return }
-            if progressiveNative {
-                for session in sessions {
-                    guard let attempt = session.planNativePreparation(originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), comparisonID: comparisonID) else {
-                        for earlier in sessions {
-                            if let id = planned[earlier.id] { _ = earlier.failNativePreparation(id, reason: "The request could not be prepared. Nothing was sent.") }
-                        }
-                        return
-                    }
-                    planned[session.id] = attempt.id
-                }
-            }
-            let unsentAttempts = unsent
-            let plannedAttempts = planned
-            let preparedSessions = readySessions
-            let allRecipients = model.comparison(comparisonID).map { comparison in
-                Set(comparison.resolvedWebAgentIDs) == Set(sessions.map(\.id)) && Set(comparison.members.map(\.id)) == recipients
-            } ?? false
-            let followUpID = UUID()
-            let telemetryStarted = Date()
-            let barrier = BroadcastSubmissionBarrier {
-                guard !Task.isCancelled, !sessions.isEmpty,
-                      web.comparisonID == comparisonID, model.comparison(comparisonID)?.endedAt == nil else { return }
-                model.finishSharedWebInputs(broadcast)
-            }
-            let result = await AgentBroadcast.send(draft: originalDraft, currentDraft: { model.state.draft }, shouldClearDraft: {
-                model.sharedDraftRevision.value == submittedDraftRevision && web.comparisonID == comparisonID
-            }, clearDraft: {
-                model.setSharedDraft("")
-            }, web: { text, confirmed in
-                let didConfirm: @MainActor @Sendable () -> Void = {
-                    confirmed()
-                    model.confirmSharedWebSubmission(broadcast)
-                }
-                let submitted: [WebAgentID: WebSendAttempt]
-                if progressiveNative {
-                    submitted = await web.prepareAndSendPlanned(text, to: sessions, comparisonID: comparisonID, plannedAttempts: plannedAttempts,
-                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: didConfirm)
-                } else {
-                    submitted = await WebAgents.send(text, to: preparedSessions, comparisonID: comparisonID,
-                        onInputsFinished: { barrier.finishNativeInputs() }, onConfirmedSubmission: didConfirm)
-                }
-                return unsentAttempts.merging(submitted) { _, latest in latest }
-            }, messages: { text, confirmed in
-                defer { if !Task.isCancelled { barrier.finishMessages() } }
-                guard !recipients.isEmpty else { return nil }
-                let states: [Submission]
-                if existingID != nil {
-                    guard let i = model.index(comparisonID) else { return nil }
-                    model.state.comparisons[i].allDraft = text
-                    await model.followUp(comparisonID, recipients: Array(recipients), newAttemptID: followUpID, telemetryManagedExternally: true)
-                    states = model.comparison(comparisonID)?.followUps.first(where: { $0.id == followUpID }).map { Array($0.states.values) } ?? []
-                } else {
-                    await model.submit(comparisonID, retry: false, telemetryManagedExternally: true)
-                    states = model.comparison(comparisonID)?.members.filter { recipients.contains($0.id) }.map(\.submission) ?? []
-                }
-                return AgentBroadcast.messagesResult(states: states, comparisonID: comparisonID, onConfirmed: {
-                    confirmed()
-                    model.confirmSharedWebSubmission(broadcast)
-                })
-            })
-            let webSubmitted = result.web.values.filter { $0.status.confirmsSubmission }.count
-            let messagesSubmitted = model.comparison(comparisonID).map { comparison in
-                existingID == nil ? comparison.members.filter { recipients.contains($0.id) && $0.submission == .submitted }.count :
-                comparison.followUps.first(where: { $0.id == followUpID })?.states.values.filter { $0 == .submitted }.count ?? 0
-            } ?? 0
-            if webSubmitted + messagesSubmitted > 0 {
-                model.recordMessageSubmission(kind: .shared, recipientCount: webSubmitted + messagesSubmitted, started: telemetryStarted, logicalID: existingID == nil ? comparisonID : followUpID)
-            } else { model.recordOperation(.send, success: false, started: telemetryStarted) }
-            if existingID != nil, allRecipients,
-               result.web.values.allSatisfy({ $0.status.confirmsSubmission }), result.web.count == sessions.count,
-               let i = model.index(comparisonID) {
-                if recipients.isEmpty {
-                    model.state.comparisons[i].recordSharedMessage(ConversationContextMessage(text: originalDraft.trimmingCharacters(in: .whitespacesAndNewlines), attachments: sentAttachments, created: broadcastCreated))
-                } else if result.comparisonID == comparisonID {
-                    model.state.comparisons[i].completeSharedBroadcast(followUpID: followUpID, recipients: recipients)
-                }
-                model.persist()
             }
         }
     }
@@ -492,29 +364,7 @@ struct AgentsWorkspaceView: View {
             guard model.beginIndependentNativeReply() else { return }
         } else { model.webBroadcastBusy = true }
         Task { @MainActor in
-            defer {
-                if independent { model.finishIndependentNativeReply() }
-                else { model.webBroadcastBusy = false }
-            }
-            let id: UUID
-            if let existingID { id = existingID }
-            else {
-                guard let created = await model.prepareWebComparison(text, recipientIDs: [], agents: [session.id]) else { return }
-                id = created
-            }
-            do { try model.freezeSharedContext(id) } catch { model.error = error.localizedDescription; return }
-            guard let i = model.index(id) else { return }
-            if model.state.comparisons[i].resolvedWebAgentIDs.contains(session.id) != true {
-                model.state.comparisons[i].setWebAgents(model.state.comparisons[i].resolvedWebAgentIDs + [session.id])
-            }
-            do { try model.save() } catch { model.error = error.localizedDescription; return }
-            showingComparison = true
-            let telemetryStarted = Date()
-            let attempt = await session.send(text, comparisonID: id)
-            if let attempt, attempt.status.confirmsSubmission {
-                model.recordMessageSubmission(kind: .private, recipientCount: 1, started: telemetryStarted, logicalID: attempt.id)
-            } else { model.recordOperation(.send, success: false, started: telemetryStarted) }
-            web.setComparison(id)
+            _ = await model.sendDirect(text, to: session, existingID: existingID, independent: independent) { showingComparison = true }
         }
     }
 }

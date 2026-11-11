@@ -1,0 +1,1 @@
+BrandMark is a flat export of the production AppIcon.icns (compiled from msgblast/AppIcon.icon; its 256 px size, cropped to the 206 px tile without the macOS margin); refresh it when the canonical icon changes.

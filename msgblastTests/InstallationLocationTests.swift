@@ -24,6 +24,14 @@ final class InstallationLocationTests: XCTestCase {
         XCTAssertEqual(SupportDirectory.folderName(demo: true, override: "msgblast-Dev", webPreview: true, bundleIdentifier: "com.msgblast.web-preview"), "msgblast-Dev")
         XCTAssertNil(SupportDirectory.sanitized("msgblast"))
     }
+    func testDevelopmentBundleIdentityAcceptsNamedDevelopmentSiblings() {
+        XCTAssertTrue(AppBundleIdentity.isDevelopment("com.msgblast.development"))
+        XCTAssertTrue(AppBundleIdentity.isDevelopment("com.msgblast.development.remote"))
+        XCTAssertFalse(AppBundleIdentity.isDevelopment("com.msgblast.developmentremote"))
+        XCTAssertFalse(AppBundleIdentity.isDevelopment("com.msgblast.mac"))
+        XCTAssertFalse(AppBundleIdentity.isDevelopment("com.msgblast.demo"))
+        XCTAssertFalse(AppBundleIdentity.isDevelopment(nil))
+    }
     func testDevelopmentBuildsCanStartButUninstalledReleaseCannot() {
         XCTAssertFalse(needsInstallation("/Users/test/projects/build/msgblast.app", development: true))
         XCTAssertTrue(needsInstallation("/Users/test/projects/build/msgblast.app", development: false))
