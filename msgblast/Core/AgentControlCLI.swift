@@ -15,6 +15,10 @@ public enum AgentControlCLI {
 
     public static let commands: Set<String> = ["help", "status", "agents", "comparisons", "show", "wait", "tools", "call"]
     public static let unavailableStatus: Int32 = 5
+    /// The request reached msgblast but no reply came back, so it may have run.
+    public static let noReplyStatus: Int32 = 6
+    public static let unavailable = "msgblast is not running, or Settings → Outside agents is off."
+    public static let noReply = "msgblast got the request but stopped before answering, so it may have run. Check before repeating it."
     public static let usage = """
     usage: msgblast <command> [--client NAME] [--json]
 
@@ -27,7 +31,8 @@ public enum AgentControlCLI {
       call TOOL [JSON]                    Run any msgblast tool
 
     --client names the agent asking. msgblast asks the person once per name.
-    Exit status: 0 done, 1 failed, 2 invalid, 3 not approved, 4 not found, 5 msgblast unreachable.
+    Exit status: 0 done, 1 failed, 2 invalid, 3 not approved, 4 not found, 5 msgblast unreachable,
+    6 no answer after the request was sent (it may have run).
     """
 
     public struct UsageError: Error, Equatable { public let message: String }
@@ -170,8 +175,12 @@ public enum AgentControlCLI {
 /// A blocking client for the app's Unix socket, used by the command-line process only.
 public enum AgentControlSocketClient {
     public struct Unavailable: Error {}
+    /// The whole request was sent but no reply came back: msgblast may have acted on it.
+    public struct NoReply: Error {}
 
-    /// Sends one request line and returns the reply line. Throws `Unavailable` when nothing is listening.
+    /// Sends one request line and returns the reply line. Throws `Unavailable` when nothing is
+    /// listening or the request could not be sent whole (msgblast ignores a partial line), and
+    /// `NoReply` when it was sent but the reply never came.
     public static func exchange(_ line: Data, socket path: String) throws -> Data {
         let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw Unavailable() }
@@ -190,6 +199,7 @@ public enum AgentControlSocketClient {
         var sent = 0
         while sent < line.count {
             let count = line[sent...].withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+            if count < 0, errno == EINTR { continue }
             guard count > 0 else { throw Unavailable() }
             sent += count
         }
@@ -197,7 +207,8 @@ public enum AgentControlSocketClient {
         var chunk = [UInt8](repeating: 0, count: 65_536)
         while !reply.contains(0x0A) {
             let count = read(descriptor, &chunk, chunk.count)
-            guard count > 0 else { throw Unavailable() }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { throw NoReply() }
             reply.append(contentsOf: chunk[0..<count])
         }
         return reply.prefix(while: { $0 != 0x0A }) + Data([0x0A])
