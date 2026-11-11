@@ -1,0 +1,56 @@
+{
+  "pr": 107,
+  "base_sha": "ddb7e2727ae6100254ec8bb706643a04fe5851e8",
+  "head_sha": "8d54f241f215d78562bd9017c6ad9fbcd5dc45d6",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request; the approval prompt fix came from msg's Mac",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "combined": "msg chose (2026-11-11 17:43Z) to land #107, #108, #109, #110, #111, #112 and #114 as this one PR. 8d54f24 is grok-bot-setup 59f0117 merged with main ddb7e27 (after #113 and #115).",
+  "component_receipts": [
+    "guardrail-receipts/pr-107-632e539.json",
+    "guardrail-receipts/pr-108-a9f4a36.json",
+    "guardrail-receipts/pr-109-bb8eb84.json",
+    "guardrail-receipts/pr-110-3669eb1.json",
+    "guardrail-receipts/pr-111-a7c02ff.json",
+    "guardrail-receipts/pr-112-ab438c3.json",
+    "guardrail-receipts/pr-114-997e1a2.json",
+    "guardrail-receipts/fix-9b52650-approval-prompt.json"
+  ],
+  "reviews": [
+    {
+      "head_sha": "8d54f241f215d78562bd9017c6ad9fbcd5dc45d6",
+      "base_sha": "ddb7e2727ae6100254ec8bb706643a04fe5851e8",
+      "previous_head": "59f01174aa384d3ab186b58d951a731d2c12b746",
+      "scope": "merge-only review of the fold commit against the reviewed component heads, plus a scan of the whole combined diff for stray files, debug code, secrets and personal data",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "Merge shape: 8d54f24 has parents 59f0117 (^1) and ddb7e27 (^2), as stated. Merge-base of 59f0117 and ddb7e27 is d71d582.",
+        "Check 1: `git diff 59f0117 8d54f24` is byte-identical (index lines stripped, cmp) to `git diff d71d582 ddb7e27`. The diff is 609 lines. The merge adds nothing beyond main's changes.",
+        "Check 2: `git diff ddb7e27 8d54f24` is byte-identical (index lines stripped, cmp) to `git diff d71d582 59f0117`. The diff is 3,897 lines. The PR's own content is unchanged by the merge. Because both diffs are identical, no conflict resolution touched stack files.",
+        "Main commits since the merge-base: #113 (swift-complexity, context budget, pr-scope-budget, with its own internal merges) and #115 (bc988d3, scope limit 1,200). No other commits found. The delta touches 11 files: .github/workflows/code-quality.yml, .github/workflows/pr-scope.yml, AGENTS.md, docs/review-guardrails.md, scripts/check_context_budget.py, scripts/check_pr_scope.py, scripts/check_swift_complexity.py, scripts/lean_run.py, and the 3 tests under scripts/tests/.",
+        "Check 3: the intersection of main's delta files with the stack's changed files is empty, so main's delta does not touch msgblast/, msgblastTests/, project.pbxproj, docs/architecture.md, docs/README.md or AGENTS.md on the stack side. AGENTS.md changed only on main's side.",
+        "pbxproj coherence in the merged tree (not changed by the merge): all 20 new Swift files are in the project (14 under msgblast/, 6 under msgblastTests/). Each has exactly one PBXFileReference, with no duplicate object IDs. The build-file entries put the 8 Core files in the app Sources phase 99F5A0..., and the 5 App files plus OutsideAgentsSettingsView.swift in the app Sources phase D9E815... The 6 test files are in the tests Sources phase 478112.... That is 20 PBXBuildFile entries in total, and the new files also appear in group E50290A2.... The pre-existing PersonalAgentController.swift is also referenced once.",
+        "Check 5: the combined diff `git diff ddb7e27...8d54f24` is 33 files, 3,612 insertions and 4 deletions (3,930 diff lines). All files are under msgblast/, msgblastTests/, docs/, integrations/grokbot-plugin/ or project.pbxproj. No stray files outside those paths.",
+        "Secrets and personal-data grep over added lines found none: no tskey-, private key blocks, literal Bearer tokens, sk-/ghp_/xox/AKIA patterns, personal emails, /Users/ paths, TODO/FIXME/XXX, NSLog or dump(. All tailnet hostnames in the diff are example.ts.net placeholders in tests. The test key \"test-key\" is an obvious placeholder.",
+        "The only print( in added Swift is `print(AgentControlCLI.usage)` for the CLI --help case, which is intentional stdout and not debug code."
+      ],
+      "checks_run": {
+        "python3 -m unittest scripts/tests/test_pr_scope.py scripts/tests/test_context_budget.py scripts/tests/test_swift_complexity.py": "Ran 20 tests, OK (skipped=1)",
+        "python3 scripts/check_context_budget.py --head HEAD": "1 instruction files; 4174/24576 bytes; 0 failures (exit 0)",
+        "diff equivalence 1 (59f0117..8d54f24 vs merge-base..ddb7e27)": "identical",
+        "diff equivalence 2 (ddb7e27..8d54f24 vs merge-base..59f0117)": "identical",
+        "file-overlap check (main delta vs stack files)": "empty intersection",
+        "secrets/personal-data grep on combined diff": "no hits other than example.ts.net test placeholders and the CLI usage print"
+      }
+    }
+  ],
+  "open_notes": [
+    "Main's diff relative to the merge-base includes the Opus 5.5 co-author trailer in the merge commit message. This is cosmetic, and the attribution reminder asks for a different trailer on future commits.",
+    "No Swift toolchain was available, so the Swift code and the pbxproj were checked only structurally (reference and ID counts, group and build-phase membership). Xcode build and test results come from CI.",
+    "Component open notes carry over: see each component receipt."
+  ],
+  "limits": "No Swift toolchain in the review container; native CI builds and tests this head."
+}

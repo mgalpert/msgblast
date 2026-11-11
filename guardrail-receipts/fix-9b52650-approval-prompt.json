@@ -1,0 +1,52 @@
+{
+  "pr": 109,
+  "change": "9b52650 (Keep serving approved agents while an approval prompt is open), merged into #109 as 8ddf34e and propagated to #110 9f55b43, #111 5e2798a, #112 f682ee6, #114 59f0117",
+  "base_sha": "bb8eb84076f793e5bfbdaaef7187a4ffea5ba231",
+  "head_sha": "8ddf34ec8771799c8b58f100e684ed63a466b12c",
+  "date": "2026-11-11",
+  "authors": "Written on msg's Mac during the agent control test pass (Grok wrote it; the Mac's Claude Code session reviewed and committed it)",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code; one pass over git diff bb8eb84 8ddf34e plus the propagation merges",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "NIT",
+      "file": "msgblast/App/AgentControlHost.swift",
+      "line": 93,
+      "issue": "Every distinct client name now gets its own window (the gate de-dupes only the same name). All windows are centered and .floating, so they stack on one spot and the lower ones are hidden. A local app or tailnet peer that sends many different client names can open an unbounded number of prompts. The old modal alert showed one prompt at a time.",
+      "fix": "Cascade the windows (for example offset by pending.count) or cap or queue the open prompts. This can be a follow-up."
+    },
+    {
+      "severity": "NIT",
+      "file": "msgblast/App/AgentControlHost.swift",
+      "line": 96,
+      "issue": "The prompt takes key focus with Allow as the default button. A stray Return or Space while the user is typing in another app approves the client at the picker's first level, Read only. The old runModal prompt had the same behaviour, but it is easier to hit now that the app keeps running while the prompt is open.",
+      "fix": "Optional: make Don’t Allow the default button, or leave as is."
+    },
+    {
+      "severity": "NIT",
+      "file": "msgblastTests/AgentControlGateTests.swift",
+      "line": 152,
+      "issue": "The new tests prove that AgentControlGate and AgentControlWire do not serialize approvals. They cannot prove that the real window is non-modal, because they replace the approval closure with a Pause. A regression back to runModal would pass them. The bounded Task.yield loops are fine, since the parked task needs only a few main-actor hops and the limit is 100. The loops also fail visibly through XCTAssertTrue(pause.started) rather than hanging.",
+      "fix": "None needed. Optionally name the tests so they claim only gate-level coverage."
+    }
+  ],
+  "verified": [
+    "Continuation lifecycle: `finish` is guarded by `guard let continuation`, then nils it, removes all observers, removes the prompt from `pending`, closes the window and resumes once. The button, willClose and willTerminate paths therefore cannot double-resume. Observers are removed before `window.close()`, so the resulting willClose cannot re-enter. The continuation cannot leak while the window lives, because Allow, Don’t Allow, any window close and app termination all resume it.",
+    "Concurrency on one thread: all state is @MainActor and is touched only on the main thread. The AppKit notifications (willClose, willTerminate) are posted on main, and button actions run on main. `withCheckedContinuation` inside a @MainActor function inherits its isolation, so the `begin` call compiles under Swift 6. The @objc selectors on a @MainActor NSObject subclass are normal.",
+    "Retain cycles: the static `pending` set owns each prompt, and the prompt owns the alert, picker and continuation. `finish` removes the prompt from `pending`, and it also drops the continuation and the observers, so nothing is retained afterwards. The set always drains.",
+    "Quit while a prompt is open: willTerminate resumes with nil, so the gate refuses that client in memory and saves nothing. Quit is no longer blocked by the prompt.",
+    "Same client asking twice: AgentControlGate.pending[client] makes the second request await the first task, so only one window is shown per name. Different clients get independent windows. A `.refused` or approved client returns before the prompt is reached.",
+    "Wrong level saved: the Allow button is tag 0 and Don’t Allow is tag 1. `pressed` returns levels[picker.indexOfSelectedItem] only for tag 0, with a bounds check, and nil otherwise. The levels at this tree are `.readOnly` and `.full`.",
+    "`.floating` level plus NSApp.activate(ignoringOtherApps:) plus makeKeyAndOrderFront is acceptable. activate was moved after the window is set up, and the focus-steal behaviour is the same as before. `ignoringOtherApps` is only deprecated, not removed.",
+    "Tests compile by reading: the `Pause` helper and the `send` helper exist with the signatures used; `AgentControl.tools` exists; `Host()` conforms; `.readOnly` and `.full` exist; there is no `.sendToAgents`. Test 1 asserts that an approved client returns .readOnly while Pending is still parked, that no approval is stored for Pending, and that .full is saved after finish. The wire test checks the same through the JSON path, including the newline terminator and the id.",
+    "The shared test class is @MainActor, so the unstructured Tasks run on the main actor and the yield loops are deterministic enough.",
+    "Item 3: at 59f0117 `grep runModal|sendToAgents` finds no `.sendToAgents` anywhere. The remaining runModal uses are unrelated: FeedbackView, AppUpdater and CrashReporting. The approval prompt no longer uses it. Both callers (AgentControlListener.swift:106 and AgentControlTailnetListener.swift:255) go through approveOutsideAgent. The tailnet variant `approveOutsideAgent(_:overTailscale:)` carries the same non-modal body at 59f0117."
+  ],
+  "open_notes": [
+    "No Swift toolchain was available, so none of this was compiled or run.",
+    "In the tree at 59f0117 the function signature and the origin sentence differ from the 8ddf34e base (the `overTailscale` parameter). The merge applied cleanly to that extra context, and the edited lines are identical.",
+    "The willClose observer also fires if the window is closed programmatically, for example by AppKit. That counts as Don’t Allow, which matches the documented behaviour. NSAlert windows have no close button, so in practice the user answers with a button, or Escape only if AppKit maps the curly-apostrophe “Don’t Allow” title to the cancel key. If Escape does not work the window just stays open, and the agent request keeps waiting until the user answers. That is not a hang of the app, but it is a request left waiting."
+  ],
+  "propagation": "identical",
+  "limits": "No Swift toolchain in the review container; the Mac ran the full unit suite at 59f0117: 925 run, 0 failed, 1 skipped."
+}
