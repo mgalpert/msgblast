@@ -9,6 +9,9 @@ import msgblastCore
     @Published private(set) var error: String?
     @Published private var addresses: [String] = []
     @Published private var magicName: String?
+    @Published private var httpsEnabled = false
+    @Published private var grokBotPeer = false
+    @Published private(set) var lastCalled: Date?
 
     private let file: URL
     private let gate: AgentControlGate
@@ -20,6 +23,9 @@ import msgblastCore
     private var listeners: [NWListener] = []
     private var links: [AgentControlTailnetLink] = []
     private var bound: [String] = []
+    private var lastStatusAt: Date?
+    private var statusTask: Task<Void, Never>?
+    private var statusQueued = false
 
     init(directory: URL, gate: AgentControlGate, host: AppModel?) {
         let location = directory.appendingPathComponent(AgentControlTailnetStore.fileName)
@@ -71,6 +77,16 @@ import msgblastCore
     var pathURL: String? {
         guard let serverURL, let plaintext else { return nil }
         return "\(serverURL)/\(plaintext)"
+    }
+
+    /// The setup block, only while the plaintext key and a server URL are both in memory.
+    var setupText: String? {
+        guard let serverURL, let plaintext else { return nil }
+        return AgentControlTailnetSetup.text(url: serverURL, key: plaintext)
+    }
+
+    var readiness: [String] {
+        AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
     }
 
     func rotateToken() {
@@ -129,12 +145,8 @@ import msgblastCore
             endpoint = makeEndpoint()
             endpointHashes = store.hashes
         }
-        if monitor == nil {
-            let monitor = NWPathMonitor()
-            monitor.pathUpdateHandler = { [weak self] _ in Task { @MainActor in self?.rebind() } }
-            monitor.start(queue: .main)
-            self.monitor = monitor
-        }
+        observeNetwork()
+        refreshStatus()
         rebind()
     }
 
@@ -149,7 +161,6 @@ import msgblastCore
             return
         }
         if found == bound, listeners.count == found.count, error == nil { return }
-        refreshMagicDNS()
         cancelListeners()
         guard let port = NWEndpoint.Port(rawValue: UInt16(store.port)) else {
             error = "Could not listen on port \(store.port)."
@@ -182,8 +193,6 @@ import msgblastCore
     }
 
     private func stopSockets() {
-        monitor?.cancel()
-        monitor = nil
         cancelListeners()
         let open = links
         links = []
@@ -209,7 +218,9 @@ import msgblastCore
 
     func respond(_ request: AgentControlHTTPRequest, peer: String) async -> AgentControlHTTPResponse {
         guard let endpoint else { return AgentControlHTTPResponse(status: 503, headers: [], body: Data()) }
-        return await endpoint.handle(request, peer: peer)
+        let response = await endpoint.handle(request, peer: peer)
+        if let when = await endpoint.lastAuthorized, when != lastCalled { lastCalled = when }
+        return response
     }
 
     private func makeEndpoint() -> AgentControlHTTPEndpoint {
@@ -223,10 +234,48 @@ import msgblastCore
         return await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0, overTailscale: true) })
     }
 
-    private func refreshMagicDNS() {
-        Task { @MainActor in
-            let name = await Task.detached(priority: .utility) { AgentControlTailnetDNS.magicName() }.value
-            self.magicName = name
+    /// Status when the card appears and when the network changes. At most one fetch every 30 seconds.
+    func refreshStatus() {
+        observeNetwork()
+        if statusTask != nil { statusQueued = true; return }
+        let now = Date()
+        if let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
+            statusQueued = true
+            let wait = 30 - now.timeIntervalSince(lastStatusAt)
+            statusTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, !Task.isCancelled else { return }
+                self.statusTask = nil
+                let queued = self.statusQueued
+                self.statusQueued = false
+                if queued { self.refreshStatus() }
+            }
+            return
         }
+        lastStatusAt = now
+        statusTask = Task { @MainActor [weak self] in
+            let parsed = await Task.detached(priority: .utility) { AgentControlTailnetDNS.fetch() }.value
+            guard let self, !Task.isCancelled else { return }
+            self.magicName = parsed?.magicName
+            self.httpsEnabled = parsed?.httpsEnabled ?? false
+            self.grokBotPeer = parsed?.grokBotPeer ?? false
+            self.statusTask = nil
+            let queued = self.statusQueued
+            self.statusQueued = false
+            if queued { self.refreshStatus() }
+        }
+    }
+
+    private func observeNetwork() {
+        guard monitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] _ in
+            Task { @MainActor in
+                self?.rebind()
+                self?.refreshStatus()
+            }
+        }
+        monitor.start(queue: .main)
+        self.monitor = monitor
     }
 }

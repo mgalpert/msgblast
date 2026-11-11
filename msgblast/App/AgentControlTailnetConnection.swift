@@ -2,9 +2,9 @@ import Foundation
 import Network
 import msgblastCore
 
-/// `tailscale status --json` → `Self.DNSName`, without the trailing dot. Missing or slow is ignored.
+/// One `tailscale status --json` run. Failures return nil and are ignored.
 enum AgentControlTailnetDNS {
-    nonisolated static func magicName() -> String? {
+    nonisolated static func fetch() -> (magicName: String?, httpsEnabled: Bool, grokBotPeer: Bool)? {
         let candidates = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
         guard let binary = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
         let process = Process()
@@ -16,11 +16,8 @@ enum AgentControlTailnetDNS {
         do { try process.run() } catch { return nil }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let node = root["Self"] as? [String: Any], var name = node["DNSName"] as? String else { return nil }
-        if name.hasSuffix(".") { name.removeLast() }
-        return name.isEmpty ? nil : name
+        guard process.terminationStatus == 0 else { return nil }
+        return AgentControlTailnetStatus.parse(data)
     }
 }
 

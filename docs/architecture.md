@@ -86,7 +86,7 @@ An unreadable file refuses every token and is not overwritten. Requests are POST
 GET and DELETE return 405 with `Allow: POST`. Any `Origin` header is 403. A
 notification is 202 with an empty body. A request is 200 JSON. The approval prompt
 runs only after a valid token, and its text says the client is on the tailnet.
-Removing the agent revokes its hash. The MCP client name is "Grok Bot (Tailscale)", so it never shares an approval with a local client.
+Removing the agent revokes its hash. The MCP client name is "Grok Bot (Tailscale)", so it never shares an approval with a local client. Settings reads one `tailscale status --json` for the MagicDNS name, whether `CertDomains` is non-empty, and whether a peer name contains "grokbot", and it copies a setup block while the key is in memory. See [Grok Bot over Tailscale](grok-bot.md).
 
 For an installed, enabled App Agent with a known destination, the first explicit
 send opens the app and checks its conversation without requiring a separate

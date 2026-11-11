@@ -107,6 +107,8 @@ public actor AgentControlHTTPEndpoint {
     private let version: String
     private let exchange: AgentControlMCPServer.Exchange
     private var servers: [String: AgentControlMCPServer] = [:]
+    /// When the last request passed the key check. Not saved.
+    public private(set) var lastAuthorized: Date?
 
     /// `hashes` maps a client name to the hex SHA-256 of its token.
     public init(hashes: [String: String], version: String, exchange: @escaping AgentControlMCPServer.Exchange) {
@@ -122,6 +124,7 @@ public actor AgentControlHTTPEndpoint {
         case .elsewhere: return empty(404)
         case .rejected: return AgentControlHTTPResponse(status: 401, headers: [("WWW-Authenticate", "Bearer")], body: Data())
         case .accepted(let client):
+            lastAuthorized = Date()
             guard request.method == "POST" else {
                 return AgentControlHTTPResponse(status: 405, headers: [("Allow", "POST")], body: Data())
             }

@@ -54,6 +54,9 @@ private struct TailnetControls: View {
         Group {
             Toggle("Let Grok Bot use msgblast over Tailscale", isOn: Binding(get: { tailnet.enabled }, set: { tailnet.enabled = $0 }))
                 .disabled(tailnet.loadFailed)
+            ForEach(tailnet.readiness, id: \.self) { line in
+                Text(line).font(.caption).foregroundStyle(.secondary)
+            }
             if tailnet.enabled, let url = tailnet.serverURL {
                 Text(url)
                     .font(.system(.caption, design: .monospaced))
@@ -80,6 +83,9 @@ private struct TailnetControls: View {
                         .controlSize(.small)
                 }
                 Button("New key") { confirmingNewKey = true }
+                if let setup = tailnet.setupText {
+                    Button("Copy Grok Bot setup") { copy(setup) }
+                }
             } else if tailnet.enabled {
                 Text("Make a new key to see it again").font(.caption).foregroundStyle(.secondary)
                 Button("New key") { tailnet.rotateToken() }
@@ -88,6 +94,7 @@ private struct TailnetControls: View {
                 .font(.caption).foregroundStyle(.secondary)
             if let error = tailnet.error { Text(error).font(.caption).foregroundStyle(.red) }
         }
+        .onAppear { tailnet.refreshStatus() }
         .alert("Make a new key?", isPresented: $confirmingNewKey) {
             Button("Cancel", role: .cancel) {}
             Button("New key") { tailnet.rotateToken() }
