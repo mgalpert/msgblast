@@ -171,6 +171,7 @@ struct ChatGPTAppObservation: Sendable {
         }
         nodes = safe(web)
         guard !nodes.contains(where: { ["AXDialog", "AXSheet"].contains($0.role) }) else { throw DesktopAppError.unavailable("Dismiss ChatGPT’s dialog before continuing.") }
+        try DesktopInterstitial.check(.dots, controls: nodes.map { ($0.role, $0.label) })
         let codexFields = nodes.filter { $0.role == "AXTextArea" && ["Work with ChatGPT", "Work with Codex"].contains($0.label) }
         if nodes.filter({ $0.role == "AXPopUpButton" && ["Switch mode, current mode: Codex", "Switch mode, current mode: ChatGPT"].contains($0.label) }).count == 1, !codexFields.isEmpty {
             func workDraft(_ field: ChatGPTAXNode) throws -> String {
