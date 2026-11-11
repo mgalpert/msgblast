@@ -221,29 +221,12 @@ extension AppModel {
         return (id, attempt)
     }
 
-    /// A Messages follow-up with text and files supplied by a remote client. The Mac's
-    /// own drafts for this conversation are set aside for the send and then restored, so
-    /// neither its unsent text nor its attached files are sent or lost.
+    /// A Messages follow-up with text and files supplied by a remote client. They go to the
+    /// send as its payload; the Mac's saved drafts and draft files are never replaced or
+    /// cleared, so quitting mid-send cannot lose them.
     func followUpWithSuppliedDraft(_ id: UUID, only memberID: UUID? = nil, recipients: [UUID]?, text: String, attachments: [MessageAttachment], newAttemptID: UUID?,
                                    telemetryManagedExternally: Bool = false) async {
-        guard let i = index(id) else { return }
-        let key = memberID?.uuidString
-        let savedText = key.map { state.comparisons[i].privateDrafts[$0] } ?? state.comparisons[i].allDraft
-        let savedFiles = attachmentDraft(comparisonID: id, memberID: memberID)
-        func place(_ text: String?, _ files: [MessageAttachment]) {
-            guard let i = index(id) else { return }
-            if let key {
-                state.comparisons[i].privateDrafts[key] = text
-                if state.comparisons[i].privateAttachmentDrafts == nil { state.comparisons[i].privateAttachmentDrafts = [:] }
-                state.comparisons[i].privateAttachmentDrafts?[key] = files
-            } else {
-                state.comparisons[i].allDraft = text ?? ""
-                state.comparisons[i].allAttachmentsDraft = files
-            }
-        }
-        place(text, attachments)
-        await followUp(id, only: memberID, recipients: recipients, newAttemptID: newAttemptID, telemetryManagedExternally: telemetryManagedExternally)
-        place(savedText, savedFiles)
-        persist()
+        await followUp(id, only: memberID, recipients: recipients, newAttemptID: newAttemptID, telemetryManagedExternally: telemetryManagedExternally,
+                       supplied: (text, attachments))
     }
 }

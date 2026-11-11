@@ -112,6 +112,8 @@ final class AppModel: ObservableObject {
     let linkPreviews = LinkPreviewStore()
     let accessGuide = MessagesAccessGuide(defaults: ProcessInfo.processInfo.arguments.contains("--demo") ? UserDefaults(suiteName: "com.msgblast.demo-permissions") ?? .standard : .standard)
     let local: LocalStore
+    /// Fixture hook: sees each state written by `save()`.
+    var didSave: ((AppState) -> Void)?
     lazy var telemetry = TelemetryCollector(endpoint: TelemetryCollector.endpoint(demo: demo), queueURL: local.url.deletingLastPathComponent().appendingPathComponent("telemetry-queue.json"))
     var lastTelemetryInventory: [String: Int]?
     var lastTelemetryActivityDay: Int?
@@ -171,6 +173,7 @@ final class AppModel: ObservableObject {
     func save() throws {
         guard !storageLoadFailed else { throw AppFailure.blocked("Saved state is unavailable. It will not be overwritten. You can quit or update after new drafts are saved separately in \(local.url.deletingLastPathComponent().appendingPathComponent("Recovery").path). Repair the saved state before sending.") }
         try local.save(state)
+        didSave?(state)
     }
     func saveForTermination() throws {
         if storageLoadFailed {
@@ -807,15 +810,17 @@ final class AppModel: ObservableObject {
         }
         if changed { try save() }
     }
-    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil, telemetryManagedExternally: Bool = false) async {
+    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil, telemetryManagedExternally: Bool = false,
+                  supplied: (text: String, attachments: [MessageAttachment])? = nil) async {
         guard let i = index(id), state.comparisons[i].endedAt == nil, !busy,
               memberID == nil || !webBroadcastBusy || webBroadcastInputsFinished else { return }
         do { try freezeSharedContext(id) } catch { self.error = error.localizedDescription; return }
         let comparison = state.comparisons[i]
         let selected = recipientIDs.map(Set.init)
         var targets = comparison.members.filter { member in memberID.map { $0 == member.id } ?? selected?.contains(member.id) ?? true }
-        let text = (memberID.map { comparison.privateDrafts[$0.uuidString] ?? "" } ?? comparison.allDraft).trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachments = attachmentDraft(comparisonID: id, memberID: memberID)
+        // A remote send supplies its own text and files; the Mac's saved drafts are never read or cleared.
+        let text = (supplied?.text ?? memberID.map { comparison.privateDrafts[$0.uuidString] ?? "" } ?? comparison.allDraft).trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachments = supplied?.attachments ?? attachmentDraft(comparisonID: id, memberID: memberID)
         if attemptID == nil && text.isEmpty && attachments.isEmpty { return }
         let telemetryStarted = Date()
         var k: Int
@@ -846,8 +851,10 @@ final class AppModel: ObservableObject {
                     }
                 }
                 state.comparisons[i].followUps.append(attempt); k = state.comparisons[i].followUps.count - 1
-                if memberID == nil { state.comparisons[i].allDraft = "" } else { state.comparisons[i].privateDrafts[memberID!.uuidString] = "" }
-                setAttachmentDraft([], comparisonID: id, memberID: memberID, saveNow: false)
+                if supplied == nil {
+                    if memberID == nil { state.comparisons[i].allDraft = "" } else { state.comparisons[i].privateDrafts[memberID!.uuidString] = "" }
+                    setAttachmentDraft([], comparisonID: id, memberID: memberID, saveNow: false)
+                }
                 try save()
             }
             let previouslySubmitted = Set(state.comparisons[i].followUps[k].states.filter { $0.value == .submitted }.map(\.key))

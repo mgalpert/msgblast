@@ -50,22 +50,25 @@ public final class MobileStore: ObservableObject {
             if !wasFinal, let record = commands[result.clientCommandID], record.status == .applied { clearDraft(sentBy: record) }
         } else {
             projection = ProjectionReducer.reduce(projection, event)
-            if case .snapshot = event, unreadSince == nil { unreadSince = Date(); database.setValue(unreadSince, "unreadSince") }
+            if case .snapshot = event, unreadSince == nil { unreadSince = Date(); try? database.setValue(unreadSince, "unreadSince") }
         }
         scheduleSave()
     }
 
-    /// Saved now, not debounced: the app may be ended right after the send goes out.
-    public func recordSent(_ command: RemoteCommand, at date: Date = Date()) {
-        commands[command.clientCommandID] = CommandLedger.record(command, at: date)
-        trimCommands()
-        database.setValue(commands, "commands")
+    /// Saved now, not debounced: the app may be ended right after the send goes out. Throws,
+    /// and records nothing, when the ledger cannot be written; the caller must not send.
+    public func recordSent(_ command: RemoteCommand, at date: Date = Date()) throws {
+        var next = commands
+        next[command.clientCommandID] = CommandLedger.record(command, at: date)
+        Self.trim(&next)
+        try database.setValue(next, "commands")
+        commands = next
     }
 
     /// The send never left the phone (no connection): nothing to ask about.
     public func discardUnsent(_ id: UUID) {
         commands[id] = nil
-        database.setValue(commands, "commands")
+        try? database.setValue(commands, "commands")
     }
 
     /// `perform` gave up waiting and told the user so; the ledger says the same until a
@@ -110,15 +113,15 @@ public final class MobileStore: ObservableObject {
     }
     public func storeAttachment(_ data: Data, type: String, turnID: String, index: Int, thumbnail: Bool) {
         let key = Self.fileKey(turnID, index, thumbnail: thumbnail)
-        database.set(data, for: key)
-        database.setValue(type, key + ":type")
+        try? database.set(data, for: key)
+        try? database.setValue(type, key + ":type")
     }
 
     // MARK: Replies
 
     public func recordReply(_ command: UUID, quoting turnID: String) {
         replyTo[command] = turnID
-        database.setValue(replyTo, "replyTo")
+        try? database.setValue(replyTo, "replyTo")
     }
 
     // MARK: Unread
@@ -127,11 +130,11 @@ public final class MobileStore: ObservableObject {
         let positions = (readPositions[conversation] ?? [:]).merging(projection.transcriptPositions(in: conversation), uniquingKeysWith: max)
         if readPositions[conversation] != positions {
             readPositions[conversation] = positions
-            database.setValue(readPositions, "readPositions")
+            try? database.setValue(readPositions, "readPositions")
         }
         guard (lastOpened[conversation] ?? .distantPast) < date else { return }
         lastOpened[conversation] = date
-        database.setValue(lastOpened, "lastOpened")
+        try? database.setValue(lastOpened, "lastOpened")
     }
 
     // MARK: Avatars
@@ -141,8 +144,8 @@ public final class MobileStore: ObservableObject {
     public func storeAvatar(_ data: Data, for ref: String) {
         guard avatars[ref] != data else { return }
         avatars[ref] = data
-        database.set(data, for: Self.avatarKey(ref))
-        database.setValue(avatars.keys.sorted(), "avatarRefs")
+        try? database.set(data, for: Self.avatarKey(ref))
+        try? database.setValue(avatars.keys.sorted(), "avatarRefs")
     }
     /// Content references the projection names that are not cached yet.
     public var missingAvatarRefs: [String] {
@@ -163,9 +166,9 @@ public final class MobileStore: ObservableObject {
 
     public func saveNow() {
         saveTask?.cancel(); saveTask = nil
-        database.setValue(projection, "projection")
-        database.setValue(commands, "commands")
-        database.setValue(drafts, "drafts")
+        try? database.setValue(projection, "projection")
+        try? database.setValue(commands, "commands")
+        try? database.setValue(drafts, "drafts")
     }
 
     private func scheduleSave() {
@@ -178,7 +181,7 @@ public final class MobileStore: ObservableObject {
         }
     }
 
-    private func trimCommands() {
+    private static func trim(_ commands: inout [UUID: CommandRecord]) {
         guard commands.count > 500 else { return }
         for record in commands.values.sorted(by: { $0.sentAt < $1.sentAt }).prefix(commands.count - 500) where record.isFinal { commands[record.id] = nil }
     }

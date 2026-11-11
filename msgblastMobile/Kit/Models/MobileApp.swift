@@ -36,9 +36,9 @@ public final class MobileApp: ObservableObject {
         store = try MobileStore(database: database)
         let saved = try database.value(PairedMac.self, "pairedMac")
         if let makeTransport {
-            connection = MacConnection(paired: saved, keys: keys, savePaired: { database.setValue($0, "pairedMac") }, makeTransport: makeTransport)
+            connection = MacConnection(paired: saved, keys: keys, savePaired: { try? database.setValue($0, "pairedMac") }, makeTransport: makeTransport)
         } else {
-            connection = MacConnection(paired: saved, keys: keys, savePaired: { database.setValue($0, "pairedMac") })
+            connection = MacConnection(paired: saved, keys: keys, savePaired: { try? database.setValue($0, "pairedMac") })
         }
         keepAwake = defaults.object(forKey: "keepAwake") as? Bool ?? true
         lastConnectionState = connection.state
@@ -139,11 +139,12 @@ public final class MobileApp: ObservableObject {
     }
 
     /// Records it (saved before it leaves, so a relaunch can still ask about it) and sends now,
-    /// or throws without queueing when disconnected.
+    /// or throws without queueing when disconnected. A record that cannot be written throws
+    /// before anything is sent.
     @discardableResult
     public func send(_ action: RemoteAction) throws -> RemoteCommand {
         let command = RemoteCommand(action: action)
-        store.recordSent(command)
+        try store.recordSent(command)
         do { try connection.send(command) } catch { store.discardUnsent(command.clientCommandID); throw error }
         return command
     }

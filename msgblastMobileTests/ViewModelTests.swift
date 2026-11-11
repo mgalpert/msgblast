@@ -758,6 +758,33 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(sends(), sentBeforeRelaunch, "The relaunch only asks; it never resends")
     }
 
+    /// A send whose record cannot be written (a full disk or I/O error) never leaves the phone,
+    /// and the user is told it was not sent.
+    func testASendWhoseRecordCannotBeWrittenIsNotTransmitted() async throws {
+        let mac = FakeMac()
+        let database = try LocalDatabase(url: nil)
+        let app = try MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                                makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        XCTAssertTrue(app.connection.state.canSend, "Connected: only the failed write stops the send")
+        let recorded = app.store.commands
+        try database.failWrites()
+        func sends() -> Int { mac.commands.filter { $0.action.kind == "sendPrivate" }.count }
+        do {
+            _ = try await app.perform(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Not saved", attachmentIDs: []))
+            XCTFail("A send that cannot be recorded must throw")
+        } catch {
+            guard case .write = error as? LocalDatabaseError else { return XCTFail("Expected a write failure, got \(error)") }
+            XCTAssertEqual((error as? LocalizedError)?.errorDescription, "This iPhone couldn't save the message, so it wasn't sent. Try again.")
+        }
+        XCTAssertThrowsError(try app.send(.sendShared(conversationID: UUID(), text: "Not saved either", agentIDs: [], attachmentIDs: [])))
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(sends(), 0, "Nothing was transmitted")
+        XCTAssertFalse(mac.commands.contains { $0.action.kind == "sendShared" }, "Nothing was transmitted")
+        XCTAssertEqual(app.store.commands, recorded, "Nothing is recorded as sent")
+        XCTAssertFalse(app.hasPendingSends)
+    }
+
     func testAvatarsAreFetchedOnceCachedAndClearedByForget() async throws {
         let mac = FakeMac()
         let image = Data("png-bytes".utf8)

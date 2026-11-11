@@ -48,6 +48,17 @@ extension SideChatModelCheck {
         model.state.comparisons[index].privateDrafts[cedar.id.uuidString] = "Mac private draft"
         let macFile = try model.local.stage(Data("mac draft file".utf8), filename: "mac-draft.txt")
         model.state.comparisons[index].privateAttachmentDrafts = [cedar.id.uuidString: [macFile]]
+        model.state.comparisons[index].allAttachmentsDraft = [macFile]
+        // Every save during a remote send keeps the Mac's drafts, so quitting mid-send loses nothing.
+        var savesDuringSend = 0
+        model.didSave = { saved in
+            guard let c = saved.comparisons.first(where: { $0.id == first }) else { preconditionFailure("Conversation missing from a save") }
+            savesDuringSend += 1
+            precondition(c.allDraft == "Mac shared draft", "Save \(savesDuringSend) replaced the shared draft: \(c.allDraft)")
+            precondition(c.privateDrafts[cedar.id.uuidString] == "Mac private draft", "Save \(savesDuringSend) replaced the private draft")
+            precondition(c.allAttachmentsDraft?.map(\.id) == [macFile.id], "Save \(savesDuringSend) replaced the shared draft files")
+            precondition(c.privateAttachmentDrafts?[cedar.id.uuidString]?.map(\.id) == [macFile.id], "Save \(savesDuringSend) replaced the private draft files")
+        }
         let followUp = await executor.execute(RemoteCommand(action: .sendPrivate(conversationID: first, agentID: cedarID, text: "Remote private", attachmentIDs: [])))
         precondition(followUp.outcome == .applied, "\(followUp)")
         let sent = model.comparison(first)!.followUps.last!
@@ -66,6 +77,9 @@ extension SideChatModelCheck {
         precondition(withFile.outcome == .applied, "\(withFile)")
         precondition(model.comparison(first)!.followUps.last!.payloads?[cedar.id.uuidString]?.parts.compactMap(\.attachment).map(\.filename) == ["remote.txt"])
         precondition(model.comparison(first)!.allDraft == "Mac shared draft")
+        precondition(model.comparison(first)!.allAttachmentsDraft?.map(\.id) == [macFile.id])
+        precondition(savesDuringSend >= 4, "The sends saved \(savesDuringSend) times")
+        model.didSave = nil
 
         // Errors from a remote command go to its result, never to the Mac's modal alert.
         let newer = await executor.execute(RemoteCommand(action: .createConversation(text: "Newer ask", agentIDs: [cedarID], attachmentIDs: [])))

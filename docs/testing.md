@@ -130,8 +130,8 @@ Label captures as simulated and retain the compiled source revision.
 
 `msgblastRemoteProtocolTests` (encode/decode round trips, framing limits, the
 encryption envelope with known-answer vectors checked against OpenSSL and Python)
-runs in the native command above, or alone with
-`-only-testing:msgblastRemoteProtocolTests`. The Mac side is in `msgblastTests`:
+runs when you add `-only-testing:msgblastRemoteProtocolTests` to the native
+command above, as CI's `native` job does. The Mac side is in `msgblastTests`:
 `RemoteIdentityTests`, `RemotePairingTests`, `RemoteAvailabilityTests` (every
 provider form and readiness state from fixture sessions, without connecting or
 launching), `RemoteProjectionTests`, `RemoteCommandExecutorTests`, and

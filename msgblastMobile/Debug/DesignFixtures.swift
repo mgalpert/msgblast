@@ -46,9 +46,9 @@ enum DesignFixtures {
     @MainActor static func makeModel(_ name: Name) -> MobileApp {
         let database = try! LocalDatabase(url: nil)
         if name != .pairing && name != .pairingPaste {
-            database.setValue(PairedMac(macName: "Studio Mac", variant: .production, deviceID: UUID(), identityKey: Data((0..<65).map { UInt8($0 &* 37 & 0xFF) }),
+            try! database.setValue(PairedMac(macName: "Studio Mac", variant: .production, deviceID: UUID(), identityKey: Data((0..<65).map { UInt8($0 &* 37 & 0xFF) }),
                                         spkiSHA256: Data(repeating: 7, count: 32), addresses: [], port: 52000, pairedAt: now.addingTimeInterval(-9 * 86_400)), "pairedMac")
-            database.setValue(projection(name), "projection")
+            try! database.setValue(projection(name), "projection")
         }
         let defaults = UserDefaults(suiteName: "msgblast-design-fixtures")!
         let app = try! MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: defaults)
@@ -76,7 +76,7 @@ enum DesignFixtures {
         for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
         if name != .pairing && name != .pairingPaste {
             let command = RemoteCommand(action: .sendPrivate(conversationID: group, agentID: "claude", text: replyText, attachmentIDs: []))
-            app.store.recordSent(command, at: now.addingTimeInterval(-50 * 60 + 119))
+            try! app.store.recordSent(command, at: now.addingTimeInterval(-50 * 60 + 119))
             app.store.handle(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, conversationID: group)))
             app.store.recordReply(command.clientCommandID, quoting: "\(group)-r1")
         }

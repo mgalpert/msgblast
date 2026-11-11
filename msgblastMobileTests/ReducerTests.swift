@@ -144,7 +144,7 @@ final class ReducerTests: XCTestCase {
         let key = MobileStore.draftKey(conversation: nil, agentID: nil)
         store.setDraft("Unsent on this phone", for: key)
         let pending = RemoteCommand(action: .setKeepAwake(enabled: true))
-        store.recordSent(pending)
+        try store.recordSent(pending)
         store.saveNow()
         let reopened = try MobileStore(database: try LocalDatabase(url: url))
         XCTAssertEqual(reopened.projection, store.projection)
@@ -180,7 +180,7 @@ final class ReducerTests: XCTestCase {
         let key = MobileStore.draftKey(conversation: nil, agentID: nil)
         first.store.setDraft("Kept", for: key)
         let pending = RemoteCommand(action: .setKeepAwake(enabled: true))
-        first.store.recordSent(pending)
+        try first.store.recordSent(pending)
         first.store.saveNow()
         guard case .ready(let second) = MobileLaunch.open(databaseURL: url, keys: MemoryDeviceKeyStore(), defaults: launchDefaults()) else { return XCTFail("Reopens") }
         XCTAssertEqual(second.store.projection, first.store.projection)
