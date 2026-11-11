@@ -22,10 +22,10 @@ struct OutsideAgentsSettingsView: View {
         }
         ForEach(gate.approvals.keys.sorted(), id: \.self) { client in
             HStack {
-                Picker(client, selection: Binding(get: { gate.approvals[client] ?? .readOnly }, set: { try? gate.set($0, for: client) })) {
+                Picker(client, selection: Binding(get: { gate.approvals[client] ?? .readOnly }, set: { gate.change($0, for: client) })) {
                     ForEach(AgentControlAccess.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
-                Button("Remove") { try? gate.set(nil, for: client) }
+                Button("Remove") { gate.change(nil, for: client) }
             }
         }
         ForEach(gate.refused.sorted(), id: \.self) { client in

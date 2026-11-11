@@ -84,4 +84,28 @@ final class AgentControlCLITests: XCTestCase {
         }
         XCTAssertEqual(AgentControlCLI.render(Data("nope".utf8), json: false).status, 1)
     }
+
+    func testALostReplyIsToldApartFromMsgblastNotRunning() throws {
+        let path = NSTemporaryDirectory() + "mb-\(UUID().uuidString.prefix(8)).sock"
+        let line = Data("{}\n".utf8)
+        XCTAssertThrowsError(try AgentControlSocketClient.exchange(line, socket: path)) { XCTAssertTrue($0 is AgentControlSocketClient.Unavailable) }
+        let server = socket(AF_UNIX, SOCK_STREAM, 0)
+        defer { close(server); unlink(path) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: Array(path.utf8)) }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(server, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        XCTAssertEqual(bound, 0)
+        XCTAssertEqual(listen(server, 1), 0)
+        // The app reads the whole request, then goes away without answering.
+        Thread {
+            let client = accept(server, nil, nil)
+            var buffer = [UInt8](repeating: 0, count: 64)
+            _ = read(client, &buffer, buffer.count)
+            close(client)
+        }.start()
+        XCTAssertThrowsError(try AgentControlSocketClient.exchange(line, socket: path)) { XCTAssertTrue($0 is AgentControlSocketClient.NoReply) }
+    }
 }
