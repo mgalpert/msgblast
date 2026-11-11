@@ -1,0 +1,25 @@
+{
+  "pr": 97,
+  "base_sha": "0f35af59a2e599c2d964b044dbcdb2ee86dbc7ee",
+  "head_sha": "416e481df7399cee560c2e1ed581f94f56347c9e",
+  "date": "2026-11-11",
+  "authors": "Codex (sidebar revisions up to b420b75) and a Claude Opus agent in msg's 'Add outside agent settings to settings PR' thread (merge of main and the Outside agents page, 416e481), at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "scope": "full diff 0f35af5...416e481 (8 files, about 385 lines): Settings sidebar, Outside agents page, UI tests, docs/architecture.md",
+  "verified": [
+    "symbol and subtitle switches cover all 9 SettingsPage cases; connectionSettings has a default",
+    "SettingsPage.id is Self, so identifiers interpolate case names (settings-page-outsideAgents) and match the UI tests",
+    "Nothing from main's old Settings form is missing: Quick Access and Conversations on General, Grok Bot under Webhooks, Outside agents, Permissions, Sharing and Updates each have a page",
+    "Pages stay mounted in a ZStack hidden by opacity, hit testing and accessibility, so drafts and unsaved Sharing choices survive page changes",
+    "The Outside agents switch label in the test matches OutsideAgentsSettingsView.swift"
+  ],
+  "findings": [
+    {"severity": "low", "note": "settings-detail-* identifier sits on the Form; if macOS does not expose it on the scroll view, scrollViews[...] queries in UI tests would fail"},
+    {"severity": "low", "note": "SharingSettingsView loads preferences once on window open; a consent change elsewhere while Settings stays open is not reflected"},
+    {"severity": "low", "note": "The 'survive reopening' assertion would also pass if the choice were not persisted"},
+    {"severity": "low", "note": "All pages are mounted at window open, so .task/.onAppear refreshes run once then rather than on each visit"}
+  ],
+  "limits": "No Swift toolchain in the review environment; compile and UI tests are covered by native CI and the Mac evidence run"
+}
