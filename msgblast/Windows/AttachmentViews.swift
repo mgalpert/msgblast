@@ -113,11 +113,10 @@ struct AttachmentComposer: View {
             Button { photosPresented = true } label: { Label("Photos", systemImage: "photo") }
             Button { filesPresented = true } label: { Label("Choose File…", systemImage: "doc") }
         } label: {
-            Image(systemName: "plus").font(.system(size: 16, weight: .medium)).frame(width: 30, height: 30)
+            Image(systemName: "plus").font(.system(size: Space.glyph, weight: .medium)).foregroundStyle(.secondary)
+                .frame(width: Space.fieldHeight, height: Space.fieldHeight)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-        .frame(width: 32, height: 32).foregroundStyle(.primary)
-        .background(.regularMaterial, in: Circle())
         .accessibilityLabel("Add photo or file").help("Add photo or file").disabled(disabled)
         .fileImporter(isPresented: $filesPresented, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             switch result {
