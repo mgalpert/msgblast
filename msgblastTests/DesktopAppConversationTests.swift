@@ -827,6 +827,19 @@ final class DesktopAppConversationTests: XCTestCase {
     private func decode(_ elements: [[String: Any]]) throws -> DesktopAppSnapshot {
         try JSONDecoder().decode(DesktopAppSnapshot.self, from: JSONSerialization.data(withJSONObject: ["elements": [element("AXSplitter", "Resize sidebar")] + elements, "elements_complete": true]))
     }
+    func testSnapshotWalkBudgetReachesLongDotsComposer() async throws {
+        // Fixture driver: it truncates like cua-driver when the budget is below the
+        // 6,490-node, depth-42 walk measured on a long Dots DM.
+        let driver = DesktopAppConversation(executable: URL(fileURLWithPath: "/fixture/cua-driver"), runProcess: { _, arguments, _, _, _ in
+            let payload = try JSONSerialization.jsonObject(with: Data(arguments[2].utf8)) as? [String: Any] ?? [:]
+            let complete = (payload["max_elements"] as? Int ?? 0) >= 6_490 && (payload["max_depth"] as? Int ?? 0) >= 42
+            let elements = complete ? #"[{"role":"AXWindow"},{"role":"AXTextArea","label":"Message","element_token":"t"}]"# : #"[{"role":"AXWindow"}]"#
+            return .init(status: 0, stdout: #"{"pid":42,"window_id":21,"truncated":\#(!complete),"elements":\#(elements)}"#)
+        })
+        let snapshot = try await driver.snapshot(.init(pid: 42, window: 21), session: "dots-budget")
+        XCTAssertNoThrow(try snapshot.checkReadable())
+        XCTAssertEqual(snapshot.body.last?.label, "Message")
+    }
 }
 
 /// Runs the real adapter/process boundary. The executable below only consumes a
