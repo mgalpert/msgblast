@@ -28,9 +28,18 @@ struct ComposeBar: View {
     /// How long the phone waits for the Mac's readiness answer (the Mac bounds it at 20 s).
     static let prepareTimeout: Duration = .seconds(25)
     @State private var sending = false
-    /// The send waiting on the Mac: its command id and the text it carried, so a late `applied`
-    /// (after the field already said unconfirmed) clears the field if it still holds that text.
-    @State private var inFlight: (id: UUID, text: String)?
+    /// The send waiting on the Mac: what it carried, so a late `applied` (after the field already
+    /// said unconfirmed) finishes it as a prompt answer would.
+    private struct InFlight {
+        var id: UUID
+        var text: String
+        var attachmentIDs: [String]
+        /// The turn it replied to, if any.
+        var quoting: String?
+        /// The phone's timeout gave up on it; only then is an `applied` late.
+        var timedOut = false
+    }
+    @State private var inFlight: InFlight?
     @State private var message: String?
     @State private var attachments: [(id: String, name: String)] = []
     @State private var photo: PhotosPickerItem?
@@ -314,6 +323,7 @@ struct ComposeBar: View {
     private func submit() {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let files = attachments.map(\.id)
+        let quoting = replyTo.wrappedValue?.id
         let action = ProjectionPresenter.sendAction(conversationID: conversationID, members: conversationID == nil ? recipients : members,
                                                     recipients: recipients, text: body, attachmentIDs: files)
         sending = true
@@ -321,35 +331,46 @@ struct ComposeBar: View {
         Task {
             defer { sending = false }
             do {
-                let result = try await app.perform(action) { inFlight = ($0.clientCommandID, body) }
+                let result = try await app.perform(action) { inFlight = InFlight(id: $0.clientCommandID, text: body, attachmentIDs: files, quoting: quoting) }
                 inFlight = nil
                 if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
-                sentCount += 1
-                text = ""; attachments = []
-                withAnimation(.snappy) { recipientsOpen = false }
-                // The reply link stays on this phone; the Mac only gets a private send.
-                if let quoted = replyTo.wrappedValue { app.store.recordReply(result.clientCommandID, quoting: quoted.id); replyTo.wrappedValue = nil }
+                finishSent(id: result.clientCommandID, text: body, attachmentIDs: files, quoting: quoting)
                 onSent(result.conversationID)
             } catch {
                 // Keep the text and files: the Mac may still be finishing this send (it is never
                 // resent, and Send stayed off until the timeout). If it does finish, the field
                 // clears itself; otherwise the user checks the conversation before sending again.
+                inFlight?.timedOut = true
                 message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
                 refusedCount += 1
+                // An `applied` that arrived between the timeout and here changes nothing later.
+                lateApplied()
             }
         }
     }
 
-    /// The Mac finished a send the field had given up on. Still that text: it went, so the
-    /// field clears as after any send; edited since: only the stale error goes.
+    /// A confirmed send: only what it carried leaves the field; text typed or files added while
+    /// it waited stay (and so does their draft).
+    private func finishSent(id: UUID, text sent: String, attachmentIDs sentFiles: [String], quoting: String?) {
+        sentCount += 1
+        text = ComposeSend.field(text, afterSending: sent)
+        attachments = ComposeSend.attachments(attachments, id: { $0.id }, afterSending: sentFiles)
+        withAnimation(.snappy) { recipientsOpen = false }
+        // The reply link stays on this phone; the Mac only gets a private send.
+        if let quoting {
+            app.store.recordReply(id, quoting: quoting)
+            if replyTo.wrappedValue?.id == quoting { replyTo.wrappedValue = nil }
+        }
+    }
+
+    /// The Mac finished a send the field had given up on: it went, so it finishes as any send
+    /// does, and a new conversation becomes its thread with the id the Mac reported.
     private func lateApplied() {
-        guard let flight = inFlight, !sending else { return }
+        guard let flight = inFlight, flight.timedOut, let confirmed = ComposeSend.lateConfirmation(app.store.commands[flight.id]) else { return }
         inFlight = nil
         message = nil
-        guard text.trimmingCharacters(in: .whitespacesAndNewlines) == flight.text else { return }
-        sentCount += 1
-        text = ""; attachments = []
-        withAnimation(.snappy) { recipientsOpen = false }
+        finishSent(id: flight.id, text: flight.text, attachmentIDs: flight.attachmentIDs, quoting: flight.quoting)
+        onSent(confirmed.conversationID)
     }
 
     private func upload(_ item: PhotosPickerItem) async {

@@ -722,6 +722,56 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(queries(), settled, "No more queries once it is final")
     }
 
+    /// The field stays editable while a send waits: sending A, then typing B and adding a file,
+    /// leaves B, the new file and B's draft after the Mac confirms A.
+    func testAConfirmedSendKeepsWhatWasTypedWhileItWaited() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        let conversation = UUID()
+        let key = MobileStore.draftKey(conversation: conversation, agentID: nil)
+        app.store.setDraft("A", for: key)
+        let (id, send) = try await startSend(app, mac, .sendShared(conversationID: conversation, text: "A", agentIDs: [], attachmentIDs: ["a1"]))
+        // Typed while it waits, as ComposeBar's text handler saves it.
+        app.store.setDraft("B", for: key)
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        mac.sessions.last!.transport.drop()
+        let result = try await send.value
+        XCTAssertEqual(result.outcome, .applied)
+        XCTAssertEqual(app.store.draft(key), "B", "The draft typed during the send stays")
+        XCTAssertEqual(ComposeSend.field("B", afterSending: "A"), "B", "The field keeps what was typed since")
+        XCTAssertEqual(ComposeSend.field(" A\n", afterSending: "A"), "", "A field still holding the sent text clears")
+        XCTAssertEqual(ComposeSend.attachments(["a1", "b2"], id: { $0 }, afterSending: ["a1"]), ["b2"], "Only the sent files go")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendShared" }.count, 1, "Never sent a second time")
+    }
+
+    /// The timeout said unconfirmed; a reconnect's query then says the Mac created the
+    /// conversation. The compose bar gets its id (so New Conversation becomes the thread), the
+    /// draft edited since stays, and the send is only queried, never resent.
+    func testANewConversationConfirmedAfterTheTimeoutGivesItsID() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        app.commandTimeout = .milliseconds(300)
+        let key = MobileStore.draftKey(conversation: nil, agentID: nil)
+        app.store.setDraft("Hi", for: key)
+        let (id, send) = try await startSend(app, mac, .createConversation(text: "Hi", agentIDs: ["codexCLI", "claudeCLI"], attachmentIDs: []))
+        do { _ = try await send.value; XCTFail("No answer must end in unconfirmed") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
+        XCTAssertNil(ComposeSend.lateConfirmation(app.store.commands[id]), "Nothing to bind while unconfirmed")
+        app.store.setDraft("Hi again", for: key)
+        let created = UUID()
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, conversationID: created, replayed: true)
+        mac.sessions.last!.transport.drop()
+        await settle { app.store.commands[id]?.status == .applied }
+        XCTAssertEqual(ComposeSend.lateConfirmation(app.store.commands[id])?.conversationID, created, "The late answer names the created conversation")
+        XCTAssertEqual(app.store.draft(key), "Hi again", "A draft edited since stays")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "createConversation" }.count, 1, "Never sent a second time")
+    }
+
     /// No manual save: the record is on disk before the send leaves, so an app ended right after
     /// dispatch (before any debounced save) still knows it, shows it unconfirmed and asks about it.
     func testASendInterruptedRightAfterDispatchIsKnownAfterRelaunch() async throws {
