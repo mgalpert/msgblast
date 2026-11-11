@@ -1,0 +1,22 @@
+{
+  "pr": 97,
+  "base_sha": "94ea9c9db9eeb1e2cb134b0b1e1a8d6f865dd083",
+  "head_sha": "f1451a929f0cf00db72e4e1bf4ff6e47c7f1fd17",
+  "previous_head": "b4da96fe21c252f27af463485d807d12b367a048",
+  "previous_receipt": "guardrail-receipts/pr-97-b4da96f.json",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Add outside agent settings to settings PR' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "scope": "delta b4da96f..f1451a9: UI test helpers for swift-complexity (b9d3e09), @MainActor restored on a test helper (5525b63), and the merge of main 94ea9c9 (#94 iPhone controller)",
+  "verified": [
+    "Every step and assertion moved into the test helpers unchanged; Swift 6 isolation of helpers is consistent with their @MainActor callers",
+    "Merge resolution: #94's Remote settings section is a .remote sidebar page (enum case, symbol, row, page, subtitle); symbol and subtitle switches exhaustive",
+    "Nothing from main's old Settings form is dropped (Quick Access, Permissions, App Agents, Outside agents, Conversations, CLI, Web agents, Grok Bot, Remote, Updates, Sharing)",
+    "Main's side of the merge does not conflict with #97's other files; git diff 94ea9c9 f1451a9 lists 17 files, all in #97's declared scope"
+  ],
+  "findings": [],
+  "minor_notes": ["The Remote page has no settings-detail-* accessibility id; no test scrolls it"],
+  "limits": "No Swift toolchain in the review environment; compile, unit and UI tests are covered by native CI and the Mac evidence run"
+}
