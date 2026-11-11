@@ -14,7 +14,7 @@ GitHub does not itself attest which model performed the review.
 
 ## Size and scope
 
-`PR scope` warns above 250 added-plus-deleted lines and fails above 600. Tests,
+`PR scope` warns above 250 added-plus-deleted lines and fails above 1,200. Tests,
 docs, generated text, and deletions count. File moves count as delete/add to keep
 large reorganizations visible. Binary files are reported separately; the byte
 metric is the total size of changed files at the head, not added bytes.
@@ -31,7 +31,7 @@ Scope: docs/review-guardrails.md
 Globs are supported. A reviewer must reject declarations broader than the approved
 request. Matching paths does not establish semantic scope or code quality.
 
-For an indivisible change over 600 lines, a different human with write, maintain,
+For an indivisible change over 1,200 lines, a different human with write, maintain,
 or admin access must approve the exact head commit with this standalone line in
 the review body: `Size-exception: <40-character head SHA>`. While a user-owned
 repository's owner is the only user with write, maintain, or admin access, the

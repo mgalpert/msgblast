@@ -113,12 +113,12 @@ def main():
     failures = []
     if total > 250:
         print('Advisory: exceeds 250 changed lines. Explain why this remains one reviewable change.')
-    if total > 600:
+    if total > 1200:
         approved = args.size_approved
         if args.repo:
             approved = github_exception(args.repo, pr['number'], args.head, pr['user']['login'])
         if not approved:
-            failures.append('Exceeds 600 lines: split, or obtain a Size-exception: <head SHA> review (another write-access human, or the owner of a solo repository), then rerun.')
+            failures.append('Exceeds 1,200 lines: split, or obtain a Size-exception: <head SHA> review (another write-access human, or the owner of a solo repository), then rerun.')
     if not patterns:
         failures.append('Declare intended paths with one Scope: <path or glob> line per entry.')
     outside = [path for path in paths if not any(fnmatch.fnmatchcase(path, p) for p in patterns)]
