@@ -44,12 +44,16 @@ the Mac or the phone applies:
 
 - Nothing is retried. A send whose result is unclear stays unclear; check the
   comparison or `msgblast_request_status` before sending again.
-- `requestId` makes a call safe to repeat. The same agent name and `requestId`
-  return the first result and never send twice. Without one, each call is new.
-- Sends run one at a time. While the Mac or the phone is sending, a new send is
-  refused as busy rather than queued.
+- `requestId` makes a call safe to repeat while msgblast is running. The same
+  agent name and `requestId` return the first result instead of sending again.
+  msgblast remembers its last 1,000 sends and forgets them when it quits, so after
+  a restart check the comparison before repeating. Without a `requestId`, each
+  call is new. A refusal is remembered too, so use a new `requestId` to try again.
+- Sends run one at a time. An agent's send waits for an earlier agent send to
+  finish. While the Mac or the phone is sending, it is refused as busy instead.
 - A locked Mac, an agent that isn't signed in or ready, or an ended comparison
-  refuses the send, and the error says why for each agent. Nothing is sent.
+  refuses the send. The error says why for each agent and names a code, such as
+  `macLocked`, `macBusy` or `agentUnavailable`. Nothing is sent.
 - Each agent name may call the send tools 6 times a minute and 60 times an hour.
   A repeat of a known `requestId` does not count.
 - A result of `done` means msgblast submitted the message to each agent. Replies
@@ -63,11 +67,12 @@ agents; Full access is what allows Messages contacts.
 While an agent's send runs, a banner above the agents says who is sending and
 what (for example "Codex · Started a blast · 3 agents") and offers **Stop Agent
 Sends**. The send already under way finishes, because stopping it halfway could
-leave a message half sent; nothing new goes out after it.
+leave a message half sent; nothing new goes out after it, including sends that
+were waiting their turn.
 
 While sends are stopped, the banner says so and offers **Allow Agent Sends**.
-Every new send call is refused with code `agentSendsStopped`, and agents can
-still read. The setting is saved, so quitting msgblast doesn't turn sends back on.
+Every new send call is refused, and the error names the code `agentSendsStopped`.
+Agents can still read. The setting is saved, so quitting msgblast doesn't turn sends back on.
 Settings → Outside agents has the same switch and lists the last agent sends since
 msgblast opened, with each one's result. The list never holds message text and
 is not saved.

@@ -31,8 +31,8 @@ public struct AgentControlActivityLog: Equatable, Sendable {
 
     public init() {}
 
-    /// The send now running, if any. Agent sends run one at a time.
-    public var running: AgentControlActivityEntry? { entries.first { $0.result == nil } }
+    /// The send now running, if any. Agent sends take turns, so the oldest unfinished one is under way.
+    public var running: AgentControlActivityEntry? { entries.last { $0.result == nil } }
 
     public mutating func begin(_ command: RemoteCommand, client: String, now: Date = Date()) {
         guard let described = Self.describe(command.action),
@@ -76,26 +76,49 @@ public struct AgentControlActivityLog: Equatable, Sendable {
     /// While true, every new agent send is refused. Saved, so quitting msgblast doesn't turn sends back on.
     @Published public var stopped: Bool { didSet { defaults.set(stopped, forKey: Self.stoppedKey) } }
     private let defaults: UserDefaults
+    private var turnTaken = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         _stopped = Published(initialValue: defaults.bool(forKey: Self.stoppedKey))
     }
 
-    /// Records a new send and runs it, or refuses it while sends are stopped.
-    /// A repeat of a known request (`known`) runs as-is and adds no entry.
-    public func run(_ command: RemoteCommand, client: String, known: Bool,
+    /// Records a new send and runs it, or refuses it while sends are stopped. A repeat of a
+    /// known request (`isKnown`) runs as-is and adds no entry. New sends take turns, and Stop
+    /// is checked again after `prepare`, right before `send`, so a send that waited its turn
+    /// or got ready while the person pressed Stop never goes out.
+    public func run(_ command: RemoteCommand, client: String, isKnown: @MainActor () -> Bool,
+                    prepare: @MainActor () async -> Void = {},
                     send: @MainActor (RemoteCommand) async -> RemoteCommandResult) async -> RemoteCommandResult {
-        guard !known else { return await send(command) }
+        guard !isKnown() else { return await send(command) }
         log.begin(command, client: client)
+        await takeTurn()
         let result: RemoteCommandResult
-        if stopped {
-            result = .rejected(command.clientCommandID, .agentSendsStopped,
-                               "Agent sends are stopped in msgblast. The person can allow them again in msgblast")
-        } else {
+        if isKnown() {
+            // A call with the same request ran while this one waited, so this gets its stored answer.
             result = await send(command)
+        } else if stopped {
+            result = refusal(command)
+        } else {
+            await prepare()
+            if stopped { result = refusal(command) } else { result = await send(command) }
         }
+        passTurn()
         log.finish(result)
         return result
+    }
+
+    private func refusal(_ command: RemoteCommand) -> RemoteCommandResult {
+        .rejected(command.clientCommandID, .agentSendsStopped, "Agent sends are stopped in msgblast. The person can allow them again in msgblast")
+    }
+
+    private func takeTurn() async {
+        guard turnTaken else { turnTaken = true; return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    private func passTurn() {
+        if waiting.isEmpty { turnTaken = false } else { waiting.removeFirst().resume() }
     }
 }

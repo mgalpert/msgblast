@@ -5,12 +5,12 @@ import msgblastRemoteProtocol
 /// Send tools for outside agents. Each call becomes a command for the same executor the
 /// iPhone controller uses, so it gets the same checks (a locked or busy Mac, each agent's
 /// readiness), runs one at a time, and is never retried. A `requestId` makes a call safe to
-/// repeat: the same id returns the first result and never sends twice.
+/// repeat while msgblast runs: the same id returns the first result instead of sending again.
 public enum AgentControlSend {
     public static let names: Set<String> = ["msgblast_blast_start", "msgblast_blast_follow_up", "msgblast_agent_message", "msgblast_comparison_end"]
     public static let maximumTextLength = 50_000
 
-    static let requestIDSummary = "requestId: your own id for this call, such as a UUID. Calling again with the same requestId returns the first result and never sends twice; after a timeout, ask msgblast_request_status."
+    static let requestIDSummary = "requestId: your own id for this call, such as a UUID. While msgblast keeps running, calling again with the same requestId returns the first result instead of sending again (it remembers its last 1,000 sends). After a timeout or a restart, ask msgblast_request_status and check the comparison before repeating."
 
     public static let tools: [AgentControlTool] = [
         AgentControlTool(name: "msgblast_blast_start", title: "Start a blast",
@@ -121,7 +121,9 @@ public enum AgentControlSend {
                 if refusalThrows {
                     let reasons = rows.compactMap { row in row.reason.map { "\(row.name): \($0)" } }
                     let message = result.message ?? "msgblast did not send it"
-                    throw AgentControlError.refused(([message] + reasons).joined(separator: ". ") + ". Nothing was sent.")
+                    let code = result.code.map { " (\($0.rawValue))" } ?? ""
+                    throw AgentControlError.refused(([message] + reasons).joined(separator: ". ") + ". Nothing was sent\(code). "
+                        + "A repeat with the same requestId gets this same answer, so use a new requestId to try again.")
                 }
                 outcome = "refused"
             }
