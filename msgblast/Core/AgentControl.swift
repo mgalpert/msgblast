@@ -1,11 +1,12 @@
 import Foundation
 
 /// How much an outside agent may do. Approval in msgblast picks one level per agent.
+/// Raw values are saved; 1 was a removed middle level and must never read as Full access.
 public enum AgentControlAccess: Int, Codable, CaseIterable, Comparable, Sendable {
-    case readOnly, sendToAgents, full
+    case readOnly = 0, full = 2
     public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
     public var label: String {
-        switch self { case .readOnly: "Read only"; case .sendToAgents: "Send to my agents"; case .full: "Full access" }
+        switch self { case .readOnly: "Read only"; case .full: "Full access" }
     }
 }
 
@@ -88,7 +89,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
                          summary: "A comparison's prompt, each agent's submission state, and the conversation so far.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}"#),
         AgentControlTool(name: "msgblast_blast_wait", title: "Wait for replies",
-                         summary: "Waits up to timeoutSeconds for events after cursor `after` (replies, busy or ready agents, send results, new Messages-agent messages, finished reports). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
+                         summary: "Waits up to timeoutSeconds for events after cursor `after` (a reply arrived, a send finished, an agent turned busy or ready). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"after":{"type":"integer","minimum":0},"comparisonId":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":0,"maximum":300}}}"#)
     ]
 
@@ -141,8 +142,11 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
 
     private static func wait(_ host: AgentControlHost, after: Int?, comparisonID: String?, timeout: Int) async throws -> AgentControlWaitResult {
         guard (0...300).contains(timeout) else { throw AgentControlError.invalidArguments("timeoutSeconds must be 0 to 300") }
+        if let after, after < 0 { throw AgentControlError.invalidArguments("after must be 0 or more") }
         let feed = host.controlEvents
-        let start = after ?? feed.cursor
+        // The feed starts again at 0 when msgblast restarts, so a cursor past its end is
+        // from an earlier run: read from the start rather than wait for events that already came.
+        let start = after.map { $0 > feed.cursor ? 0 : $0 } ?? feed.cursor
         var comparison: UUID?
         if let comparisonID {
             guard let id = UUID(uuidString: comparisonID) else { throw AgentControlError.invalidArguments("comparisonId is not a comparison id") }
