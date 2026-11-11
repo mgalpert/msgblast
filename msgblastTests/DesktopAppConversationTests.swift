@@ -3586,6 +3586,51 @@ final class DesktopAppDriverTests: XCTestCase {
         }
     }
 
+    func testMuseConnectReturnsToMainChatInTheBackgroundWhenASideChatHidesItsComposer() async throws {
+        for label in ["Back to main chat", "Main chat"] {
+            var main = museObservation(); main.url = URL(string: "https://muse.ai/")!
+            let fixture = try driver([apps(.muse), windows(),
+                                      snapshot(["elements": [element("AXStaticText", "Side chat"), element("AXButton", label, token: "s00000001:main")]]),
+                                      try museStep("click", observation: main, token: "s00000001:main")])
+            defer { fixture.remove() }
+            let native = fixture.directory.appendingPathComponent("native.json")
+            // The side chat exposes no composer until Muse is back on Main chat.
+            let adapter = MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero)) { _ in
+                guard FileManager.default.fileExists(atPath: native.path) else { throw MuseObservationError.incomplete }
+                return try JSONDecoder().decode(MuseAppObservation.self, from: Data(contentsOf: native))
+            }
+            try await adapter.checkAvailable()
+            let calls = try await finishedCalls(fixture)
+            XCTAssertEqual(calls.map(\.tool).filter { $0 != "end_session" }, ["list_apps", "list_windows", "get_window_state", "click"], label)
+            XCTAssertFalse(calls.contains { $0.tool == "type_text" || $0.tool == "press_key" })
+            assertMuseBackground(calls)
+        }
+    }
+
+    func testMuseConnectFailureNeverBringsMuseForwardAndSaysWhatToDo() async throws {
+        let fixture = try driver([apps(.muse), windows(), snapshot(["elements": [element("AXStaticText", "Side chat")]])])
+        defer { fixture.remove() }
+        let adapter = MuseAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero)) { _ in
+            throw MuseObservationError.incomplete
+        }
+        let focus = FirstCall()
+        let session = WebAgentSession(provider: .museApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
+                                      museApp: adapter, desktopApps: .demo,
+                                      desktopDriver: try readinessDriver(fixture, app: .muse, delivery: .foreground, captureHostWindow: {
+                                          _ = focus.take()
+                                          throw DesktopAppError.unavailable("Connecting Muse must not take focus")
+                                      }))
+        defer { session.beginShutdown() }
+        session.setEnabled(true)
+        await session.connectDesktopConversation()
+        XCTAssertFalse(session.desktopReady)
+        XCTAssertTrue(focus.take(), "Connecting Muse never brings it to the front")
+        XCTAssertTrue(session.desktopStatus.contains("message box"), session.desktopStatus)
+        XCTAssertNotNil(session.desktopRecoveryMessage)
+        let calls = try await finishedCalls(fixture)
+        XCTAssertFalse(calls.contains { ["click", "type_text", "press_key"].contains($0.tool) })
+    }
+
     func testMuseCheckCannotClaimReadyAfterRemovalDisableOrShutdownDuringTheRead() async throws {
         @MainActor final class InstalledApp {
             var installation = DesktopAppInstallation(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242)
@@ -4633,7 +4678,8 @@ final class DesktopAppDriverTests: XCTestCase {
             }
         }
     }
-    private func readinessDriver(_ fixture: DriverFixture, app: DesktopAppProvider) throws -> DesktopAppConversation {
+    private func readinessDriver(_ fixture: DriverFixture, app: DesktopAppProvider, delivery: DesktopAppConversation.Delivery = .background,
+                                 captureHostWindow: (@Sendable () async throws -> DesktopAppConversation.Target)? = nil) throws -> DesktopAppConversation {
         // Session window readiness is separate from the adapter's ordered action plan.
         let executable = fixture.directory.appendingPathComponent("readiness-driver")
         try Data("""
@@ -4651,7 +4697,8 @@ final class DesktopAppDriverTests: XCTestCase {
         sys.stdout.flush();time.sleep(.02)
         """.utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        return DesktopAppConversation(executable: executable)
+        guard let captureHostWindow else { return DesktopAppConversation(executable: executable, delivery: delivery) }
+        return DesktopAppConversation(executable: executable, delivery: delivery, captureHostWindow: captureHostWindow)
     }
     private func driver(_ steps: [[String: Any]]) throws -> DriverFixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-driver-test-\(UUID())")
