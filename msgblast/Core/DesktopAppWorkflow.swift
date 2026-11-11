@@ -83,12 +83,12 @@ enum DesktopAppWorkflow {
         }
     }
 
-    /// Navigation needed for a send runs under the same foreground ownership
-    /// as input, so a background click cannot silently leave the old chat open.
+    /// Navigation takes the foreground only for apps whose input does.
     static func preparation<Value: Sendable>(_ app: DesktopAppProvider, driver: DesktopAppConversation?,
                                             isolation: isolated (any Actor)? = #isolation,
                                             prepare: () async throws -> Value) async throws -> Value {
-        guard let driver, let focus = try await driver.beginForeground(app, session: "msgblast-prepare-\(UUID())") else {
+        guard let driver, app.requiresForegroundSubmission,
+              let focus = try await driver.beginForeground(app, session: "msgblast-prepare-\(UUID())") else {
             return try await prepare()
         }
         let value: Value

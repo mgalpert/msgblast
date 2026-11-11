@@ -1721,6 +1721,30 @@ final class DesktopAppDriverTests: XCTestCase {
             XCTAssertFalse(calls.contains { ["type_text", "press_key", "click"].contains($0.tool) })
         }
     }
+    func testChatGPTAndDotsPreparationStayInTheBackground() async throws {
+        for app in [DesktopAppProvider.chatgpt, .dots] {
+            for shouldFail in [false, true] {
+                let fixture = try driver([])
+                defer { fixture.remove() }
+                let host = fixtureHost
+                let control = DesktopAppConversation(executable: fixture.executable, delivery: .foreground, captureHostWindow: { host })
+                do {
+                    let result = try await DesktopAppWorkflow.preparation(app, driver: control) {
+                        if shouldFail { throw DesktopAppError.unavailable("Preparation failed") }
+                        return "prepared"
+                    }
+                    XCTAssertFalse(shouldFail)
+                    XCTAssertEqual(result, "prepared")
+                } catch {
+                    XCTAssertTrue(shouldFail, error.localizedDescription)
+                    XCTAssertEqual(error.localizedDescription, "Preparation failed")
+                }
+                let calls = try await finishedCalls(fixture, cleanupCount: 0)
+                XCTAssertFalse(calls.contains { $0.tool == "bring_to_front" })
+                XCTAssertTrue(calls.isEmpty)
+            }
+        }
+    }
     func testReplyRefreshRestoresTheExactHostOnceWithoutInput() async throws {
         let fixture = try driver([activation(), activation(fixtureHost)])
         defer { fixture.remove() }
