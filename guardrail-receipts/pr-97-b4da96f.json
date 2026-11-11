@@ -1,0 +1,41 @@
+{
+  "pr": 97,
+  "base_sha": "0f35af59a2e599c2d964b044dbcdb2ee86dbc7ee",
+  "head_sha": "b4da96fe21c252f27af463485d807d12b367a048",
+  "previous_head": "260bd5b3b9b25c160b30ba0c6dafa9132823fed1",
+  "previous_receipt": "guardrail-receipts/pr-97-260bd5b.json",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Add outside agent settings to settings PR' thread, at the owner's request (any MCP client over Tailscale, one key per agent)",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "c8866062c73680868a78bed9147eaad3f92590e4",
+      "scope": "delta 260bd5b..c886606: per-agent Tailscale keys (Core name rules, setup text, listener, Settings view, tests, docs)",
+      "verdict": "request changes",
+      "findings": [
+        "remoteClientName rejected only control characters, while approvals use AgentControlGate.clientName; a zero-width or bidi name could share Grok Bot's approval, and Remove could miss a double-spaced name's approval",
+        "Grok Bot's last-called readiness line was updated by any agent's key",
+        "Grok Bot plugin docs still used removed labels"
+      ]
+    },
+    {
+      "head_sha": "b4da96fe21c252f27af463485d807d12b367a048",
+      "scope": "delta c886606..b4da96f: fixes for the three findings, with unit tests",
+      "verdict": "approve",
+      "verified": [
+        "remoteClientName now cleans with AgentControlGate.clientName before the suffix; saved names round-trip through clientName unchanged; hand-traced tests for newline, U+200B, U+202E, double space, trim, suffix stripping, length",
+        "lastAuthorizedByClient is set on the accepted branch; the listener reads only Grok Bot's entry; endpoints are rebuilt on key changes so stamps reset",
+        "No remaining user-facing old labels in the repo",
+        "Compiles by inspection: nonisolated static gate helper, cross-actor await read, guard var mutation"
+      ],
+      "findings": []
+    }
+  ],
+  "minor_notes": [
+    "A local-socket client could still name itself 'X (Tailscale)' and share a remote agent's approval (pre-existing; could be blocked in AgentControlGate for local callers)",
+    "add() clears the field even if saving the key fails; the error shows in the section's red line"
+  ],
+  "limits": "No Swift toolchain in the review environment; compile, unit and UI tests are covered by native CI and the Mac evidence run"
+}
