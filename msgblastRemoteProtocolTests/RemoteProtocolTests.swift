@@ -107,6 +107,44 @@ final class RemoteProtocolCodingTests: XCTestCase {
         XCTAssertTrue(parts[1].agents.isEmpty, "Only the first part repeats agents and conversations")
     }
 
+    /// 400 long replies are over the frame cap in one part; split by bytes, every sealed frame fits.
+    func testSnapshotPartsAreSplitByBytesUnderTheFrameCap() throws {
+        let conversation = UUID()
+        let text = String(repeating: "a", count: 22_000)
+        let turns = (0..<400).map { RemoteTurn(id: "\($0)", conversationID: conversation, agentID: "claude", role: .assistant, origin: .agentTranscript, text: text, created: date, ordinal: $0, contentHash: "h") }
+        let snapshot = RemoteSnapshot(seq: 4, macStatus: status(), grid: RemoteGrid(visibleAgentIDs: []), agents: [availability(.ready)], conversations: [], turns: turns, attempts: [])
+        XCTAssertGreaterThan(try RemoteProtocol.encoder().encode(RemoteMessage.snapshot(snapshot)).count, RemoteProtocol.maximumFrameBytes, "One part would not fit")
+        let parts = snapshot.parts()
+        XCTAssertGreaterThan(parts.count, 1)
+        for part in parts {
+            // Sealed adds an 8-byte counter and a 16-byte tag.
+            let payload = try RemoteProtocol.encoder().encode(RemoteMessage.snapshot(part))
+            XCTAssertLessThan(payload.count + 24, RemoteProtocol.maximumFrameBytes)
+            XCTAssertNoThrow(try RemoteFraming.frame(payload + Data(count: 24)))
+        }
+        XCTAssertEqual(parts.map(\.partIndex), Array(0..<parts.count))
+        XCTAssertTrue(parts.allSatisfy { $0.partCount == parts.count && $0.seq == 4 })
+        XCTAssertEqual(parts.flatMap(\.turns), turns, "Every turn arrives, whole and in order")
+    }
+
+    func testATurnTooLargeForOneFrameIsCutToFit() throws {
+        let conversation = UUID()
+        let small = RemoteTurn(id: "small", conversationID: conversation, agentID: nil, role: .user, origin: .followUp, text: "Hi", created: date, ordinal: 0, contentHash: "h")
+        let huge = RemoteTurn(id: "huge", conversationID: conversation, agentID: "claude", role: .assistant, origin: .agentTranscript,
+                              text: String(repeating: "b", count: RemoteProtocol.maximumFrameBytes + 1000), created: date, ordinal: 1, contentHash: "h")
+        let snapshot = RemoteSnapshot(seq: 5, macStatus: status(), grid: RemoteGrid(visibleAgentIDs: []), agents: [availability(.ready)], conversations: [], turns: [small, huge], attempts: [])
+        let parts = snapshot.parts()
+        for part in parts {
+            let payload = try RemoteProtocol.encoder().encode(RemoteMessage.snapshot(part))
+            XCTAssertLessThan(payload.count + 24, RemoteProtocol.maximumFrameBytes)
+        }
+        let received = parts.flatMap(\.turns)
+        XCTAssertEqual(received.map(\.id), ["small", "huge"])
+        XCTAssertEqual(received[0], small)
+        XCTAssertTrue(received[1].text.hasPrefix(String(repeating: "b", count: 1000)))
+        XCTAssertTrue(received[1].text.hasSuffix("Open it on your Mac.]"))
+    }
+
     func testPairingOfferURLRoundTripsAndRejectsForeignURLs() throws {
         let offer = RemotePairingOffer(macName: "Studio", variant: .demo, endpoints: [RemoteEndpoint(host: "100.64.1.2", kind: .tailscale, interface: "utun3"), RemoteEndpoint(host: "192.168.1.2", kind: .lan)],
                                        port: 50123, spkiSHA256: Data(repeating: 1, count: 32), identityKeySHA256: Data(repeating: 2, count: 32), code: RemotePairingOffer.makeCode(), expiresAt: date)

@@ -138,12 +138,13 @@ public final class MobileApp: ObservableObject {
         store.storeAvatar(data, for: ref)
     }
 
-    /// Sends now and records it, or throws without queueing when disconnected.
+    /// Records it (saved before it leaves, so a relaunch can still ask about it) and sends now,
+    /// or throws without queueing when disconnected.
     @discardableResult
     public func send(_ action: RemoteAction) throws -> RemoteCommand {
         let command = RemoteCommand(action: action)
-        try connection.send(command)
         store.recordSent(command)
+        do { try connection.send(command) } catch { store.discardUnsent(command.clientCommandID); throw error }
         return command
     }
 

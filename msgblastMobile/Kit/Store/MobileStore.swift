@@ -55,10 +55,17 @@ public final class MobileStore: ObservableObject {
         scheduleSave()
     }
 
+    /// Saved now, not debounced: the app may be ended right after the send goes out.
     public func recordSent(_ command: RemoteCommand, at date: Date = Date()) {
         commands[command.clientCommandID] = CommandLedger.record(command, at: date)
         trimCommands()
-        scheduleSave()
+        database.setValue(commands, "commands")
+    }
+
+    /// The send never left the phone (no connection): nothing to ask about.
+    public func discardUnsent(_ id: UUID) {
+        commands[id] = nil
+        database.setValue(commands, "commands")
     }
 
     /// `perform` gave up waiting and told the user so; the ledger says the same until a

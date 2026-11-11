@@ -608,6 +608,7 @@ final class MobileAppTests: XCTestCase {
         let app = try makeApp(mac)
         app.connection.timing.backoff = [.milliseconds(50)]
         XCTAssertThrowsError(try app.send(.setKeepAwake(enabled: true)), "Never queued while disconnected")
+        XCTAssertTrue(app.store.commands.isEmpty, "A send that never left is not recorded")
         let paired = try await app.pair(link: mac.offer().url.absoluteString, deviceName: "Phone")
         XCTAssertEqual(paired.macName, "Fake Mac")
         await settle { app.store.projection.seq != nil }
@@ -719,6 +720,40 @@ final class MobileAppTests: XCTestCase {
         let settled = queries()
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(queries(), settled, "No more queries once it is final")
+    }
+
+    /// No manual save: the record is on disk before the send leaves, so an app ended right after
+    /// dispatch (before any debounced save) still knows it, shows it unconfirmed and asks about it.
+    func testASendInterruptedRightAfterDispatchIsKnownAfterRelaunch() async throws {
+        let mac = FakeMac()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-interrupted-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("cache.sqlite")
+        let keys = MemoryDeviceKeyStore()
+        func launch() throws -> MobileApp {
+            let app = try MobileApp(database: try LocalDatabase(url: url), keys: keys, defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                                    makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+            app.connection.timing.backoff = [.milliseconds(50)]
+            return app
+        }
+        let first = try launch()
+        _ = try await first.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        let id = try first.send(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Interrupted", attachmentIDs: [])).clientCommandID
+        // Ended here, with no suspension point since the send: read the file as a new process would.
+        let onDisk = try MobileStore(database: try LocalDatabase(url: url))
+        XCTAssertEqual(onDisk.commands[id]?.status, .unconfirmed)
+        XCTAssertTrue(onDisk.unresolvedCommandIDs.contains(id))
+
+        first.connection.stop()
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        let relaunched = try launch()
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .unconfirmed, "Shown as unconfirmed until the Mac answers")
+        relaunched.connection.connect()
+        await settle { relaunched.store.commands[id]?.status == .applied }
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .applied, "The relaunch asked about it")
+        XCTAssertTrue(mac.commands.contains { $0.action == .queryCommand(clientCommandID: id) })
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendPrivate" }.count, 1, "Never sent a second time")
     }
 
     func testAvatarsAreFetchedOnceCachedAndClearedByForget() async throws {
