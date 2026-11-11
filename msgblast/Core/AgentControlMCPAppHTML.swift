@@ -167,11 +167,13 @@ button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-off
     });
     main.appendChild(list);
   }
+  // Agent names and event kinds are untrusted text, so look keys up only as own properties.
+  function own(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
   function renderComparison(item) {
     setTitle(text(item.prompt || "Comparison"));
     showBack(true);
     var main = document.getElementById("main"), turns = Array.isArray(item.turns) ? item.turns : [];
-    var order = [], byAgent = {};
+    var order = [], byAgent = Object.create(null);
     clear(main);
     turns.forEach(function (turn) {
       var name = text(turn.agent || "Agent");
@@ -187,7 +189,7 @@ button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-off
     order.forEach(function (name) {
       var column = el("section", "col");
       column.appendChild(el("h2", "agent", name));
-      if (item.submissions && item.submissions[name]) column.appendChild(el("p", "meta", text(item.submissions[name])));
+      if (item.submissions && own(item.submissions, name)) column.appendChild(el("p", "meta", text(item.submissions[name])));
       byAgent[name].forEach(function (turn) {
         var bubble = el("article", turn.outgoing ? "turn out" : "turn in");
         bubble.appendChild(el("p", "who", turn.outgoing ? "Prompt" : "Reply"));
@@ -209,7 +211,7 @@ button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-off
     var list = el("ul", "list");
     events.forEach(function (event) {
       var row = el("li", "row");
-      var bits = [names[event.kind] || event.kind, event.agent, event.detail].filter(Boolean);
+      var bits = [own(names, event.kind) ? names[event.kind] : event.kind, event.agent, event.detail].filter(Boolean);
       row.appendChild(el("p", "body", bits.join(" · ") || "Event"));
       if (event.date) row.appendChild(el("p", "meta", formatDate(event.date)));
       var id = event.comparisonId || event.comparisonID;

@@ -56,7 +56,7 @@ On a personal tailnet, Grok Bot's device has the person's own tailnet access. A 
 
 ## Readiness
 
-The Tailscale card shows three lines. When the macOS firewall is on, a fourth line after the Tailscale line says whether msgblast may accept incoming connections. msgblast only reads that state.
+The Tailscale card shows three lines. When the macOS firewall is on, a fourth line appears right after the Tailscale line and says whether msgblast may accept incoming connections. msgblast only reads that state.
 
 - "Tailscale isn't connected on this Mac." Open Tailscale on this Mac and sign in. "Connected as" followed by the MagicDNS name means that name was found.
 - "HTTPS certificates are off for this tailnet." This line is information only. msgblast uses `http://`, and Tailscale encrypts the connection, so nothing needs changing. Turning certificates on does not make msgblast serve `https://`. "HTTPS certificates are on for this tailnet" means that array is set.

@@ -78,11 +78,12 @@ final class AgentControlMCPAppTests: XCTestCase {
             XCTAssertFalse(catalog?.name.contains(".") == true)
             XCTAssertFalse(catalog?.inputSchema.contains("\"required\"") == true)
         }
-        let tools = #"{"id":1,"result":{"tools":[{"name":"msgblast_status","title":"msgblast status","description":"Status.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_comparisons_list","title":"List comparisons","description":"Saved.","access":"Read only","allowed":true,"inputSchema":{"type":"object","properties":{}}},{"name":"msgblast_comparison_read","title":"Read a comparison","description":"Read.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_blast_wait","title":"Wait for replies","description":"Wait.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_mentions","title":"Mention comparisons","description":"Search.","access":"Read only","allowed":true,"inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}]}}"#
+        let tools = #"{"id":1,"result":{"tools":[{"name":"msgblast_status","title":"msgblast status","description":"Status.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_comparisons_list","title":"List comparisons","description":"Saved.","access":"Read only","allowed":true,"inputSchema":{"type":"object","properties":{}}},{"name":"msgblast_comparison_read","title":"Read a comparison","description":"Read.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_blast_wait","title":"Wait for replies","description":"Wait.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_mentions","title":"Mention comparisons","description":"Search.","access":"Read only","allowed":true,"inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},{"name":"msgblast_blast_start","title":"Start a blast","description":"Sends.","access":"Full access","allowed":false,"inputSchema":{"type":"object"}}]}}"#
         let server = AgentControlMCPServer(version: "9.9", client: "Codex") { _ in Data((tools + "\n").utf8) }
         let list = try await send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
         let listed = try XCTUnwrap((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])
         let linked = Set(["msgblast_comparisons_list", "msgblast_comparison_read", "msgblast_blast_wait"])
+        XCTAssertTrue(listed.contains { $0["name"] as? String == "msgblast_blast_start" })
         for tool in listed {
             let name = tool["name"] as? String ?? ""
             let meta = tool["_meta"] as? [String: Any]
@@ -95,10 +96,14 @@ final class AgentControlMCPAppTests: XCTestCase {
             } else {
                 XCTAssertNil(entries, name)
             }
+            let visibility = (meta?["ui"] as? [String: Any])?["visibility"] as? [String]
             if name == "msgblast_mentions" {
-                let visibility = (meta?["ui"] as? [String: Any])?["visibility"] as? [String]
                 XCTAssertEqual(visibility, ["model", "app"])
                 XCTAssertEqual((tool["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool, true)
+            } else if (tool["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool == false {
+                XCTAssertEqual(visibility, ["model"], name)
+            } else {
+                XCTAssertNil(visibility, name)
             }
         }
     }

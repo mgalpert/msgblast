@@ -100,7 +100,8 @@ were waiting their turn.
 While sends are stopped, the banner says so and offers **Allow Agent Sends**.
 Every new send call is refused, and the error names the code `agentSendsStopped`.
 A stopped call isn't stored, so once sends are allowed again the same call, with
-the same `requestId`, can be repeated. Agents can still read. The setting is saved, so quitting msgblast doesn't turn sends back on.
+the same `requestId`, can be repeated. Agents can still read. The setting is
+saved, so quitting msgblast doesn't turn sends back on.
 Settings → Outside agents has the same switch and lists the last agent sends since
 msgblast opened, with each one's result. The list never holds message text and
 is not saved.

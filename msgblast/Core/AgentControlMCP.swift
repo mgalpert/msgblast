@@ -143,6 +143,11 @@ public actor AgentControlMCPServer {
                     var ui = meta["ui"] as? [String: Any] ?? [:]
                     ui["visibility"] = ["model", "app"]
                     meta["ui"] = ui
+                } else if access != AgentControlAccess.readOnly.label {
+                    // Send tools stay out of reach of the comparison view, which only reads.
+                    var ui = meta["ui"] as? [String: Any] ?? [:]
+                    ui["visibility"] = ["model"]
+                    meta["ui"] = ui
                 }
                 if !meta.isEmpty { listed["_meta"] = meta }
             }
