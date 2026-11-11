@@ -255,9 +255,12 @@ import msgblastCore
         return AgentControlHTTPEndpoint(hashes: store.hashes, version: version) { try await bridge.exchange($0) }
     }
 
+    /// Runs one request. A request still waiting when the endpoint is switched off or rebuilt for a
+    /// new key runs nothing.
     func reply(_ line: Data) async throws -> Data {
-        guard let host else { throw CocoaError(.fileReadNoSuchFile) }
-        return await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0, overTailscale: true) })
+        guard let host, let current = endpoint else { throw CocoaError(.fileReadNoSuchFile) }
+        return await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0, overTailscale: true) },
+                                              isLive: { endpoint === current })
     }
 
     /// Status when the card appears and when the network changes. At most one fetch every 30 seconds.

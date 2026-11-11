@@ -114,7 +114,8 @@ import msgblastCore
     private func answer(_ line: Data, on connection: NWConnection) async {
         guard sessions.contains(connection) else { return }
         guard let host else { return sessions.drop(connection) }
-        let reply = await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0) })
+        let reply = await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0) },
+                                                   isLive: { sessions.contains(connection) })
         guard sessions.contains(connection) else { return }
         connection.send(content: reply, completion: .contentProcessed { [weak self] _ in
             Task { @MainActor in self?.sessions.finish(connection) }

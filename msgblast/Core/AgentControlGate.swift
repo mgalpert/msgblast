@@ -87,7 +87,10 @@ import Foundation
 /// `{"id":1,"client":"Claude Code","method":"tools/list"}` or
 /// `{"id":2,"client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":{}}`.
 public enum AgentControlWire {
-    @MainActor public static func respond(to line: Data, host: AgentControlHost, gate: AgentControlGate, approve: @escaping AgentControlGate.Approve) async -> Data {
+    /// `isLive` turns false once the session the request came on is closed, for example when Outside
+    /// agents is switched off while an approval prompt is open. Nothing runs after that.
+    @MainActor public static func respond(to line: Data, host: AgentControlHost, gate: AgentControlGate, approve: @escaping AgentControlGate.Approve,
+                                          isLive: @MainActor () -> Bool = { true }) async -> Data {
         guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             return reply(nil, error: "invalidRequest", "Each line must be one JSON object.")
         }
@@ -98,6 +101,7 @@ public enum AgentControlWire {
         guard let access = await gate.access(for: client, approve: approve) else {
             return reply(id, error: "notApproved", notApproved(client, gate: gate))
         }
+        guard isLive() else { return reply(id, error: "unavailable", "Outside agents is off in msgblast. Nothing was run.") }
         switch request["method"] as? String {
         case "tools/list": return reply(id, result: ["tools": toolList(access)])
         case "tools/call": return await call(request, id: id, access: access, host: host, client: client)

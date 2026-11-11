@@ -4,8 +4,10 @@ Agents on this Mac, such as Claude Code and Codex, can use msgblast through the
 `msgblast` command and its stdio MCP server (`msgblast mcp`). Grok Bot can use the
 same tools over Tailscale; see [Grok Bot over Tailscale](grok-bot.md). Everything
 is off until Settings → Outside agents → "Let agents on this Mac use msgblast" is on.
-Switching it off again ends every open session at once. A request that was
-running gets no reply, and nothing new is answered.
+Switching it off again ends every open session at once: nothing new runs, even
+if an approval prompt is answered afterwards, and a request that was running gets
+no reply. A send already under way finishes, because stopping it halfway could
+leave a message half sent.
 
 ## Connect your agents
 
