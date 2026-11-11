@@ -182,20 +182,30 @@ public enum AgentControlSocketClient {
     /// listening or the request could not be sent whole (msgblast ignores a partial line), and
     /// `NoReply` when it was sent but the reply never came.
     public static func exchange(_ line: Data, socket path: String) throws -> Data {
+        let descriptor = try connect(to: path)
+        defer { close(descriptor) }
+        try writeAll(line, to: descriptor)
+        return try readReply(from: descriptor)
+    }
+
+    private static func connect(to path: String) throws -> Int32 {
         let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw Unavailable() }
-        defer { close(descriptor) }
         var on: Int32 = 1
         setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw Unavailable() }
+        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { close(descriptor); throw Unavailable() }
         withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: bytes) }
         let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        guard connected == 0 else { throw Unavailable() }
+        guard connected == 0 else { close(descriptor); throw Unavailable() }
+        return descriptor
+    }
+
+    private static func writeAll(_ line: Data, to descriptor: Int32) throws {
         var sent = 0
         while sent < line.count {
             let count = line[sent...].withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
@@ -203,6 +213,9 @@ public enum AgentControlSocketClient {
             guard count > 0 else { throw Unavailable() }
             sent += count
         }
+    }
+
+    private static func readReply(from descriptor: Int32) throws -> Data {
         var reply = Data()
         var chunk = [UInt8](repeating: 0, count: 65_536)
         while !reply.contains(0x0A) {
