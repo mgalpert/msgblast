@@ -105,7 +105,9 @@ public enum AgentControlSend {
     }
 
     /// What a send tool returns. A refusal throws instead, so MCP clients see an error.
-    public static func result(_ result: RemoteCommandResult, requestID: String, agents: [AgentControlAgent], refusalThrows: Bool) throws -> AgentControlSendResult {
+    /// `named` says whether the caller gave the requestId, which decides how to tell it to try again.
+    public static func result(_ result: RemoteCommandResult, requestID: String, agents: [AgentControlAgent], refusalThrows: Bool,
+                              named: Bool = true) throws -> AgentControlSendResult {
         let names = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         let ids = Set(result.agentStatuses.keys).union(result.agentReasons.keys).sorted()
         let rows = ids.map { remote -> AgentControlSendResult.Agent in
@@ -118,18 +120,22 @@ public enum AgentControlSend {
         case .accepted: outcome = "running"
         case .rejected:
             if result.code == .unknownCommand { outcome = "unknown" } else {
-                if refusalThrows {
-                    let reasons = rows.compactMap { row in row.reason.map { "\(row.name): \($0)" } }
-                    let message = result.message ?? "msgblast did not send it"
-                    let code = result.code.map { " (\($0.rawValue))" } ?? ""
-                    throw AgentControlError.refused(([message] + reasons).joined(separator: ". ") + ". Nothing was sent\(code). "
-                        + "A repeat with the same requestId gets this same answer, so use a new requestId to try again.")
-                }
+                if refusalThrows { throw AgentControlError.refused(refusal(result, rows: rows, named: named)) }
                 outcome = "refused"
             }
         }
         return AgentControlSendResult(outcome: outcome, requestId: requestID, replayed: result.replayed, comparisonId: result.conversationID,
                                       code: result.code?.rawValue, message: result.message, agents: rows)
+    }
+
+    /// Why a send was refused, per agent, with its code. The executor stores a refusal under its
+    /// requestId, so a caller that named one is told a repeat gets the same answer.
+    static func refusal(_ result: RemoteCommandResult, rows: [AgentControlSendResult.Agent], named: Bool) -> String {
+        let reasons = rows.compactMap { row in row.reason.map { "\(row.name): \($0)" } }
+        let message = result.message ?? "msgblast did not send it"
+        let code = result.code.map { " (\($0.rawValue))" } ?? ""
+        let again = named ? " A repeat with the same requestId gets this same answer, so use a new requestId to try again." : ""
+        return ([message] + reasons).joined(separator: ". ") + ". Nothing was sent\(code)." + again
     }
 }
 
