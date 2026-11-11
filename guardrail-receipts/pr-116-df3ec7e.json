@@ -1,0 +1,160 @@
+{
+  "pr": 116,
+  "base_sha": "997e1a215b743f4a717b6cb671bdb8a389c685ca",
+  "head_sha": "df3ec7e4d6d6cbaaccff447c4ca457467193306d",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "c62e78a5b9a943e886b748ca59516751f347cb59",
+      "base_sha": "3af2820e8801f09a6a9fae557b8e560550f56282",
+      "scope": "delta since 501eb1a",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "AgentControlGate.swift `call(_:id:access:host:client:)` still passes `client: client` to `AgentControl.call`. It now builds arguments with `encoded(request[\"arguments\"])` and replies `invalidArguments` when that returns nil.",
+        "`encoded` treats nil and NSNull as empty Data, a `[String: Any]` as serialized JSON, and everything else as nil. A bare string or number is refused before it reaches JSONSerialization, which avoids the uncatchable exception. The switch-expression branches (Data and `try?` Data?) type-check against the `Data?` return under Swift 5.9+ and Swift 6.",
+        "The MCP side (AgentControlMCP.swift:109) sends `params[\"arguments\"] ?? [String: Any]()`, and the CLI sends a dictionary. An NSNull from MCP becomes empty Data on the wire, so every path into `call` is covered.",
+        "Empty Data: `AgentControl.call` uses `arguments.isEmpty ? Arguments() : decode(arguments)`. All fields of the private `Arguments` struct are optional, so the synthesized init works. The four send tools then throw clean `invalidArguments` errors (text, agents, agent, comparisonId 'is required') and `msgblast_request_status` throws 'requestId is required'. Nothing is sent and nothing traps.",
+        "Object arguments: `AgentControl.Arguments` carries text, agents, agent, requestId and comparisonId, and `send` maps them into `AgentControlSend.Input`. Parsing is unchanged by the merge.",
+        "`gate.change(_:for:)` guards on `loadFailed`, falls back to an in-memory approval when saving fails, and sets `saveError`. Settings uses it for both the Picker and Remove. The new function is MainActor-isolated like the rest of the gate and has no concurrency problem.",
+        "docs/outside-agents.md name note is accurate. The socket is chmod 0600 (AgentControlListener.swift:45), so only the same user can connect, and the client name is self-declared in the request. Any process running as the user can therefore claim an approved name and get its level. The advice to restrict Full access and remove unused names follows from that.",
+        "Complexity estimator on the 12 non-test Swift files this PR's delta touches (AgentControlSends, AgentControl, AgentControlSend, AgentControlGate, CLI, Events, MCP, TailnetListener, Command, TailnetSetup, OutsideAgentsSettingsView, Host) printed no violations."
+      ],
+      "open_notes": [
+        "The Tailscale path authenticates clients by token, not by claimed name. The docs note covers only the local `msgblast` command and the socket, which is correct as scoped.",
+        "The delta carries the lower PRs' fixes (Tailscale link closing, Grok Bot text and readiness, event feed, CLI and MCP lost-reply handling). I read their diffs and saw no compile or logic problems, but did not review them in depth, since they were reviewed in their own PRs."
+      ]
+    },
+    {
+      "head_sha": "c62e78a5b9a943e886b748ca59516751f347cb59",
+      "base_sha": "3af2820e8801f09a6a9fae557b8e560550f56282",
+      "scope": "full review of this PR's own code (the merged-in #94 is reviewed in #94)",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Core/AgentControl.swift",
+          "line": 164,
+          "issue": "The executor stores every rejection in its ledger, including macBusy, macLocked and agentUnavailable (RemoteCommandExecutor.finish, checkSend). Repeating the same requestId therefore replays that refusal for good, while the error text says 'Your Mac is busy. Try again soon'.",
+          "status": "fixed in 9a9ed34: a refusal says to use a new requestId"
+        },
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Core/AgentControlSend.swift",
+          "line": 58,
+          "issue": "The tool text and docs say a repeated requestId 'never sends twice'. The executor ledger is in memory and capped at 1000 entries, so after a restart or 1000 later sends a repeat is 'unknown' to the executor and the send runs again.",
+          "status": "fixed in 9a9ed34: tool text and docs say requestId holds while msgblast runs, for its last 1,000 sends"
+        },
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Core/AgentControlSend.swift",
+          "line": 125,
+          "issue": "A refusal throws AgentControlError.refused, which AgentControlWire maps to the single wire code 'refused'. The result's machine-readable code (rate limit, agentUnavailable, macLocked, and agentSendsStopped in #117) is never returned for send tools, and only the status tool can show it.",
+          "status": "fixed in 9a9ed34: the error text names the code"
+        },
+        {
+          "severity": "NIT",
+          "file": "docs/outside-agents.md",
+          "line": 43,
+          "issue": "The docs say 'While the Mac or the phone is sending, a new send is refused as busy rather than queued.' The agent executor queues a send behind another agent send, and the caller's MCP call waits. Only a Mac or phone send seen when the queued send reaches the head gives macBusy.",
+          "status": "fixed in 9a9ed34 (docs)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControl.swift",
+          "line": 164,
+          "issue": "The rate-limit check and the executor's duplicate detection are not atomic across the probe await. Two simultaneous first calls with the same requestId both pass 'unknown' and both consume quota. The executor still blocks the second send, so there is no double send.",
+          "status": "open (NIT): the executor still blocks the second send"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblastTests/AgentControlSendTests.swift",
+          "line": 139,
+          "issue": "testLimitWindowsSlide covers only the 6-per-minute window. The 60-per-hour window is never exercised. All tests use a fake Host with its own ledger, so AgentControlSends and the real executor path (probe, status check, replay) are untested.",
+          "status": "hourly window test added in 9a9ed34; the real executor path is covered by the live send test"
+        }
+      ],
+      "verified": [
+        "Read only is rejected before any send logic: AgentControl.call checks access >= tool.access, and the five tools carry the right levels (the four sends are .full, request_status is .readOnly). Test covers it.",
+        "Full access allows Messages contacts: AgentControlSends forces allowMessagesSends = true for its own host, and the phone's setting is untouched.",
+        "requestId becomes clientCommandID through a SHA-256 hash (version 5 style) of 'msgblast-agent-request', NUL, client and requestId. Client names are sanitised of control characters, so the NUL delimiter cannot be spoofed. Two agents with the same requestId get different ids, and no requestId gives a fresh UUID.",
+        "Replay never sends twice in the running process. The executor returns the ledger result or an 'accepted, replayed' result for an id in progress, and execute() returns that without a second send.",
+        "The limit check is synchronous on the MainActor with no suspension between the status check and allow(), so same-agent concurrent calls cannot slip past it. Windows are 60/6 and 3600/60 and counted per client. The limit is skipped when controlSendStatus is not unknownCommand.",
+        "The probe runs only when the id is unknown, via model.remoteAvailabilityProbe(slow: false).",
+        "Refusals throw AgentControlError.refused with the message plus per-agent reasons plus 'Nothing was sent', and the Wire maps it to isError. request_status never throws a refusal (refusalThrows false) and reports 'unknown' for unknownCommand.",
+        "The executor runs sends one at a time (sendQueue/drain) and re-checks lock and busy at the head of the queue. Locked Mac, ended conversation and not-ready agent are checked in checkSend. Nothing retries.",
+        "Message text is not in any thrown error or result field. Results carry only outcome, ids, per-agent status and reasons, and host messages.",
+        "Swift 6 reading: AgentControlSends and the executor are MainActor. The static var sendLimit sits on a @MainActor enum. The static let windows tuple array is Sendable. The Optional.map with a throwing closure rethrows. The switch over result.outcome is exhaustive (a plain enum with 3 cases). RemoteRejectionCode comparisons use == and implicit members, never a switch.",
+        "The settings closure inside AgentControlSends.init is the one thing I cannot confirm without a compiler. It is a MainActor-inferred closure assigned to a local and passed as nonisolated '() -> RemoteSettings' to AppRemoteHost, with MainActor.assumeIsolated inside. This may draw a loses-global-actor diagnostic in Swift 6; RemoteService uses a thread-safe reader instead.",
+        "Tests match their names for the bad-arguments error strings, id translation, refusal reasons, per-agent separation and the 6 + 1 sequence."
+      ],
+      "open_notes": [
+        "The agent executor and the phone executor have separate ledgers and queues. They are kept apart only by the isBusy check at the head of the queue, so confirm AppRemoteHost.performSend sets busy synchronously before its first await.",
+        "remoteAvailabilityProbe runs before the lock check, so a locked Mac still runs permission preflights for every new send, including comparison_end.",
+        "The limit's per-client dictionary is never pruned for idle names (trivial)."
+      ]
+    },
+    {
+      "head_sha": "9a9ed34edf95a88808f7bae4767431c470206d08",
+      "base_sha": null,
+      "scope": "delta since c62e78a (fixes for the full review, merge of #114 test build fix)",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlSend.swift",
+          "line": 125,
+          "issue": "When the caller sent no requestId, the code makes a UUID and never shows it, yet the refusal says 'A repeat with the same requestId gets this same answer, so use a new requestId to try again.'",
+          "status": "fixed in df3ec7e: the repeat advice appears only when the caller gave a requestId"
+        }
+      ],
+      "verified": [
+        "The expected string in testRefusalNamesEachAgentsReason (AgentControlSendTests.swift:123) equals what the code builds. The code joins [message]+reasons with '. ' and appends '. Nothing was sent (agentUnavailable). ' and then 'A repeat with the same requestId ...'. The test's two concatenated literals give the same text, and the code rawValue is agentUnavailable.",
+        "Refusals really are ledgered: submit() rejects through finish(), which stores the result under the id, and a repeat returns it with replayed=true. So 'use a new requestId' is accurate for every refusal that goes through the executor.",
+        "The rate-limit refusal is thrown before the executor, is not ledgered, and does not use the repeat text. It only gained '(tooManySends)'. It also does not count a repeat of a known id, because the limiter is checked only when controlSendStatus is unknownCommand.",
+        "The code is nil-safe: `result.code.map {...} ?? \"\"` drops the parenthetical when there is no code. No other test or docs reference the old 'Nothing was sent.' string for agent control.",
+        "The ledger claim matches the code: RemoteCommandExecutor.ledgerCapacity = 1000, the ledger is a plain in-memory dictionary, and the agent path builds its own executor (AgentControlSends.swift:31), so 'last 1,000 sends' is accurate. The 'while msgblast runs / forgets on quit' wording is also accurate.",
+        "The docs claim 'agent sends wait for each other, but are refused as busy while the Mac or phone is sending' matches the executor: its sendQueue returns .accepted while queued and execute() skips accepted, and checkSend refuses with macBusy.",
+        "The hourly test's arithmetic is correct. Sends sit 59s apart, so the 60s window never holds more than 2 and only the hour window can refuse. At t=60*59=3540 all 60 earlier sends are under 3600s old, so count 60 >= 60 and allow returns false. A refused call is not recorded, and 'Claude Code' has its own history so it is allowed. At t=3601 the first send has aged out (59 left), so allow returns true; the last send is 120s old, so the minute window passes.",
+        "The test uses `var limit` with a mutating func and a Date constant, so it should compile cleanly under Swift 6.",
+        "The test fix merged in is identical to #110."
+      ],
+      "open_notes": [
+        "The tool summary says 'it remembers its last 1,000 sends'. The ledger holds every command result that goes through the executor (including rejections), which is close enough."
+      ]
+    },
+    {
+      "head_sha": "df3ec7e4d6d6cbaaccff447c4ca457467193306d",
+      "base_sha": null,
+      "scope": "delta since 9a9ed34 (refusal wording without a requestId)",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "New error strings match the tests character for character. Named: '... Nothing was sent (agentUnavailable).' + ' A repeat with the same requestId gets this same answer, so use a new requestId to try again.' gives exactly one space and the final period, equal to the test's concatenation. Unnamed: ends at '(agentUnavailable).' with no trailing space, equal to the new unnamed expectation. The old trailing space after 'Nothing was sent(code).' is gone and the tests agree.",
+        "Callers: only 2 call sites of AgentControlSend.result. The send path passes named: input.requestId != nil. The request-status path (AgentControl.swift:148) still passes refusalThrows: false and does not use named, which defaults to true. Both compile and the status path is unchanged.",
+        "input.requestId is the raw optional from Arguments, so named is true only when the caller supplied one. The UUID fallback is made separately and does not affect it.",
+        "refusal(_:rows:named:) is a pure refactor of the old inline message. The `result` parameter shadowing the static func `result` is harmless, since the body calls `refusal(...)` and not `result(...)`."
+      ],
+      "open_notes": []
+    }
+  ],
+  "open_items": [
+    "NIT AgentControl.swift: The rate-limit check and the executor's duplicate detection are not atomic across the probe await. Two simultaneous first calls with the same requestId both pass 'unknown' and both consume quota. The executor still blocks the second send, so there is no double send.",
+    "The PR diff includes the iPhone controller (#94) until #94 is on main; that code is reviewed in #94, not here."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line (after adding AgentControlGateTests.swift)"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42954846782",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed, and mobile passed",
+    "finished": "2026-11-11T04:25Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}

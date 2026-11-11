@@ -1,0 +1,149 @@
+{
+  "pr": 114,
+  "base_sha": "ab438c341572c47f595644bc1be51b1e9f7133ab",
+  "head_sha": "997e1a215b743f4a717b6cb671bdb8a389c685ca",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "76e165b296441e491c404645314ffef48c5360c1",
+      "base_sha": "1e8cc6e4fde26f2f98e12d72dc2bc3dcc87b2b7f",
+      "scope": "full review of the PR",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "SHOULD-FIX",
+          "file": "integrations/grokbot-plugin/msgblast/skills/msgblast-setup/SKILL.md",
+          "line": 9,
+          "issue": "The intro still says \"Wait for them to paste the setup text.\" This contradicts the rest of the skill, which now asks for the Server URL only and says never to ask for the setup block.",
+          "status": "fixed in 3af2820"
+        },
+        {
+          "severity": "SHOULD-FIX",
+          "file": "integrations/grokbot-plugin/msgblast/CHANGELOG.md",
+          "line": 5,
+          "issue": "The 0.1.0 entry still says the skill \"asks the person to paste the setup block from msgblast\". That is no longer true.",
+          "status": "fixed in 3af2820"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlTailnetConnection.swift",
+          "line": 18,
+          "issue": "The 8 MB cap is applied only after readDataToEndOfFile() has read all the output, so it does not bound memory. The 5 s SIGTERM does bound how long the read can run. SIGTERM is also not SIGKILL, so a tailscale process that ignores it can still block the read. The asyncAfter closure reads process.isRunning from another thread.",
+          "status": "open (NIT): the 5 s timeout bounds the read time"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlTailnetConnection.swift",
+          "line": 129,
+          "issue": "After a complete request, if pipelined bytes remain in the buffer, startDeadline() is armed before `await owner.respond(...)`. The first request may be waiting on the user's approval prompt, which can take longer than 10 s.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlTailnetListener.swift",
+          "line": 193,
+          "issue": "stopSockets() does not cancel statusTask. A fetch or the 30 s wait that is already running still finishes and sets magicName and the other state. lastCalled is also not cleared on revoke or New key.",
+          "status": "lastCalled part fixed in 3af2820; statusTask part open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlTailnetSetup.swift",
+          "line": 19,
+          "issue": "The HTTPS-certificates-off line gets a warning mark, but msgblast never serves https. The skill tells the bot to \"follow the line that has a warning\".",
+          "status": "fixed in 3af2820: shown as information, not a warning"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Windows/OutsideAgentsSettingsView.swift",
+          "line": 127,
+          "issue": "The 120 s clipboard clear runs in-process. Quitting msgblast within 2 minutes leaves the key on the pasteboard.",
+          "status": "open (NIT)"
+        }
+      ],
+      "verified": [
+        "README.md now asks for the Server URL only and says never to ask for the key, header or setup block in chat. The SKILL.md body (\"Ask for the Server URL only\") matches, with rotate-the-key advice if a key is pasted. Two stale lines remain, listed in the findings: SKILL.md line 9 and the CHANGELOG.",
+        "tailscale status subprocess: 5 s terminate and the 8 MB check are present. The timeout works. The size cap is post-hoc only (NIT above).",
+        "observeNetwork: stopSockets() now cancels the NWPathMonitor and sets it to nil. refreshStatus() no longer starts it. listen() calls observeNetwork(), guarded by `monitor == nil`, so re-enabling re-creates it once. This is correct and complete.",
+        "Key copies: copySecret() is used for Copy header, the path link and the setup block. It sets the concealed type (org.nspasteboard.ConcealedType) and clears after 120 s only if changeCount is unchanged. The header-only value is in place. The plain copy() remains for the URL only.",
+        "Request deadline: 10 s timer started on the first bytes of a request, cancelled on a complete parse, and sends 408 then closes. The cap of 16 links is enforced in accept(). Non-tailnet peers are cancelled at accept, and the endpoint still returns 403 as a second check. close() cancels the deadline.",
+        "Merge conflict resolution: 408 \"Request Timeout\" is correctly added to the reasons dictionary, which is otherwise intact. The 413 and 503 entries are preserved.",
+        "Docs: docs/grok-bot.md states that anyone on the tailnet with the key can call, and that New key keeps the approval level and Remove clears both. It also states the 10 s, 16-connection and 60 s limits and the concealed/2-minute clipboard behavior. All match the code.",
+        "The key reaches no log or persisted file. text(url:key:) is used only for the clipboard. The status JSON parse reads only Self, CertDomains and Peer, and discards the rest."
+      ],
+      "open_notes": [
+        "The Grok Bot peer detection matches the name 'grokbot' case-insensitively in HostName or DNSName. It is a heuristic, and the docs describe it honestly.",
+        "I did not verify the new unit tests beyond reading them. CI passed at 76e165b.",
+        "The deadline and per-connection tasks assume MainActor isolation, which matches the existing pattern."
+      ]
+    },
+    {
+      "head_sha": "3af2820e8801f09a6a9fae557b8e560550f56282",
+      "base_sha": "deabfb64eee95da96fb7891a0ffe332fa5f98a66",
+      "scope": "delta since 76e165b (fixes for round 1, merge of #112)",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlTailnetListener.swift",
+          "line": 243,
+          "issue": "respond() reads `endpoint.lastAuthorized` from the endpoint it captured before its await. A request already in flight with the old key can set lastCalled again after rotateToken() or revoke() cleared it.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlTailnetListener.swift",
+          "line": 98,
+          "issue": "rotateToken() and revoke() set `lastCalled = nil` before rebuild/persist. If the save fails, the store and plaintext roll back but lastCalled stays cleared.",
+          "status": "open (NIT)"
+        }
+      ],
+      "verified": [
+        "Finding 1: SKILL.md intro now reads 'ask them to paste only the Server URL'. Lines 22-24 say never to ask for the key and never to paste the Authorization header or the setup block into the chat. The only 'paste' hits in the plugin, README and docs are URL-only, the header into the connector field, or the docs/grok-bot.md step that pastes into the connector rather than into chat.",
+        "Finding 2: CHANGELOG.md now says 'asks the person for the Server URL only, never the key' and puts the key in the connector's header field.",
+        "Finding 3: the off line is now '\\u{2139}\\u{FE0E} HTTPS certificates are off ... Nothing to change: msgblast uses http://, and Tailscale encrypts the connection.' The code, AgentControlTailnetSetupTests.swift line 49 and docs/grok-bot.md line 62 agree. The 'on' line keeps the check mark, and SKILL.md's 'follow the line that has a warning' no longer points at the off line.",
+        "Finding 4: lastCalled = nil is set in rotateToken() and in revoke(_:) when the client is Grok Bot.",
+        "Conflict resolution in AgentControlTailnetListener.swift kept both sides. stopSockets() cancels listeners, cancels the monitor, then calls closeLinks(), and keeps the endpoint, hashes, bound and addresses resets. rebind() has closeLinks() on the no-address path and on the `found != bound` path, and bind(_:port:) is extracted. maximumLinks and the accept() cap, with its isTailnetPeer check, are still there. closeLinks() is safe on re-entry, as in #112.",
+        "The merged #112 pieces are intact and match the base: gate.change, the NoReply handling, the invalidArguments guard, and the event feed with `created` and `adopting`. I found no compile problems under Swift 6 strict concurrency in the files I read."
+      ],
+      "open_notes": [
+        "docs/grok-bot.md line 63 and line 68 say 'copy the setup block'. That is the user copying it into the connector, not pasting it into chat, so it is not a contradiction.",
+        "docs/grok-bot.md line 5 says Settings checks certificates 'so you can see that before Grok Bot asks for an https:// address'. This is slightly at odds with the new 'information only' wording, but it is not wrong."
+      ]
+    },
+    {
+      "head_sha": "997e1a215b743f4a717b6cb671bdb8a389c685ca",
+      "base_sha": null,
+      "scope": "delta since 3af2820 (merge of #112 test build fix)",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "git diff 3af2820 997e1a2 --stat: only msgblastTests/AgentControlCLITests.swift changed (9 insertions, 7 deletions), same as #110.",
+        "All socket calls are Darwin.-qualified; no other NSObject collisions in the test file."
+      ],
+      "open_notes": []
+    }
+  ],
+  "open_items": [
+    "NIT AgentControlTailnetConnection.swift: The 8 MB cap is applied only after readDataToEndOfFile() has read all the output, so it does not bound memory. The 5 s SIGTERM does bound how long the read can run. SIGTERM is also not SIGKILL, so a tailscale process that ignores it can still block the read. The asyncAfter closure reads process.isRunning from another thread.",
+    "NIT AgentControlTailnetConnection.swift: After a complete request, if pipelined bytes remain in the buffer, startDeadline() is armed before `await owner.respond(...)`. The first request may be waiting on the user's approval prompt, which can take longer than 10 s.",
+    "NIT AgentControlTailnetListener.swift: stopSockets() does not cancel statusTask. A fetch or the 30 s wait that is already running still finishes and sets magicName and the other state. lastCalled is also not cleared on revoke or New key.",
+    "NIT OutsideAgentsSettingsView.swift: The 120 s clipboard clear runs in-process. Quitting msgblast within 2 minutes leaves the key on the pasteboard.",
+    "NIT AgentControlTailnetListener.swift: respond() reads `endpoint.lastAuthorized` from the endpoint it captured before its await. A request already in flight with the old key can set lastCalled again after rotateToken() or revoke() cleared it.",
+    "NIT AgentControlTailnetListener.swift: rotateToken() and revoke() set `lastCalled = nil` before rebuild/persist. If the save fails, the store and plaintext roll back but lastCalled stays cleared."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42952731073",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed",
+    "finished": "2026-11-11T04:10Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}

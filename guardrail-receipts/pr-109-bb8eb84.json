@@ -1,0 +1,121 @@
+{
+  "pr": 109,
+  "base_sha": "a9f4a366552060f5e031aa7a642f54e1640bd6d7",
+  "head_sha": "bb8eb84076f793e5bfbdaaef7187a4ffea5ba231",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve with notes",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "9398c4c2835df4332a20ab9d7449f2f00f9dd5a3",
+      "base_sha": "ca49d481e8e2f1cf494586cd83d230a5f502f7b8",
+      "scope": "full review of the PR",
+      "verdict": "request changes",
+      "findings": [
+        {
+          "severity": "BLOCKER",
+          "file": "msgblast/Core/AgentControlGate.swift",
+          "line": 113,
+          "issue": "AgentControlWire.call builds the tool arguments with `try? JSONSerialization.data(withJSONObject: $0)` on whatever JSON value the client put under \"arguments\". This is the same code in 2cffc30 and 9398c4c. Foundation raises an Objective-C NSException (not a Swift error) when the top-level value is not an array or dictionary, so `try?` does not catch it. (Based on my knowledge of Foundation on Darwin; there is no toolchain here to run it.)",
+          "status": "fixed in bb8eb84: arguments that are not a JSON object get invalidArguments, and a test covers it"
+        },
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Windows/OutsideAgentsSettingsView.swift",
+          "line": 18,
+          "issue": "The Settings picker and the Remove button call `try? gate.set(...)`. This is the same swallowed-write-failure problem that the saveError fix addressed on the approval path. `set` also returns silently without writing when loadFailed is true.",
+          "status": "fixed in bb8eb84: Settings uses gate.change, which applies the change and shows a save failure"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlListener.swift",
+          "line": 236,
+          "issue": "Every complete line gets its own Task, so lines are answered concurrently. Each unknown client name opens its own modal NSAlert, and refused names are never cleared. In access(), pending only de-duplicates identical names.",
+          "status": "open (NIT, deferred)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlListener.swift",
+          "line": 176,
+          "issue": "The socket path is built from the support directory with no length check. sockaddr_un.sun_path holds about 104 bytes. The listener also unconditionally deletes any existing socket file at start.",
+          "status": "open (NIT, deferred)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlGate.swift",
+          "line": 29,
+          "issue": "Approvals are keyed only by the self-declared client name. Any same-user process can claim \"Claude Code\" and inherit its saved level.",
+          "status": "by design and documented: approvals are keyed by the name the agent gives"
+        }
+      ],
+      "verified": [
+        "Don't Allow: `refused` is checked before the saved approvals and before any prompt. A nil answer inserts the name into `refused`, and the Settings list with Ask Again clears it. Waiters on a pending prompt share the one result, and `set` also clears the refusal. Correct.",
+        "Quadratic line loop: `start` advances through the buffer and only the remaining partial line is kept. The 1MB cap applies to the whole buffer. This is linear. A final line without a newline is dropped, which is acceptable.",
+        "error.localizedDescription: unexpected errors now return the fixed text \"msgblast could not run <name>.\". Only AgentControlError descriptions reach agents. Those are tool-argument messages, and the decode message holds no file paths.",
+        "try? set in access(): on failure the approval is kept in memory and saveError is shown in Settings. A later successful set clears saveError. Correct. The Settings view still has the swallowed-write pattern, see the SHOULD-FIX above.",
+        "clientName: control, format, line and paragraph separators, private-use, surrogate and unassigned scalars become spaces, and whitespace is collapsed. It rejects an empty name or one over 80 characters, so bidi controls (category Cf) are removed. The sanitized name is used for the prompt, the file key and the refusal. Correct.",
+        "Event feed: startObserving resets the observation, then a 1-second timer calls observe(controlSnapshot()). The snapshot reads in-memory state only and is capped at 20 comparisons. It is stopped in stop(). Correct.",
+        "Approval prompt: the text now says Read only includes message text and that it can't send.",
+        "Refactor 9398c4c: the diff shows respond is split into notApproved, toolList and call with the same logic and strings, so the behavior is unchanged. It carries over the arguments crash above. The helper `code(_:)` is nonisolated and fine."
+      ],
+      "open_notes": [
+        "Deferred socket-chmod window: the reason mostly holds. The support folder is under ~/Library, which is 0700 on macOS, so other users cannot traverse to the socket, and the approval gate still applies to each client. It is not airtight: the support folder itself is probably created 0755, and other same-user processes are not stopped by 0600 anyway. Setting a restrictive umask around listener creation, or creating the socket in a 0700 subfolder, would close it cheaply. I judge deferring acceptable.",
+        "Revoking or removing an approval takes effect on the next request, because access is checked per line. Open connections are not closed, which is fine.",
+        "Dev and production separation holds: the socket and approvals file both live in local.url's parent folder, which is build-specific.",
+        "I could not check the CI results or compile anything."
+      ]
+    },
+    {
+      "head_sha": "bb8eb84076f793e5bfbdaaef7187a4ffea5ba231",
+      "base_sha": "a9f4a366552060f5e031aa7a642f54e1640bd6d7",
+      "scope": "delta since 9398c4c (fixes for the round 1 BLOCKER and SHOULD-FIX)",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlGate.swift",
+          "line": 59,
+          "issue": "`change` silently does nothing when `loadFailed`, and no test covers that path or the `refused.remove` on a failed save.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AppModel.swift",
+          "line": 120,
+          "issue": "The estimator flags `init` at 39 lines and cc=11. It was already cc=11 at base a9f4a36 (38 lines), and this PR adds one line (`_ = agentControl`).",
+          "status": "pre-existing; this PR adds one line"
+        }
+      ],
+      "verified": [
+        "Crash fix (blocker): `encoded(_:)` returns empty Data for nil and for JSON null (NSNull inside Any?). It returns JSON data only for `[String: Any]`, and nil (invalidArguments) for strings, numbers, arrays and booleans. JSONSerialization.data(withJSONObject:) is now only ever called with a dictionary that came out of JSONSerialization, so it cannot raise the ObjC exception. The `switch` expression compiles under Swift 5.9+/6: `case nil, is NSNull` and `case let object as [String: Any]` are valid on Any?, the branches yield Data / Data? / nil against the Data? return type, and the non-isolated private static helper is fine.",
+        "Settings: the Picker setter and Remove button now call `gate.change`. On a save failure `set` throws before mutating, `change` then applies in memory (assigning nil removes the key), clears `refused` for the client, and sets saveError, which the view already renders. A later successful save writes the full dictionary, so earlier in-memory changes get persisted and saveError clears. When loadFailed, `change` is a no-op.",
+        "AgentControlHost.controlSnapshot now sets `snapshot.created[comparison.id] = comparison.created` for each watched comparison, so #108's adopting logic works in the app. `Comparison.created` is a non-optional Date.",
+        "Test testWireRefusesArgumentsThatAreNotAnObject: the raw-string concatenations give valid JSON (`\"x\"`, `[1]`, `7` and `null`). Each non-object gets error.code invalidArguments, and null gets a normal msgblast_status result with version 1.0 (readOnly is approved by the default `approve`). The assertions are right.",
+        "Test testASettingsChangeThatCantBeSavedStillAppliesAndSaysSo: the missing parent directory makes the atomic write throw, so approvals gets .full with saveError set, then nil removes it. A fresh gate on the unwritable path has no file, so loadFailed is false and approvals is [:]. The writable-file case saves, leaves saveError nil and round-trips. All assertions are correct, and AgentControlAccess is Equatable for the [:] comparison.",
+        "Merge of #108's fix is clean. Whole diff against base a9f4a36 shows only the expected files (host, listener, gate, settings view, AppModel +3 lines, AgentControl.swift, tests, pbxproj, architecture.md), and the delta broke nothing I could find."
+      ],
+      "open_notes": [
+        "Host.controlSnapshot only inserts a watched web-agent key when its session exists. A comparison whose session appears later is adopted silently if it already has replies, which is the intended no-replay behaviour.",
+        "The #108 notes also apply here: the settling-agent case and the microsecond snapshot-versus-lastLook gap."
+      ]
+    }
+  ],
+  "open_items": [
+    "NIT AgentControlListener.swift: Every complete line gets its own Task, so lines are answered concurrently. Each unknown client name opens its own modal NSAlert, and refused names are never cleared. In access(), pending only de-duplicates identical names.",
+    "NIT AgentControlListener.swift: The socket path is built from the support directory with no length check. sockaddr_un.sun_path holds about 104 bytes. The listener also unconditionally deletes any existing socket file at start.",
+    "NIT AgentControlGate.swift: `change` silently does nothing when `loadFailed`, and no test covers that path or the `refused.remove` on a failed save."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42951874191",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed",
+    "finished": "2026-11-11T03:42Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}

@@ -1,0 +1,114 @@
+{
+  "pr": 112,
+  "base_sha": "a7c02ff851f219cb648e4b312c2e92c49f27e46b",
+  "head_sha": "ab438c341572c47f595644bc1be51b1e9f7133ab",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "1e8cc6e4fde26f2f98e12d72dc2bc3dcc87b2b7f",
+      "base_sha": "b99106eb7f932522736e193604c6a9939c7ea62a",
+      "scope": "full review of the PR",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/App/AgentControlTailnetConnection.swift",
+          "line": 75,
+          "issue": "Open at this head: there is no request deadline and no connection cap. The 60 s idle timer is cancelled on every received byte and is not armed while a request is being handled. The listener's accept() appends every link to `links` with no limit.",
+          "status": "open in this PR alone; fixed in #114 (request deadline and connection cap), which is stacked on it and merges with it"
+        },
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/App/AgentControlTailnetListener.swift",
+          "line": 176,
+          "issue": "Open at this head: `rebind()` calls `cancelListeners()` but never closes the accepted `links`. Only the toggle-off path (`stopSockets`) closes them. `revoke` and `rotateToken` also leave links open, though they are safe because the endpoint is rebuilt with the new hashes.",
+          "status": "fixed in deabfb6: rebind closes accepted links when the address changes"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Windows/OutsideAgentsSettingsView.swift",
+          "line": 30,
+          "issue": "Revoke is reachable only through the per-client Remove button, and that row exists only when `gate.approvals` has an entry for \"Grok Bot (Tailscale)\". Turning the toggle off keeps the hash.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlTailnetListener.swift",
+          "line": 196,
+          "issue": "No local-endpoint check at accept. `accept()` trusts `requiredLocalEndpoint` and only the remote `peer` is checked in `endpoint.handle`.",
+          "status": "open (NIT): the listener is bound to the Tailscale address"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/App/AgentControlTailnetListener.swift",
+          "line": 230,
+          "issue": "`refreshMagicDNS` runs `tailscale status --json` through `readDataToEndOfFile` with no timeout, on every rebind.",
+          "status": "fixed in #114 (5 s timeout)"
+        }
+      ],
+      "verified": [
+        "The refactor in 1e8cc6e is behavior-preserving. `AgentControlHTTPRequest.parse` is the same, including the order of checks: header marker, headerLimit (tooLarge), UTF-8 and head (invalid), transfer-encoding (invalid), content-length (invalid), bodyLimit (tooLarge), then incomplete or complete. `head` and `length` are line-for-line extractions of the old code. The reason dictionary has the same 10 codes with the same default \"Error\".",
+        "`ipv6`, `ipv4Tail` and `groups` are equivalent to the old code. Checked cases: `::` gives 16 zero bytes; `::1` is accepted and is not tailnet; `fd7a:115c:a1e0::1` matches bytes 0 to 5; `::ffff:100.68.57.78` gives 6 groups plus 4 tail bytes and the CGNAT check; too many groups gives `missing < 1` and nil; a single half with fewer or more than 8 groups gives nil; `:::`, `1::2::3` and a malformed tail give nil. Dotted forms with no `ffff` group, such as `::1.2.3.4`, are rejected (fail closed). That was the same in the old code and is harmless.",
+        "The split test is fine. It does not change which assertions run, and both new test names are unique. Both tests are still valid when run separately.",
+        "Auth ordering is fine. Peer check first, then Origin (403), then credential: wrong path gives 404, bad key gives 401 with WWW-Authenticate, and a non-POST with a good key gives 405. Bearer wins over the path token. Token hashes are compared in constant time against every stored hash. The query string is ignored.",
+        "The code now does what the PR claims. Revoke: Remove calls `gate.set(nil)` and `tailnet.revoke`, which clears the hash, nils the plaintext and rebuilds the endpoint (per-client MCP server state is dropped, so the old approval state goes with it). Plaintext keys are never persisted: the store saves only hashes, the file is mode 0600, a failed load refuses every token and is never overwritten, and legacy plaintext tokens are migrated to hashes. Toggling off or turning the local socket off closes the sockets, the links and the endpoint. 413 and 400 are consistent between the code and docs/architecture.md."
+      ],
+      "open_notes": [
+        "Still open at this head: slowloris (no deadline or connection cap, deferred to #114), links not closed on address change, and no Remove row until an approval exists.",
+        "Deferred and judged acceptable: the missing accept-time local-endpoint check, the fact that a New key does not reset the approval for the client name (#114 documents it), the key appearing in the fallback URL (it can land in logs or history, and the UI labels it as a fallback), and the fact that any tailnet device holding the key can call (#114 docs).",
+        "CI: I could not run it here (no Swift toolchain). The only compile-risk constructs I checked are `split(separator: \"::\")` with a String separator (fine on Swift 5.7 and later) and `AgentControlTailnetBridge` as `@unchecked Sendable` with a weak var. Neither looks like a problem. The head 1e8cc6e's CI run was still in progress when I reviewed.",
+        "No BLOCKER found."
+      ]
+    },
+    {
+      "head_sha": "deabfb64eee95da96fb7891a0ffe332fa5f98a66",
+      "base_sha": "5b0a5a4f1a96aed81a7a520d3918cde16c7495eb",
+      "scope": "delta since 1e8cc6e (close links on address change, merge of #111)",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "OutsideAgentsSettingsView.swift: the merge kept both calls. Remove runs gate.change(nil, for: client) and then listener.tailnet.revoke(client). The Picker setter also uses gate.change.",
+        "rebind() still returns early when the addresses, the listener count and the error state are unchanged: `if found == bound, listeners.count == found.count, error == nil { return }`. That line is untouched.",
+        "closeLinks() is safe when a link's close calls back into drop(_:). It copies links, empties the array, and only then closes each link. Link.close() is guarded by `open`, so it runs once, and its drop(_:) removes from the already-empty array and does nothing. Everything is @MainActor, so nothing else can touch `links` in between.",
+        "closeLinks() runs when the Tailscale addresses disappear, and when `found != bound` before listeners are recreated. The case where the address set is unchanged but the error is set (rebind retry) does not close links.",
+        "bind(_:port:) keeps the old loop unchanged: isTailnetPeer guard, the same NWParameters, handlers and start(queue: .main), listeners appended, last error returned. The caller still sets bound = found and the same error expression afterwards, so behaviour matches the old inline code. It compiles under Swift 6: both methods are @MainActor, and handlers hop through Task { @MainActor } with [weak self].",
+        "stopSockets() now calls closeLinks(), the same behaviour as the old inline code."
+      ],
+      "open_notes": [
+        "When the address set changes, all links are closed, including ones on an address that is still bound. Clients reconnect, so this is acceptable."
+      ]
+    },
+    {
+      "head_sha": "ab438c341572c47f595644bc1be51b1e9f7133ab",
+      "base_sha": null,
+      "scope": "delta since deabfb6 (merge of #111 test build fix)",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "git diff deabfb6 ab438c3 --stat: only msgblastTests/AgentControlCLITests.swift changed (9 insertions, 7 deletions), same as #110.",
+        "All socket calls are Darwin.-qualified; no other NSObject collisions in the test file."
+      ],
+      "open_notes": []
+    }
+  ],
+  "open_items": [
+    "SHOULD-FIX AgentControlTailnetConnection.swift: Open at this head: there is no request deadline and no connection cap. The 60 s idle timer is cancelled on every received byte and is not armed while a request is being handled. The listener's accept() appends every link to `links` with no limit.",
+    "NIT OutsideAgentsSettingsView.swift: Revoke is reachable only through the per-client Remove button, and that row exists only when `gate.approvals` has an entry for \"Grok Bot (Tailscale)\". Turning the toggle off keeps the hash.",
+    "NIT AgentControlTailnetListener.swift: No local-endpoint check at accept. `accept()` trusts `requiredLocalEndpoint` and only the remote `peer` is checked in `endpoint.handle`."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42952727556",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed",
+    "finished": "2026-11-11T04:06Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}

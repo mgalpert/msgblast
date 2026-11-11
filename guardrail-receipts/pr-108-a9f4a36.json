@@ -1,0 +1,106 @@
+{
+  "pr": 108,
+  "base_sha": "632e5396f0c398236eb19b24a6351d8b0051ff2d",
+  "head_sha": "a9f4a366552060f5e031aa7a642f54e1640bd6d7",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve with notes",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "ca49d481e8e2f1cf494586cd83d230a5f502f7b8",
+      "base_sha": "632e5396f0c398236eb19b24a6351d8b0051ff2d",
+      "scope": "full review of the PR",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Core/AgentControlEvents.swift",
+          "line": 96,
+          "issue": "observe() and changes(since:) treat a Key missing from the previous snapshot as a count of 0, or as a nil state. Any Key that first appears after the first look is therefore diffed against 0/nil.",
+          "status": "fixed in a9f4a36: a comparison that joins the watched set is recorded silently, and one created since the last look is compared from zero"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControl.swift",
+          "line": 144,
+          "issue": "Cursor handling: a cursor lower than the current feed cursor is always trusted. A cursor older than the 500-event retention window returns only the retained events, with no signal that some were dropped.",
+          "status": "open (NIT, deferred): no signal that events older than the 500 kept were dropped"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlEvents.swift",
+          "line": 58,
+          "issue": "withCheckedContinuation is not cancellation-aware. If the MCP request task is cancelled, for example when the client disconnects, the waiter stays until its timeout (up to 300s) or until eviction.",
+          "status": "open (NIT, deferred): waits are bounded by their timeout and eviction"
+        }
+      ],
+      "verified": [
+        "Stale cursor after restart: `after > feed.cursor` is clamped to 0. A comparison-filtered timeout returns next=max(start, cursor). There is a test for this.",
+        "Negative `after` throws invalidArguments, and the schema has minimum 0. The timeout range is also checked.",
+        "Waiter cap: maximumWaiters=32, and the oldest waiter is resumed with [] when it is exceeded. waiterOrder is pruned lazily. Evicted and published waiters are removed from the dictionary before resume, so there is no double resume. publish iterates a copy while mutating.",
+        "Sleeper cancel: `sleeper?.cancel()` runs after the continuation resumes. A cancelled sleeper exits through the isCancelled guard, and one that fires after a publish finds nothing to remove. Every path resumes a waiter exactly once, all on MainActor.",
+        "observe(_:date:) publishes events. The first look only records, resetObservation() exists, and streaming replies are held back until the agent is no longer busy. Events carry no message text, paths or secrets, only state strings. wait is readOnly.",
+        "pbxproj registers AgentControlEvents.swift in the group and the Sources phase. The new tests cover wake, timeout, the cap and observe."
+      ],
+      "open_notes": [
+        "Nothing publishes events until the next PR's timer calls observe(). The app has no way to expect or get events yet.",
+        "The `uncertain` state is only reported, never retried, which matches the rule against retrying uncertain sends.",
+        "The feed is shared across all clients. A cursor from a Dev build or a different host process is not distinguishable, but Dev and production do not share state here.",
+        "Not re-run: no Swift toolchain."
+      ]
+    },
+    {
+      "head_sha": "a9f4a366552060f5e031aa7a642f54e1640bd6d7",
+      "base_sha": "632e5396f0c398236eb19b24a6351d8b0051ff2d",
+      "scope": "delta since ca49d48 (fix for the round 1 SHOULD-FIX)",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlEvents.swift",
+          "line": 118,
+          "issue": "adopting(_:createdBefore:) takes `next` after the settling override (`next.replies[key] = old.replies[key]`), so a joined comparison whose agent is still streaming gets no recorded count. When that agent settles, its whole existing history is announced as one replyArrived.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlEvents.swift",
+          "line": 78,
+          "issue": "`lastLook` is the `date` passed to observe, which is taken after the snapshot is built. A comparison created in the gap between building the snapshot and stamping the date has created < lastLook, so at the next look it is adopted silently, and its first state or reply is missed.",
+          "status": "open (NIT)"
+        }
+      ],
+      "verified": [
+        "Joining logic is correct. `watched` is the comparison IDs present in the previous look's replies/states, and `joined` means not watched and created < lastLook. Joined comparisons get next's counts and states copied into the baseline, so `changes(since:)` sees no diff. Comparisons created since the last look (created >= lastLook) are not adopted and are compared from zero, so their first reply and send result are announced.",
+        "First observation: `defer { lastLook = date }` also runs on the `guard ... else { last = snapshot; return }` path, so the first look records and sets lastLook. After resetObservation, `last` is nil so the next look only records. lastLook starts at .distantPast, so it is never used before a first look.",
+        "A comparison whose `created` entry is missing defaults to .distantPast and counts as old (recorded silently). That is the safe direction.",
+        "Busy-state changes still flow through changes(since:) unaffected, because adopting only touches replies and states.",
+        "Test testAComparisonThatJoinsTheWatchedSetIsRecordedButANewOneIsAnnounced does exercise the fix. At the second look, older (created start-3600 < lastLook start) is adopted silently. newer (created start+0.5, which is not before start) is announced, giving exactly [.replyArrived, .sendResult] for newer only. At the third look older's reply 4 to 5 is announced, ending at cursor 3. I traced every assertion and they hold. The Set<UUID?> vs [newer] literal and the `last?.comparisonID` vs UUID comparisons type-check through optional promotion.",
+        "Swift 6 concurrency: `adopting` is a value-type method on a Sendable struct, and the local `joined` closure is non-escaping. Nothing is a compile concern.",
+        "Whole-diff scan against base 632e539: only the events file, AgentControl.swift, the tests and pbxproj changed. The delta broke nothing."
+      ],
+      "open_notes": [
+        "The fix depends on AgentControlSnapshot.created being filled by the host. That happens in #109's AgentControlHost.controlSnapshot (verified there); in #108 alone, nothing populates `created`, so every comparison counts as old."
+      ]
+    }
+  ],
+  "open_items": [
+    "NIT AgentControl.swift: Cursor handling: a cursor lower than the current feed cursor is always trusted. A cursor older than the 500-event retention window returns only the retained events, with no signal that some were dropped.",
+    "NIT AgentControlEvents.swift: withCheckedContinuation is not cancellation-aware. If the MCP request task is cancelled, for example when the client disconnects, the waiter stays until its timeout (up to 300s) or until eviction.",
+    "NIT AgentControlEvents.swift: adopting(_:createdBefore:) takes `next` after the settling override (`next.replies[key] = old.replies[key]`), so a joined comparison whose agent is still streaming gets no recorded count. When that agent settles, its whole existing history is announced as one replyArrived.",
+    "NIT AgentControlEvents.swift: `lastLook` is the `date` passed to observe, which is taken after the snapshot is built. A comparison created in the gap between building the snapshot and stamping the date has created < lastLook, so at the next look it is adopted silently, and its first state or reply is missed."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42951870827",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed",
+    "finished": "2026-11-11T03:44Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}

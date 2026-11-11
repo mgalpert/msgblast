@@ -1,0 +1,110 @@
+{
+  "pr": 110,
+  "base_sha": "bb8eb84076f793e5bfbdaaef7187a4ffea5ba231",
+  "head_sha": "3669eb1a0392b5b749c210ddbe4b7ebda8830a68",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "36c95bde0dd5b3335f1dca957faac0afbb9a1e70",
+      "base_sha": "9398c4c2835df4332a20ab9d7449f2f00f9dd5a3",
+      "scope": "full review of the PR",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Core/AgentControlCLI.swift",
+          "line": 196,
+          "issue": "AgentControlSocketClient.exchange throws the same Unavailable error for a failed connect and for a failure after the request was written (read returns -1/0, EINTR, app quits mid-call). The command then prints 'msgblast is not running, or Settings → Outside agents is off.' and exits 5.",
+          "status": "fixed in 4ba0b09: a lost reply after the request was written is reported apart from msgblast not running"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlCLI.swift",
+          "line": 83,
+          "issue": "An MSGBLAST_CLIENT environment variable that is set but empty or whitespace-only hits the 'must be a name' usage error. The error message mentions only --client.",
+          "status": "open (NIT)"
+        }
+      ],
+      "verified": [
+        "isCommand: leading --client NAME and --json now run the CLI. App launch options (--demo, --update-probe, -NSDocument...) and an empty argument list still open the GUI, and the new tests cover these. Edge cases checked by hand: ['--client'] alone reaches parse and is rejected with 'needs a value'; ['--demo','status'] opens the GUI.",
+        "--client validation: AgentControlGate.clientName strips control, format (bidi), separator, private-use and unassigned scalars, collapses whitespace, and caps at 80 characters. Failures exit 2 and the sent name is the sanitized one. Tests cover the bidi, length and BEL cases.",
+        "Parser split (36c95bd): compared line by line with the pre-split parse. The order is unchanged (split, then client check, then --help, then command). The defaults (Terminal / Claude Code) and the tool names, option handling and error strings are identical. No behavior change found."
+      ],
+      "open_notes": [
+        "The client name is self-asserted. Any local process can claim an already-approved name such as 'Claude Code'. This is inherited from the socket design and not new here.",
+        "The client's read loop has no timeout. This is fine because the server bounds wait at 300 s, but a hung app hangs the command."
+      ]
+    },
+    {
+      "head_sha": "4ba0b09678be31e960c5c4628fd93fc8087a7004",
+      "base_sha": "bb8eb84076f793e5bfbdaaef7187a4ffea5ba231",
+      "scope": "delta since 36c95bd (lost-reply fix, merge of #109)",
+      "verdict": "approve",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlCLI.swift",
+          "line": 21,
+          "issue": "The 'msgblast is not running...' text now lives in AgentControlCLI.unavailable, but AgentControlMCPServer.unavailable (in #111) still holds its own copy of the same string.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlCLI.swift",
+          "line": 223,
+          "issue": "readReply has no read timeout, and `reply.contains(0x0A)` rescans the whole buffer on each chunk.",
+          "status": "open (NIT, pre-existing); the server bounds waits at 300 s"
+        }
+      ],
+      "verified": [
+        "Descriptors are closed on every path: exchange defers close(descriptor) right after connect(to:) returns, and connect(to:) closes before each of its own throws (path too long, connect failed). Only the `socket()` failure throws without a close, and there is no descriptor then.",
+        "Name resolution is correct. `Darwin.connect` and `Darwin.socket` are qualified, so they don't collide with the static `connect(to:)`. `close`, `read`, `write` and `setsockopt` have no competing member in the enum.",
+        "SO_NOSIGPIPE is set on the descriptor before use, so a write to a closed peer gives EPIPE (mapped to Unavailable) instead of killing the command with SIGPIPE.",
+        "writeAll: it loops on partial writes with `line[sent...]` (the slice's baseAddress is correct), retries on EINTR, and throws Unavailable on 0 or an error. That is consistent with the claim that msgblast ignores a partial line.",
+        "readReply: EINTR is retried. EOF or an error before a newline throws NoReply. It returns exactly the first line plus a newline.",
+        "exchange throws NoReply only after the whole request is written, and Unavailable otherwise.",
+        "AgentControlCommand uses `catch is NoReply` and exits 6 with AgentControlCLI.noReply text; any other error exits 5. The usage text lists '6 no answer after the request was sent (it may have run)'.",
+        "Test: it first checks that a missing socket gives Unavailable. The listener binds and listens before the client connects, so the accept backlog absorbs any ordering race. The server thread reads the 3-byte request and closes, so the client sees EOF and NoReply. Cleanup closes the server and unlinks the path, and the path is well under the 104-byte sun_path limit. The Thread closure captures only a let Int32, so it is fine under Swift 6 Sendable checking. I see no flakiness.",
+        "Delta review: the base's merged fixes (socket argument guard, Settings save errors, event feed) don't touch the CLI files beyond the conflict-free merge. The whole-PR diff against the base is the CLI, command, Settings view, tests and project file, with nothing broken."
+      ],
+      "open_notes": [
+        "I cannot compile here; the Swift 6 strict-concurrency reading is by inspection only. I found no compile or concurrency problems.",
+        "Exit 6 is the only status where a retry might double-run a request. The text says so, which is the right call."
+      ]
+    },
+    {
+      "head_sha": "3669eb1a0392b5b749c210ddbe4b7ebda8830a68",
+      "base_sha": null,
+      "scope": "delta since 4ba0b09 (test build fix)",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "git diff 4ba0b09 3669eb1 --stat: only msgblastTests/AgentControlCLITests.swift changed (9 insertions, 7 deletions).",
+        "Every libc call in the socket test is now Darwin.-qualified: socket, close (x3), unlink, bind, listen, accept, read. The remaining unqualified names are sockaddr_un, sa_family_t, socklen_t, AF_UNIX and SOCK_STREAM, which are types and constants that NSObject does not shadow.",
+        "A grep of the file for other plain C calls that could collide with NSObject or XCTestCase members (sleep, exit, connect, send, write, open, select, poll, and similar) found none.",
+        "`import Darwin` before `import XCTest` is fine, and `Darwin.bind(server, $0, ...)` inside the withMemoryRebound closure resolves to the C function."
+      ],
+      "open_notes": []
+    }
+  ],
+  "open_items": [
+    "NIT AgentControlCLI.swift: An MSGBLAST_CLIENT environment variable that is set but empty or whitespace-only hits the 'must be a name' usage error. The error message mentions only --client.",
+    "NIT AgentControlCLI.swift: The 'msgblast is not running...' text now lives in AgentControlCLI.unavailable, but AgentControlMCPServer.unavailable (in #111) still holds its own copy of the same string.",
+    "NIT AgentControlCLI.swift: readReply has no read timeout, and `reply.contains(0x0A)` rescans the whole buffer on each chunk."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42952718366",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed",
+    "finished": "2026-11-11T03:52Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}

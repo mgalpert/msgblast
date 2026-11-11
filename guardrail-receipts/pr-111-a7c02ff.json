@@ -1,0 +1,117 @@
+{
+  "pr": 111,
+  "base_sha": "3669eb1a0392b5b749c210ddbe4b7ebda8830a68",
+  "head_sha": "a7c02ff851f219cb648e4b312c2e92c49f27e46b",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "b99106eb7f932522736e193604c6a9939c7ea62a",
+      "base_sha": "36c95bde0dd5b3335f1dca957faac0afbb9a1e70",
+      "scope": "full review of the PR",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Core/AgentControlMCP.swift",
+          "line": 119,
+          "issue": "send() maps any exchange failure to code -32002 or an isError result with text 'msgblast is not running...'. That includes failures after the request was written to the socket (see the PR 110 finding on exchange).",
+          "status": "fixed in 5b0a5a4: a lost reply maps to its own message"
+        },
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/App/AgentControlCommand.swift",
+          "line": 62,
+          "issue": "The 1 MiB line cap is applied after readLine has already read the whole line into memory, so it does not bound memory. Cancelled waits also keep their in-flight slot for up to 300 s because notifications/cancelled is ignored.",
+          "status": "open (deferred): the cap is checked after the line is read"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlMCP.swift",
+          "line": 56,
+          "issue": "ping and initialize return before the _meta check and never get resultType 'complete', while every other modern-version reply does.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlMCP.swift",
+          "line": 38,
+          "issue": "The JSON-RPC id is echoed as any JSON type, including an object or array. A request with 'id': null is treated as a request, not a notification.",
+          "status": "open (NIT)"
+        }
+      ],
+      "verified": [
+        "In-flight and line caps: the semaphore holds at 64 requests and the reader pauses when it is full. A line over 1 MiB gets -32600 with id null. The group.wait at EOF drains replies. The cap itself is real for requests, but see the memory note above.",
+        "Non-object JSON (a number, a string, an array/batch) returns -32600. Malformed JSON returns -32700. A non-string method returns -32600 with the id kept. 2025-03-26 is dropped: an initialize asking for it gets 2025-11-25, and discover lists only the 3 versions. The tests cover this.",
+        "clientInfo name and title go through AgentControlGate.clientName (control, bidi and format characters stripped, 400-character pre-cut, 80 cap). The title is tried first, then the name. The test shows 'Evil\\u202eAgent\\n' becoming 'Evil Agent'. --client wins over the reported name.",
+        "Concurrency test: the actor is reentrant because handle suspends at the awaited exchange. wireID is bumped before the await. The test blocks a wait and still gets a status reply and a ping reply, so the test is valid. In production the exchange runs on DispatchQueue.global, and the reader thread is not an actor thread, so up to 64 threads can block without starving the Swift pool.",
+        "Handle/result split (b99106e): behavior is identical. ping and initialize still skip the version check, the _meta checks and the resultType rule are the same, and the error mapping is the same.",
+        "Deferrals: ignoring notifications/cancelled is mostly acceptable because wait is server-bounded at 300 s and the default is 60 s. The 64-slot starvation caveat above is the exception. Not checking the version on ping is acceptable (NIT)."
+      ],
+      "open_notes": [
+        "The setup command in OutsideAgentsSettingsView is correctly single-quote escaped and uses `claude|codex mcp add msgblast -- '<exe>' mcp`.",
+        "The new `.mcp` case in the CLI and the AgentControlCommand switch is exhaustive.",
+        "A client that reports 'Claude Code' via clientInfo gets that name's approvals unless the person passes --client. This is inherited from the socket's name-based approval design.",
+        "I could not build or run tests here. I judged the Swift 6 sendability of the Task.detached capture of the actor and the line by reading it only. CI on 76e165b passing supports it."
+      ]
+    },
+    {
+      "head_sha": "5b0a5a4f1a96aed81a7a520d3918cde16c7495eb",
+      "base_sha": "4ba0b09678be31e960c5c4628fd93fc8087a7004",
+      "scope": "delta since b99106e (lost-reply fix, merge of #110)",
+      "verdict": "approve",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlMCP.swift",
+          "line": 11,
+          "issue": "`AgentControlMCPServer.unavailable` duplicates `AgentControlCLI.unavailable`, while the new NoReply path already reads its text from AgentControlCLI.",
+          "status": "open (NIT)"
+        }
+      ],
+      "verified": [
+        "send() throws `Failure(-32002, AgentControlCLI.noReply)` for `catch is AgentControlSocketClient.NoReply`, and any other exchange error becomes `Self.unavailable`. This is correct, and the NoReply catch comes first.",
+        "The error survives the hop. In AgentControlCommand.serve, `Result { try AgentControlSocketClient.exchange(...) }` is Result<Data, any Error> and keeps the thrown NoReply. `continuation.resume(with:)` rethrows it unchanged, so `catch is NoReply` in send() matches.",
+        "callTool: `(error as? Failure)?.message ?? Self.unavailable`. `Failure` is a private struct nested in the actor, and the cast sits inside the actor's own method, so it compiles. The failure message is returned as an isError tool result with the noReply text. tools/list still reports the Failure as a JSON-RPC error (-32002) with that message.",
+        "Test closure `{ _ in throw AgentControlSocketClient.NoReply() }` type-checks as `@Sendable (Data) async throws -> Data`: the parameter is ignored and the body only throws, and NoReply is an empty Sendable struct. The test asserts the isError text equals AgentControlCLI.noReply for tools/call and the message for tools/list.",
+        "The merge of #110 is clean: AgentControlCommand.swift's request path is identical to #110's, and the CLI changes arrive as-is. The whole-PR diff against base 4ba0b09 is the MCP server, the `mcp` subcommand with LockedOutput, in-flight and line limits, Settings view text, tests and project file. Nothing in the delta broke it."
+      ],
+      "open_notes": [
+        "I cannot compile here; the Swift 6 strict-concurrency reading is by inspection only. LockedOutput is @unchecked Sendable around an NSLock. The detached Task captures `server` (an actor), `output`, `slots`, `group` and a `let line` String, all Sendable or reference types that are safe to share.",
+        "A stalled app still blocks an MCP request indefinitely because the socket read has no timeout. That predates this delta and is not new."
+      ]
+    },
+    {
+      "head_sha": "a7c02ff851f219cb648e4b312c2e92c49f27e46b",
+      "base_sha": null,
+      "scope": "delta since 5b0a5a4 (merge of #110 test build fix)",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "git diff 5b0a5a4 a7c02ff --stat: only msgblastTests/AgentControlCLITests.swift changed (9 insertions, 7 deletions), same as #110.",
+        "All socket calls are Darwin.-qualified; no other NSObject collisions in the test file."
+      ],
+      "open_notes": []
+    }
+  ],
+  "open_items": [
+    "SHOULD-FIX AgentControlCommand.swift: The 1 MiB line cap is applied after readLine has already read the whole line into memory, so it does not bound memory. Cancelled waits also keep their in-flight slot for up to 300 s because notifications/cancelled is ignored.",
+    "NIT AgentControlMCP.swift: ping and initialize return before the _meta check and never get resultType 'complete', while every other modern-version reply does.",
+    "NIT AgentControlMCP.swift: The JSON-RPC id is echoed as any JSON type, including an object or array. A request with 'id': null is treated as a request, not a notification.",
+    "NIT AgentControlMCP.swift: `AgentControlMCPServer.unavailable` duplicates `AgentControlCLI.unavailable`, while the new NoReply path already reads its text from AgentControlCLI."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42952723051",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed",
+    "finished": "2026-11-11T04:00Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}

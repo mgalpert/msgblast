@@ -1,0 +1,181 @@
+{
+  "pr": 117,
+  "base_sha": "df3ec7e4d6d6cbaaccff447c4ca457467193306d",
+  "head_sha": "becca5638f7fa20e726773088f335f8528099153",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent in msg's 'Plan agent control for msgblast' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, independent subagents that wrote none of this code; one pass per head listed in reviews",
+  "verdict": "approve with notes",
+  "exact_head_reviewed": true,
+  "reviews": [
+    {
+      "head_sha": "da5b11e075098d469e11b4f7b3b4e351dc94664d",
+      "base_sha": "c62e78a5b9a943e886b748ca59516751f347cb59",
+      "scope": "delta since 86baead",
+      "verdict": "approve",
+      "findings": [],
+      "verified": [
+        "The merge result in OutsideAgentsSettingsView.swift keeps `@ObservedObject var activity: AgentControlActivity` and `AgentSendsSettings(activity: activity)` (from #117), and uses `gate.change` in the Picker setter and in Remove (from #116). Remove still calls `listener.tailnet.revoke(client)` afterwards. The diff against #116's head for this file is only the two activity lines.",
+        "docs/outside-agents.md has both the name-only note (after the Settings sentence, before Tools) and the new 'Seeing and stopping agent sends' section at the end. The two are consistent: the section says Stop applies to new sends, an in-flight send finishes, `agentSendsStopped` refuses new sends, and the Settings list holds no message text.",
+        "The merge diff against #116's head touches the same 11 files as #117's own change and nothing else. `controlSend(_:client:)` is updated in the protocol, the default extension, `AppModel.controlSend` and `AgentControlSends.send`, and AgentControl.swift passes `client: client`. No stale one-argument call sites in the files I read.",
+        "AgentControlSends.init reads `model.agentSendActivity`, a `let` on AppModel, from the lazy `agentSends`. There is no init-order problem.",
+        "Complexity estimator on all 7 Swift files this PR touches (AgentControlSends, AppModel, AgentControl, AgentControlActivity, AgentSendsBanner, OutsideAgentsSettingsView, Views.swift) printed 7 lines, all in AppModel.swift: init, setupDemo, refresh, addAgent, submit, reconcile, followUp. None comes from this PR. Its only AppModel change is the one-line `let agentSendActivity = AgentControlActivity()`, and `git diff c62e78a da5b11e` shows nothing else in those functions."
+      ],
+      "open_notes": [
+        "The AppModel.swift complexity hits are pre-existing and not caused by #117. If CI lints that file wholesale they would show up, but they are not in this PR's changes.",
+        "I read the delta and the merge-sensitive files only. I did not re-review AgentControlActivity.swift or the banner view beyond what the complexity run and the merge diff exposed."
+      ]
+    },
+    {
+      "head_sha": "da5b11e075098d469e11b4f7b3b4e351dc94664d",
+      "base_sha": "c62e78a5b9a943e886b748ca59516751f347cb59",
+      "scope": "full review of the PR",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "SHOULD-FIX",
+          "file": "msgblast/Core/AgentControlActivity.swift",
+          "line": 92,
+          "issue": "`stopped` is checked once, before `send` runs. A new send then awaits the availability probe (AgentControlSends.swift line 41) and may wait in the executor queue behind another agent send (a minutes-long wait, with the banner showing 'running'). If the person presses Stop during either wait, the send still goes out.",
+          "status": "fixed in aeec28d: agent sends take turns, and Stop is checked after the turn, after the readiness check and right before the send"
+        },
+        {
+          "severity": "SHOULD-FIX",
+          "file": "docs/outside-agents.md",
+          "line": 68,
+          "issue": "The docs say a stopped send is 'refused with code `agentSendsStopped`'. The refusal is thrown as AgentControlError.refused, which the Wire reports as code 'refused', and the agentSendsStopped code never reaches the agent.",
+          "status": "fixed in 9a9ed34 (#116): the error text names the code"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblastTests/AgentControlActivityTests.swift",
+          "line": 20,
+          "issue": "No test covers Stop pressed while a send is running (the send must finish and the next send be refused). No test covers Stop pressed during the probe or queue wait. No test covers AgentControlSends.send with known versus unknown ids or the stopped path through the real executor.",
+          "status": "Stop tests added in aeec28d; AgentControlSends with a known or unknown id is covered by the live test"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControl.swift",
+          "line": 164,
+          "issue": "Stopped sends still count against the 6/min and 60/hr limit, because the limit check runs in AgentControl.send before the activity stop check.",
+          "status": "open (NIT)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlActivity.swift",
+          "line": 35,
+          "issue": "The comment says 'Agent sends run one at a time', but several entries can be unfinished at once (a send queued behind another). `running` returns only the newest, so the banner names the newest queued send, not the one under way.",
+          "status": "fixed in aeec28d: the banner names the oldest unfinished send, which holds the turn"
+        }
+      ],
+      "verified": [
+        "The log never holds message text. AgentControlActivityEntry stores only client, an action label, an agent count, a date and a result string. Result strings come from result.message (host/executor reasons and agent ids, never the send text). The test checks the text is absent.",
+        "A replayed result never finishes an entry twice: finish() ignores replayed results and only finishes an entry whose result is nil. Walked the concurrent same-requestId race: the second caller gets an accepted/replayed result and is ignored, and the first caller finishes the entry once.",
+        "A duplicate running id adds no entry: begin() guards on an unfinished entry with the same id, and the known=true path never calls begin.",
+        "The stopped path begins and finishes an entry (Refused: ...), never reaches the probe or the executor, and the refusal is not stored in the executor ledger, so the same requestId can be retried after Allow.",
+        "Known (repeat) requests are answered even while stopped. Only the pre-send check is skipped for a repeat, so Stop cannot stop a send already under way. Past the pre-send stop check, the executor's send is not interrupted.",
+        "Stopped state persists: didSet writes UserDefaults 'AgentSendsStopped', and init reads it with _stopped = Published(initialValue:) (valid, didSet does not fire in init). The test builds a second instance on the same suite.",
+        "The 50-entry cap: insert at 0, removeLast(count - 50). The test checks the count, the newest-first order and the dropped oldest entry, and that finishing a dropped entry is a no-op.",
+        "Swift 6: AgentControlActivity is @MainActor with @Published state. The log struct is Sendable and Equatable. `send` is a non-escaping @MainActor closure. The `static let agentSendsStopped: Self = \"...\"` extension on the open string type is valid. The switch over result.outcome is exhaustive (a 3-case enum). The AgentControlHost signature change leaves the only other conformer (the test Host) updated, and the app files are in the pbxproj. The SwiftUI banner and settings views compile as read. StatusBanners flattens into the parent VStack.",
+        "Tests match their names except the gap noted above."
+      ],
+      "open_notes": [
+        "AgentControlActivity() uses UserDefaults.standard when AppModel creates it, so demo and fixture runs read and write the persisted Stop flag, and stopped can leak into other processes' runs. Confirm that is intended.",
+        "Refused stopped sends are 'unknown' in msgblast_request_status (they never reached the executor) while the activity list shows 'Refused'. This is consistent with the documentation of 'unknown' but worth knowing."
+      ]
+    },
+    {
+      "head_sha": "aeec28dce3f951a10e3c154eb9e5ec3362333da9",
+      "base_sha": null,
+      "scope": "delta since da5b11e (fixes for the full review, merge of #116)",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlSend.swift",
+          "line": 125,
+          "issue": "The Stop refusal (agentSendsStopped) comes from AgentControlActivity.run and is never stored in the executor ledger. It still passes through AgentControlSend.result, so it gets 'A repeat with the same requestId gets this same answer'.",
+          "status": "fixed in becca56: a Stop refusal says the same call can be repeated once sends are allowed"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblast/Core/AgentControlActivity.swift",
+          "line": 104,
+          "issue": "If a duplicate call (same id) is refused by Stop after the first call was also refused, its log.finish finds no unfinished entry and does nothing. If sends are re-enabled between the two and the second one then sends, its Done result is also dropped, because the first call's entry already says Refused.",
+          "status": "open (NIT, cosmetic)"
+        }
+      ],
+      "verified": [
+        "No path between takeTurn and passTurn can skip passTurn. run has no early return, throw or try after takeTurn, and send and prepare are non-throwing. Cancellation of the caller does not matter either, since the checked continuation is not cancellation-aware and the turn is always passed. passTurn resumes the next waiter directly (turnTaken stays true) or clears the flag, and the waiter resumes only after the current call has run log.finish, because there is no suspension between passTurn and log.finish.",
+        "A known request skips the turn: the first `guard !isKnown()` returns before log.begin or takeTurn. An in-progress id also counts as known (status(of:) returns accepted/replayed), so a same-request call never queues behind the turn. In the executor, execute() returns the accepted+replayed answer straight away.",
+        "Same-id duplicate handling works. log.begin ignores an id that already has an unfinished entry, and finish ignores replayed results. A duplicate that waits its turn re-checks isKnown() after the turn and gets the stored answer through send, which is a replay with no second send. The first call's entry is finished by the first call.",
+        "Stop is checked after the turn, again after prepare, and immediately before send, with no suspension between the last check and the send call. All of it runs on the MainActor, so there is no stale read. The race is closed except for the executor's own drain(): `send` hands the command to executor.execute, which submit()s it and runs it in a later `Task { @MainActor }`, so a Stop pressed in that tiny gap would not stop it. See the open note.",
+        "Deadlock on re-entry: neither send (executor.execute) nor prepare (remoteAvailabilityProbe) calls activity.run, so there is none today. A future re-entrant call would wait on a turn its own caller holds.",
+        "log.running is now entries.last where result == nil. Entries are newest first, so that is the oldest unfinished entry, which is the one holding the turn. I confirmed that in the new waits-its-turn test, and the 50-entry test's new expectation commands[2] is correct: entries 52 and 51 are finished, so the oldest unfinished one still listed is index 2.",
+        "Swift 6: `isKnown: @MainActor () -> Bool` and `prepare: @MainActor () async -> Void = {}` are non-escaping closure parameters on a @MainActor class, and are called from MainActor context. The withCheckedContinuation body in takeTurn is a non-Sendable closure that inherits MainActor isolation, so touching `waiting` is fine.",
+        "The call-site trailing-closure binding is fine. With prepare: passed explicitly the trailing closure goes to send. In the tests that omit prepare:, SE-0286 forward scan skips the defaulted prepare and binds to the required send, so both forms compile. No leftover `known:` callers exist.",
+        "In AgentControlSends.swift, `prepare: { await self.model.remoteAvailabilityProbe(slow: false) }` is fine because that function is `async` and returns Void. Previously the probe ran only for new sends, and it still does (a known request returns before prepare), and a Stop-refused send now skips the probe.",
+        "The new tests are deterministic. The test class is @MainActor, Held is @MainActor, and every task runs on the MainActor, so Task.yield polling is cooperative. The `until { held.release != nil }` wait ends only after the first send has suspended inside send. In the second task, log.begin and the waiting.append run with no suspension between them, so once `activity.log.entries.count == 2` is seen the second task is already queued. The refusal text, the entry order [second refused, first Done], held.sent == [first] and the running id all match the code. `[String?]` compares against a [String] literal fine.",
+        "The Stop-during-prepare test sets stopped inside prepare, and the second check refuses the send before send runs, so sent == 0 with code agentSendsStopped.",
+        "The 10,000-yield cap in until() only bounds a hung test; a failure would surface as a failed assertion rather than a hang."
+      ],
+      "open_notes": [
+        "Race left open: after the final stopped check, executor.execute() submit()s synchronously but the executor starts the send in a later `Task { @MainActor }` (drain), so Stop pressed in that gap can still let one send out. Closing it would need the executor to re-check a stop flag at the head of the queue, which is a design call.",
+        "The doc comment on AgentControlSends.swift still says the phone or Mac UI sending makes an agent's send refused as Mac busy; that matches the executor and is fine.",
+        "Re-entering run() from prepare or send would deadlock; nothing does today."
+      ]
+    },
+    {
+      "head_sha": "becca5638f7fa20e726773088f335f8528099153",
+      "base_sha": null,
+      "scope": "delta since aeec28d (merge of #116, refusal wording after Stop)",
+      "verdict": "approve with notes",
+      "findings": [
+        {
+          "severity": "NIT",
+          "file": "docs/outside-agents.md",
+          "line": 75,
+          "issue": "The new sentence is spliced into the middle of a line, leaving 'the same `requestId`, can be repeated. Agents can still read. The setting is saved, ...' as one over-long line.",
+          "status": "open (NIT, cosmetic)"
+        },
+        {
+          "severity": "NIT",
+          "file": "msgblastTests/AgentControlSendTests.swift",
+          "line": 134,
+          "issue": "The test Host.controlSend stores every answer in its ledger, including the Stop refusal. The real path (AgentControlActivity.run) refuses before the executor and stores nothing.",
+          "status": "open (NIT): the real path is covered in AgentControlActivityTests"
+        }
+      ],
+      "verified": [
+        "Strings match character for character. For the Stop case the test message is 'Agent sends are stopped in msgblast. The person can allow them again in msgblast'. There are no agentReasons, so rows are empty. The join gives message + '. Nothing was sent (agentSendsStopped).' + ' Once the person allows agent sends, the same call can be repeated.', which equals the test's concatenation (one space before 'Once', final period). The named and unnamed agentUnavailable expectations are identical to #116 and also match.",
+        "Swift validity: `let again = if ... { \" ...\" } else if named { \" ...\" } else { \"\" }` is a valid if expression. Every branch is a single expression of String type, and there is an else. The repo already uses if expressions (WebAgentSession.swift:801). `result.code == .agentSendsStopped` compares RemoteRejectionCode? with an implicit member, the same form as the existing `result.code == .unknownCommand`. agentSendsStopped is `static let` in a public extension of RemoteRejectionCode in the same msgblastCore module (AgentControlActivity.swift:6), so it resolves. The Stop branch correctly takes precedence over `named`, so an unnamed Stop call is also told it can be repeated. That reads fine: the caller gave no id, but 'the same call' still works.",
+        "Test: `RemoteCommandResult.rejected(_ id: UUID, _ code: RemoteRejectionCode, _ message: String)` exists (Commands.swift:221). The closure `{ .rejected($0.clientCommandID, .agentSendsStopped, ...) }` infers its return type from Host.answer's declared type. msgblastRemoteProtocol is imported in the test. The requestId 'r1' makes named true, which shows Stop takes precedence over named. On the first call the Host's ledger is empty, so the answer is returned unreplayed, and the error is thrown (refusalThrows true).",
+        "Callers still compile: same two call sites, send passes named:, status path unchanged (refusalThrows false).",
+        "Doc claim is true. AgentControlActivity.run returns refusal(command) without calling `send` (executor.execute) on both Stop checks, so nothing enters the executor ledger. RemoteCommandExecutor.status(of:) returns .unknownCommand for an id that is in neither ledger nor inProgress, so a Stop-refused id is unknown afterwards. After Allow, the repeat with the same requestId passes isKnown() == false and goes to the executor as a fresh send. The old 'same answer' sentence would indeed have been wrong for it.",
+        "Rate limiter: AgentControl.send checks `host.controlSendStatus(id).code == .unknownCommand, !sendLimit.allow(client)` before calling host.controlSend. A Stop-refused id is unknown, so each repeat of it, including repeats while sends are still stopped, spends an allowance (6 per minute, 60 per hour per client) and is not exempt as a 'known request'. After Allow, the repeat counts again as a normal new send. This is consistent and not a bug. The docs say nothing contrary.",
+        "The merge commit becca56 has parents aeec28d and df3ec7e. Against aeec28d it adds exactly the #116 changes plus the Stop branch, the doc line and the test. Merging in df3ec7e introduced nothing else (the controlSend(command, client:) signature from #117 is preserved at the call site)."
+      ],
+      "open_notes": [
+        "Stopped attempts count toward the per-client send limit (see rate limiter note above). That is existing behaviour and may be worth a doc line if agents poll while stopped; it is not required here."
+      ]
+    }
+  ],
+  "open_items": [
+    "NIT AgentControl.swift: Stopped sends still count against the 6/min and 60/hr limit, because the limit check runs in AgentControl.send before the activity stop check.",
+    "NIT AgentControlActivity.swift: If a duplicate call (same id) is refused by Stop after the first call was also refused, its log.finish finds no unfinished entry and does nothing. If sends are re-enabled between the two and the second one then sends, its Done result is also dropped, because the first call's entry already says Refused.",
+    "NIT outside-agents.md: The new sentence is spliced into the middle of a line, leaving 'the same `requestId`, can be repeated. Agents can still read. The setting is saved, ...' as one over-long line.",
+    "NIT AgentControlSendTests.swift: The test Host.controlSend stores every answer in its ledger, including the Stop refusal. The real path (AgentControlActivity.run) refuses before the executor and stores nothing.",
+    "Race left open: Stop pressed between the last check and the executor starting the queued send can let that one send out. Closing it means the executor re-checks Stop at the head of its queue."
+  ],
+  "checks_run_locally_at_head": {
+    "swift-complexity estimator (SwiftLint 0.65.1 rules, ratchet from merge-base)": "no new violations in changed Swift files",
+    "PR scope coverage": "every changed path is in a Scope line"
+  },
+  "ci_at_head": {
+    "workflow": "Validate msgblast",
+    "run": "https://github.com/mgalpert/msgblast/actions/runs/42954847467",
+    "result": "native (Xcode build and unit tests on the hosted macOS runner) and linux passed, and mobile passed",
+    "finished": "2026-11-11T04:23Z"
+  },
+  "limits": "Reviews ran in a Linux cloud container with no Swift toolchain, so the reviewers read the code and could not build it; compiling and unit tests are native CI on the hosted macOS runner (see ci_at_head). No live run in a Dev build yet, and evidence (screenshot and video) is pending."
+}
