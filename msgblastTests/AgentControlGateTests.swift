@@ -28,14 +28,14 @@ import XCTest
     func testApprovalIsAskedOnceSavedAndSurvivesRestart() async throws {
         let asked = Counter()
         let gate = AgentControlGate(file: file)
-        let first = Task { await gate.access(for: "Codex") { _ in asked.value += 1; try? await Task.sleep(for: .milliseconds(20)); return .sendToAgents } }
-        let second = Task { await gate.access(for: "Codex") { _ in asked.value += 1; return .full } }
+        let first = Task { await gate.access(for: "Codex") { _ in asked.value += 1; try? await Task.sleep(for: .milliseconds(20)); return .full } }
+        let second = Task { await gate.access(for: "Codex") { _ in asked.value += 1; return .readOnly } }
         let levels = [await first.value, await second.value]
-        XCTAssertEqual(levels, [.sendToAgents, .sendToAgents])
+        XCTAssertEqual(levels, [.full, .full])
         XCTAssertEqual(asked.value, 1)
         let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
         XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o600)
-        XCTAssertEqual(AgentControlGate(file: file).approvals, ["Codex": .sendToAgents])
+        XCTAssertEqual(AgentControlGate(file: file).approvals, ["Codex": .full])
     }
 
     func testRefusedAndRevokedAgentsAreNotApproved() async throws {
