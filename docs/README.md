@@ -25,6 +25,8 @@ Local development does not need production release credentials.
   separate accounts, saved sessions, configuration, and report restrictions.
 - [Grok Bot](grokbot.md): webhook routines, callback tunnel, credential storage,
   and bundled helper.
+- [Grok Bot over Tailscale](grok-bot.md): the tailnet MCP endpoint, setup, and
+  readiness checks.
 - [Update recovery](update-recovery.md): preserving state when an older app cannot
   read state written by a newer one.
 
