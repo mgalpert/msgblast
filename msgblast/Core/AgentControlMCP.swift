@@ -5,7 +5,8 @@ import Foundation
 public actor AgentControlMCPServer {
     public typealias Exchange = @Sendable (Data) async throws -> Data
     public static let modernVersion = "2026-07-28"
-    public static let legacyVersions = ["2025-11-25", "2025-06-18", "2025-03-26"]
+    /// 2025-03-26 is left out on purpose: it requires JSON-RPC batches, which msgblast refuses.
+    public static let legacyVersions = ["2025-11-25", "2025-06-18"]
     static let instructions = "msgblast sends one prompt to many AI agents and Messages contacts at once and keeps their replies side by side as a comparison. Use msgblast_agents_list to see the agents, msgblast_comparisons_list and msgblast_comparison_read to read comparisons, and msgblast_blast_wait to wait for replies instead of polling. Each agent gets the access level the person chose in msgblast."
     static let unavailable = "msgblast is not running, or Settings → Outside agents is off."
 
@@ -26,10 +27,17 @@ public actor AgentControlMCPServer {
 
     /// One JSON-RPC message in, one line out. Notifications and stray responses get nothing back.
     public func handle(_ line: Data) async -> Data? {
-        guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+        guard let parsed = try? JSONSerialization.jsonObject(with: line, options: .fragmentsAllowed) else {
             return Self.encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Each line must be one JSON-RPC message."]])
         }
-        guard let id = message["id"], let method = message["method"] as? String else { return nil }
+        guard let message = parsed as? [String: Any] else {
+            return Self.encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32600, "message": "Send one JSON-RPC object per line. Batches are not supported."]])
+        }
+        // A request names a method and has an id; no id is a notification, no method a stray response.
+        guard let id = message["id"], message["method"] != nil else { return nil }
+        guard let method = message["method"] as? String else {
+            return Self.encode(["jsonrpc": "2.0", "id": id, "error": ["code": -32600, "message": "method must be a string."]])
+        }
         let params = message["params"] as? [String: Any] ?? [:]
         let meta = params["_meta"] as? [String: Any] ?? [:]
         do {
@@ -58,7 +66,7 @@ public actor AgentControlMCPServer {
             if let requested = failure.requested { error["data"] = ["supported": [Self.modernVersion] + Self.legacyVersions, "requested": requested] }
             return Self.encode(["jsonrpc": "2.0", "id": id, "error": error])
         } catch {
-            return Self.encode(["jsonrpc": "2.0", "id": id, "error": ["code": -32603, "message": error.localizedDescription]])
+            return Self.encode(["jsonrpc": "2.0", "id": id, "error": ["code": -32603, "message": "msgblast could not handle \(method)."]])
         }
     }
 
@@ -127,10 +135,13 @@ public actor AgentControlMCPServer {
         return WireReply(result: object?["result"], error: nil)
     }
 
+    /// The name the MCP client reports, made safe the same way the socket checks names.
     private static func name(_ info: [String: Any]?) -> String? {
-        let raw = (info?["title"] as? String) ?? (info?["name"] as? String)
-        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
-        return String(trimmed.prefix(80))
+        for key in ["title", "name"] {
+            guard let raw = info?[key] as? String else { continue }
+            if let name = AgentControlGate.clientName(String(raw.prefix(400))) { return String(name.prefix(80)) }
+        }
+        return nil
     }
 
     private static func encode(_ body: [String: Any]) -> Data {
