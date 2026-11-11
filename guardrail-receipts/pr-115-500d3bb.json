@@ -1,0 +1,28 @@
+{
+  "pr": 115,
+  "base_sha": "e9e2f53d0387661e2ead5984f276fda0db1892dd",
+  "head_sha": "500d3bb0215e55054865919bd4dd4d61705629ca",
+  "previous_reviewed_head": "bc988d3629055a0abd82aace1a768b9e7080ab38",
+  "previous_receipt": "guardrail-receipts/pr-115-bc988d3.json",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent, at the owner's request to double the PR size limit; 500d3bb is the owner's Update branch merge of main (#113) into the PR",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code; merge-only delta review at 500d3bb on top of the full review of bc988d3",
+  "verdict": "approve",
+  "findings": [],
+  "verified": [
+    "500d3bb is a two-parent merge of bc988d3 and e9e2f53 (main after #113)",
+    "git diff bc988d3 500d3bb is byte-identical, apart from index lines, to git diff d71d582 e9e2f53: exactly #113's content (8 files, 490 insertions) and nothing else",
+    "the PR's own change is unchanged: git diff d71d582 bc988d3 and git diff e9e2f53 500d3bb match apart from index lines (4 files, 9 insertions, 9 deletions)",
+    "review-guardrails.md, AGENTS.md and check_pr_scope.py all say 1,200; no stale 600 scope limit remains",
+    "#113's 'Context and tool output' section in review-guardrails.md is intact and does not conflict with the 1,200 limit"
+  ],
+  "open_notes": [
+    "test_swift_complexity's native analyzer test is skipped without a SWIFTLINT binary; it comes from #113 and is unrelated to this PR",
+    "carried from bc988d3: the limit is a literal in the script and the docs, with no shared constant"
+  ],
+  "checks_run_locally_at_head": {
+    "test_pr_scope.py + test_swift_complexity.py + test_context_budget.py": "20 tests OK, 1 skipped (needs SWIFTLINT)",
+    "PR scope": "PASS, 18 lines, 4 files, all in declared scope, base e9e2f53"
+  },
+  "limits": "Checks ran in a Linux cloud container, not in hosted Actions; the GitHub workflows and live exception lookup were not exercised."
+}
