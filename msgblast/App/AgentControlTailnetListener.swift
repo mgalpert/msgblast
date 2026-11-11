@@ -145,16 +145,26 @@ import msgblastCore
         guard !found.isEmpty else {
             error = "Tailscale isn't connected on this Mac."
             cancelListeners()
+            closeLinks()
             bound = []
             return
         }
         if found == bound, listeners.count == found.count, error == nil { return }
         refreshMagicDNS()
         cancelListeners()
+        // A connection on an address this Mac no longer has would never be closed otherwise.
+        if found != bound { closeLinks() }
         guard let port = NWEndpoint.Port(rawValue: UInt16(store.port)) else {
             error = "Could not listen on port \(store.port)."
             return
         }
+        let failure = bind(found, port: port)
+        bound = found
+        if listeners.count == found.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
+    }
+
+    /// Starts a listener on each Tailscale address. Returns the last error, if any.
+    private func bind(_ found: [String], port: NWEndpoint.Port) -> String? {
         var failure: String?
         for address in found {
             guard AgentControlTailnet.isTailnetPeer(address) else { continue }
@@ -177,17 +187,14 @@ import msgblastCore
                 failure = error.localizedDescription
             }
         }
-        bound = found
-        if listeners.count == found.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
+        return failure
     }
 
     private func stopSockets() {
         monitor?.cancel()
         monitor = nil
         cancelListeners()
-        let open = links
-        links = []
-        open.forEach { $0.close() }
+        closeLinks()
         endpoint = nil
         endpointHashes = [:]
         bound = []
@@ -197,6 +204,12 @@ import msgblastCore
     private func cancelListeners() {
         listeners.forEach { $0.cancel() }
         listeners = []
+    }
+
+    private func closeLinks() {
+        let open = links
+        links = []
+        open.forEach { $0.close() }
     }
 
     private func accept(_ connection: NWConnection) {
