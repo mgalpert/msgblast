@@ -22,6 +22,17 @@ struct AgentsWorkspaceView: View {
     @State private var hiddenMembers: Set<UUID> = []
     @State private var hiddenWebAgents: Set<WebAgentID> = []
     @State private var requestedAgents: Set<WebAgentID> = []
+    @State private var showingDetails = false
+    @State private var optionsSession: OptionsTarget?
+    @State private var pinnedExpanded = false
+    /// `sheet(item:)` needs an `Identifiable` value; a session has an id but does not declare the conformance.
+    private struct OptionsTarget: Identifiable {
+        let session: WebAgentSession
+        let id: String
+        @MainActor init(_ session: WebAgentSession) { self.session = session; id = session.id.id }
+    }
+    /// A status line this long or longer keeps its full text behind an ⓘ.
+    private static let shortLineLength = 60
     private var sending: Bool { model.busy || model.webBroadcastBusy || web.sessions.contains { $0.isSending } }
     private var canUseOtherRecipients: Bool {
         !model.busy && model.webBroadcastBusy && model.webBroadcastReplyGate.canBrowseWhileWaiting &&
@@ -59,8 +70,15 @@ struct AgentsWorkspaceView: View {
         let names = drafts.formatted(.list(type: .and))
         return "Finish or clear the draft in \(names), or deselect \(names) to send to the other agents."
     }
+    /// The one selected app agent that can take a private reply while the broadcast still runs.
+    private var directReplySession: WebAgentSession? {
+        guard busy, nativeRecipients.isEmpty, selectedWebSessions.count == 1, let session = selectedWebSessions.first,
+              canReplyWhileBroadcasting(to: session) else { return nil }
+        return session
+    }
     private var canSend: Bool {
         let text = model.state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if directReplySession != nil && !text.isEmpty && attachments.isEmpty && nativeComparison?.endedAt == nil { return true }
         return nativeComparison?.endedAt == nil && !busy && !WebAgents.hasConflictingNativeRecipients(selectedWebSessions.map(\.provider)) && preparingDesktopSessions.isEmpty && !editingAgents && !showingConnectionIntro && (!selectedWebSessions.isEmpty || !nativeRecipients.isEmpty)
             && (selectedWebSessions.isEmpty || (!text.isEmpty && attachments.isEmpty))
             && selectedWebSessions.allSatisfy { $0.provider.usesNativeConversation || ($0.snapshot.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.draftRecoveryText == nil && !$0.hasUnresolvedSend(text)) }
@@ -87,11 +105,20 @@ struct AgentsWorkspaceView: View {
                         session.connect(); showingComparison = true
                     })
             }
-            Divider()
             composer
         }
         .background(Color(nsColor: .textBackgroundColor))
         .overlay { if showingConnectionIntro { connectionIntro } }
+        .sheet(item: $optionsSession) { target in
+            VStack(alignment: .leading, spacing: Space.screen) {
+                HStack {
+                    Text("\(target.session.name) Options").font(.headline)
+                    Spacer()
+                    Button("Done") { optionsSession = nil }.keyboardShortcut(.defaultAction)
+                }
+                DesktopAppSetupView(session: target.session, busy: sending, showConnectionConfirmation: false)
+            }.padding(Space.screen).frame(width: Space.sheetWidth)
+        }
         .task { if !model.webBroadcastBusy { web.connectSelected() } }
         .onChange(of: web.comparisonID) { _, _ in
             if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = []; requestedAgents = [] }
@@ -101,8 +128,26 @@ struct AgentsWorkspaceView: View {
             if windowComparisonID == nil { hiddenMembers = []; hiddenWebAgents = []; requestedAgents = [] }
         }
         .onChange(of: showingComparison) { _, value in if value { editingAgents = false } }
+        #if DEBUG
+        .onChange(of: model.designRequest) { _, request in
+            guard let request, request.comparisonID == (windowComparisonID ?? (showingComparison ? web.comparisonID : nil)) else { return }
+            switch request {
+            case .showDetails: showingDetails = true
+            case .hideDetails: showingDetails = false
+            case .send: send()
+            }
+        }
+        #endif
         .toolbar {
             if showingComparison {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingDetails.toggle() } label: { Image(systemName: "info.circle") }
+                        .help("Details").accessibilityLabel("Conversation details")
+                        .popover(isPresented: $showingDetails, arrowEdge: .bottom) {
+                            ConversationDetailsView(title: nativeComparison?.title ?? "New Blast", members: detailsMembers,
+                                                    additions: detailsAdditions, footer: detailsFooter)
+                        }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     ChatShareButton(title: nativeComparison?.title ?? "Chat", captureLayout: captureLayout)
                 }
@@ -114,18 +159,136 @@ struct AgentsWorkspaceView: View {
                         .disabled(sending)
                 }
             }
-            if windowComparisonID == nil && !model.state.comparisons.isEmpty { ToolbarItem(placement: .navigation) {
-                Button {
-                    model.requestNewBlast()
-                } label: {
-                    Label("New Blast", systemImage: "square.and.pencil")
-                        .labelStyle(.titleAndIcon)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                }
-                .accessibilityLabel("New Blast").disabled(!model.canStartNewBlast)
-            } }
         }
+    }
+
+    // MARK: Details
+
+    /// The agents workspace's pane `busy`: sends in flight, or another window owns the live comparison.
+    private var paneBusy: Bool { sending || (windowComparisonID != nil && web.comparisonID != windowComparisonID) }
+
+    /// Whether a column's agent receives the next message, and whether that can be changed now;
+    /// the header and the Details popover share it.
+    private func recipientState(_ session: WebAgentSession) -> (included: Bool, enabled: Bool) {
+        let agentBusy = web.isBusyForSelection(session)
+        let joined = nativeComparison?.resolvedWebAgentIDs.contains(session.id) ?? true
+        return (session.isEnabled && session.state.selected && !agentBusy && joined,
+                !(busy || agentBusy || !session.isEnabled || (model.webBroadcastBusy && !joined) || nativeComparison?.endedAt != nil))
+    }
+
+    private func removeSession(_ session: WebAgentSession) {
+        if windowComparisonID == nil || web.comparisonID == windowComparisonID {
+            session.updateState { $0.selected = false }
+        }
+        hiddenWebAgents.insert(session.id)
+    }
+
+    private func removeMember(_ id: UUID) {
+        if windowComparisonID == nil || web.comparisonID == windowComparisonID {
+            model.state.selection.remove(id)
+            model.persist()
+        }
+        hiddenMembers.insert(id)
+    }
+
+    private func toggleMember(_ id: UUID) {
+        hiddenMembers.remove(id)
+        toggle(id)
+    }
+
+    /// Adds a Messages agent: into a saved conversation, or into the selection for a new one.
+    private func addMessageAgent(_ agent: Agent) {
+        if let comparison = nativeComparison, !comparison.members.contains(where: { $0.id == agent.id }) {
+            guard !model.webBroadcastBusy else { return }
+            model.webBroadcastBusy = true
+            Task { @MainActor in
+                defer { model.webBroadcastBusy = false }
+                await model.addAgent(agent, to: comparison.id)
+            }
+        } else {
+            hiddenMembers.remove(agent.id)
+            if !model.state.selection.contains(agent.id) { toggle(agent.id) }
+        }
+    }
+
+    private func openSettings() {
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    /// The column header's menu items as Details actions.
+    private func sessionActions(_ session: WebAgentSession) -> [DetailsAction] {
+        var actions: [DetailsAction] = []
+        if session.provider != .grokbot {
+            actions.append(DetailsAction(id: "reload", title: "Reload", systemImage: "arrow.clockwise",
+                                         disabled: paneBusy || archivedMessages(for: session) != nil) { session.reload() })
+        }
+        if session.provider.desktopApp != nil {
+            actions.append(DetailsAction(id: "options", title: "Options…", systemImage: "gearshape") { optionsSession = OptionsTarget(session) })
+        }
+        if session.provider == .grokbot {
+            actions.append(DetailsAction(id: "settings", title: "Grok Bot Settings…", systemImage: "gearshape") { openSettings() })
+        }
+        actions.append(DetailsAction(id: "remove", title: "Remove from View", systemImage: "eye.slash", disabled: sending) { removeSession(session) })
+        return actions
+    }
+
+    private var detailsMembers: [DetailsMember] {
+        let sessions = displayedSessions.map { session in
+            let state = recipientState(session)
+            return DetailsMember(id: session.id.id, agent: AgentArtwork.agent(for: session), name: session.name, detail: session.locationLabel,
+                                 included: state.included, enabled: state.enabled, busy: session.loading,
+                                 toggle: { selectRecipient(session) }, actions: sessionActions(session))
+        }
+        let members = displayedMembers.map { member in
+            DetailsMember(id: member.id.uuidString, agent: model.state.agents.first { $0.id == member.id }, name: member.name, detail: member.chat.handle,
+                          included: model.state.selection.contains(member.id), enabled: !(model.busy || model.webBroadcastBusy), busy: false,
+                          toggle: { toggleMember(member.id) }, actions: [
+                            DetailsAction(id: "open", title: "Open in Messages", systemImage: "message") { model.openMessages(member) },
+                            DetailsAction(id: "remove", title: "Remove from View", systemImage: "eye.slash") { removeMember(member.id) }
+                          ])
+        }
+        // Agents whose message is not sent yet (a new blast with no saved conversation).
+        let unsent = unsentMessageAgents.map { agent in
+            DetailsMember(id: agent.id.uuidString, agent: agent, name: agent.name, detail: model.route(agent)?.handle,
+                          included: true, enabled: false, busy: false, toggle: {}, actions: [
+                            DetailsAction(id: "remove", title: "Remove from View", systemImage: "eye.slash", disabled: sending) { removeUnsent(agent) }
+                          ])
+        }
+        return sessions + members + unsent
+    }
+
+    private var detailsAdditions: [DetailsAddition] {
+        let shownSessions = Set(displayedSessions.map(\.id))
+        let sessions = model.recipientWebSessions(for: nativeComparison).filter { !shownSessions.contains($0.id) }.map { session in
+            DetailsAddition(id: session.id.id, agent: AgentArtwork.agent(for: session), name: session.name,
+                            enabled: !web.isBusyForSelection(session) && session.isEnabled && !model.webBroadcastBusy) { selectRecipient(session) }
+        }
+        let shownAgents = Set((nativeComparison?.members.map(\.id) ?? []) + unsentMessageAgents.map(\.id))
+        let agents = model.recipientMessageAgents(for: nativeComparison).filter { !shownAgents.contains($0.id) }.map { agent in
+            DetailsAddition(id: agent.id.uuidString, agent: agent, name: agent.name,
+                            enabled: model.route(agent) != nil && !model.webBroadcastBusy) { addMessageAgent(agent) }
+        }
+        return sessions + agents
+    }
+
+    private var detailsFooter: [DetailsAction] {
+        var actions: [DetailsAction] = []
+        if !model.databaseAvailable {
+            actions.append(DetailsAction(id: "access", title: "Check Messages Access", systemImage: "arrow.clockwise") { model.refresh() })
+        }
+        if let comparison = nativeComparison {
+            actions.append(DetailsAction(id: "end", title: "End Conversation", systemImage: "xmark.circle", destructive: true, disabled: comparison.endedAt != nil) {
+                _ = model.endConversation(comparison.id)
+                showingDetails = false
+            })
+        }
+        return actions
+    }
+
+    private func removeUnsent(_ agent: Agent) {
+        model.state.selection.remove(agent.id)
+        hiddenMembers.insert(agent.id)
+        model.persist()
     }
 
     private var connectionIntro: some View {
@@ -168,8 +331,14 @@ struct AgentsWorkspaceView: View {
     private var comparisonChatCount: Int { displayedSessions.count + displayedMembers.count + unsentMessageAgents.count }
 
     private var comparisonPanes: some View {
-        chatColumns
-            .background(ChatWindowFrame(chatCount: comparisonChatCount, enabled: !preservesWindowFrame))
+        VStack(spacing: 0) {
+            // A group's forming prompt stays in view under the headers; the title is derived from it.
+            if comparisonChatCount > 1, let prompt = nativeComparison?.prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                PinnedPromptRow(text: prompt, expanded: $pinnedExpanded)
+            }
+            chatColumns
+        }
+        .background(ChatWindowFrame(chatCount: comparisonChatCount, enabled: !preservesWindowFrame))
     }
 
     private var chatColumns: some View {
@@ -181,39 +350,32 @@ struct AgentsWorkspaceView: View {
                 HStack(spacing: 0) {
                     ForEach(displayedSessions, id: \.id) { session in
                         if session.id != displayedSessions.first?.id { Divider() }
-                        WebAgentPane(session: session, account: model.personalAgent, busy: sending || (windowComparisonID != nil && web.comparisonID != windowComparisonID), allowPrivateReplyWhileBusy: canReplyWhileBroadcasting(to: session), endedMessages: archivedMessages(for: session), removalDisabled: sending, sendNative: { sendDirect($0, to: session) }, removeFromView: {
-                            if windowComparisonID == nil || web.comparisonID == windowComparisonID {
-                                session.updateState { $0.selected = false }
-                            }
-                            hiddenWebAgents.insert(session.id)
-                        })
+                        let state = recipientState(session)
+                        WebAgentPane(session: session, account: model.personalAgent, busy: paneBusy, endedMessages: archivedMessages(for: session), removalDisabled: sending,
+                                     isRecipient: state.included, recipientEnabled: state.enabled,
+                                     toggleRecipient: { selectRecipient(session) }, showOptions: { optionsSession = OptionsTarget(session) },
+                                     sendNative: { sendDirect($0, to: session) }, removeFromView: { removeSession(session) })
                             .frame(width: width).id(session.id.id)
                     }
                     if let comparison = nativeComparison {
                         ForEach(displayedMembers) { member in
                             if !displayedSessions.isEmpty || member.id != displayedMembers.first?.id { Divider() }
-                            ConversationView(model: model, comparisonID: comparison.id, memberID: member.id, removeFromView: {
-                                if windowComparisonID == nil || web.comparisonID == windowComparisonID {
-                                    model.state.selection.remove(member.id)
-                                    model.persist()
-                                }
-                                hiddenMembers.insert(member.id)
-                            })
+                            ConversationView(model: model, comparisonID: comparison.id, memberID: member.id,
+                                             recipient: (model.state.selection.contains(member.id), { toggleMember(member.id) }),
+                                             showsComposer: false, removeFromView: { removeMember(member.id) })
                                 .frame(width: width).id(member.id.uuidString)
                         }
                     }
                     ForEach(unsentAgents) { agent in
                         if !displayedSessions.isEmpty || agent.id != unsentAgents.first?.id { Divider() }
                         VStack(spacing: 0) {
-                            ContactHeader(agent: agent, name: agent.name + (model.demo ? " (Demo)" : ""), destination: model.route(agent)?.handle ?? "", removeFromView: {
-                                model.state.selection.remove(agent.id)
-                                hiddenMembers.insert(agent.id)
-                                model.persist()
-                            })
-                            .background(.bar).disabled(sending)
+                            ColumnHeader(agent: agent, name: agent.name + (model.demo ? " (Demo)" : ""), included: true, enabled: false,
+                                         detail: model.route(agent)?.handle, toggle: {}) {
+                                Button("Remove from View") { removeUnsent(agent) }.disabled(sending)
+                            }
                             Spacer()
                             Text("Your message has not been sent. Use Send & compare after signing in to your selected accounts.")
-                                .foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
+                                .font(.system(size: Space.bodyText)).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(Space.section)
                             Spacer()
                         }
                         .frame(width: width).id(agent.id.uuidString)
@@ -232,43 +394,28 @@ struct AgentsWorkspaceView: View {
         return nil
     }
 
+    /// "Message Claude" when exactly one agent receives the next message, else "Message".
+    private var composePlaceholder: String {
+        let names = selectedWebSessions.map(\.name) + nativeRecipients.map(\.name)
+        return names.count == 1 ? "Message \(names[0])" : "Message"
+    }
+
+    /// The one compose bar, Messages-style: at most one status line, then the field.
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Space.gap) {
             let signedOut = selectedWebSessions.filter { !$0.provider.usesNativeConversation && $0.snapshot.signedIn == false }
             if !signedOut.isEmpty {
                 Text("Sign in required: \(signedOut.map { $0.name }.formatted(.list(type: .and)))")
-                    .font(.caption).foregroundStyle(.orange).accessibilityIdentifier("Website sign-in status")
-            }
-            if !selectedWebSessions.isEmpty && !attachments.isEmpty {
+                    .font(.caption).foregroundStyle(.orange).lineLimit(1).accessibilityIdentifier("Website sign-in status")
+            } else if !selectedWebSessions.isEmpty && !attachments.isEmpty {
                 Text("Web agents support text here. Remove the attachments or deselect them to send.")
-                    .font(.caption).foregroundStyle(.orange)
-            }
-            if showingComparison { ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    Text("Send to").font(.caption).foregroundStyle(.secondary)
-                    ForEach(model.recipientWebSessions(for: nativeComparison), id: \.id) { session in
-                        let agentBusy = web.isBusyForSelection(session)
-                        let joined = nativeComparison?.resolvedWebAgentIDs.contains(session.id) ?? true
-                        recipient(session.name, selected: session.isEnabled && session.state.selected && !agentBusy && joined, agentBusy: agentBusy) { selectRecipient(session) }
-                            .disabled(agentBusy || !session.isEnabled || (model.webBroadcastBusy && !joined))
-                    }
-                    ForEach(model.recipientMessageAgents(for: nativeComparison)) { agent in
-                        recipient(agent.name, selected: model.state.selection.contains(agent.id)) {
-                            if let comparison = nativeComparison, !comparison.members.contains(where: { $0.id == agent.id }) {
-                                guard !model.webBroadcastBusy else { return }
-                                model.webBroadcastBusy = true
-                                Task { @MainActor in
-                                    defer { model.webBroadcastBusy = false }
-                                    await model.addAgent(agent, to: comparison.id)
-                                }
-                            } else { hiddenMembers.remove(agent.id); toggle(agent.id) }
-                        }
-                            .disabled(model.route(agent) == nil || (model.webBroadcastBusy && nativeComparison.map { !$0.members.contains(where: { $0.id == agent.id }) } == true))
-                            .help("Messages · \(agent.name)")
-                    }
+                    .font(.caption).foregroundStyle(.orange).lineLimit(1)
+            } else if let reason = sharedSendDisabledReason {
+                HStack(spacing: Space.tight) {
+                    Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if reason.count > Self.shortLineLength { DetailButton(detail: reason) }
                 }
-            }.scrollIndicators(.hidden).disabled(nativeComparison?.endedAt != nil) }
-            if showingComparison, let comparison = nativeComparison {
+            } else if showingComparison, let comparison = nativeComparison {
                 FollowUpStatus(model: model, comparison: comparison, universal: true).disabled(busy)
             }
             MessageInput(text: Binding(get: {
@@ -283,21 +430,10 @@ struct AgentsWorkspaceView: View {
             }),
                          attachments: attachments, addAttachments: { await model.addAttachments($0, comparisonID: attachmentComparisonID) },
                          removeAttachment: { id in model.setAttachmentDraft(attachments.filter { $0.id != id }, comparisonID: attachmentComparisonID) },
-                         placeholder: "Message", accessibilityName: "Shared prompt", sendLabel: "Send & compare",
+                         placeholder: composePlaceholder, accessibilityName: "Shared prompt", sendLabel: "Send & compare",
                          disabled: !canSend, attachmentsEnabled: selectedWebSessions.isEmpty,
                          sendDisabledReason: sharedSendDisabledReason, send: send, focusRequest: newBlastRequest)
-        }.padding(20)
-    }
-
-    private func recipient(_ title: String, selected: Bool, agentBusy: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                Text(title)
-                if agentBusy { Text("Busy").foregroundStyle(.secondary) }
-            }.font(.caption.weight(.medium)).padding(.horizontal, 10).padding(.vertical, 6)
-        }.buttonStyle(.plain).background(selected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08), in: Capsule())
-            .accessibilityLabel("Recipient \(title)").accessibilityValue(agentBusy ? "Busy" : selected ? "Selected" : "Not selected").disabled(busy || agentBusy)
+        }.padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
     }
 
     private func selectRecipient(_ session: WebAgentSession) {
@@ -327,6 +463,13 @@ struct AgentsWorkspaceView: View {
     private func send() {
         guard canSend else { return }
         let model = model
+        // A private reply to the one selected app agent while the broadcast is still running.
+        if let session = directReplySession {
+            let text = model.state.draft
+            sendDirect(text, to: session)
+            model.setSharedDraft("")
+            return
+        }
         let sessions = selectedWebSessions
         let recipients = Set(nativeRecipients.map(\.id))
         if !showingComparison {
@@ -711,95 +854,64 @@ private struct LocalAgentSetupView: View {
 private struct WebAgentPane: View {
     @ObservedObject var session: WebAgentSession
     @ObservedObject var account: PersonalAgentController
-    @State private var showingDesktopOptions = false
     let busy: Bool
-    var allowPrivateReplyWhileBusy = false
     var endedMessages: [WebPageMessage]? = nil
     var removalDisabled = false
+    /// This agent receives the workspace's next message.
+    let isRecipient: Bool
+    let recipientEnabled: Bool
+    let toggleRecipient: () -> Void
+    /// Opens the desktop options sheet the workspace owns.
+    let showOptions: () -> Void
     let sendNative: (String) -> Void
     let removeFromView: () -> Void
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                AgentAvatar(agent: AgentArtwork.agent(for: session), name: session.name, size: 38)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(session.name).font(.headline)
-                    Text(session.locationLabel).font(.caption).foregroundStyle(.secondary)
+            ColumnHeader(agent: AgentArtwork.agent(for: session), name: session.name, included: isRecipient, enabled: recipientEnabled,
+                         busy: session.loading, detail: session.locationLabel, toggle: toggleRecipient) {
+                if session.provider != .grokbot {
+                    Button("Reload") { session.reload() }.disabled(busy || endedMessages != nil)
                 }
-                Spacer()
-                if session.loading { ProgressView().controlSize(.small) }
-                if session.provider.desktopApp != nil {
-                    Button { showingDesktopOptions = true } label: { Image(systemName: "gearshape") }
-                        .help("\(session.name) options").accessibilityLabel("\(session.name) options")
-                        .popover(isPresented: $showingDesktopOptions) {
-                            VStack(alignment: .leading, spacing: 16) {
-                                HStack {
-                                    Text("\(session.name) options").font(.headline)
-                                    Spacer()
-                                    Button("Done") { showingDesktopOptions = false }
-                                }
-                                DesktopAppSetupView(session: session, busy: busy, showConnectionConfirmation: false)
-                            }.padding(20).frame(width: 440)
-                        }
-                }
-                if session.provider == .grokbot {
-                    SettingsLink { Image(systemName: "gearshape") }
-                        .help("Grok Bot settings").accessibilityLabel("Grok Bot settings")
-                } else {
-                    Button { session.reload() } label: { Image(systemName: "arrow.clockwise") }.help("Reload \(session.name)").accessibilityLabel("Reload \(session.name)").disabled(busy || endedMessages != nil)
-                }
-            }.padding(14).background(.bar).contentShape(Rectangle())
-                .accessibilityIdentifier("Agent header \(session.name)")
-                .contextMenu { Button("Remove from view", action: removeFromView).disabled(removalDisabled) }
+                if session.provider.desktopApp != nil { Button("Options…", action: showOptions) }
+                if session.provider == .grokbot { SettingsLink { Text("Grok Bot Settings…") } }
+                Button("Remove from View", action: removeFromView).disabled(removalDisabled)
+            }
             if session.needsConversationLink {
-                HStack {
-                    Text(session.canLinkCurrentConversation ? "Continue in this conversation." : "Open the original chat to continue this comparison.").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
+                NoticeRow(text: session.canLinkCurrentConversation ? "Continue in this conversation" : "Open the original chat to continue",
+                          detail: session.canLinkCurrentConversation ? nil : "Open the original chat to continue this comparison.") {
                     Button("Use this conversation") { Task { await session.linkCurrentConversation() } }
                         .disabled(busy || !session.canLinkCurrentConversation)
-                }.padding(10)
+                }
             }
             if let latest = session.latestComparisonAttempt, !session.isAutomaticallyWaitingForNativeReply,
                !(session.provider.desktopApp != nil && latest.status == .waiting && latest.messageID != nil),
                latest.status.showsAttemptBanner(for: session.provider) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label(latest.status.label(for: session.provider), systemImage: "info.circle")
-                        .font(.caption.weight(.semibold))
-                    Text(latest.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if let detail = latest.detail, detail != session.desktopRecoveryMessage { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                let line = "\(latest.status.label(for: session.provider)): \(latest.text)"
+                let detail = latest.detail.flatMap { $0 != session.desktopRecoveryMessage ? $0 : nil }
+                NoticeRow(text: line, systemImage: "info.circle", detail: [line, detail].compactMap { $0 }.joined(separator: "\n"),
+                          attention: latest.status == .notSent || latest.status == .uncertain) {
                     if latest.status == .notSent, latest.messageID == nil, session.provider.desktopApp != nil {
                         Button("Retry") { sendNative(latest.text) }
                             .disabled(busy || !session.canSubmitNativePrompt)
                     }
-                }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityElement(children: .contain)
+                }
+                .accessibilityElement(children: .contain)
             }
             if let error = session.error, error != session.latestComparisonAttempt?.detail,
                endedMessages != nil || session.desktopRecoveryMessage != error {
-                Text(error).font(.caption).foregroundStyle(.orange).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                NoticeRow(error, systemImage: "exclamationmark.circle", detail: error, attention: true)
             }
             if let draft = session.draftRecoveryText {
-                HStack {
-                    Text("Your saved draft is retained. Copy it into this chat to continue.").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
+                NoticeRow(text: "Your saved draft is retained", detail: "Your saved draft is retained. Copy it into this chat to continue.") {
                     Button("Copy saved draft") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(draft, forType: .string)
                     }
-                }.padding(10)
+                }
             }
             if let endedMessages {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(endedMessages) { message in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(message.role == "user" ? "You" : session.name).font(.caption.bold()).foregroundStyle(.secondary)
-                                Text(message.text).textSelection(.enabled)
-                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
-                        }
-                    }.padding(12)
-                }
+                NativeTranscriptView(agent: AgentArtwork.agent(for: session), name: session.name, messages: endedMessages,
+                                     statuses: [:], dates: [:], typing: false, emptyText: "No messages", bottomID: "ended-\(session.id.id)")
             } else if session.provider.usesNativeConversation {
                 nativeConversation(session.provider.personalAgentProvider)
             } else if session.connected {
@@ -835,25 +947,15 @@ private struct WebAgentPane: View {
         }
     }
 
-    private func nativeMessage(_ message: WebPageMessage, status: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(message.role == "user" ? "You" : session.name).font(.caption.bold()).foregroundStyle(.secondary)
-            Text((try? AttributedString(markdown: message.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(message.text))
-                .textSelection(.enabled)
-            if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
-        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
-            .id(message.id)
-    }
-
-    private func nativeStatus(_ message: WebPageMessage) -> String? {
+    /// The status caption under one of your messages: Sent, Sending…, or Submission unconfirmed.
+    private func nativeStatus(_ message: WebPageMessage) -> (text: String, color: Color)? {
         guard message.role == "user", let attempt = session.state.attempts.first(where: {
             ($0.messageID ?? $0.id.uuidString) == message.id
         }) else { return nil }
         if attempt.status == .observed { return nil }
-        if attempt.messageID != nil { return "Sent" }
-        if attempt.status == .uncertain { return "Submission unconfirmed" }
-        return [.preparing, .attempting].contains(attempt.status) ? "Sending…" : nil
+        if attempt.messageID != nil { return ("Sent", .secondary) }
+        if attempt.status == .uncertain { return ("Submission unconfirmed", .orange) }
+        return [.preparing, .attempting].contains(attempt.status) ? ("Sending…", .secondary) : nil
     }
 
     private var nativeMessages: [WebPageMessage] {
@@ -864,21 +966,37 @@ private struct WebAgentPane: View {
         return messages
     }
 
+    private var nativeStatuses: [String: (text: String, color: Color)] {
+        var statuses: [String: (text: String, color: Color)] = [:]
+        for message in nativeMessages where message.role == "user" {
+            if let status = nativeStatus(message) { statuses[message.id] = status }
+        }
+        return statuses
+    }
+
+    /// When each of your messages was sent, from its attempt; replies carry no time.
+    private var nativeDates: [String: Date] {
+        var dates: [String: Date] = [:]
+        for message in nativeMessages where message.role == "user" {
+            if let attempt = session.state.attempts.first(where: { ($0.messageID ?? $0.id.uuidString) == message.id }) {
+                dates[message.id] = attempt.created
+            }
+        }
+        return dates
+    }
+
     private func nativeConversation(_ provider: PersonalAgentProvider?) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 0) {
             let connected = session.provider.desktopApp != nil ? session.desktopReady : session.provider == .grokbot ? session.grokBotIsConfigured : [.subscription, .apiKey, .other].contains(session.accountStatus)
             if !session.provider.isAvailableInBuild {
-                Text("\(session.name) is unavailable in this build. Your saved conversation is preserved.")
-                    .font(.caption).foregroundStyle(.secondary)
+                NoticeRow("\(session.name) is unavailable in this build",
+                          detail: "\(session.name) is unavailable in this build. Your saved conversation is preserved.")
             } else if !session.isEnabled {
-                Text("Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
-                    .font(.caption).foregroundStyle(.secondary)
+                NoticeRow("Enable \(session.name) in Settings to send",
+                          detail: "Enable \(session.name) in Settings to send. Your saved conversation is still available here.")
             } else if let app = session.provider.desktopApp, !connected,
                       let recovery = session.desktopRecoveryMessage {
-                HStack {
-                    Text(recovery)
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
+                NoticeRow(text: recovery, detail: recovery, attention: true) {
                     if session.desktopInstallation.isInstalled {
                         Button("Reconnect") { Task {
                             if !session.desktopInstallation.isRunning { await session.openDesktopApp() }
@@ -890,18 +1008,15 @@ private struct WebAgentPane: View {
                 }.accessibilityIdentifier("desktop-connection-recovery")
             } else if session.provider == .grokbot {
                 if session.fixture {
-                    Text("Simulated webhook and callback · no Bot contacted")
-                        .font(.caption).foregroundStyle(.secondary)
+                    NoticeRow("Simulated webhook and callback · no Bot contacted")
                 } else if !connected {
-                    Text("Connect your Grok Bot webhook using the settings gear.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    NoticeRow(text: "Connect your Grok Bot webhook in Settings", attention: true) {
+                        SettingsLink { Text("Grok Bot Settings…") }
+                    }
                 }
             } else if !connected, let provider {
-                HStack {
-                    Label(session.fixture ? "Simulated local account · no provider requests" : session.accountStatus.label,
-                          systemImage: "person.crop.circle")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
+                NoticeRow(text: session.fixture ? "Simulated local account · no provider requests" : session.accountStatus.label,
+                          systemImage: "person.crop.circle", attention: !session.fixture) {
                     if account.installed.contains(where: { $0.provider == provider }) {
                         Button(provider == .codex ? "Sign in with ChatGPT" : "Sign in with Claude") { account.signIn(provider) }
                             .disabled(session.fixture || busy)
@@ -910,56 +1025,45 @@ private struct WebAgentPane: View {
                              ? "https://developers.openai.com/codex/cli" : "https://code.claude.com/docs/en/setup")!)
                     }
                 }
-                if let error = account.accountError { Text(error).font(.caption).foregroundStyle(.orange) }
+                if let error = account.accountError { NoticeRow(error, systemImage: "exclamationmark.circle", detail: error, attention: true) }
             }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        if session.snapshot.messages.isEmpty, session.pendingNativeAttempt == nil {
-                            Text(session.provider.desktopApp != nil ? "Send a message to start a conversation." : connected ? "Ready to chat. Send a message below, or use the shared message box to ask your selected agents." : "Sign in to \(session.name) to start chatting. Your request stays in the message box until you send it.")
-                                .foregroundStyle(.secondary).padding(.vertical, 20)
-                        }
-                        ForEach(nativeMessages) { message in
-                            nativeMessage(message, status: nativeStatus(message))
-                        }
-                        if session.isSending { ProgressView(session.provider == .grokbot ? "Sending to Grok Bot…" : "\(session.name) is replying…").id("replying") }
+            NativeTranscriptView(agent: AgentArtwork.agent(for: session), name: session.name, messages: nativeMessages,
+                                 statuses: nativeStatuses, dates: nativeDates, typing: session.isSending,
+                                 emptyText: session.provider.desktopApp != nil ? "Send a message to start a conversation." : connected ? "Ready to chat. Send a message below, or use the shared message box to ask your selected agents." : "Sign in to \(session.name) to start chatting. Your request stays in the message box until you send it.",
+                                 bottomID: "native-\(session.id.id)")
+            if session.isSending {
+                // The typing bubble shows the activity; this line carries the one way to stop it.
+                NoticeRow(text: "Replying…", progress: true) {
+                    if provider != nil || session.provider.desktopApp != nil {
+                        Button("Stop") { session.cancelNativeRequest() }
                     }
-                }.onChange(of: session.snapshot.messages.last?.id) { _, id in
-                    if let id { proxy.scrollTo(id, anchor: .bottom) }
-                }.onChange(of: session.pendingNativeAttempt?.id) { _, id in
-                    if let id { proxy.scrollTo(id.uuidString, anchor: .bottom) }
                 }
             }
-            if session.isSending, provider != nil || session.provider.desktopApp != nil { Button("Cancel \(session.name) reply") { session.cancelNativeRequest() } }
             if let attempt = session.incompleteDesktopAttempt, attempt.comparisonID != session.state.comparisonID {
                 let origin = "“" + String(attempt.text.prefix(80)) + "”"
-                Text("An incomplete request in \(origin) is blocking this app. Review its reply in the native app before continuing.")
-                    .font(.caption).foregroundStyle(.orange)
-                Button("Acknowledge that incomplete request") { session.acknowledgeIncompleteRequest(attemptID: attempt.id) }
-                    .disabled(busy || session.isSending)
+                NoticeRow(text: "An incomplete request is blocking this app", systemImage: "exclamationmark.circle",
+                          detail: "An incomplete request in \(origin) is blocking this app. Review its reply in the native app before continuing.",
+                          attention: true) {
+                    Button("Acknowledge") { session.acknowledgeIncompleteRequest(attemptID: attempt.id) }
+                        .disabled(busy || session.isSending)
+                }
             }
             if session.isAutomaticallyWaitingForNativeReply {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Waiting for \(session.name)…").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Stop waiting") { session.acknowledgeIncompleteRequest() }.disabled(busy)
+                NoticeRow(text: "Waiting for \(session.name)…", progress: true) {
+                    Button("Stop Waiting") { session.acknowledgeIncompleteRequest() }.disabled(busy)
                 }
             } else if session.latestComparisonAttempt?.status == .uncertain {
-                Text("The last request was incomplete. Continuing may consume provider usage again.").font(.caption).foregroundStyle(.orange)
-                Button("Acknowledge incomplete request") { session.acknowledgeIncompleteRequest() }.disabled(busy)
+                NoticeRow(text: "The last request was incomplete", systemImage: "exclamationmark.circle",
+                          detail: "The last request was incomplete. Continuing may consume provider usage again.", attention: true) {
+                    Button("Acknowledge") { session.acknowledgeIncompleteRequest() }.disabled(busy)
+                }
             }
             if session.provider == .grokbot, session.latestComparisonAttempt?.status == .waiting {
-                Text("Grok Bot may continue working if you stop waiting.").font(.caption).foregroundStyle(.secondary)
-                Button("Stop waiting for this reply") { session.acknowledgeIncompleteRequest() }.disabled(busy)
-            }
-            MessageInput(text: Binding(get: { session.state.draft }, set: { text in session.updateState { $0.draft = text } }),
-                attachments: [], addAttachments: { _ in }, removeAttachment: { _ in }, placeholder: "Message \(session.name)",
-                accessibilityName: "Message \(session.name)", sendLabel: "Send to \(session.name)",
-                disabled: (busy && !allowPrivateReplyWhileBusy) || !session.canSubmitNativePrompt, attachmentsEnabled: false) {
-                    sendNative(session.state.draft)
+                NoticeRow(text: "Grok Bot may continue working if you stop waiting") {
+                    Button("Stop Waiting") { session.acknowledgeIncompleteRequest() }.disabled(busy)
                 }
-        }.padding(14)
+            }
+        }
     }
 
 }

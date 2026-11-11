@@ -1,0 +1,26 @@
+name: Scratch web fixture (temporary)
+on:
+  push:
+    branches: [claude/project-thread-fcdpdd]
+permissions:
+  contents: read
+jobs:
+  fixture:
+    runs-on: xcode-27
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Build Debug app
+        run: |
+          set -o pipefail
+          xcodebuild -project msgblast.xcodeproj -scheme msgblast \
+            -derivedDataPath build/updater-validation \
+            -destination 'platform=macOS,arch=arm64' \
+            ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo build 2>&1 | tail -40
+      - name: Web comparison fixtures
+        run: bash scripts/test_web_comparisons.sh build/updater-validation

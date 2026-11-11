@@ -131,6 +131,12 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
 
     func observeUpdates(with updater: AppUpdater) { updateUI = updater }
 
+    #if DEBUG
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if let appearance = DesignFixture.appearance() { NSApp.appearance = appearance }
+    }
+    #endif
+
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         updateUI?.showUpdate(item, isReady: false)
     }
