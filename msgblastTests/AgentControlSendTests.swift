@@ -120,7 +120,8 @@ import msgblastRemoteProtocol
         host.answer = { RemoteCommandResult(clientCommandID: $0.clientCommandID, outcome: .rejected, code: .agentUnavailable, message: "Not every agent was ready",
                                             agentReasons: ["chatgpt": "Open ChatGPT on your Mac and sign in"]) }
         let error = await refusal("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"]}"#, host: host)
-        XCTAssertEqual(error, .refused("Not every agent was ready. ChatGPT: Open ChatGPT on your Mac and sign in. Nothing was sent."))
+        XCTAssertEqual(error, .refused("Not every agent was ready. ChatGPT: Open ChatGPT on your Mac and sign in. Nothing was sent (agentUnavailable). "
+                                       + "A repeat with the same requestId gets this same answer, so use a new requestId to try again."))
     }
 
     func testTooManySendsAreRefusedButRepeatsOfAKnownRequestAreNot() async throws {
@@ -142,6 +143,16 @@ import msgblastRemoteProtocol
         for second in 0..<6 { XCTAssertTrue(limit.allow("Codex", now: start.addingTimeInterval(Double(second)))) }
         XCTAssertFalse(limit.allow("Codex", now: start.addingTimeInterval(30)))
         XCTAssertTrue(limit.allow("Codex", now: start.addingTimeInterval(61)))
+    }
+
+    func testTheHourlyLimitStopsTheSixtyFirstSend() {
+        var limit = AgentControlSendLimit()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        // 59 seconds apart stays under 6 a minute, so only the hourly window can refuse.
+        for index in 0..<60 { XCTAssertTrue(limit.allow("Codex", now: start.addingTimeInterval(Double(index) * 59)), "send \(index)") }
+        XCTAssertFalse(limit.allow("Codex", now: start.addingTimeInterval(60 * 59)))
+        XCTAssertTrue(limit.allow("Claude Code", now: start.addingTimeInterval(60 * 59)))
+        XCTAssertTrue(limit.allow("Codex", now: start.addingTimeInterval(3601)), "the first send has left the hour")
     }
 
     func testAgentIDsTranslateBothWays() {

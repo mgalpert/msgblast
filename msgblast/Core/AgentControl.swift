@@ -162,7 +162,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         let fields = AgentControlSend.Input(text: input.text, agents: input.agents, agent: input.agent, comparisonID: input.comparisonId)
         let command = try AgentControlSend.command(name, fields, id: id)
         if host.controlSendStatus(id).code == .unknownCommand, !sendLimit.allow(client) {
-            throw AgentControlError.refused("Too many sends from \(client) in a short time. Wait a minute, then try again. Nothing was sent.")
+            throw AgentControlError.refused("Too many sends from \(client) in a short time. Wait a minute, then try again. Nothing was sent (tooManySends).")
         }
         let result = await host.controlSend(command)
         return try AgentControlSend.result(result, requestID: request, agents: host.controlAgents(), refusalThrows: true)
