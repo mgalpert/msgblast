@@ -654,6 +654,46 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendShared" }.count, 1, "Never sent a second time")
     }
 
+    func testARelaunchedAppKeepsAskingAboutARestoredSendUntilItFinishes() async throws {
+        let mac = FakeMac()
+        let database = try LocalDatabase(url: nil)
+        let keys = MemoryDeviceKeyStore()
+        func launch() throws -> MobileApp {
+            let app = try MobileApp(database: database, keys: keys, defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                                    makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+            app.connection.timing.backoff = [.milliseconds(50)]
+            app.requeryDelays = [.milliseconds(20)]
+            return app
+        }
+        let first = try launch()
+        _ = try await first.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        let key = MobileStore.draftKey(conversation: nil, agentID: nil)
+        first.store.setDraft("Slow", for: key)
+        let id = try first.send(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Slow", attachmentIDs: [])).clientCommandID
+        await settle { mac.commands.contains { $0.clientCommandID == id } }
+        // The app quits mid-send; the relaunch has no waiter for it, only the saved record.
+        first.store.saveNow()
+        first.connection.stop()
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Still running on your Mac", replayed: true)
+        let relaunched = try launch()
+        XCTAssertFalse(relaunched.hasPendingSends)
+        relaunched.connection.connect()
+        func queries() -> Int { mac.commands.filter { $0.action == .queryCommand(clientCommandID: id) }.count }
+        await settle { queries() >= 3 }
+        XCTAssertGreaterThanOrEqual(queries(), 3, "A restored send still running is asked about again, not only once")
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .accepted)
+        XCTAssertEqual(relaunched.store.draft(key), "Slow", "The draft stays until the Mac confirms")
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        await settle { relaunched.store.commands[id]?.status == .applied }
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .applied)
+        XCTAssertEqual(relaunched.store.draft(key), "", "The draft the send carried is cleared")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendPrivate" }.count, 1, "Never sent a second time")
+        let settled = queries()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(queries(), settled, "No more queries once it is final")
+    }
+
     func testAvatarsAreFetchedOnceCachedAndClearedByForget() async throws {
         let mac = FakeMac()
         let image = Data("png-bytes".utf8)

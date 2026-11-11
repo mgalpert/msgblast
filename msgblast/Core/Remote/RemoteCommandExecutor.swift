@@ -130,6 +130,29 @@ public enum RemoteAttachmentFetch: Sendable, Equatable {
     case unavailable(String)
 }
 
+/// A wait that really ends at its deadline. Task-group cancellation cannot interrupt work
+/// that ignores it, and a group still waits for that child; this returns at the deadline
+/// and leaves the work running.
+public enum RemoteDeadline {
+    public static func wait(for work: Task<Void, Never>, until deadline: ContinuousClock.Instant) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let once = ResumeOnce(continuation)
+            let timer = Task { try? await Task.sleep(until: deadline); once.resume() }
+            Task { await work.value; timer.cancel(); once.resume() }
+        }
+    }
+
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Never>?
+        init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+        func resume() {
+            lock.lock(); let pending = continuation; continuation = nil; lock.unlock()
+            pending?.resume()
+        }
+    }
+}
+
 public extension RemoteCommandHost {
     func avatar(_ ref: String) -> Data? { nil }
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult { .rejected(.unsupported, "Update msgblast on your Mac") }

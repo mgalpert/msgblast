@@ -197,12 +197,7 @@ final class AppRemoteHost: RemoteCommandHost {
         let webAgents = model.webAgents
         // The Mac composer does the same when it shows these agents: open their chats, never launch apps.
         let preparing = Task { await RemoteErrorCapture.$current.withValue(capture) { _ = await webAgents.prepareComparison(id, for: sessions, startNativeApps: false) } }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await preparing.value }
-            group.addTask { try? await Task.sleep(until: deadline) }
-            await group.next()
-            group.cancelAll()
-        }
+        await RemoteDeadline.wait(for: preparing, until: deadline)
         let waiting = await notReadyReasons(sessions, timeout: max(.zero, deadline - ContinuousClock.now))
         return waiting.isEmpty ? .applied(conversationID: id) : .rejected(.notReady, "Not every agent was ready", conversationID: id, reasons: waiting)
     }
