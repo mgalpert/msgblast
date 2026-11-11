@@ -99,6 +99,32 @@ import XCTest
         XCTAssertEqual((unknown["error"] as? [String: Any])?["code"] as? String, "unknownTool")
     }
 
+    func testWireRefusesArgumentsThatAreNotAnObject() async throws {
+        let gate = AgentControlGate(file: file)
+        for arguments in [#""x""#, "[1]", "7"] {
+            let reply = try await send(#"{"id":1,"client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":"# + arguments + "}", gate: gate)
+            XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "invalidArguments", arguments)
+        }
+        let null = try await send(#"{"id":2,"client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":null}"#, gate: gate)
+        XCTAssertEqual((null["result"] as? [String: Any])?["version"] as? String, "1.0")
+    }
+
+    func testASettingsChangeThatCantBeSavedStillAppliesAndSaysSo() async throws {
+        let unwritable = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString)/approvals.json")
+        let gate = AgentControlGate(file: unwritable)
+        gate.change(.full, for: "Codex")
+        XCTAssertEqual(gate.approvals["Codex"], .full)
+        XCTAssertNotNil(gate.saveError)
+        gate.change(nil, for: "Codex")
+        XCTAssertNil(gate.approvals["Codex"])
+        gate.change(.readOnly, for: "Claude Code")
+        XCTAssertEqual(AgentControlGate(file: unwritable).approvals, [:])
+        let saved = AgentControlGate(file: file)
+        saved.change(.full, for: "Codex")
+        XCTAssertNil(saved.saveError)
+        XCTAssertEqual(AgentControlGate(file: file).approvals["Codex"], .full)
+    }
+
     func testWireRejectsMalformedLinesAndMissingClient() async throws {
         let gate = AgentControlGate(file: file)
         let garbage = try await send("{", gate: gate)
