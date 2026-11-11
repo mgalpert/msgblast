@@ -25,7 +25,28 @@ extension SideChatModelCheck {
         let cedar = model.state.agents[0], lumen = model.state.agents[1]
         let cedarID = RemoteAgentIDs.messages(cedar.id)
         precondition(availability.availability(for: cedarID)?.readiness == .ready, "\(String(describing: availability.availability(for: cedarID)))")
+        let first = try await checkRemoteMessagesCreateAndReplay(model, executor: executor, cedar: cedar, macDraft: macDraft)
+        try await checkRemotePrivateAndAttachedSends(model, executor: executor, first: first, cedar: cedar)
+        try await checkRemoteFailureRouting(model, executor: executor, first: first, cedarID: cedarID)
+        try await checkRemoteWebsiteSend(model, executor: executor, first: first, lumen: lumen, macDraft: macDraft)
 
+        // Guards: a locked Mac and the iMessage setting.
+        power.simulate(locked: true)
+        let locked = await executor.execute(RemoteCommand(action: .createConversation(text: "Locked", agentIDs: ["claude"], attachmentIDs: [])))
+        precondition(locked.code == .macLocked)
+        power.simulate(locked: false)
+        settings.value.allowMessagesSends = false
+        let off = await executor.execute(RemoteCommand(action: .createConversation(text: "Off", agentIDs: [cedarID], attachmentIDs: [])))
+        precondition(off.code == .messagesSendsOff)
+        precondition(keepAwake.held == false, "Send assertions are released")
+        host.discardStagedAttachments()
+        try await runRemoteServiceChecks(model)
+        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that prepares the chat, waits for readiness and submits once, plus prepareConversation), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
+    }
+
+    /// A Messages-only new conversation and its replay. Returns the new conversation's id.
+    @MainActor static func checkRemoteMessagesCreateAndReplay(_ model: AppModel, executor: RemoteCommandExecutor, cedar: Agent, macDraft: String) async throws -> UUID {
+        let cedarID = RemoteAgentIDs.messages(cedar.id)
         // A Messages-only new conversation from the phone leaves the Mac composer alone.
         let ask = RemoteCommand(action: .createConversation(text: "Remote ask", agentIDs: [cedarID], attachmentIDs: []))
         let created = await executor.execute(ask)
@@ -41,13 +62,29 @@ extension SideChatModelCheck {
         let count = model.state.comparisons.count
         let replay = await executor.execute(ask)
         precondition(replay.replayed && replay.conversationID == first && model.state.comparisons.count == count)
+        return first
+    }
 
+    /// Private and shared remote follow-ups (one with a staged file) keep the Mac's own drafts and files.
+    @MainActor static func checkRemotePrivateAndAttachedSends(_ model: AppModel, executor: RemoteCommandExecutor, first: UUID, cedar: Agent) async throws {
+        let cedarID = RemoteAgentIDs.messages(cedar.id)
         // A private follow-up uses the phone's text; the Mac's own drafts and files stay put.
         let index = model.index(first)!
         model.state.comparisons[index].allDraft = "Mac shared draft"
         model.state.comparisons[index].privateDrafts[cedar.id.uuidString] = "Mac private draft"
         let macFile = try model.local.stage(Data("mac draft file".utf8), filename: "mac-draft.txt")
         model.state.comparisons[index].privateAttachmentDrafts = [cedar.id.uuidString: [macFile]]
+        model.state.comparisons[index].allAttachmentsDraft = [macFile]
+        // Every save during a remote send keeps the Mac's drafts, so quitting mid-send loses nothing.
+        var savesDuringSend = 0
+        model.didSave = { saved in
+            guard let c = saved.comparisons.first(where: { $0.id == first }) else { preconditionFailure("Conversation missing from a save") }
+            savesDuringSend += 1
+            precondition(c.allDraft == "Mac shared draft", "Save \(savesDuringSend) replaced the shared draft: \(c.allDraft)")
+            precondition(c.privateDrafts[cedar.id.uuidString] == "Mac private draft", "Save \(savesDuringSend) replaced the private draft")
+            precondition(c.allAttachmentsDraft?.map(\.id) == [macFile.id], "Save \(savesDuringSend) replaced the shared draft files")
+            precondition(c.privateAttachmentDrafts?[cedar.id.uuidString]?.map(\.id) == [macFile.id], "Save \(savesDuringSend) replaced the private draft files")
+        }
         let followUp = await executor.execute(RemoteCommand(action: .sendPrivate(conversationID: first, agentID: cedarID, text: "Remote private", attachmentIDs: [])))
         precondition(followUp.outcome == .applied, "\(followUp)")
         let sent = model.comparison(first)!.followUps.last!
@@ -66,7 +103,13 @@ extension SideChatModelCheck {
         precondition(withFile.outcome == .applied, "\(withFile)")
         precondition(model.comparison(first)!.followUps.last!.payloads?[cedar.id.uuidString]?.parts.compactMap(\.attachment).map(\.filename) == ["remote.txt"])
         precondition(model.comparison(first)!.allDraft == "Mac shared draft")
+        precondition(model.comparison(first)!.allAttachmentsDraft?.map(\.id) == [macFile.id])
+        precondition(savesDuringSend >= 4, "The sends saved \(savesDuringSend) times")
+        model.didSave = nil
+    }
 
+    /// A failed remote command reports in its result, while the same failure from the Mac UI raises the alert.
+    @MainActor static func checkRemoteFailureRouting(_ model: AppModel, executor: RemoteCommandExecutor, first: UUID, cedarID: String) async throws {
         // Errors from a remote command go to its result, never to the Mac's modal alert.
         let newer = await executor.execute(RemoteCommand(action: .createConversation(text: "Newer ask", agentIDs: [cedarID], attachmentIDs: [])))
         precondition(newer.outcome == .applied)
@@ -80,7 +123,10 @@ extension SideChatModelCheck {
         await model.followUp(first)
         precondition(model.error?.contains("newer comparison") == true)
         model.error = nil
+    }
 
+    /// A website agent's shared send from the phone prepares the page, submits once and refuses a duplicate.
+    @MainActor static func checkRemoteWebsiteSend(_ model: AppModel, executor: RemoteCommandExecutor, first: UUID, lumen: Agent, macDraft: String) async throws {
         // A website agent through the lifted shared send, with the Mac draft intact.
         model.webAgents.setEnabled(true, for: .claude)
         let claude = model.webAgents.session(for: .claude)!
@@ -106,19 +152,6 @@ extension SideChatModelCheck {
         // A repeated identical website ask is refused by the existing duplicate guard, not resent.
         let again = await executor.execute(RemoteCommand(action: .sendPrivate(conversationID: shared.conversationID, agentID: "claude", text: "Website and Messages", attachmentIDs: [])))
         precondition(claude.state.attempts.filter { $0.text == "Website and Messages" }.count <= 2, "\(again)")
-
-        // Guards: a locked Mac and the iMessage setting.
-        power.simulate(locked: true)
-        let locked = await executor.execute(RemoteCommand(action: .createConversation(text: "Locked", agentIDs: ["claude"], attachmentIDs: [])))
-        precondition(locked.code == .macLocked)
-        power.simulate(locked: false)
-        settings.value.allowMessagesSends = false
-        let off = await executor.execute(RemoteCommand(action: .createConversation(text: "Off", agentIDs: [cedarID], attachmentIDs: [])))
-        precondition(off.code == .messagesSendsOff)
-        precondition(keepAwake.held == false, "Send assertions are released")
-        host.discardStagedAttachments()
-        try await runRemoteServiceChecks(model)
-        print("PASS: remote commands run through the actual AppModel send paths (Messages new/private/shared with a staged file, website shared send that prepares the chat, waits for readiness and submits once, plus prepareConversation), replay without resending, keep the Mac's drafts and files, route failures to the command result instead of the alert, and refuse when locked or when iMessage sends are off; the real RemoteService pairs an in-memory phone with no network port, streams its snapshot and events, honors keep-awake and the iMessage setting, and forgets the phone. Isolated Demo profile; simulated Messages and local website fixtures only.")
     }
 
     /// The real RemoteService in Demo: settings saved in the isolated profile, no network

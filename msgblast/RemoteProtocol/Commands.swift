@@ -56,16 +56,30 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .endConversation: "endConversation"
         case .acknowledgeIncomplete: "acknowledgeIncomplete"
         case .cancelNative: "cancelNative"
+        default: transferKind
+        }
+    }
+    /// `kind` for keep-awake, uploads, reports and preparation; the rest go to `lookupKind`.
+    private var transferKind: String {
+        switch self {
         case .setKeepAwake: "setKeepAwake"
         case .uploadAttachmentChunk: "uploadAttachmentChunk"
         case .attachStaged: "attachStaged"
         case .requestReport: "requestReport"
         case .prepareConversation: "prepareConversation"
+        default: lookupKind
+        }
+    }
+    /// `kind` for queries, fetches, renames and unknown actions (other actions are named by `kind`).
+    private var lookupKind: String {
+        switch self {
         case .queryCommand: "queryCommand"
         case .fetchAvatar: "fetchAvatar"
         case .renameConversation: "renameConversation"
         case .fetchAttachment: "fetchAttachment"
         case .unknown(let kind): kind
+        case .createConversation, .sendShared, .sendPrivate, .endConversation, .acknowledgeIncomplete, .cancelNative,
+             .setKeepAwake, .uploadAttachmentChunk, .attachStaged, .requestReport, .prepareConversation: kind
         }
     }
     /// Actions that run one at a time with sends (they may navigate pages on the Mac).
@@ -84,34 +98,69 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try c.decode(String.self, forKey: .kind)
-        func ids(_ key: CodingKeys) throws -> [String] { try c.decodeIfPresent([String].self, forKey: key) ?? [] }
+        if let action = try Self.decodeMessageAction(kind, from: c) {
+            self = action
+        } else if let action = try Self.decodeTransferAction(kind, from: c) {
+            self = action
+        } else {
+            self = try Self.decodeLookupAction(kind, from: c)
+        }
+    }
+    private static func decodeActionIDs(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) throws -> [String] {
+        try c.decodeIfPresent([String].self, forKey: key) ?? []
+    }
+    /// Sends, ending and acknowledging; nil for any other kind.
+    private static func decodeMessageAction(_ kind: String, from c: KeyedDecodingContainer<CodingKeys>) throws -> RemoteAction? {
+        func ids(_ key: CodingKeys) throws -> [String] { try decodeActionIDs(c, key) }
         switch kind {
         case "createConversation":
-            self = .createConversation(text: try c.decode(String.self, forKey: .text), agentIDs: try ids(.agentIDs), attachmentIDs: try ids(.attachmentIDs))
+            return .createConversation(text: try c.decode(String.self, forKey: .text), agentIDs: try ids(.agentIDs), attachmentIDs: try ids(.attachmentIDs))
         case "sendShared":
-            self = .sendShared(conversationID: try c.decode(UUID.self, forKey: .conversationID), text: try c.decode(String.self, forKey: .text), agentIDs: try ids(.agentIDs), attachmentIDs: try ids(.attachmentIDs))
+            return .sendShared(conversationID: try c.decode(UUID.self, forKey: .conversationID), text: try c.decode(String.self, forKey: .text), agentIDs: try ids(.agentIDs), attachmentIDs: try ids(.attachmentIDs))
         case "sendPrivate":
-            self = .sendPrivate(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID), text: try c.decode(String.self, forKey: .text), attachmentIDs: try ids(.attachmentIDs))
-        case "endConversation": self = .endConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID))
-        case "acknowledgeIncomplete": self = .acknowledgeIncomplete(agentID: try c.decode(String.self, forKey: .agentID), attemptID: try c.decodeIfPresent(String.self, forKey: .attemptID))
-        case "cancelNative": self = .cancelNative(agentID: try c.decode(String.self, forKey: .agentID))
-        case "setKeepAwake": self = .setKeepAwake(enabled: try c.decode(Bool.self, forKey: .enabled))
+            return .sendPrivate(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID), text: try c.decode(String.self, forKey: .text), attachmentIDs: try ids(.attachmentIDs))
+        case "endConversation": return .endConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID))
+        case "acknowledgeIncomplete": return .acknowledgeIncomplete(agentID: try c.decode(String.self, forKey: .agentID), attemptID: try c.decodeIfPresent(String.self, forKey: .attemptID))
+        case "cancelNative": return .cancelNative(agentID: try c.decode(String.self, forKey: .agentID))
+        default: return nil
+        }
+    }
+    /// Keep-awake, uploads, reports and preparation; nil for any other kind.
+    private static func decodeTransferAction(_ kind: String, from c: KeyedDecodingContainer<CodingKeys>) throws -> RemoteAction? {
+        switch kind {
+        case "setKeepAwake": return .setKeepAwake(enabled: try c.decode(Bool.self, forKey: .enabled))
         case "uploadAttachmentChunk":
-            self = .uploadAttachmentChunk(uploadID: try c.decode(UUID.self, forKey: .uploadID), filename: try c.decode(String.self, forKey: .filename), index: try c.decode(Int.self, forKey: .index), count: try c.decode(Int.self, forKey: .count), data: try c.decode(Data.self, forKey: .data))
-        case "attachStaged": self = .attachStaged(uploadID: try c.decode(UUID.self, forKey: .uploadID), sha256: try c.decode(Data.self, forKey: .sha256))
-        case "requestReport": self = .requestReport(conversationID: try c.decode(UUID.self, forKey: .conversationID))
-        case "prepareConversation": self = .prepareConversation(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentIDs: try ids(.agentIDs))
-        case "queryCommand": self = .queryCommand(clientCommandID: try c.decode(UUID.self, forKey: .clientCommandID))
-        case "fetchAvatar": self = .fetchAvatar(ref: try c.decode(String.self, forKey: .ref))
+            return .uploadAttachmentChunk(uploadID: try c.decode(UUID.self, forKey: .uploadID), filename: try c.decode(String.self, forKey: .filename), index: try c.decode(Int.self, forKey: .index), count: try c.decode(Int.self, forKey: .count), data: try c.decode(Data.self, forKey: .data))
+        case "attachStaged": return .attachStaged(uploadID: try c.decode(UUID.self, forKey: .uploadID), sha256: try c.decode(Data.self, forKey: .sha256))
+        case "requestReport": return .requestReport(conversationID: try c.decode(UUID.self, forKey: .conversationID))
+        case "prepareConversation": return .prepareConversation(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentIDs: try decodeActionIDs(c, .agentIDs))
+        default: return nil
+        }
+    }
+    /// Queries, fetches and renames; any other kind is kept as `unknown`.
+    private static func decodeLookupAction(_ kind: String, from c: KeyedDecodingContainer<CodingKeys>) throws -> RemoteAction {
+        switch kind {
+        case "queryCommand": return .queryCommand(clientCommandID: try c.decode(UUID.self, forKey: .clientCommandID))
+        case "fetchAvatar": return .fetchAvatar(ref: try c.decode(String.self, forKey: .ref))
         case "fetchAttachment":
-            self = .fetchAttachment(turnID: try c.decode(String.self, forKey: .turnID), index: try c.decode(Int.self, forKey: .index), maxBytes: try c.decode(Int.self, forKey: .maxBytes))
-        case "renameConversation": self = .renameConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID), title: try c.decode(String.self, forKey: .title))
-        default: self = .unknown(kind: kind)
+            return .fetchAttachment(turnID: try c.decode(String.self, forKey: .turnID), index: try c.decode(Int.self, forKey: .index), maxBytes: try c.decode(Int.self, forKey: .maxBytes))
+        case "renameConversation": return .renameConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID), title: try c.decode(String.self, forKey: .title))
+        default: return .unknown(kind: kind)
         }
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(kind, forKey: .kind)
+        switch self {
+        case .createConversation, .sendShared, .sendPrivate, .endConversation, .acknowledgeIncomplete, .cancelNative:
+            try encodeMessageFields(into: &c)
+        case .setKeepAwake, .uploadAttachmentChunk, .attachStaged, .requestReport, .prepareConversation:
+            try encodeTransferFields(into: &c)
+        case .queryCommand, .fetchAvatar, .renameConversation, .fetchAttachment, .unknown:
+            try encodeLookupFields(into: &c)
+        }
+    }
+    private func encodeMessageFields(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
         switch self {
         case .createConversation(let text, let agentIDs, let attachmentIDs):
             try c.encode(text, forKey: .text); try c.encode(agentIDs, forKey: .agentIDs); try c.encode(attachmentIDs, forKey: .attachmentIDs)
@@ -124,6 +173,11 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .endConversation(let id): try c.encode(id, forKey: .conversationID)
         case .acknowledgeIncomplete(let agentID, let attemptID): try c.encode(agentID, forKey: .agentID); try c.encodeIfPresent(attemptID, forKey: .attemptID)
         case .cancelNative(let agentID): try c.encode(agentID, forKey: .agentID)
+        default: break
+        }
+    }
+    private func encodeTransferFields(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        switch self {
         case .setKeepAwake(let enabled): try c.encode(enabled, forKey: .enabled)
         case .uploadAttachmentChunk(let uploadID, let filename, let index, let count, let data):
             try c.encode(uploadID, forKey: .uploadID); try c.encode(filename, forKey: .filename)
@@ -131,12 +185,17 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .attachStaged(let uploadID, let sha256): try c.encode(uploadID, forKey: .uploadID); try c.encode(sha256, forKey: .sha256)
         case .requestReport(let id): try c.encode(id, forKey: .conversationID)
         case .prepareConversation(let id, let agents): try c.encodeIfPresent(id, forKey: .conversationID); try c.encode(agents, forKey: .agentIDs)
+        default: break
+        }
+    }
+    private func encodeLookupFields(into c: inout KeyedEncodingContainer<CodingKeys>) throws {
+        switch self {
         case .queryCommand(let id): try c.encode(id, forKey: .clientCommandID)
         case .fetchAvatar(let ref): try c.encode(ref, forKey: .ref)
         case .renameConversation(let id, let title): try c.encode(id, forKey: .conversationID); try c.encode(title, forKey: .title)
         case .fetchAttachment(let turnID, let index, let maxBytes):
             try c.encode(turnID, forKey: .turnID); try c.encode(index, forKey: .index); try c.encode(maxBytes, forKey: .maxBytes)
-        case .unknown: break
+        default: break
         }
     }
 }

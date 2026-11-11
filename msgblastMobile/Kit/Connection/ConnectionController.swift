@@ -287,39 +287,50 @@ public final class MacConnection: ObservableObject {
     private func handle(_ event: RemoteClientDriver.Event) {
         switch event {
         case .paired(let complete, let identityKey):
-            guard let pending = pairing, let candidate = pairingCandidate else { break }
-            let mac = PairedMac(macName: complete.macName, variant: pending.offer.variant, deviceID: complete.deviceID, identityKey: identityKey,
-                                spkiSHA256: pending.offer.spkiSHA256, addresses: pending.offer.endpoints, port: pending.offer.port, pairedAt: now())
-            do { try keys.store(candidate) } catch { pairingFailed(error); return }
-            pairingCandidate = nil
-            willReplacePairing?(mac)
-            pairedMac = mac
-            savePaired(mac)
-            finishPairing(.success(mac))
-            authenticated()
+            // A failed key store ends here, before the event reaches the store.
+            guard paired(complete, identityKey: identityKey) else { return }
         case .authenticated:
             authenticated()
         case .error(let error):
-            switch error.code {
-            case .macLocked: state = .macLocked
-            case .notPaired, .authenticationFailed, .forgotten:
-                lastError = error.message
-                stopTransport()
-                state = .pairingLost(error.message)
-            case .pairingClosed, .pairingFailed, .pairingReplaceNeedsConfirmation:
-                lastError = error.message
-                pairingFailed(RemotePairingError(message: error.message))
-            case .anotherClientConnected:
-                stopTransport()   // A newer connection of this phone took over.
-            default:
-                lastError = error.message
-                lost(error.message)
-            }
+            handleError(error)
         case .snapshot, .events:
             if state == .macLocked { state = .connected }
         default: break
         }
         onEvent?(event)
+    }
+
+    /// Completes a pending pairing. False only when the new key could not be stored.
+    private func paired(_ complete: RemotePairComplete, identityKey: Data) -> Bool {
+        guard let pending = pairing, let candidate = pairingCandidate else { return true }
+        let mac = PairedMac(macName: complete.macName, variant: pending.offer.variant, deviceID: complete.deviceID, identityKey: identityKey,
+                            spkiSHA256: pending.offer.spkiSHA256, addresses: pending.offer.endpoints, port: pending.offer.port, pairedAt: now())
+        do { try keys.store(candidate) } catch { pairingFailed(error); return false }
+        pairingCandidate = nil
+        willReplacePairing?(mac)
+        pairedMac = mac
+        savePaired(mac)
+        finishPairing(.success(mac))
+        authenticated()
+        return true
+    }
+
+    private func handleError(_ error: RemoteErrorMessage) {
+        switch error.code {
+        case .macLocked: state = .macLocked
+        case .notPaired, .authenticationFailed, .forgotten:
+            lastError = error.message
+            stopTransport()
+            state = .pairingLost(error.message)
+        case .pairingClosed, .pairingFailed, .pairingReplaceNeedsConfirmation:
+            lastError = error.message
+            pairingFailed(RemotePairingError(message: error.message))
+        case .anotherClientConnected:
+            stopTransport()   // A newer connection of this phone took over.
+        default:
+            lastError = error.message
+            lost(error.message)
+        }
     }
 
     private func authenticated() {

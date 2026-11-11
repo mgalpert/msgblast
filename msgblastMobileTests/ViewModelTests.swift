@@ -155,6 +155,31 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(rows[old], false, "Replies from before this phone started tracking are not unread")
     }
 
+    /// App, website, CLI and bot replies carry no time: unread goes by each agent's transcript position.
+    func testAnUndatedReplyPastTheLastReadPositionIsUnread() {
+        let id = UUID(), opened = fixedNow, since = fixedNow.addingTimeInterval(-3600)
+        var state = ProjectionState()
+        state.conversations[id] = RemoteConversation(id: id, title: "T", prompt: "P", created: fixedNow.addingTimeInterval(-600), endedAt: nil, agentIDs: ["claude"],
+                                                     canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow.addingTimeInterval(-600))
+        func add(_ ordinal: Int, _ role: RemoteTurnRole) {
+            state.turns["w\(ordinal)"] = RemoteTurn(id: "w\(ordinal)", conversationID: id, agentID: "claude", role: role, origin: .agentTranscript,
+                                                    text: "\(ordinal)", created: nil, ordinal: ordinal, contentHash: "h")
+        }
+        add(0, .user); add(1, .assistant)
+        let read = [id: state.transcriptPositions(in: id)]
+        XCTAssertEqual(read[id], ["claude": 1], "Opening records the agent's position")
+        XCTAssertEqual(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since, readPositions: read).inbox.first?.unread, false, "Already read")
+        add(2, .user); add(3, .assistant)
+        XCTAssertEqual(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since, readPositions: read).inbox.first?.unread, true,
+                       "An undated reply newer than the last-read position is unread")
+        XCTAssertFalse(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since, readPositions: [id: state.transcriptPositions(in: id)]).isUnread(id),
+                       "Opening it again reads it")
+        XCTAssertFalse(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since).isUnread(id),
+                       "No position kept yet: a conversation older than its last opening is not marked")
+        XCTAssertTrue(ProjectionPresenter(state: state, unreadSince: fixedNow.addingTimeInterval(-7200)).isUnread(id),
+                      "No position kept yet: a conversation begun since tracking began is new")
+    }
+
     func testInboxIsOneListByRecencyAndAReplyOrSendMovesARowToTheTop() {
         var state = ProjectionState()
         let group = UUID(), direct = UUID(), contact = UUID()
@@ -506,8 +531,10 @@ final class PresenterTests: XCTestCase {
         store.markOpened(id, at: opened)
         store.markOpened(id, at: opened.addingTimeInterval(-10))
         XCTAssertEqual(try MobileStore(database: database).lastOpened[id], opened, "Kept across launches; never moves back")
+        XCTAssertEqual(try MobileStore(database: database).readPositions[id], [:], "Read positions are kept under their own key")
         store.forgetMac()
         XCTAssertNil(try MobileStore(database: database).lastOpened[id])
+        XCTAssertNil(try MobileStore(database: database).readPositions[id])
     }
 
     func testBlockedLinesKeepTheMacsLongerReasonAsDetail() throws {
@@ -581,6 +608,7 @@ final class MobileAppTests: XCTestCase {
         let app = try makeApp(mac)
         app.connection.timing.backoff = [.milliseconds(50)]
         XCTAssertThrowsError(try app.send(.setKeepAwake(enabled: true)), "Never queued while disconnected")
+        XCTAssertTrue(app.store.commands.isEmpty, "A send that never left is not recorded")
         let paired = try await app.pair(link: mac.offer().url.absoluteString, deviceName: "Phone")
         XCTAssertEqual(paired.macName, "Fake Mac")
         await settle { app.store.projection.seq != nil }
@@ -652,6 +680,159 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(result.outcome, .applied)
         XCTAssertEqual(app.store.commands[id]?.status, .applied)
         XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendShared" }.count, 1, "Never sent a second time")
+    }
+
+    func testARelaunchedAppKeepsAskingAboutARestoredSendUntilItFinishes() async throws {
+        let mac = FakeMac()
+        let database = try LocalDatabase(url: nil)
+        let keys = MemoryDeviceKeyStore()
+        func launch() throws -> MobileApp {
+            let app = try MobileApp(database: database, keys: keys, defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                                    makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+            app.connection.timing.backoff = [.milliseconds(50)]
+            app.requeryDelays = [.milliseconds(20)]
+            return app
+        }
+        let first = try launch()
+        _ = try await first.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        let key = MobileStore.draftKey(conversation: nil, agentID: nil)
+        first.store.setDraft("Slow", for: key)
+        let id = try first.send(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Slow", attachmentIDs: [])).clientCommandID
+        await settle { mac.commands.contains { $0.clientCommandID == id } }
+        // The app quits mid-send; the relaunch has no waiter for it, only the saved record.
+        first.store.saveNow()
+        first.connection.stop()
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Still running on your Mac", replayed: true)
+        let relaunched = try launch()
+        XCTAssertFalse(relaunched.hasPendingSends)
+        relaunched.connection.connect()
+        func queries() -> Int { mac.commands.filter { $0.action == .queryCommand(clientCommandID: id) }.count }
+        await settle { queries() >= 3 }
+        XCTAssertGreaterThanOrEqual(queries(), 3, "A restored send still running is asked about again, not only once")
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .accepted)
+        XCTAssertEqual(relaunched.store.draft(key), "Slow", "The draft stays until the Mac confirms")
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        await settle { relaunched.store.commands[id]?.status == .applied }
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .applied)
+        XCTAssertEqual(relaunched.store.draft(key), "", "The draft the send carried is cleared")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendPrivate" }.count, 1, "Never sent a second time")
+        let settled = queries()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(queries(), settled, "No more queries once it is final")
+    }
+
+    /// The field stays editable while a send waits: sending A, then typing B and adding a file,
+    /// leaves B, the new file and B's draft after the Mac confirms A.
+    func testAConfirmedSendKeepsWhatWasTypedWhileItWaited() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        let conversation = UUID()
+        let key = MobileStore.draftKey(conversation: conversation, agentID: nil)
+        app.store.setDraft("A", for: key)
+        let (id, send) = try await startSend(app, mac, .sendShared(conversationID: conversation, text: "A", agentIDs: [], attachmentIDs: ["a1"]))
+        // Typed while it waits, as ComposeBar's text handler saves it.
+        app.store.setDraft("B", for: key)
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        mac.sessions.last!.transport.drop()
+        let result = try await send.value
+        XCTAssertEqual(result.outcome, .applied)
+        XCTAssertEqual(app.store.draft(key), "B", "The draft typed during the send stays")
+        XCTAssertEqual(ComposeSend.field("B", afterSending: "A"), "B", "The field keeps what was typed since")
+        XCTAssertEqual(ComposeSend.field(" A\n", afterSending: "A"), "", "A field still holding the sent text clears")
+        XCTAssertEqual(ComposeSend.attachments(["a1", "b2"], id: { $0 }, afterSending: ["a1"]), ["b2"], "Only the sent files go")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendShared" }.count, 1, "Never sent a second time")
+    }
+
+    /// The timeout said unconfirmed; a reconnect's query then says the Mac created the
+    /// conversation. The compose bar gets its id (so New Conversation becomes the thread), the
+    /// draft edited since stays, and the send is only queried, never resent.
+    func testANewConversationConfirmedAfterTheTimeoutGivesItsID() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        app.commandTimeout = .milliseconds(300)
+        let key = MobileStore.draftKey(conversation: nil, agentID: nil)
+        app.store.setDraft("Hi", for: key)
+        let (id, send) = try await startSend(app, mac, .createConversation(text: "Hi", agentIDs: ["codexCLI", "claudeCLI"], attachmentIDs: []))
+        do { _ = try await send.value; XCTFail("No answer must end in unconfirmed") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
+        XCTAssertNil(ComposeSend.lateConfirmation(app.store.commands[id]), "Nothing to bind while unconfirmed")
+        app.store.setDraft("Hi again", for: key)
+        let created = UUID()
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, conversationID: created, replayed: true)
+        mac.sessions.last!.transport.drop()
+        await settle { app.store.commands[id]?.status == .applied }
+        XCTAssertEqual(ComposeSend.lateConfirmation(app.store.commands[id])?.conversationID, created, "The late answer names the created conversation")
+        XCTAssertEqual(app.store.draft(key), "Hi again", "A draft edited since stays")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "createConversation" }.count, 1, "Never sent a second time")
+    }
+
+    /// No manual save: the record is on disk before the send leaves, so an app ended right after
+    /// dispatch (before any debounced save) still knows it, shows it unconfirmed and asks about it.
+    func testASendInterruptedRightAfterDispatchIsKnownAfterRelaunch() async throws {
+        let mac = FakeMac()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-interrupted-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("cache.sqlite")
+        let keys = MemoryDeviceKeyStore()
+        func launch() throws -> MobileApp {
+            let app = try MobileApp(database: try LocalDatabase(url: url), keys: keys, defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                                    makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+            app.connection.timing.backoff = [.milliseconds(50)]
+            return app
+        }
+        let first = try launch()
+        _ = try await first.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        let id = try first.send(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Interrupted", attachmentIDs: [])).clientCommandID
+        // Ended here, with no suspension point since the send: read the file as a new process would.
+        let onDisk = try MobileStore(database: try LocalDatabase(url: url))
+        XCTAssertEqual(onDisk.commands[id]?.status, .unconfirmed)
+        XCTAssertTrue(onDisk.unresolvedCommandIDs.contains(id))
+
+        first.connection.stop()
+        func sends() -> Int { mac.commands.filter { $0.action.kind == "sendPrivate" }.count }
+        let sentBeforeRelaunch = sends()
+        mac.queryAnswers[id] = RemoteCommandResult(clientCommandID: id, outcome: .applied, replayed: true)
+        let relaunched = try launch()
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .unconfirmed, "Shown as unconfirmed until the Mac answers")
+        relaunched.connection.connect()
+        await settle { relaunched.store.commands[id]?.status == .applied }
+        XCTAssertEqual(relaunched.store.commands[id]?.status, .applied, "The relaunch asked about it")
+        XCTAssertTrue(mac.commands.contains { $0.action == .queryCommand(clientCommandID: id) })
+        XCTAssertEqual(sends(), sentBeforeRelaunch, "The relaunch only asks; it never resends")
+    }
+
+    /// A send whose record cannot be written (a full disk or I/O error) never leaves the phone,
+    /// and the user is told it was not sent.
+    func testASendWhoseRecordCannotBeWrittenIsNotTransmitted() async throws {
+        let mac = FakeMac()
+        let database = try LocalDatabase(url: nil)
+        let app = try MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: UserDefaults(suiteName: "msgblast-mobile-tests-\(UUID().uuidString)")!,
+                                makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        XCTAssertTrue(app.connection.state.canSend, "Connected: only the failed write stops the send")
+        let recorded = app.store.commands
+        try database.failWrites()
+        func sends() -> Int { mac.commands.filter { $0.action.kind == "sendPrivate" }.count }
+        do {
+            _ = try await app.perform(.sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Not saved", attachmentIDs: []))
+            XCTFail("A send that cannot be recorded must throw")
+        } catch {
+            guard case .write = error as? LocalDatabaseError else { return XCTFail("Expected a write failure, got \(error)") }
+            XCTAssertEqual((error as? LocalizedError)?.errorDescription, "This iPhone couldn't save the message, so it wasn't sent. Try again.")
+        }
+        XCTAssertThrowsError(try app.send(.sendShared(conversationID: UUID(), text: "Not saved either", agentIDs: [], attachmentIDs: [])))
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(sends(), 0, "Nothing was transmitted")
+        XCTAssertFalse(mac.commands.contains { $0.action.kind == "sendShared" }, "Nothing was transmitted")
+        XCTAssertEqual(app.store.commands, recorded, "Nothing is recorded as sent")
+        XCTAssertFalse(app.hasPendingSends)
     }
 
     func testAvatarsAreFetchedOnceCachedAndClearedByForget() async throws {

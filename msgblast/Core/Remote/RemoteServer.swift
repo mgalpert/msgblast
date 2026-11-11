@@ -170,20 +170,9 @@ final class RemoteServerSession {
     private func handle(_ message: RemoteMessage) {
         switch (phase, message) {
         case (.awaitingPairing(let challenge), .pairResponse(let response)):
-            switch server.pairing.complete(response, challenge: challenge, transcript: channel!.transcript) {
-            case .success(let device):
-                send(.pairComplete(RemotePairComplete(deviceID: device.id, macName: server.macName())))
-                authenticated(device.id)
-            case .failure(let failure):
-                fail(failure.errorCode, failure.errorDescription ?? "Pairing failed.")
-            }
+            completePairing(response, challenge: challenge)
         case (.awaitingAuthentication, .authenticate(let auth)):
-            guard server.pairing.device != nil else { return fail(.notPaired, "This phone is not paired with this Mac. Pair it again from msgblast Settings → Remote.") }
-            guard let device = server.pairing.verify(auth, transcript: channel!.transcript) else {
-                return fail(.authenticationFailed, "This phone is not the one paired with this Mac.")
-            }
-            send(.authenticated(deviceID: device.id))
-            authenticated(device.id)
+            authenticate(auth)
         case (.authenticated, .subscribe(let since)):
             subscribed = true
             deliveredSeq = since
@@ -197,6 +186,25 @@ final class RemoteServerSession {
         default:
             fail(.protocolViolation, "Unexpected \(message.kind) message.")
         }
+    }
+
+    private func completePairing(_ response: RemotePairResponse, challenge: Data) {
+        switch server.pairing.complete(response, challenge: challenge, transcript: channel!.transcript) {
+        case .success(let device):
+            send(.pairComplete(RemotePairComplete(deviceID: device.id, macName: server.macName())))
+            authenticated(device.id)
+        case .failure(let failure):
+            fail(failure.errorCode, failure.errorDescription ?? "Pairing failed.")
+        }
+    }
+
+    private func authenticate(_ auth: RemoteAuthenticate) {
+        guard server.pairing.device != nil else { return fail(.notPaired, "This phone is not paired with this Mac. Pair it again from msgblast Settings → Remote.") }
+        guard let device = server.pairing.verify(auth, transcript: channel!.transcript) else {
+            return fail(.authenticationFailed, "This phone is not the one paired with this Mac.")
+        }
+        send(.authenticated(deviceID: device.id))
+        authenticated(device.id)
     }
 
     private func authenticated(_ id: UUID) {

@@ -1,0 +1,46 @@
+name: Swift complexity
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-complexity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  swift-complexity:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download verified SwiftLint 0.65.1
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip \
+            -o "$RUNNER_TEMP/swiftlint.zip"
+          echo "c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0  $RUNNER_TEMP/swiftlint.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
+      - name: Reject new or worsened Swift complexity
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin "pull/$PR_NUMBER/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+          git show "$BASE_SHA:scripts/check_swift_complexity.py" > "$RUNNER_TEMP/check_complexity.py"
+          python3 "$RUNNER_TEMP/check_complexity.py" --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --swiftlint "$RUNNER_TEMP/swiftlint/swiftlint"
+      - name: Test ratchet behavior
+        env:
+          SWIFTLINT: ${{ runner.temp }}/swiftlint/swiftlint
+        run: python3 -m unittest discover -s scripts/tests -p test_swift_complexity.py -v

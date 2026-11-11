@@ -14,6 +14,10 @@ public final class MobileStore: ObservableObject {
     @Published public private(set) var avatars: [String: Data]
     /// When each conversation was last opened on this phone, for the unread dot.
     @Published public private(set) var lastOpened: [UUID: Date]
+    /// Undated replies (Mac apps, websites, CLIs, bots) have no time to compare: each agent's
+    /// transcript position when the conversation was last opened. Kept under its own key, so
+    /// saved state from before it decodes unchanged.
+    @Published public private(set) var readPositions: [UUID: [String: Int]]
     /// When this phone first heard from the paired Mac; older replies are not unread.
     public private(set) var unreadSince: Date?
     /// Replies made from this phone: command id → the quoted turn. Local only; the Mac
@@ -30,6 +34,7 @@ public final class MobileStore: ObservableObject {
         commands = try database.value([UUID: CommandRecord].self, "commands") ?? [:]
         drafts = try database.value([String: String].self, "drafts") ?? [:]
         lastOpened = try database.value([UUID: Date].self, "lastOpened") ?? [:]
+        readPositions = try database.value([UUID: [String: Int]].self, "readPositions") ?? [:]
         unreadSince = try database.value(Date.self, "unreadSince")
         replyTo = try database.value([UUID: String].self, "replyTo") ?? [:]
         let refs = try database.value([String].self, "avatarRefs") ?? []
@@ -45,15 +50,25 @@ public final class MobileStore: ObservableObject {
             if !wasFinal, let record = commands[result.clientCommandID], record.status == .applied { clearDraft(sentBy: record) }
         } else {
             projection = ProjectionReducer.reduce(projection, event)
-            if case .snapshot = event, unreadSince == nil { unreadSince = Date(); database.setValue(unreadSince, "unreadSince") }
+            if case .snapshot = event, unreadSince == nil { unreadSince = Date(); try? database.setValue(unreadSince, "unreadSince") }
         }
         scheduleSave()
     }
 
-    public func recordSent(_ command: RemoteCommand, at date: Date = Date()) {
-        commands[command.clientCommandID] = CommandLedger.record(command, at: date)
-        trimCommands()
-        scheduleSave()
+    /// Saved now, not debounced: the app may be ended right after the send goes out. Throws,
+    /// and records nothing, when the ledger cannot be written; the caller must not send.
+    public func recordSent(_ command: RemoteCommand, at date: Date = Date()) throws {
+        var next = commands
+        next[command.clientCommandID] = CommandLedger.record(command, at: date)
+        Self.trim(&next)
+        try database.setValue(next, "commands")
+        commands = next
+    }
+
+    /// The send never left the phone (no connection): nothing to ask about.
+    public func discardUnsent(_ id: UUID) {
+        commands[id] = nil
+        try? database.setValue(commands, "commands")
     }
 
     /// `perform` gave up waiting and told the user so; the ledger says the same until a
@@ -98,23 +113,28 @@ public final class MobileStore: ObservableObject {
     }
     public func storeAttachment(_ data: Data, type: String, turnID: String, index: Int, thumbnail: Bool) {
         let key = Self.fileKey(turnID, index, thumbnail: thumbnail)
-        database.set(data, for: key)
-        database.setValue(type, key + ":type")
+        try? database.set(data, for: key)
+        try? database.setValue(type, key + ":type")
     }
 
     // MARK: Replies
 
     public func recordReply(_ command: UUID, quoting turnID: String) {
         replyTo[command] = turnID
-        database.setValue(replyTo, "replyTo")
+        try? database.setValue(replyTo, "replyTo")
     }
 
     // MARK: Unread
 
     public func markOpened(_ conversation: UUID, at date: Date = Date()) {
+        let positions = (readPositions[conversation] ?? [:]).merging(projection.transcriptPositions(in: conversation), uniquingKeysWith: max)
+        if readPositions[conversation] != positions {
+            readPositions[conversation] = positions
+            try? database.setValue(readPositions, "readPositions")
+        }
         guard (lastOpened[conversation] ?? .distantPast) < date else { return }
         lastOpened[conversation] = date
-        database.setValue(lastOpened, "lastOpened")
+        try? database.setValue(lastOpened, "lastOpened")
     }
 
     // MARK: Avatars
@@ -124,8 +144,8 @@ public final class MobileStore: ObservableObject {
     public func storeAvatar(_ data: Data, for ref: String) {
         guard avatars[ref] != data else { return }
         avatars[ref] = data
-        database.set(data, for: Self.avatarKey(ref))
-        database.setValue(avatars.keys.sorted(), "avatarRefs")
+        try? database.set(data, for: Self.avatarKey(ref))
+        try? database.setValue(avatars.keys.sorted(), "avatarRefs")
     }
     /// Content references the projection names that are not cached yet.
     public var missingAvatarRefs: [String] {
@@ -138,6 +158,7 @@ public final class MobileStore: ObservableObject {
         drafts = [:]
         avatars = [:]
         lastOpened = [:]
+        readPositions = [:]
         unreadSince = nil
         replyTo = [:]
         database.removeAll()
@@ -145,9 +166,9 @@ public final class MobileStore: ObservableObject {
 
     public func saveNow() {
         saveTask?.cancel(); saveTask = nil
-        database.setValue(projection, "projection")
-        database.setValue(commands, "commands")
-        database.setValue(drafts, "drafts")
+        try? database.setValue(projection, "projection")
+        try? database.setValue(commands, "commands")
+        try? database.setValue(drafts, "drafts")
     }
 
     private func scheduleSave() {
@@ -160,7 +181,7 @@ public final class MobileStore: ObservableObject {
         }
     }
 
-    private func trimCommands() {
+    private static func trim(_ commands: inout [UUID: CommandRecord]) {
         guard commands.count > 500 else { return }
         for record in commands.values.sorted(by: { $0.sentAt < $1.sentAt }).prefix(commands.count - 500) where record.isFinal { commands[record.id] = nil }
     }

@@ -9,7 +9,7 @@ publishing is a separate, explicitly requested maintainer operation.
   split into independently passing PRs. Wait for the user's approval; an already
   approved plan is sufficient. Revisit the plan if the scope materially changes.
 - Target 200–300 changed lines per PR. More than 250 added-plus-deleted lines is
-  advisory; more than 600 requires splitting or recorded maintainer approval for
+  advisory; more than 1,200 requires splitting or recorded maintainer approval for
   the exact head revision. Explain added code, files, dependencies, and scope
   changes in the PR. Do not split one logical change into unreviewable fragments.
 - Write the minimum code that satisfies the requirement. Prefer functions over

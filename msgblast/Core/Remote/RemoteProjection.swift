@@ -92,77 +92,104 @@ public enum RemoteProjectionBuilder {
     public static func state(from input: RemoteProjectionInput) -> RemoteProjectionState {
         var conversations: [RemoteConversation] = [], turns: [RemoteTurn] = [], attempts: [RemoteAttempt] = []
         for comparison in input.comparisons {
-            let cid = comparison.id
-            var activity = comparison.created
-            var conversationAttempts: [RemoteAttempt] = []
-            turns.append(RemoteTurn(id: "p:\(cid.uuidString)", conversationID: cid, agentID: nil, role: .user, origin: .sharedPrompt, text: comparison.prompt,
-                                    created: comparison.created, ordinal: 0, attachments: refs(comparison.attachments ?? []), contentHash: hash(comparison.prompt)))
-            for member in comparison.members {
-                let agentID = RemoteAgentIDs.messages(member.id)
-                conversationAttempts.append(RemoteAttempt(id: "ma:\(cid.uuidString):\(member.id.uuidString)", conversationID: cid, agentID: agentID, text: comparison.prompt,
-                                                          status: status(member.submission), detail: member.error, created: member.attemptedAt))
-                for (index, message) in (input.messagesTranscripts[cid]?[member.id] ?? []).enumerated() where !message.outgoing {
-                    turns.append(RemoteTurn(id: "m:\(message.guid)", conversationID: cid, agentID: agentID, role: .assistant, origin: .messagesHistory, text: message.text,
-                                            created: message.date, ordinal: index, attachments: refs(message.attachments), contentHash: hash(message.text),
-                                            reactions: reactions(message.reactions, contact: agentID)))
-                    activity = max(activity, message.date)
-                }
-            }
-            for (index, followUp) in comparison.followUps.enumerated() {
-                let privateMember = followUp.sharedWithAll != true && followUp.memberIDs.count == 1 ? followUp.memberIDs.first : nil
-                let files = followUp.payloads?.values.first?.parts.compactMap(\.attachment) ?? []
-                turns.append(RemoteTurn(id: "f:\(followUp.id.uuidString)", conversationID: cid, agentID: privateMember.map(RemoteAgentIDs.messages), role: .user, origin: .followUp,
-                                        text: followUp.text, created: followUp.created, ordinal: index + 1, attachments: refs(files), contentHash: hash(followUp.text)))
-                activity = max(activity, followUp.created)
-                for member in followUp.memberIDs {
-                    let key = member.uuidString
-                    conversationAttempts.append(RemoteAttempt(id: "fa:\(followUp.id.uuidString):\(key)", conversationID: cid, agentID: RemoteAgentIDs.messages(member),
-                        text: followUp.text, status: followUp.states[key].map(status) ?? .ready, detail: followUp.errors[key], created: followUp.created))
-                }
-            }
-            for agent in comparison.resolvedWebAgentIDs {
-                // Native transcripts carry stable ids. Website DOM ids may be synthetic, so a
-                // website turn is keyed by its position; a re-render or a growing reply is an update.
-                for (ordinal, message) in (input.webHistories[cid]?[agent] ?? []).enumerated() {
-                    let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
-                    turns.append(RemoteTurn(id: "w:\(agent.id):\(cid.uuidString):\(key)", conversationID: cid, agentID: agent.id, role: role(message.role), origin: .agentTranscript,
-                                            text: message.text, created: nil, ordinal: ordinal, contentHash: hash(message.text)))
-                }
-                for attempt in input.webAttempts[cid]?[agent] ?? [] {
-                    conversationAttempts.append(RemoteAttempt(id: "wa:\(attempt.id.uuidString)", conversationID: cid, agentID: agent.id, text: attempt.text,
-                                                              status: status(attempt.status), detail: attempt.detail, created: attempt.created))
-                    activity = max(activity, attempt.created)
-                }
-            }
-            // Tapbacks on your own messages: the contact reacted to the prompt or a follow-up
-            // you sent; attach them to that turn rather than showing them as messages.
-            var onYours: [String: [RemoteReaction]] = [:]
-            for member in comparison.members {
-                let agentID = RemoteAgentIDs.messages(member.id)
-                for message in input.messagesTranscripts[cid]?[member.id] ?? [] where message.outgoing && !message.reactions.isEmpty {
-                    let target = message.text == comparison.prompt ? "p:\(cid.uuidString)"
-                        : comparison.followUps.last { $0.text == message.text && $0.memberIDs.contains(member.id) }.map { "f:\($0.id.uuidString)" }
-                    guard let target else { continue }
-                    onYours[target, default: []] += reactions(message.reactions, contact: agentID) ?? []
-                }
-            }
-            for index in turns.indices where turns[index].conversationID == cid {
-                if let added = onYours[turns[index].id], !added.isEmpty { turns[index].reactions = (turns[index].reactions ?? []) + added }
-            }
-            attempts += conversationAttempts
-            // Native requests (Mac apps, CLIs, bots) that never completed block that agent here.
-            let incomplete = comparison.resolvedWebAgentIDs.filter(\.provider.usesNativeConversation).flatMap { agent in
-                (input.webAttempts[cid]?[agent] ?? []).filter { $0.blocksAsIncomplete(now: Date()) }.map {
-                    RemoteIncompleteAttempt(agentID: agent.id, attemptID: "wa:\($0.id.uuidString)", reasonCode: .incompleteRequestBlocking)
-                }
-            }
-            conversations.append(RemoteConversation(id: cid, title: comparison.title, prompt: comparison.prompt, created: comparison.created, endedAt: comparison.endedAt,
-                agentIDs: comparison.members.map { RemoteAgentIDs.messages($0.id) } + comparison.resolvedWebAgentIDs.map(\.id),
-                canEnd: input.canEnd[cid] ?? (comparison.endedAt == nil), unresolvedAttemptCount: conversationAttempts.filter(\.status.isUnresolved).count,
-                lastActivity: activity, report: input.reports[cid], incompleteAttempts: incomplete))
+            conversations.append(conversation(comparison, input: input, turns: &turns, attempts: &attempts))
         }
         return RemoteProjectionState(macStatus: input.macStatus, grid: RemoteGrid(visibleAgentIDs: input.gridAgentIDs), agents: input.agents,
                                      conversations: conversations, turns: turns, attempts: attempts)
+    }
+
+    /// Projects one comparison: appends its turns and attempts and returns its conversation.
+    private static func conversation(_ comparison: Comparison, input: RemoteProjectionInput, turns: inout [RemoteTurn], attempts: inout [RemoteAttempt]) -> RemoteConversation {
+        let cid = comparison.id
+        var activity = comparison.created
+        var conversationAttempts: [RemoteAttempt] = []
+        turns.append(RemoteTurn(id: "p:\(cid.uuidString)", conversationID: cid, agentID: nil, role: .user, origin: .sharedPrompt, text: comparison.prompt,
+                                created: comparison.created, ordinal: 0, attachments: refs(comparison.attachments ?? []), contentHash: hash(comparison.prompt)))
+        appendMessagesMembers(comparison, input: input, turns: &turns, attempts: &conversationAttempts, activity: &activity)
+        appendFollowUps(comparison, turns: &turns, attempts: &conversationAttempts, activity: &activity)
+        appendWebAgents(comparison, input: input, turns: &turns, attempts: &conversationAttempts, activity: &activity)
+        attachReactionsOnYours(comparison, input: input, turns: &turns)
+        attempts += conversationAttempts
+        // Native requests (Mac apps, CLIs, bots) that never completed block that agent here.
+        let incomplete = comparison.resolvedWebAgentIDs.filter(\.provider.usesNativeConversation).flatMap { agent in
+            (input.webAttempts[cid]?[agent] ?? []).filter { $0.blocksAsIncomplete(now: Date()) }.map {
+                RemoteIncompleteAttempt(agentID: agent.id, attemptID: "wa:\($0.id.uuidString)", reasonCode: .incompleteRequestBlocking)
+            }
+        }
+        return RemoteConversation(id: cid, title: comparison.title, prompt: comparison.prompt, created: comparison.created, endedAt: comparison.endedAt,
+            agentIDs: comparison.members.map { RemoteAgentIDs.messages($0.id) } + comparison.resolvedWebAgentIDs.map(\.id),
+            canEnd: input.canEnd[cid] ?? (comparison.endedAt == nil), unresolvedAttemptCount: conversationAttempts.filter(\.status.isUnresolved).count,
+            lastActivity: activity, report: input.reports[cid], incompleteAttempts: incomplete)
+    }
+
+    private static func appendMessagesMembers(_ comparison: Comparison, input: RemoteProjectionInput, turns: inout [RemoteTurn],
+                                              attempts conversationAttempts: inout [RemoteAttempt], activity: inout Date) {
+        let cid = comparison.id
+        for member in comparison.members {
+            let agentID = RemoteAgentIDs.messages(member.id)
+            conversationAttempts.append(RemoteAttempt(id: "ma:\(cid.uuidString):\(member.id.uuidString)", conversationID: cid, agentID: agentID, text: comparison.prompt,
+                                                      status: status(member.submission), detail: member.error, created: member.attemptedAt))
+            for (index, message) in (input.messagesTranscripts[cid]?[member.id] ?? []).enumerated() where !message.outgoing {
+                turns.append(RemoteTurn(id: "m:\(message.guid)", conversationID: cid, agentID: agentID, role: .assistant, origin: .messagesHistory, text: message.text,
+                                        created: message.date, ordinal: index, attachments: refs(message.attachments), contentHash: hash(message.text),
+                                        reactions: reactions(message.reactions, contact: agentID)))
+                activity = max(activity, message.date)
+            }
+        }
+    }
+
+    private static func appendFollowUps(_ comparison: Comparison, turns: inout [RemoteTurn], attempts conversationAttempts: inout [RemoteAttempt], activity: inout Date) {
+        let cid = comparison.id
+        for (index, followUp) in comparison.followUps.enumerated() {
+            let privateMember = followUp.sharedWithAll != true && followUp.memberIDs.count == 1 ? followUp.memberIDs.first : nil
+            let files = followUp.payloads?.values.first?.parts.compactMap(\.attachment) ?? []
+            turns.append(RemoteTurn(id: "f:\(followUp.id.uuidString)", conversationID: cid, agentID: privateMember.map(RemoteAgentIDs.messages), role: .user, origin: .followUp,
+                                    text: followUp.text, created: followUp.created, ordinal: index + 1, attachments: refs(files), contentHash: hash(followUp.text)))
+            activity = max(activity, followUp.created)
+            for member in followUp.memberIDs {
+                let key = member.uuidString
+                conversationAttempts.append(RemoteAttempt(id: "fa:\(followUp.id.uuidString):\(key)", conversationID: cid, agentID: RemoteAgentIDs.messages(member),
+                    text: followUp.text, status: followUp.states[key].map(status) ?? .ready, detail: followUp.errors[key], created: followUp.created))
+            }
+        }
+    }
+
+    private static func appendWebAgents(_ comparison: Comparison, input: RemoteProjectionInput, turns: inout [RemoteTurn],
+                                        attempts conversationAttempts: inout [RemoteAttempt], activity: inout Date) {
+        let cid = comparison.id
+        for agent in comparison.resolvedWebAgentIDs {
+            // Native transcripts carry stable ids. Website DOM ids may be synthetic, so a
+            // website turn is keyed by its position; a re-render or a growing reply is an update.
+            for (ordinal, message) in (input.webHistories[cid]?[agent] ?? []).enumerated() {
+                let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
+                turns.append(RemoteTurn(id: "w:\(agent.id):\(cid.uuidString):\(key)", conversationID: cid, agentID: agent.id, role: role(message.role), origin: .agentTranscript,
+                                        text: message.text, created: nil, ordinal: ordinal, contentHash: hash(message.text)))
+            }
+            for attempt in input.webAttempts[cid]?[agent] ?? [] {
+                conversationAttempts.append(RemoteAttempt(id: "wa:\(attempt.id.uuidString)", conversationID: cid, agentID: agent.id, text: attempt.text,
+                                                          status: status(attempt.status), detail: attempt.detail, created: attempt.created))
+                activity = max(activity, attempt.created)
+            }
+        }
+    }
+
+    /// Tapbacks on your own messages: the contact reacted to the prompt or a follow-up
+    /// you sent; attach them to that turn rather than showing them as messages.
+    private static func attachReactionsOnYours(_ comparison: Comparison, input: RemoteProjectionInput, turns: inout [RemoteTurn]) {
+        let cid = comparison.id
+        var onYours: [String: [RemoteReaction]] = [:]
+        for member in comparison.members {
+            let agentID = RemoteAgentIDs.messages(member.id)
+            for message in input.messagesTranscripts[cid]?[member.id] ?? [] where message.outgoing && !message.reactions.isEmpty {
+                let target = message.text == comparison.prompt ? "p:\(cid.uuidString)"
+                    : comparison.followUps.last { $0.text == message.text && $0.memberIDs.contains(member.id) }.map { "f:\($0.id.uuidString)" }
+                guard let target else { continue }
+                onYours[target, default: []] += reactions(message.reactions, contact: agentID) ?? []
+            }
+        }
+        for index in turns.indices where turns[index].conversationID == cid {
+            if let added = onYours[turns[index].id], !added.isEmpty { turns[index].reactions = (turns[index].reactions ?? []) + added }
+        }
     }
 }
 

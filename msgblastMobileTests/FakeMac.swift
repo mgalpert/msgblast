@@ -56,51 +56,67 @@ final class FakeMac {
             guard let mac else { return }
             for payload in try! decoder.append(bytes) {
                 if channel == nil {
-                    guard case .hello(let hello) = try! RemoteProtocol.decoder().decode(RemoteHandshakeMessage.self, from: payload) else { return }
-                    let (reply, channel) = try! RemoteServerHandshake.respond(to: hello, identity: mac.identity, macName: "Fake Mac", variant: .demo)
-                    transport.deliverToClient(try! RemoteFraming.frame(try! RemoteProtocol.encoder().encode(RemoteHandshakeMessage.serverHello(reply))))
-                    self.channel = channel
-                    if hello.intent == .pair { challenge = RemoteHandshake.randomNonce(); send(.pairChallenge(RemotePairChallenge(challenge: challenge, expiresAt: Date().addingTimeInterval(60)))) }
+                    guard acceptHello(payload, mac: mac) else { return }
                     continue
                 }
                 var channel = self.channel!
                 let message = try! channel.open(payload)
                 self.channel = channel
-                switch message {
-                case .pairResponse(let response):
-                    guard RemoteHandshake.pairingProof(code: mac.code, challenge: challenge, transcript: channel.transcript, devicePublicKey: response.devicePublicKey) == response.proof else {
-                        send(.error(RemoteErrorMessage(code: .pairingFailed, message: "The pairing code did not match."))); return
-                    }
-                    mac.deviceKey = response.devicePublicKey
-                    send(.pairComplete(RemotePairComplete(deviceID: mac.deviceID, macName: "Fake Mac")))
-                case .authenticate(let auth):
-                    guard !mac.forgetOnResume, let key = mac.deviceKey, auth.deviceID == mac.deviceID,
-                          RemoteHandshake.verify(signature: auth.signature, over: channel.transcript, publicKey: key) else {
-                        send(.error(RemoteErrorMessage(code: .notPaired, message: "This phone is not paired with this Mac."))); return
-                    }
-                    send(.authenticated(deviceID: auth.deviceID))
-                case .subscribe(let since):
-                    sinceSeq = since
-                    if mac.lockedOnConnect { send(.error(RemoteErrorMessage(code: .macLocked, message: "Disconnected: your Mac is locked."))); return }
-                    if let since, since == mac.snapshot.seq { send(.events(events: [], latestSeq: since)) }
-                    else if let delay = mac.snapshotDelay {
-                        let snapshot = mac.snapshot
-                        Task { @MainActor [weak self] in try? await Task.sleep(for: delay); self?.mac?.snapshotsSent += 1; self?.send(.snapshot(snapshot)) }
-                    } else { mac.snapshotsSent += 1; send(.snapshot(mac.snapshot)) }
-                case .command(let command):
-                    mac.commands.append(command)
-                    if case .fetchAvatar(let ref) = command.action {
-                        guard let avatars = mac.avatars else { send(.commandResult(.rejected(command.clientCommandID, .unsupported, "Update msgblast on your Mac"))); continue }
-                        send(.commandResult(avatars[ref].map { RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, avatar: $0) }
-                                            ?? .rejected(command.clientCommandID, .unknownAvatar, "No artwork for that agent")))
-                        continue
-                    }
-                    if case .queryCommand(let id) = command.action, var answer = mac.queryAnswers[id] { answer.clientCommandID = id; send(.commandResult(answer)); continue }
-                    if mac.answerCommands { send(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied))) }
-                case .ping(let nonce): send(.pong(nonce: nonce, seq: mac.snapshot.seq))
-                default: break
-                }
+                // False stops reading this delivery, like the Mac after an error reply.
+                guard handleOpened(message, transcript: channel.transcript, mac: mac) else { return }
             }
+        }
+        /// Answers the plaintext hello; false when the payload is not a hello.
+        private func acceptHello(_ payload: Data, mac: FakeMac) -> Bool {
+            guard case .hello(let hello) = try! RemoteProtocol.decoder().decode(RemoteHandshakeMessage.self, from: payload) else { return false }
+            let (reply, channel) = try! RemoteServerHandshake.respond(to: hello, identity: mac.identity, macName: "Fake Mac", variant: .demo)
+            transport.deliverToClient(try! RemoteFraming.frame(try! RemoteProtocol.encoder().encode(RemoteHandshakeMessage.serverHello(reply))))
+            self.channel = channel
+            if hello.intent == .pair { challenge = RemoteHandshake.randomNonce(); send(.pairChallenge(RemotePairChallenge(challenge: challenge, expiresAt: Date().addingTimeInterval(60)))) }
+            return true
+        }
+        /// Answers one opened message; false when the rest of the delivery is ignored.
+        private func handleOpened(_ message: RemoteMessage, transcript: Data, mac: FakeMac) -> Bool {
+            switch message {
+            case .pairResponse(let response):
+                guard RemoteHandshake.pairingProof(code: mac.code, challenge: challenge, transcript: transcript, devicePublicKey: response.devicePublicKey) == response.proof else {
+                    send(.error(RemoteErrorMessage(code: .pairingFailed, message: "The pairing code did not match."))); return false
+                }
+                mac.deviceKey = response.devicePublicKey
+                send(.pairComplete(RemotePairComplete(deviceID: mac.deviceID, macName: "Fake Mac")))
+            case .authenticate(let auth):
+                guard !mac.forgetOnResume, let key = mac.deviceKey, auth.deviceID == mac.deviceID,
+                      RemoteHandshake.verify(signature: auth.signature, over: transcript, publicKey: key) else {
+                    send(.error(RemoteErrorMessage(code: .notPaired, message: "This phone is not paired with this Mac."))); return false
+                }
+                send(.authenticated(deviceID: auth.deviceID))
+            case .subscribe(let since): return replyToSubscribe(since: since, mac: mac)
+            case .command(let command): replyToCommand(command, mac: mac)
+            case .ping(let nonce): send(.pong(nonce: nonce, seq: mac.snapshot.seq))
+            default: break
+            }
+            return true
+        }
+        private func replyToSubscribe(since: UInt64?, mac: FakeMac) -> Bool {
+            sinceSeq = since
+            if mac.lockedOnConnect { send(.error(RemoteErrorMessage(code: .macLocked, message: "Disconnected: your Mac is locked."))); return false }
+            if let since, since == mac.snapshot.seq { send(.events(events: [], latestSeq: since)) }
+            else if let delay = mac.snapshotDelay {
+                let snapshot = mac.snapshot
+                Task { @MainActor [weak self] in try? await Task.sleep(for: delay); self?.mac?.snapshotsSent += 1; self?.send(.snapshot(snapshot)) }
+            } else { mac.snapshotsSent += 1; send(.snapshot(mac.snapshot)) }
+            return true
+        }
+        private func replyToCommand(_ command: RemoteCommand, mac: FakeMac) {
+            mac.commands.append(command)
+            if case .fetchAvatar(let ref) = command.action {
+                guard let avatars = mac.avatars else { send(.commandResult(.rejected(command.clientCommandID, .unsupported, "Update msgblast on your Mac"))); return }
+                send(.commandResult(avatars[ref].map { RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, avatar: $0) }
+                                    ?? .rejected(command.clientCommandID, .unknownAvatar, "No artwork for that agent")))
+                return
+            }
+            if case .queryCommand(let id) = command.action, var answer = mac.queryAnswers[id] { answer.clientCommandID = id; send(.commandResult(answer)); return }
+            if mac.answerCommands { send(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied))) }
         }
     }
     private(set) var sessions: [Session] = []

@@ -24,70 +24,9 @@ struct PairingView: View {
     var body: some View {
         Form {
             if let offer {
-                Section {
-                    LabeledContent("Mac", value: offer.macName)
-                    LabeledContent("Key") {
-                        Text(PairedMac.fingerprint(offer.identityKeySHA256)).font(.callout.monospaced()).foregroundStyle(.secondary)
-                    }
-                    if offer.variant == .demo { LabeledContent("Mode", value: "Demo") }
-                } footer: {
-                    Text("Expires in \(Self.minutesLeft(offer.expiresAt)) min")
-                }
-                Section {
-                    Button { pair(offer) } label: {
-                        HStack { Spacer(); if pairing { ProgressView() } else { Text("Pair").bold() }; Spacer() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .disabled(pairing)
-                    errorRows
-                    Button("Use Another Code") { self.offer = nil; link = ""; error = nil; unreachable = false }
-                        .frame(maxWidth: .infinity)
-                        .listRowBackground(Color.clear)
-                        .disabled(pairing)
-                }
+                offerSections(offer)
             } else {
-                Section {
-                    VStack(spacing: Space.section) {
-                        AppIconImage(size: Space.hero)
-                        Text("Open msgblast › Settings › Remote on your Mac")
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                }
-                Section {
-                    Button { scanning = true } label: { Label("Scan Code", systemImage: "camera").frame(maxWidth: .infinity) }
-                        .buttonStyle(.borderedProminent).controlSize(.large)
-                        .disabled(!DataScannerViewController.isSupported)
-                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
-                    if !pasting {
-                        Button("Paste Link") { pasting = true }
-                            .frame(maxWidth: .infinity)
-                            .listRowBackground(Color.clear)
-                    }
-                }
-                if pasting {
-                    Section {
-                        TextField("msgblast://pair…", text: $link)
-                            .lineLimit(1)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .submitLabel(.continue)
-                            .onSubmit { if !link.isEmpty { read(link) } }
-                    }
-                    Section {
-                        // Same edges as Scan Code above.
-                        Button { read(link) } label: { Text("Continue").frame(maxWidth: .infinity) }
-                            .buttonStyle(.borderedProminent).controlSize(.large)
-                            .disabled(link.isEmpty)
-                            .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
-                    }
-                }
-                if error != nil { Section { errorRows } }
+                scanSections
             }
         }
         .listSectionSpacing(Space.section)
@@ -106,6 +45,77 @@ struct PairingView: View {
             if let incomingLink { read(incomingLink); self.incomingLink = nil }
         }
         .onChange(of: incomingLink) { _, value in if let value { read(value); incomingLink = nil } }
+    }
+
+    /// A read code: the Mac's name and key fingerprint, then Pair.
+    @ViewBuilder private func offerSections(_ offer: RemotePairingOffer) -> some View {
+        Section {
+            LabeledContent("Mac", value: offer.macName)
+            LabeledContent("Key") {
+                Text(PairedMac.fingerprint(offer.identityKeySHA256)).font(.callout.monospaced()).foregroundStyle(.secondary)
+            }
+            if offer.variant == .demo { LabeledContent("Mode", value: "Demo") }
+        } footer: {
+            Text("Expires in \(Self.minutesLeft(offer.expiresAt)) min")
+        }
+        Section {
+            Button { pair(offer) } label: {
+                HStack { Spacer(); if pairing { ProgressView() } else { Text("Pair").bold() }; Spacer() }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .disabled(pairing)
+            errorRows
+            Button("Use Another Code") { self.offer = nil; link = ""; error = nil; unreachable = false }
+                .frame(maxWidth: .infinity)
+                .listRowBackground(Color.clear)
+                .disabled(pairing)
+        }
+    }
+
+    /// No code yet: scan one, or paste its link.
+    @ViewBuilder private var scanSections: some View {
+        Section {
+            VStack(spacing: Space.section) {
+                AppIconImage(size: Space.hero)
+                Text("Open msgblast › Settings › Remote on your Mac")
+                    .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+        }
+        Section {
+            Button { scanning = true } label: { Label("Scan Code", systemImage: "camera").frame(maxWidth: .infinity) }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!DataScannerViewController.isSupported)
+                .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
+            if !pasting {
+                Button("Paste Link") { pasting = true }
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            }
+        }
+        if pasting {
+            Section {
+                TextField("msgblast://pair…", text: $link)
+                    .lineLimit(1)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .submitLabel(.continue)
+                    .onSubmit { if !link.isEmpty { read(link) } }
+            }
+            Section {
+                // Same edges as Scan Code above.
+                Button { read(link) } label: { Text("Continue").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(link.isEmpty)
+                    .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
+            }
+        }
+        if error != nil { Section { errorRows } }
     }
 
     @ViewBuilder private var errorRows: some View {

@@ -106,6 +106,22 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(codes(evaluate(signals(.chatgptApp) { $0.desktopReady = false; $0.desktopError = "This ChatGPT application version is not supported yet." })), [.appVersionUnsupported])
         XCTAssertEqual(codes(evaluate(signals(.chatgptApp) { $0.desktopReady = false; $0.desktopError = "Open ChatGPT’s main window." })), [.windowMissingOrAmbiguous])
 
+        checkMacAppReconnectStates()
+        // An agent that shares its Mac app with one that is sending is busy, as on the Mac.
+        let shared = evaluate(signals(.dotsApp) { $0.sameAppBusyWith = "ChatGPT" })
+        if case .busy = shared.readiness {} else { XCTFail("Shared app in use is busy: \(shared.readiness)") }
+        XCTAssertFalse(shared.readiness.acceptsSend); XCTAssertEqual(codes(shared), [.sendInFlight])
+        // Once a check succeeds the failure is gone and the agent is ready again by itself.
+        XCTAssertEqual(evaluate(signals(.museApp)).readiness, .ready)
+        let queued = evaluate(signals(.claudeApp), otherDesktopSending: true)
+        XCTAssertEqual(queued.readiness, .ready, "A queued desktop send is not a refusal")
+        XCTAssertEqual(codes(queued), [.queuedBehindDesktopSend])
+        let gemini = evaluate(signals(.geminiApp))
+        XCTAssertEqual(gemini.readiness, .unavailable); XCTAssertEqual(codes(gemini), [.notOfferedInBuild])
+    }
+
+    /// The Reconnect, still-loading and prepares-on-send states of `testMacAppStates`.
+    private func checkMacAppReconnectStates() {
         // The Mac pane's Reconnect states block the phone too, with phone wording and the Mac's text as detail.
         let failed = "App control could not complete this request. Review msgblast permissions; nothing will be retried automatically."
         let reconnect = evaluate(signals(.museApp) { $0.desktopReady = false; $0.desktopError = failed })
@@ -131,17 +147,6 @@ final class RemoteAvailabilityTests: XCTestCase {
         let neverConnected = evaluate(signals(.claudeApp) { $0.hasDesktopBinding = false; $0.desktopReady = false; $0.canSubmitNativePrompt = true })
         XCTAssertTrue(neverConnected.readiness.acceptsSend); XCTAssertEqual(codes(neverConnected), [.preparesOnSend])
         XCTAssertEqual(neverConnected.reasons.first?.userText, "Connects \(WebProvider.claudeApp.name) on your Mac first")
-        // An agent that shares its Mac app with one that is sending is busy, as on the Mac.
-        let shared = evaluate(signals(.dotsApp) { $0.sameAppBusyWith = "ChatGPT" })
-        if case .busy = shared.readiness {} else { XCTFail("Shared app in use is busy: \(shared.readiness)") }
-        XCTAssertFalse(shared.readiness.acceptsSend); XCTAssertEqual(codes(shared), [.sendInFlight])
-        // Once a check succeeds the failure is gone and the agent is ready again by itself.
-        XCTAssertEqual(evaluate(signals(.museApp)).readiness, .ready)
-        let queued = evaluate(signals(.claudeApp), otherDesktopSending: true)
-        XCTAssertEqual(queued.readiness, .ready, "A queued desktop send is not a refusal")
-        XCTAssertEqual(codes(queued), [.queuedBehindDesktopSend])
-        let gemini = evaluate(signals(.geminiApp))
-        XCTAssertEqual(gemini.readiness, .unavailable); XCTAssertEqual(codes(gemini), [.notOfferedInBuild])
     }
 
     func testCLIAndWebhookStates() {

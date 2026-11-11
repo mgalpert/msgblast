@@ -133,22 +133,9 @@ public final class EndpointRacer {
                 guard let self, let transport else { return }
                 switch state {
                 case .ready:
-                    guard self.winner == nil else { transport.cancel(); return }
-                    self.winner = transport
-                    transport.onState = nil
-                    for other in self.contenders where other !== transport { other.onState = nil; other.cancel() }
-                    self.contenders = []
-                    self.deadline?.cancel(); self.deadline = nil
-                    completion(.success(transport))
+                    self.contenderReady(transport, completion: completion)
                 case .failed, .closed:
-                    guard self.winner == nil else { return }
-                    if case .failed(let reason) = state { self.failures.append("\(transport.label): \(reason)") }
-                    remaining -= 1
-                    if remaining == 0 {
-                        self.contenders = []
-                        self.deadline?.cancel(); self.deadline = nil
-                        completion(.failure(RaceFailure(reasons: self.failures)))
-                    }
+                    self.contenderEnded(transport, state: state, remaining: &remaining, completion: completion)
                 }
             }
             transport.start()
@@ -161,6 +148,30 @@ public final class EndpointRacer {
             let failures = self.failures
             self.cancel()
             completion(.failure(RaceFailure(reasons: [Self.unreachableReason(addresses: count)] + failures, timedOut: true)))
+        }
+    }
+
+    /// The first contender to complete TLS wins; the rest are cancelled.
+    private func contenderReady(_ transport: ClientTransport, completion: (Result<ClientTransport, RaceFailure>) -> Void) {
+        guard winner == nil else { transport.cancel(); return }
+        winner = transport
+        transport.onState = nil
+        for other in contenders where other !== transport { other.onState = nil; other.cancel() }
+        contenders = []
+        deadline?.cancel(); deadline = nil
+        completion(.success(transport))
+    }
+
+    /// A contender failed or closed; the race fails when none is left.
+    private func contenderEnded(_ transport: ClientTransport, state: ClientTransportState, remaining: inout Int,
+                                completion: (Result<ClientTransport, RaceFailure>) -> Void) {
+        guard winner == nil else { return }
+        if case .failed(let reason) = state { failures.append("\(transport.label): \(reason)") }
+        remaining -= 1
+        if remaining == 0 {
+            contenders = []
+            deadline?.cancel(); deadline = nil
+            completion(.failure(RaceFailure(reasons: failures)))
         }
     }
 

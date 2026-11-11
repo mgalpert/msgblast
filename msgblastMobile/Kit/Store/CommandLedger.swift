@@ -63,3 +63,30 @@ public enum CommandLedger {
         records.values.filter { $0.status == .unconfirmed || $0.status == .sending || $0.status == .accepted }.sorted { $0.sentAt < $1.sentAt }.suffix(50).map(\.id)
     }
 }
+
+/// What the compose bar keeps once the Mac confirms a send. The field stays editable while a
+/// send waits, so text typed and files added since stay, in the field and its saved draft.
+public enum ComposeSend {
+    /// The field after a confirmed send of `sent` (trimmed, as it went): cleared only if it still holds it.
+    public static func field(_ text: String, afterSending sent: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines) == sent ? "" : text
+    }
+
+    /// The attachments after a confirmed send: only the ones it carried go.
+    public static func attachments<T>(_ current: [T], id: (T) -> String, afterSending sent: [String]) -> [T] {
+        let gone = Set(sent)
+        return current.filter { !gone.contains(id($0)) }
+    }
+
+    /// A send the field gave up on (its timeout said unconfirmed) that the Mac then finished.
+    public struct LateConfirmation: Equatable, Sendable {
+        /// The conversation it went to: for a new conversation, the id the Mac reported.
+        public var conversationID: UUID?
+    }
+
+    /// Nil until the record is applied. Read from the stored record, so it is never resent.
+    public static func lateConfirmation(_ record: CommandRecord?) -> LateConfirmation? {
+        guard let record, record.status == .applied else { return nil }
+        return LateConfirmation(conversationID: record.result?.conversationID ?? record.conversationID)
+    }
+}
