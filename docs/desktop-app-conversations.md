@@ -50,7 +50,7 @@ its pending request. Completing the reply restores availability. A saved choice
 does not add an agent to a comparison that started without it: its pane and
 follow-ups stay limited to that comparison's members until the user adds it.
 
-Muse, Grok Bot, Wabi, ChatGPT, and Dots use foreground input. An explicit send
+Muse, Grok Bot, Wabi, and Claude use foreground input. An explicit send
 acquires one shared desktop transaction, brings the
 exact app window forward, and holds it through navigation, text entry, and
 submission. Once the outgoing request is observed, it
@@ -59,8 +59,9 @@ background. If submission cannot be confirmed within five seconds, focus still r
 without resending or claiming success. Failures and cancellation also restore
 msgblast before releasing desktop ownership. After focus restoration, the next
 independent app may submit while earlier replies are still being collected.
-ChatGPT/Dots and copies of the same app retain their shared surface until reply
-collection finishes. Claude retains its background path.
+ChatGPT and Dots focus, type, and submit with background input and never
+activate the app to send. Copies of the same app retain their shared surface
+until reply collection finishes.
 An explicit Connect or conversation start reopens hidden apps as well as closed
 apps; a running process and a WindowServer entry alone do not prove the app is
 readable. Passive readiness checks never open or activate apps. An unverifiable
@@ -302,7 +303,7 @@ changed dot identity blocks input until the saved context can be verified.
 Dots can publish its sidebar unread badge while the conversation remains stale
 in the background. Before typing, msgblast acknowledges an existing badge by
 clicking the same verified Dot and checks that its identity and history are
-unchanged and the badge clears. This happens within the foreground send transaction;
+unchanged and the badge clears. This happens before typing, with background input;
 it never selects another Dot or dismisses a draft. After verifying this request's outgoing message, msgblast may
 briefly activate that exact ChatGPT window once when the active Dot's unread
 badge changes after submission. An unchanged pre-send badge does not trigger it.
