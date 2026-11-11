@@ -11,7 +11,7 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        for name in ["general", "apps", "websites", "cli", "webhooks", "permissions", "sharing", "updates"] {
+        for name in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "permissions", "sharing", "updates"] {
             XCTAssertTrue(settings.staticTexts["settings-page-\(name)"].isHittable)
         }
         settings.buttons["Record Shortcut"].click()
@@ -36,6 +36,9 @@ final class WorkflowTests: XCTestCase {
                 XCTAssertTrue(settings.buttons["Add Grok Bot…"].isHittable)
             }
         }
+        settings.staticTexts["settings-page-outsideAgents"].click()
+        XCTAssertTrue(settings.switches["Let agents on this Mac use msgblast"].waitForExistence(timeout: 5))
+        settings.staticTexts["settings-page-apps"].click()
         settings.buttons["Manage permissions"].click()
         XCTAssertTrue(settings.switches["enable-cua-host-permission"].exists)
         settings.staticTexts["settings-page-updates"].click()
@@ -51,7 +54,7 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         settings.staticTexts["settings-page-sharing"].click()
         XCTAssertEqual(String(describing: usage.value ?? ""), unsavedValue, "Saved choices must survive reopening")
-        for page in ["general", "apps", "websites", "cli", "webhooks", "permissions", "sharing", "updates"] {
+        for page in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "permissions", "sharing", "updates"] {
             settings.staticTexts["settings-page-\(page)"].click()
             XCTAssertTrue(settings.buttons["settings-send-feedback"].isHittable)
             XCTAssertTrue(settings.buttons["settings-build-feature"].isHittable)
