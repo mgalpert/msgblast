@@ -44,12 +44,16 @@ the Mac or the phone applies:
 
 - Nothing is retried. A send whose result is unclear stays unclear; check the
   comparison or `msgblast_request_status` before sending again.
-- `requestId` makes a call safe to repeat. The same agent name and `requestId`
-  return the first result and never send twice. Without one, each call is new.
-- Sends run one at a time. While the Mac or the phone is sending, a new send is
-  refused as busy rather than queued.
+- `requestId` makes a call safe to repeat while msgblast is running. The same
+  agent name and `requestId` return the first result instead of sending again.
+  msgblast remembers its last 1,000 sends and forgets them when it quits, so after
+  a restart check the comparison before repeating. Without a `requestId`, each
+  call is new. A refusal is remembered too, so use a new `requestId` to try again.
+- Sends run one at a time. An agent's send waits for an earlier agent send to
+  finish. While the Mac or the phone is sending, it is refused as busy instead.
 - A locked Mac, an agent that isn't signed in or ready, or an ended comparison
-  refuses the send, and the error says why for each agent. Nothing is sent.
+  refuses the send. The error says why for each agent and names a code, such as
+  `macLocked`, `macBusy` or `agentUnavailable`. Nothing is sent.
 - Each agent name may call the send tools 6 times a minute and 60 times an hour.
   A repeat of a known `requestId` does not count.
 - A result of `done` means msgblast submitted the message to each agent. Replies
