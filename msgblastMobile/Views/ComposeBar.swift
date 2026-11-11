@@ -80,94 +80,16 @@ struct ComposeBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.gap) {
-            Group {
-            if let quoted = replyTo.wrappedValue, let agent = quoted.agentID {
-                // Messages-style quote bar while replying to one response.
-                HStack(spacing: Space.gap) {
-                    AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarChip)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Replying to \(presenter.shortName(agent))").font(.caption.weight(.semibold))
-                        Text(quoted.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    Button { replyTo.wrappedValue = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).accessibilityLabel("Cancel Reply")
-                }
-            }
-            if let status { statusLine(status) }
-            if recipientsOpen, let selection, choosesRecipients {
-                RecipientStrip(app: app, members: members, selection: selection)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-            if !attachments.isEmpty {
-                ScrollView(.horizontal) { HStack { ForEach(attachments, id: \.id) { Label($0.name, systemImage: "paperclip").font(.caption) } } }
-            }
-            if let note = dictation.note { Text(note).font(.caption).foregroundStyle(.secondary) }
-            }
+            Group { rowsAboveField }
             // The rows above the field keep the 16 pt screen margin (applied to each; an empty
             // group adds no spacing); the field row is wider.
             .padding(.horizontal, Space.screen - Space.barEdge)
             // Telegram's bar: a plain plus circle, one quiet capsule (an agent badge when one is
             // chosen, the text, then the dictation glyph inside), and a round Send outside.
             HStack(alignment: .bottom, spacing: Space.gap) {
-                // Only for recipients that take attachments; otherwise the field starts at the edge.
-                if takesAttachments {
-                Menu {
-                    // Messages' order: Camera (on a device with one), Photo, File.
-                    if CameraPicker.isAvailable { Button { capturing = true } label: { Label("Camera", systemImage: "camera") } }
-                    PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }
-                    Button { importing = true } label: { Label("File", systemImage: "doc") }
-                } label: {
-                    Image(systemName: "plus").font(.system(size: Space.glyph + 2, weight: .regular))
-                        .foregroundStyle(Color(.label).opacity(0.7))
-                        .frame(width: Space.fieldHeight, height: Space.fieldHeight)
-                        .background(Circle().fill(Color(.secondarySystemBackground)))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add Photo or File")
-                .transition(.opacity)
-                }
-                HStack(alignment: .bottom, spacing: 0) {
-                    if choosesRecipients {
-                        // Who this goes to; tap to choose next to the keyboard.
-                        Button { withAnimation(.snappy) { recipientsOpen.toggle() } } label: {
-                            RecipientBadge(app: app, recipients: recipients)
-                                .frame(height: Space.fieldHeight)
-                                .padding(.leading, Space.fieldBadgeInset)
-                                // At least 44 pt to tap.
-                                .contentShape(Rectangle().inset(by: -Space.fieldBadgeInset))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Recipients, \(recipients.count == members.count ? "everyone" : recipients.map(presenter.shortName).formatted(.list(type: .and)))")
-                        .accessibilityHint(recipientsOpen ? "Hides the agents" : "Shows the agents to choose from")
-                    } else if !recipients.isEmpty {
-                        // Who this goes to: one agent, or a pair in New Conversation.
-                        RecipientBadge(app: app, recipients: recipients)
-                            .padding(.leading, Space.fieldBadgeInset)
-                            .padding(.bottom, (Space.fieldHeight - (recipients.count == 1 ? Space.badge : Space.avatarChip)) / 2)
-                            .accessibilityHidden(true)
-                    }
-                    MessageField(text: $text, placeholder: placeholder, focused: $fieldFocused,
-                                 leadingInset: choosesRecipients || !recipients.isEmpty ? Space.gap : Space.fieldTextInset)
-                    if !hasContent && showsDictation {
-                        DictationGlyph(listening: dictation.state == .listening) { dictation.toggle(base: text) { text = $0 } }
-                    }
-                    Color.clear.frame(width: Space.inset - Space.tight, height: 1)
-                }
-                .frame(minHeight: Space.fieldHeight)
-                .background(RoundedRectangle(cornerRadius: Space.fieldHeight / 2, style: .continuous).fill(Color(.secondarySystemBackground)))
-                .animation(.snappy(duration: 0.2), value: hasContent)
-                Button { send() } label: {
-                    Image(systemName: "arrow.up").font(.system(size: Space.glyph * 0.85, weight: .semibold))
-                        .foregroundStyle(canSend ? Color.white : Color.secondary)
-                        .frame(width: Space.fieldHeight, height: Space.fieldHeight)
-                        .background(Circle().fill(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.tertiarySystemFill))))
-                        .animation(.easeOut(duration: 0.15), value: canSend)
-                }
-                .buttonStyle(.plain)
-                // Looks exactly as enabled as it is: disabled while getting ready or sending.
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
+                attachMenu
+                fieldCapsule
+                sendButton
             }
         }
         .padding(.horizontal, Space.barEdge).padding(.vertical, Space.barV)
@@ -180,11 +102,7 @@ struct ComposeBar: View {
         .sensoryFeedback(.selection, trigger: selection?.wrappedValue)
         .onAppear {
             text = app.store.draft(draftKey); prepare()
-            #if DEBUG
-            // Design review: `MSGBLAST_FIXTURE_FOCUS` opens the keyboard, which simctl cannot tap.
-            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FOCUS"] != nil { fieldFocused = true }
-            if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_RECIPIENTS"] != nil { fieldFocused = true; recipientsOpen = true }
-            #endif
+            applyFixtureFocus()
         }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
@@ -206,6 +124,109 @@ struct ComposeBar: View {
             }
             .ignoresSafeArea()
         }
+    }
+
+    /// The quote bar, the status line, the recipient strip, attachments and the dictation note.
+    @ViewBuilder private var rowsAboveField: some View {
+        if let quoted = replyTo.wrappedValue, let agent = quoted.agentID {
+            // Messages-style quote bar while replying to one response.
+            HStack(spacing: Space.gap) {
+                AgentAvatar(app: app, agentID: agent, name: presenter.shortName(agent), size: Space.avatarChip)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Replying to \(presenter.shortName(agent))").font(.caption.weight(.semibold))
+                    Text(quoted.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Button { replyTo.wrappedValue = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain).accessibilityLabel("Cancel Reply")
+            }
+        }
+        if let status { statusLine(status) }
+        if recipientsOpen, let selection, choosesRecipients {
+            RecipientStrip(app: app, members: members, selection: selection)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+        if !attachments.isEmpty {
+            ScrollView(.horizontal) { HStack { ForEach(attachments, id: \.id) { Label($0.name, systemImage: "paperclip").font(.caption) } } }
+        }
+        if let note = dictation.note { Text(note).font(.caption).foregroundStyle(.secondary) }
+    }
+
+    /// Only for recipients that take attachments; otherwise the field starts at the edge.
+    @ViewBuilder private var attachMenu: some View {
+        if takesAttachments {
+            Menu {
+                // Messages' order: Camera (on a device with one), Photo, File.
+                if CameraPicker.isAvailable { Button { capturing = true } label: { Label("Camera", systemImage: "camera") } }
+                PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }
+                Button { importing = true } label: { Label("File", systemImage: "doc") }
+            } label: {
+                Image(systemName: "plus").font(.system(size: Space.glyph + 2, weight: .regular))
+                    .foregroundStyle(Color(.label).opacity(0.7))
+                    .frame(width: Space.fieldHeight, height: Space.fieldHeight)
+                    .background(Circle().fill(Color(.secondarySystemBackground)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add Photo or File")
+            .transition(.opacity)
+        }
+    }
+
+    /// The quiet capsule: the recipient badge, the text, then the dictation glyph.
+    private var fieldCapsule: some View {
+        HStack(alignment: .bottom, spacing: 0) {
+            if choosesRecipients {
+                // Who this goes to; tap to choose next to the keyboard.
+                Button { withAnimation(.snappy) { recipientsOpen.toggle() } } label: {
+                    RecipientBadge(app: app, recipients: recipients)
+                        .frame(height: Space.fieldHeight)
+                        .padding(.leading, Space.fieldBadgeInset)
+                        // At least 44 pt to tap.
+                        .contentShape(Rectangle().inset(by: -Space.fieldBadgeInset))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Recipients, \(recipients.count == members.count ? "everyone" : recipients.map(presenter.shortName).formatted(.list(type: .and)))")
+                .accessibilityHint(recipientsOpen ? "Hides the agents" : "Shows the agents to choose from")
+            } else if !recipients.isEmpty {
+                // Who this goes to: one agent, or a pair in New Conversation.
+                RecipientBadge(app: app, recipients: recipients)
+                    .padding(.leading, Space.fieldBadgeInset)
+                    .padding(.bottom, (Space.fieldHeight - (recipients.count == 1 ? Space.badge : Space.avatarChip)) / 2)
+                    .accessibilityHidden(true)
+            }
+            MessageField(text: $text, placeholder: placeholder, focused: $fieldFocused,
+                         leadingInset: choosesRecipients || !recipients.isEmpty ? Space.gap : Space.fieldTextInset)
+            if !hasContent && showsDictation {
+                DictationGlyph(listening: dictation.state == .listening) { dictation.toggle(base: text) { text = $0 } }
+            }
+            Color.clear.frame(width: Space.inset - Space.tight, height: 1)
+        }
+        .frame(minHeight: Space.fieldHeight)
+        .background(RoundedRectangle(cornerRadius: Space.fieldHeight / 2, style: .continuous).fill(Color(.secondarySystemBackground)))
+        .animation(.snappy(duration: 0.2), value: hasContent)
+    }
+
+    private var sendButton: some View {
+        Button { send() } label: {
+            Image(systemName: "arrow.up").font(.system(size: Space.glyph * 0.85, weight: .semibold))
+                .foregroundStyle(canSend ? Color.white : Color.secondary)
+                .frame(width: Space.fieldHeight, height: Space.fieldHeight)
+                .background(Circle().fill(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.tertiarySystemFill))))
+                .animation(.easeOut(duration: 0.15), value: canSend)
+        }
+        .buttonStyle(.plain)
+        // Looks exactly as enabled as it is: disabled while getting ready or sending.
+        .disabled(!canSend)
+        .accessibilityLabel("Send")
+    }
+
+    /// Design review only; does nothing in release builds.
+    private func applyFixtureFocus() {
+        #if DEBUG
+        // Design review: `MSGBLAST_FIXTURE_FOCUS` opens the keyboard, which simctl cannot tap.
+        if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FOCUS"] != nil { fieldFocused = true }
+        if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_RECIPIENTS"] != nil { fieldFocused = true; recipientsOpen = true }
+        #endif
     }
 
     private var hasContent: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty }

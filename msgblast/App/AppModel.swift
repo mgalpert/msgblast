@@ -840,22 +840,8 @@ final class AppModel: ObservableObject {
                 throw AppFailure.blocked("\(member.name) has joined a newer comparison. Genuine inline replies have not been validated on this Mac. Open the original prompt in Messages to reply; the shared follow-up was not sent.")
             }
             if attemptID == nil {
-                var attempt = FollowUp(text: text, memberIDs: targets.map(\.id))
-                if let newAttemptID { attempt.id = newAttemptID }
-                attempt.sharedWithAll = memberID == nil && comparison.webProviders == nil && Set(targets.map(\.id)) == Set(comparison.members.map(\.id))
-                for member in targets {
-                    attempt.states[member.id.uuidString] = .ready
-                    if !attachments.isEmpty {
-                        if attempt.payloads == nil { attempt.payloads = [:] }
-                        attempt.payloads?[member.id.uuidString] = OutgoingPayload(text: text, attachments: attachments)
-                    }
-                }
-                state.comparisons[i].followUps.append(attempt); k = state.comparisons[i].followUps.count - 1
-                if supplied == nil {
-                    if memberID == nil { state.comparisons[i].allDraft = "" } else { state.comparisons[i].privateDrafts[memberID!.uuidString] = "" }
-                    setAttachmentDraft([], comparisonID: id, memberID: memberID, saveNow: false)
-                }
-                try save()
+                k = try appendNewFollowUp(id, at: i, comparison: comparison, text: text, attachments: attachments, targets: targets,
+                                          memberID: memberID, newAttemptID: newAttemptID, clearDrafts: supplied == nil)
             }
             let previouslySubmitted = Set(state.comparisons[i].followUps[k].states.filter { $0.value == .submitted }.map(\.key))
             busy = true
@@ -899,6 +885,28 @@ final class AppModel: ObservableObject {
             }
         } catch { self.error = error.localizedDescription }
         busy = false; refresh()
+    }
+    /// Appends a new follow-up for `targets`, clears the Mac's drafts when they supplied the
+    /// text, saves, and returns the follow-up's index.
+    private func appendNewFollowUp(_ id: UUID, at i: Int, comparison: Comparison, text: String, attachments: [MessageAttachment], targets: [Member],
+                                   memberID: UUID?, newAttemptID: UUID?, clearDrafts: Bool) throws -> Int {
+        var attempt = FollowUp(text: text, memberIDs: targets.map(\.id))
+        if let newAttemptID { attempt.id = newAttemptID }
+        attempt.sharedWithAll = memberID == nil && comparison.webProviders == nil && Set(targets.map(\.id)) == Set(comparison.members.map(\.id))
+        for member in targets {
+            attempt.states[member.id.uuidString] = .ready
+            if !attachments.isEmpty {
+                if attempt.payloads == nil { attempt.payloads = [:] }
+                attempt.payloads?[member.id.uuidString] = OutgoingPayload(text: text, attachments: attachments)
+            }
+        }
+        state.comparisons[i].followUps.append(attempt); let k = state.comparisons[i].followUps.count - 1
+        if clearDrafts {
+            if memberID == nil { state.comparisons[i].allDraft = "" } else { state.comparisons[i].privateDrafts[memberID!.uuidString] = "" }
+            setAttachmentDraft([], comparisonID: id, memberID: memberID, saveNow: false)
+        }
+        try save()
+        return k
     }
     func appendDemo(_ text: String, chat: Chat, outgoing: Bool, replyTo: String? = nil, attachments: [MessageAttachment] = []) {
         demoRow += 1

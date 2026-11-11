@@ -294,39 +294,50 @@ public final class RemoteListener: ObservableObject {
         var opened: [NWListener] = []
         func fail() -> [any RemoteBoundListener]? { opened.forEach { $0.cancel() }; return nil }
         for address in addresses {
-            let tls = NWProtocolTLS.Options()
-            sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv13)
-            sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv13)
-            sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
-            let parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
-            parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(address.address), port: nwPort)
-            parameters.allowLocalEndpointReuse = true
-            parameters.includePeerToPeer = false
-            if let interface = interfaces.first(where: { $0.name == address.interface }) { parameters.requiredInterface = interface }
-            guard let listener = try? NWListener(using: parameters) else { return fail() }
-            if address.kind == .lan { listener.service = NWListener.Service(name: serviceName, type: RemoteProtocol.bonjourServiceType) }
-            listener.newConnectionHandler = { [weak self] connection in
-                MainActor.assumeIsolated { self?.onConnection(NetworkRemoteConnection(connection)) }
-            }
-            let ready = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                var resumed = false
-                listener.stateUpdateHandler = { [weak self] state in
-                    MainActor.assumeIsolated {
-                        switch state {
-                        case .ready: if !resumed { resumed = true; continuation.resume(returning: true) }
-                        case .failed(let failure):
-                            if !resumed { resumed = true; continuation.resume(returning: false) }
-                            else { self?.error = "Remote control stopped listening: \(failure.localizedDescription)" }
-                        case .cancelled: if !resumed { resumed = true; continuation.resume(returning: false) }
-                        default: break
-                        }
-                    }
-                }
-                listener.start(queue: .main)
-            }
+            guard let listener = makeListener(for: address, port: nwPort, identity: secIdentity) else { return fail() }
+            let ready = await waitUntilReady(listener)
             opened.append(listener)
             guard ready else { return fail() }
         }
         return opened
+    }
+
+    /// A TLS 1.3 listener for one address, with Bonjour on LAN addresses. Not started.
+    private func makeListener(for address: RemoteInterfaceAddress, port nwPort: NWEndpoint.Port, identity secIdentity: sec_identity_t) -> NWListener? {
+        let tls = NWProtocolTLS.Options()
+        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv13)
+        sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv13)
+        sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
+        let parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(address.address), port: nwPort)
+        parameters.allowLocalEndpointReuse = true
+        parameters.includePeerToPeer = false
+        if let interface = interfaces.first(where: { $0.name == address.interface }) { parameters.requiredInterface = interface }
+        guard let listener = try? NWListener(using: parameters) else { return nil }
+        if address.kind == .lan { listener.service = NWListener.Service(name: serviceName, type: RemoteProtocol.bonjourServiceType) }
+        listener.newConnectionHandler = { [weak self] connection in
+            MainActor.assumeIsolated { self?.onConnection(NetworkRemoteConnection(connection)) }
+        }
+        return listener
+    }
+
+    /// Starts the listener and waits for it to become ready (true) or fail (false).
+    private func waitUntilReady(_ listener: NWListener) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            var resumed = false
+            listener.stateUpdateHandler = { [weak self] state in
+                MainActor.assumeIsolated {
+                    switch state {
+                    case .ready: if !resumed { resumed = true; continuation.resume(returning: true) }
+                    case .failed(let failure):
+                        if !resumed { resumed = true; continuation.resume(returning: false) }
+                        else { self?.error = "Remote control stopped listening: \(failure.localizedDescription)" }
+                    case .cancelled: if !resumed { resumed = true; continuation.resume(returning: false) }
+                    default: break
+                    }
+                }
+            }
+            listener.start(queue: .main)
+        }
     }
 }

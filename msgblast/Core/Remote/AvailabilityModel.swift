@@ -118,6 +118,22 @@ public struct AgentSessionSignals: Sendable, Equatable {
     }
 }
 
+/// The readiness, source and reasons collected while mapping one agent's signals.
+private struct AvailabilityDraft {
+    let name: String
+    var reasons: [AvailabilityReason] = []
+    var readiness: AgentReadiness = .ready
+    var source: AvailabilitySource = .live
+
+    init(name: String) { self.name = name }
+
+    mutating func add(_ code: AvailabilityReasonCode, _ text: String, _ fix: FixLocation, permission: MacPermission? = nil, attempt: String? = nil, detail: String? = nil) {
+        // One short line for the phone; the Mac's full reason stays as the detail.
+        let line = RemotePhoneText.split(text, agentName: name)
+        reasons.append(AvailabilityReason(code: code, userText: line.text, fixOn: fix, permission: permission, attemptID: attempt, detail: detail ?? line.detail))
+    }
+}
+
 /// Pure mapping from existing signals to `AgentAvailability` (architecture §2.7).
 public enum AvailabilityCalculator {
     public static func product(_ provider: WebProvider) -> AgentProduct {
@@ -125,12 +141,10 @@ public enum AvailabilityCalculator {
         case .muse, .museApp: .muse
         case .chatgpt, .chatgptApp, .codexCLI: .chatgpt
         case .claude, .claudeApp, .claudeCode: .claude
-        case .grok: .grok
         case .grokbot, .grokBotApp: .grokBot
         case .dots, .dotsApp: .dots
-        case .os3: .os3
-        case .hark: .hark
-        case .wabi: .wabi
+        // These providers share their product's raw value: .grok, .os3, .hark and .wabi.
+        case .grok, .os3, .hark, .wabi: AgentProduct(rawValue: provider.rawValue)
         case .geminiApp: .gemini
         }
     }
@@ -143,111 +157,19 @@ public enum AvailabilityCalculator {
 
     public static func availability(_ s: AgentSessionSignals, inputs m: MacAvailabilityInputs, otherDesktopSending: Bool, now: Date) -> AgentAvailability {
         let provider = s.provider, form = form(provider)
-        var reasons: [AvailabilityReason] = []
-        var readiness: AgentReadiness = .ready
-        var source: AvailabilitySource = .live
-        func add(_ code: AvailabilityReasonCode, _ text: String, _ fix: FixLocation, permission: MacPermission? = nil, attempt: String? = nil, detail: String? = nil) {
-            // One short line for the phone; the Mac's full reason stays as the detail.
-            let line = RemotePhoneText.split(text, agentName: s.name)
-            reasons.append(AvailabilityReason(code: code, userText: line.text, fixOn: fix, permission: permission, attemptID: attempt, detail: detail ?? line.detail))
-        }
+        var d = AvailabilityDraft(name: s.name)
         if !provider.isAvailableInBuild {
-            readiness = .unavailable; add(.notOfferedInBuild, "\(s.name) isn't in this version", .none, detail: "\(s.name) is not offered in this version of msgblast.")
+            d.readiness = .unavailable; d.add(.notOfferedInBuild, "\(s.name) isn't in this version", .none, detail: "\(s.name) is not offered in this version of msgblast.")
         } else if !s.isEnabled {
-            readiness = .unavailable; add(.disabled, "Turn on \(s.name) on your Mac", .mac)
+            d.readiness = .unavailable; d.add(.disabled, "Turn on \(s.name) on your Mac", .mac)
         } else if !s.isStorageAvailable {
-            readiness = .unavailable; add(.storageFailed, "Repair \(s.name) on your Mac", .mac, detail: "\(s.name)'s saved state could not be read on your Mac. Nothing will be sent until it is repaired.")
+            d.readiness = .unavailable; d.add(.storageFailed, "Repair \(s.name) on your Mac", .mac, detail: "\(s.name)'s saved state could not be read on your Mac. Nothing will be sent until it is repaired.")
         } else {
             switch form {
-            case .website:
-                source = s.connected ? .live : .lastKnown
-                if !provider.supportsSharedSubmissions {
-                    readiness = .unavailable; add(.noSharedSends, "Use \(s.name) on your Mac", .mac, detail: "msgblast does not send to \(s.name) yet.")
-                } else if s.isSending {
-                    readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "Sending to \(s.name)…", .none)
-                } else if s.signedIn == false || s.signedOut == true {
-                    readiness = .blocked; add(.signedOut, "Sign in to \(s.name) on your Mac", .mac)
-                } else if s.connected && s.snapshotReason.hasPrefix("Finish the open dialog") {
-                    readiness = .blocked; add(.dialogOpen, s.snapshotReason, .mac)
-                } else if s.connected && s.snapshotReason.hasPrefix("Wait for") && s.snapshotReason.hasSuffix("current reply.") {
-                    readiness = .busy(detail: RemotePhoneText.split(s.snapshotReason, agentName: s.name).text); add(.sendInFlight, s.snapshotReason, .none)
-                } else if s.signedIn == nil {
-                    add(.signInUnknown, "Sign-in is checked when you send", .none)
-                }
-            case .macApp:
-                source = .lastKnown
-                if !s.desktopInstalled {
-                    readiness = .unavailable; source = .live; add(.notInstalled, "Install \(s.name) on your Mac", .mac)
-                    break
-                }
-                if m.driverInstalled == false { readiness = .blocked; add(.driverUnavailable, "Reinstall msgblast on your Mac", .mac, detail: "App control is missing from this copy of msgblast. Update or reinstall it on your Mac.") }
-                if m.accessibility == .denied { readiness = .blocked; add(.permissionMissing, "Allow Accessibility on your Mac", .mac, permission: .accessibility, detail: "Allow Accessibility for msgblast in System Settings on your Mac.") }
-                if m.screenRecording == .denied { readiness = .blocked; add(.permissionMissing, "Allow Screen Recording on your Mac", .mac, permission: .screenRecording, detail: "Allow Screen & System Audio Recording for msgblast in System Settings on your Mac.") }
-                for id in s.unresolvedAttemptIDs {
-                    readiness = .blocked
-                    add(.incompleteRequestBlocking, "Finish the \(s.name) request first", .phone, attempt: id,
-                        detail: "An earlier request to \(s.name) did not complete. Review it before sending again; usage may have been consumed.")
-                }
-                guard readiness == .ready else { break }
-                if let other = s.sameAppBusyWith {
-                    readiness = .busy(detail: "\(other) is using this app")
-                    add(.sendInFlight, "\(other) is using this app", .none, detail: "\(other) is using the same app on your Mac. \(s.name) is busy until it finishes.")
-                    break
-                }
-                if s.isSending || !s.replyingAttemptIDs.isEmpty { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
-                else if s.loading { readiness = .busy(detail: "Checking \(s.name)…"); add(.sendInFlight, "Checking \(s.name) on your Mac", .none) }
-                else if !s.desktopReady && s.canSubmitNativePrompt {
-                    // As on the Mac, the first explicit prompt prepares the app; a failure is
-                    // recorded as not sent and never blocks the other recipients.
-                    readiness = s.desktopRunning ? .ready : .readyWillLaunch; source = .live
-                    if let error = s.desktopError, !error.isEmpty {
-                        add(.preparesOnSend, "Connects \(s.name) on your Mac first", .none, detail: error)
-                    } else if !s.hasDesktopBinding {
-                        add(.preparesOnSend, "Connects \(s.name) on your Mac first", .none)
-                    } else if !s.desktopRunning {
-                        add(.appNotRunning, "Opens \(s.name) on your Mac", .none)
-                    }
-                }
-                else if !s.hasDesktopBinding && !s.desktopReady { readiness = .blocked; add(.notConnected, "Connect \(s.name) on your Mac first", .mac) }
-                else if let error = s.desktopError, !error.isEmpty {
-                    // The Mac composer would not try this app either; its pane shows Reconnect.
-                    readiness = .blocked
-                    switch desktopCode(error) {
-                    case .controlsUpdating:
-                        add(.controlsUpdating, "\(s.name) is still loading", .mac, detail: "\(RemotePhoneText.phrase(error)) If this stays, reconnect \(s.name) on your Mac.")
-                    case .reconnectNeeded:
-                        add(.reconnectNeeded, "Reconnect \(s.name) on your Mac", .mac, detail: error)
-                    case let code:
-                        add(code, error, .mac)
-                    }
-                } else if !s.desktopRunning {
-                    readiness = .readyWillLaunch; source = .live
-                    add(.appNotRunning, "Opens \(s.name) on your Mac", .none)
-                }
-                if readiness.acceptsSend && otherDesktopSending {
-                    add(.queuedBehindDesktopSend, "Waits for the current Mac app request", .none, detail: "Mac app requests run one at a time. This one will wait for the current one.")
-                }
-            case .cli:
-                source = s.connected ? .live : .lastKnown
-                if s.isSending || !s.replyingAttemptIDs.isEmpty { readiness = .busy(detail: "\(s.name) is working…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
-                else if s.snapshotReady { }
-                else if s.accountStatus == .signedOut { readiness = .blocked; add(.cliSignedOut, "Sign in to \(s.name) on your Mac", .mac) }
-                else if s.snapshotReason.hasPrefix("Install ") { readiness = .unavailable; add(.notInstalled, "Install \(s.name) on your Mac", .mac, detail: RemotePhoneText.phrase(s.snapshotReason, agentName: s.name)) }
-                else { add(.signInUnknown, "Account is checked when you send", .none) }
-                for id in s.unresolvedAttemptIDs {
-                    add(.incompleteRequestBlocking, "Finish the \(s.name) request first", .phone, attempt: id,
-                        detail: "An earlier request to \(s.name) did not complete in one conversation. Review it there before sending again.")
-                }
-            case .webhookBot:
-                if !s.grokBotConfigured { readiness = .blocked; add(.webhookNotConfigured, "Set up \(s.name)'s webhook on your Mac", .mac) }
-                // While the key is read or the reply tunnel starts, the bot is blocked; it becomes ready by itself.
-                else if let activity = s.grokBotActivity { readiness = .blocked; add(.tunnelStarting, activity, .none) }
-                else if s.isSending || !s.replyingAttemptIDs.isEmpty { readiness = .busy(detail: "Sending to \(s.name)…"); add(.sendInFlight, "\(s.name) is handling a request", .none) }
-                else if !s.snapshotReady && s.unresolvedAttemptIDs.isEmpty { add(.tunnelStarting, "Replies need your Mac awake", .none, detail: "The reply connection starts on your Mac with your first send. Keep it awake for replies.") }
-                for id in s.unresolvedAttemptIDs {
-                    add(.incompleteRequestBlocking, "Finish the \(s.name) request first", .phone, attempt: id,
-                        detail: "\(s.name) has not replied to an earlier request in one conversation. Stop waiting there before sending again.")
-                }
+            case .website: websiteAvailability(s, into: &d)
+            case .macApp: macAppAvailability(s, inputs: m, otherDesktopSending: otherDesktopSending, into: &d)
+            case .cli: cliAvailability(s, into: &d)
+            case .webhookBot: webhookBotAvailability(s, into: &d)
             case .messages:
                 break
             }
@@ -257,7 +179,117 @@ public enum AvailabilityCalculator {
             visibleInGrid: m.visibleGridIDs.contains(s.gridID), selectedForSharedSend: s.isEnabled && s.selected && shared,
             capabilities: AgentCapabilities(sharedSend: shared, privateSend: shared, attachments: false, namedCopies: provider.supportsCopies,
                                             endConversation: true, sharesOneConversation: provider.sharesOneConversation),
-            readiness: readiness, reasons: reasons, observedAt: now, source: source)
+            readiness: d.readiness, reasons: d.reasons, observedAt: now, source: d.source)
+    }
+
+    private static func websiteAvailability(_ s: AgentSessionSignals, into d: inout AvailabilityDraft) {
+        d.source = s.connected ? .live : .lastKnown
+        if !s.provider.supportsSharedSubmissions {
+            d.readiness = .unavailable; d.add(.noSharedSends, "Use \(s.name) on your Mac", .mac, detail: "msgblast does not send to \(s.name) yet.")
+        } else if s.isSending {
+            d.readiness = .busy(detail: "Sending to \(s.name)…"); d.add(.sendInFlight, "Sending to \(s.name)…", .none)
+        } else if s.signedIn == false || s.signedOut == true {
+            d.readiness = .blocked; d.add(.signedOut, "Sign in to \(s.name) on your Mac", .mac)
+        } else if s.connected && s.snapshotReason.hasPrefix("Finish the open dialog") {
+            d.readiness = .blocked; d.add(.dialogOpen, s.snapshotReason, .mac)
+        } else if s.connected && s.snapshotReason.hasPrefix("Wait for") && s.snapshotReason.hasSuffix("current reply.") {
+            d.readiness = .busy(detail: RemotePhoneText.split(s.snapshotReason, agentName: s.name).text); d.add(.sendInFlight, s.snapshotReason, .none)
+        } else if s.signedIn == nil {
+            d.add(.signInUnknown, "Sign-in is checked when you send", .none)
+        }
+    }
+
+    private static func macAppAvailability(_ s: AgentSessionSignals, inputs m: MacAvailabilityInputs, otherDesktopSending: Bool, into d: inout AvailabilityDraft) {
+        d.source = .lastKnown
+        if !s.desktopInstalled {
+            d.readiness = .unavailable; d.source = .live; d.add(.notInstalled, "Install \(s.name) on your Mac", .mac)
+            return
+        }
+        addMacAppBlockers(s, inputs: m, into: &d)
+        guard d.readiness == .ready else { return }
+        if let other = s.sameAppBusyWith {
+            d.readiness = .busy(detail: "\(other) is using this app")
+            d.add(.sendInFlight, "\(other) is using this app", .none, detail: "\(other) is using the same app on your Mac. \(s.name) is busy until it finishes.")
+            return
+        }
+        addMacAppState(s, into: &d)
+        if d.readiness.acceptsSend && otherDesktopSending {
+            d.add(.queuedBehindDesktopSend, "Waits for the current Mac app request", .none, detail: "Mac app requests run one at a time. This one will wait for the current one.")
+        }
+    }
+
+    private static func addMacAppBlockers(_ s: AgentSessionSignals, inputs m: MacAvailabilityInputs, into d: inout AvailabilityDraft) {
+        if m.driverInstalled == false { d.readiness = .blocked; d.add(.driverUnavailable, "Reinstall msgblast on your Mac", .mac, detail: "App control is missing from this copy of msgblast. Update or reinstall it on your Mac.") }
+        if m.accessibility == .denied { d.readiness = .blocked; d.add(.permissionMissing, "Allow Accessibility on your Mac", .mac, permission: .accessibility, detail: "Allow Accessibility for msgblast in System Settings on your Mac.") }
+        if m.screenRecording == .denied { d.readiness = .blocked; d.add(.permissionMissing, "Allow Screen Recording on your Mac", .mac, permission: .screenRecording, detail: "Allow Screen & System Audio Recording for msgblast in System Settings on your Mac.") }
+        for id in s.unresolvedAttemptIDs {
+            d.readiness = .blocked
+            d.add(.incompleteRequestBlocking, "Finish the \(s.name) request first", .phone, attempt: id,
+                  detail: "An earlier request to \(s.name) did not complete. Review it before sending again; usage may have been consumed.")
+        }
+    }
+
+    private static func addMacAppState(_ s: AgentSessionSignals, into d: inout AvailabilityDraft) {
+        if s.isSending || !s.replyingAttemptIDs.isEmpty { d.readiness = .busy(detail: "Sending to \(s.name)…"); d.add(.sendInFlight, "\(s.name) is handling a request", .none) }
+        else if s.loading { d.readiness = .busy(detail: "Checking \(s.name)…"); d.add(.sendInFlight, "Checking \(s.name) on your Mac", .none) }
+        else if !s.desktopReady && s.canSubmitNativePrompt { addMacAppPreparesOnSend(s, into: &d) }
+        else if !s.hasDesktopBinding && !s.desktopReady { d.readiness = .blocked; d.add(.notConnected, "Connect \(s.name) on your Mac first", .mac) }
+        else if let error = s.desktopError, !error.isEmpty { addMacAppDesktopError(error, s, into: &d) }
+        else if !s.desktopRunning {
+            d.readiness = .readyWillLaunch; d.source = .live
+            d.add(.appNotRunning, "Opens \(s.name) on your Mac", .none)
+        }
+    }
+
+    private static func addMacAppPreparesOnSend(_ s: AgentSessionSignals, into d: inout AvailabilityDraft) {
+        // As on the Mac, the first explicit prompt prepares the app; a failure is
+        // recorded as not sent and never blocks the other recipients.
+        d.readiness = s.desktopRunning ? .ready : .readyWillLaunch; d.source = .live
+        if let error = s.desktopError, !error.isEmpty {
+            d.add(.preparesOnSend, "Connects \(s.name) on your Mac first", .none, detail: error)
+        } else if !s.hasDesktopBinding {
+            d.add(.preparesOnSend, "Connects \(s.name) on your Mac first", .none)
+        } else if !s.desktopRunning {
+            d.add(.appNotRunning, "Opens \(s.name) on your Mac", .none)
+        }
+    }
+
+    private static func addMacAppDesktopError(_ error: String, _ s: AgentSessionSignals, into d: inout AvailabilityDraft) {
+        // The Mac composer would not try this app either; its pane shows Reconnect.
+        d.readiness = .blocked
+        switch desktopCode(error) {
+        case .controlsUpdating:
+            d.add(.controlsUpdating, "\(s.name) is still loading", .mac, detail: "\(RemotePhoneText.phrase(error)) If this stays, reconnect \(s.name) on your Mac.")
+        case .reconnectNeeded:
+            d.add(.reconnectNeeded, "Reconnect \(s.name) on your Mac", .mac, detail: error)
+        case let code:
+            d.add(code, error, .mac)
+        }
+    }
+
+    private static func cliAvailability(_ s: AgentSessionSignals, into d: inout AvailabilityDraft) {
+        d.source = s.connected ? .live : .lastKnown
+        if s.isSending || !s.replyingAttemptIDs.isEmpty { d.readiness = .busy(detail: "\(s.name) is working…"); d.add(.sendInFlight, "\(s.name) is handling a request", .none) }
+        else if s.snapshotReady { }
+        else if s.accountStatus == .signedOut { d.readiness = .blocked; d.add(.cliSignedOut, "Sign in to \(s.name) on your Mac", .mac) }
+        else if s.snapshotReason.hasPrefix("Install ") { d.readiness = .unavailable; d.add(.notInstalled, "Install \(s.name) on your Mac", .mac, detail: RemotePhoneText.phrase(s.snapshotReason, agentName: s.name)) }
+        else { d.add(.signInUnknown, "Account is checked when you send", .none) }
+        for id in s.unresolvedAttemptIDs {
+            d.add(.incompleteRequestBlocking, "Finish the \(s.name) request first", .phone, attempt: id,
+                  detail: "An earlier request to \(s.name) did not complete in one conversation. Review it there before sending again.")
+        }
+    }
+
+    private static func webhookBotAvailability(_ s: AgentSessionSignals, into d: inout AvailabilityDraft) {
+        if !s.grokBotConfigured { d.readiness = .blocked; d.add(.webhookNotConfigured, "Set up \(s.name)'s webhook on your Mac", .mac) }
+        // While the key is read or the reply tunnel starts, the bot is blocked; it becomes ready by itself.
+        else if let activity = s.grokBotActivity { d.readiness = .blocked; d.add(.tunnelStarting, activity, .none) }
+        else if s.isSending || !s.replyingAttemptIDs.isEmpty { d.readiness = .busy(detail: "Sending to \(s.name)…"); d.add(.sendInFlight, "\(s.name) is handling a request", .none) }
+        else if !s.snapshotReady && s.unresolvedAttemptIDs.isEmpty { d.add(.tunnelStarting, "Replies need your Mac awake", .none, detail: "The reply connection starts on your Mac with your first send. Keep it awake for replies.") }
+        for id in s.unresolvedAttemptIDs {
+            d.add(.incompleteRequestBlocking, "Finish the \(s.name) request first", .phone, attempt: id,
+                  detail: "\(s.name) has not replied to an earlier request in one conversation. Stop waiting there before sending again.")
+        }
     }
 
     static func desktopCode(_ message: String) -> AvailabilityReasonCode {

@@ -257,18 +257,33 @@ public final class RemoteCommandExecutor {
         guard !host.isLocked else { return reject(command, .macLocked, "Your Mac is locked") }
         guard let plan = plan(command) else { return reject(command, .invalidCommand, "Not a send.") }
         if atHead && host.isBusy { return reject(command, .macBusy, "Your Mac is busy. Try again soon") }
+        if let rejection = checkPlanShape(command, plan) { return rejection }
+        var members: [String]?
+        if let rejection = resolveMembers(command, plan.conversationID, host: host, into: &members) { return rejection }
+        return checkTargets(command, plan, members: members, host: host)
+    }
+
+    /// A send needs text or files, at least one agent for a new conversation, and no repeats.
+    private func checkPlanShape(_ command: RemoteCommand, _ plan: RemoteSendPlan) -> RemoteCommandResult? {
         let text = plan.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !plan.attachmentIDs.isEmpty else { return reject(command, .invalidCommand, "Write a message first") }
         guard plan.kind != .newConversation || !plan.agentIDs.isEmpty else { return reject(command, .invalidCommand, "Choose at least one agent") }
         guard Set(plan.agentIDs).count == plan.agentIDs.count else { return reject(command, .invalidCommand, "An agent is listed twice") }
-        var members: [String]?
-        if let id = plan.conversationID {
-            switch host.conversation(id) {
-            case nil: return reject(command, .unknownConversation, "This conversation is gone from your Mac")
-            case .ended?: return reject(command, .conversationEnded, "This conversation has ended")
-            case .active(let list)?: members = list
-            }
+        return nil
+    }
+
+    /// Reads an existing conversation's members into `members`, or rejects one that is gone or ended.
+    private func resolveMembers(_ command: RemoteCommand, _ id: UUID?, host: any RemoteCommandHost, into members: inout [String]?) -> RemoteCommandResult? {
+        guard let id else { return nil }
+        switch host.conversation(id) {
+        case nil: return reject(command, .unknownConversation, "This conversation is gone from your Mac")
+        case .ended?: return reject(command, .conversationEnded, "This conversation has ended")
+        case .active(let list)?: members = list
         }
+        return nil
+    }
+
+    private func checkTargets(_ command: RemoteCommand, _ plan: RemoteSendPlan, members: [String]?, host: any RemoteCommandHost) -> RemoteCommandResult? {
         if plan.kind == .sharedFollowUp, let members, let outsider = plan.agentIDs.first(where: { !members.contains($0) }) {
             return reject(command, .invalidCommand, "\(outsider) isn't in this conversation")
         }
@@ -277,21 +292,28 @@ public final class RemoteCommandExecutor {
         var messagesTargets = 0
         for agentID in targets {
             guard let availability = host.availability(for: agentID) else { return reject(command, .unknownAgent, "An agent is gone from your Mac") }
-            if availability.form == .messages {
-                messagesTargets += 1
-                guard host.messagesSendsAllowed else {
-                    return reject(command, .messagesSendsOff, "Turn on iMessage sends on your Mac")
-                }
-            }
-            if plan.kind == .privateMessage, !availability.capabilities.privateSend { return reject(command, .agentUnavailable, "\(availability.displayName) can't take private messages") }
-            if plan.kind != .privateMessage, !availability.capabilities.sharedSend { return reject(command, .agentUnavailable, "\(availability.displayName) can't take shared messages") }
-            guard availability.readiness.acceptsSend else {
-                let why = availability.reasons.map(\.userText).first ?? "\(availability.displayName) isn't ready"
-                return reject(command, .agentUnavailable, why)
-            }
+            if availability.form == .messages { messagesTargets += 1 }
+            if let rejection = checkTarget(command, plan, availability, host: host) { return rejection }
         }
+        return checkAttachments(command, plan, allMessages: messagesTargets == targets.count, host: host)
+    }
+
+    private func checkTarget(_ command: RemoteCommand, _ plan: RemoteSendPlan, _ availability: AgentAvailability, host: any RemoteCommandHost) -> RemoteCommandResult? {
+        if availability.form == .messages && !host.messagesSendsAllowed {
+            return reject(command, .messagesSendsOff, "Turn on iMessage sends on your Mac")
+        }
+        if plan.kind == .privateMessage, !availability.capabilities.privateSend { return reject(command, .agentUnavailable, "\(availability.displayName) can't take private messages") }
+        if plan.kind != .privateMessage, !availability.capabilities.sharedSend { return reject(command, .agentUnavailable, "\(availability.displayName) can't take shared messages") }
+        guard availability.readiness.acceptsSend else {
+            let why = availability.reasons.map(\.userText).first ?? "\(availability.displayName) isn't ready"
+            return reject(command, .agentUnavailable, why)
+        }
+        return nil
+    }
+
+    private func checkAttachments(_ command: RemoteCommand, _ plan: RemoteSendPlan, allMessages: Bool, host: any RemoteCommandHost) -> RemoteCommandResult? {
         if !plan.attachmentIDs.isEmpty {
-            guard messagesTargets == targets.count else { return reject(command, .attachmentRejected, "Files go only to Messages agents") }
+            guard allMessages else { return reject(command, .attachmentRejected, "Files go only to Messages agents") }
             guard plan.attachmentIDs.allSatisfy(host.hasStagedAttachment) else { return reject(command, .attachmentRejected, "Attachment expired. Add it again") }
         }
         return nil
@@ -329,13 +351,8 @@ public final class RemoteCommandExecutor {
         guard !host.isLocked else { return reject(command, .macLocked, "Your Mac is locked") }
         guard case .prepareConversation(let id, let agents) = command.action else { return reject(command, .invalidCommand, "Not a preparation.") }
         if atHead && host.isBusy { return reject(command, .macBusy, "Your Mac is busy. Try again soon") }
-        if let id {
-            switch host.conversation(id) {
-            case nil: return reject(command, .unknownConversation, "This conversation is gone from your Mac")
-            case .ended?: return reject(command, .conversationEnded, "This conversation has ended")
-            case .active?: break
-            }
-        }
+        var members: [String]?
+        if let rejection = resolveMembers(command, id, host: host, into: &members) { return rejection }
         guard agents.allSatisfy({ host.availability(for: $0) != nil }) else { return reject(command, .unknownAgent, "An agent is gone from your Mac") }
         return nil
     }
@@ -368,24 +385,55 @@ public final class RemoteCommandExecutor {
         if case .setKeepAwake(let enabled) = command.action { return outcome(command, host.setKeepAwake(enabled)) }
         guard !host.isLocked else { return reject(command, .macLocked, "Your Mac is locked") }
         switch command.action {
-        case .endConversation(let id):
-            switch host.conversation(id) {
-            case nil: return reject(command, .unknownConversation, "This conversation is gone from your Mac")
-            case .ended?: return outcome(command, .applied(conversationID: id, message: "Already ended"))
-            case .active?: return outcome(command, host.endConversation(id))
-            }
-        case .acknowledgeIncomplete(let agent, let attempt): return outcome(command, host.acknowledgeIncomplete(agentID: agent, attemptID: attempt))
-        case .cancelNative(let agent): return outcome(command, host.cancelNative(agentID: agent))
-        case .setKeepAwake(let enabled): return outcome(command, host.setKeepAwake(enabled))
-        case .renameConversation(let id, let title):
-            let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return reject(command, .invalidCommand, "Enter a name") }
-            guard name.count <= Comparison.maximumTitleLength else { return reject(command, .invalidCommand, "Names are limited to \(Comparison.maximumTitleLength) characters") }
-            guard host.conversation(id) != nil else { return reject(command, .unknownConversation, "This conversation is gone from your Mac") }
-            return outcome(command, host.renameConversation(id, title: name))
+        case .endConversation, .renameConversation, .requestReport: return await applyConversationCommand(command, host: host)
+        case .acknowledgeIncomplete, .cancelNative, .setKeepAwake: return applyAgentCommand(command, host: host)
+        case .uploadAttachmentChunk, .attachStaged: return applyAttachmentCommand(command, host: host)
+        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
+        case .unknown(let kind): return reject(command, .unsupported, "Update msgblast on your Mac")
+        }
+    }
+
+    /// `apply` for ending, renaming, and reporting on a conversation.
+    private func applyConversationCommand(_ command: RemoteCommand, host: any RemoteCommandHost) async -> RemoteCommandResult {
+        switch command.action {
+        case .endConversation(let id): return endConversation(command, id, host: host)
+        case .renameConversation(let id, let title): return renameConversation(command, id, title: title, host: host)
         case .requestReport(let id):
             guard case .active? = host.conversation(id) else { return reject(command, .unknownConversation, "Reports need an active conversation") }
             return outcome(command, await host.requestReport(id))
+        default: return reject(command, .invalidCommand, "Handled separately.")
+        }
+    }
+
+    private func endConversation(_ command: RemoteCommand, _ id: UUID, host: any RemoteCommandHost) -> RemoteCommandResult {
+        switch host.conversation(id) {
+        case nil: return reject(command, .unknownConversation, "This conversation is gone from your Mac")
+        case .ended?: return outcome(command, .applied(conversationID: id, message: "Already ended"))
+        case .active?: return outcome(command, host.endConversation(id))
+        }
+    }
+
+    private func renameConversation(_ command: RemoteCommand, _ id: UUID, title: String, host: any RemoteCommandHost) -> RemoteCommandResult {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return reject(command, .invalidCommand, "Enter a name") }
+        guard name.count <= Comparison.maximumTitleLength else { return reject(command, .invalidCommand, "Names are limited to \(Comparison.maximumTitleLength) characters") }
+        guard host.conversation(id) != nil else { return reject(command, .unknownConversation, "This conversation is gone from your Mac") }
+        return outcome(command, host.renameConversation(id, title: name))
+    }
+
+    /// `apply` for acknowledging, cancelling, and keep-awake.
+    private func applyAgentCommand(_ command: RemoteCommand, host: any RemoteCommandHost) -> RemoteCommandResult {
+        switch command.action {
+        case .acknowledgeIncomplete(let agent, let attempt): return outcome(command, host.acknowledgeIncomplete(agentID: agent, attemptID: attempt))
+        case .cancelNative(let agent): return outcome(command, host.cancelNative(agentID: agent))
+        case .setKeepAwake(let enabled): return outcome(command, host.setKeepAwake(enabled))
+        default: return reject(command, .invalidCommand, "Handled separately.")
+        }
+    }
+
+    /// `apply` for receiving upload chunks and staging the finished file.
+    private func applyAttachmentCommand(_ command: RemoteCommand, host: any RemoteCommandHost) -> RemoteCommandResult {
+        switch command.action {
         case .uploadAttachmentChunk(let uploadID, let filename, let index, let count, let data):
             return receive(command, uploadID: uploadID, filename: filename, index: index, count: count, data: data)
         case .attachStaged(let uploadID, let digest):
@@ -395,8 +443,7 @@ public final class RemoteCommandExecutor {
             guard Data(SHA256.hash(data: data)) == digest else { return reject(command, .attachmentRejected, "Upload failed. Add it again") }
             do { return outcome(command, .applied(), attachmentID: try host.stageAttachment(data, filename: upload.filename)) }
             catch { return reject(command, .attachmentRejected, error.localizedDescription) }
-        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
-        case .unknown(let kind): return reject(command, .unsupported, "Update msgblast on your Mac")
+        default: return reject(command, .invalidCommand, "Handled separately.")
         }
     }
 

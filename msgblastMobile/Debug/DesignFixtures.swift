@@ -29,58 +29,78 @@ enum DesignFixtures {
     /// The screen the fixture opens on.
     static func screen(_ name: Name) -> LaunchScreen {
         let requested = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_CONVERSATION"].flatMap(UUID.init(uuidString:))
+        if let fixture = fixtureConversation(name) { return .conversation(requested ?? fixture) }
         switch name {
-        case .conversation, .typing: return .conversation(requested ?? group)
-        case .conversationShort: return .conversation(requested ?? shortConversation)
-        case .conversationPinned: return .conversation(requested ?? group)
-        case .conversationMany: return .conversation(requested ?? manyConversation)
-        case .incomplete: return .conversation(requested ?? unfinished)
-        case .blocked: return .conversation(requested ?? blockedConversation)
         case .new: return .newConversation
         case .settings: return .settings
         case .pairingPaste: return .pastePairingLink
-        case .inbox, .reconnecting, .locked, .pairing: return requested.map(LaunchScreen.conversation) ?? .inbox
+        default: return requested.map(LaunchScreen.conversation) ?? .inbox
+        }
+    }
+
+    /// The conversation a thread fixture opens, or nil for the other screens.
+    private static func fixtureConversation(_ name: Name) -> UUID? {
+        switch name {
+        case .conversation, .typing, .conversationPinned: return group
+        case .conversationShort: return shortConversation
+        case .conversationMany: return manyConversation
+        case .incomplete: return unfinished
+        case .blocked: return blockedConversation
+        default: return nil
         }
     }
 
     @MainActor static func makeModel(_ name: Name) -> MobileApp {
         let database = try! LocalDatabase(url: nil)
-        if name != .pairing && name != .pairingPaste {
+        let paired = name != .pairing && name != .pairingPaste
+        if paired {
             try! database.setValue(PairedMac(macName: "Studio Mac", variant: .production, deviceID: UUID(), identityKey: Data((0..<65).map { UInt8($0 &* 37 & 0xFF) }),
                                         spkiSHA256: Data(repeating: 7, count: 32), addresses: [], port: 52000, pairedAt: now.addingTimeInterval(-9 * 86_400)), "pairedMac")
             try! database.setValue(projection(name), "projection")
         }
         let defaults = UserDefaults(suiteName: "msgblast-design-fixtures")!
         let app = try! MobileApp(database: database, keys: MemoryDeviceKeyStore(), defaults: defaults)
+        showConnection(app, name)
+        if paired { storeAvatars(app) }
+        // `MSGBLAST_FIXTURE_DRAFT` pre-fills the opened conversation's composer, so Send shows.
+        if let draft = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DRAFT"], case .conversation(let id) = screen(name) {
+            app.store.setDraft(draft, for: MobileStore.draftKey(conversation: id, agentID: nil))
+        }
+        // Attachment bytes as if fetched from the Mac: two photos and a PDF on the group's prompt.
+        if paired { storeAttachments(app) }
+        // Every row but the group has been read on this phone, so the inbox shows one unread dot.
+        for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
+        if paired { recordFixtureReply(app) }
+        return app
+    }
+
+    @MainActor private static func showConnection(_ app: MobileApp, _ name: Name) {
         switch name {
         case .pairing, .pairingPaste: break
         case .reconnecting: app.connection.showDesignFixture(.reconnecting(attempt: 3, retryAt: now.addingTimeInterval(8)), lastHeard: now.addingTimeInterval(-130))
         case .locked: app.connection.showDesignFixture(.macLocked, lastHeard: now.addingTimeInterval(-40))
         default: app.connection.showDesignFixture(.connected, lastHeard: now, connectedVia: "100.101.102.103:52000", connectSeconds: 0.4)
         }
-        if name != .pairing && name != .pairingPaste { for (_, avatar) in avatars { app.store.storeAvatar(avatar.data, for: avatar.ref) } }
-        // `MSGBLAST_FIXTURE_DRAFT` pre-fills the opened conversation's composer, so Send shows.
-        if let draft = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DRAFT"], case .conversation(let id) = screen(name) {
-            app.store.setDraft(draft, for: MobileStore.draftKey(conversation: id, agentID: nil))
+    }
+
+    @MainActor private static func storeAvatars(_ app: MobileApp) {
+        for (_, avatar) in avatars { app.store.storeAvatar(avatar.data, for: avatar.ref) }
+    }
+
+    @MainActor private static func storeAttachments(_ app: MobileApp) {
+        let prompt = "\(group)-p1"
+        for (index, hue) in [0.3, 0.08].enumerated() {
+            app.store.storeAttachment(photo(hue: hue, side: 320), type: "image/jpeg", turnID: prompt, index: index, thumbnail: true)
+            app.store.storeAttachment(photo(hue: hue, side: 1600), type: "image/jpeg", turnID: prompt, index: index, thumbnail: false)
         }
-        // Attachment bytes as if fetched from the Mac: two photos and a PDF on the group's prompt.
-        if name != .pairing && name != .pairingPaste {
-            let prompt = "\(group)-p1"
-            for (index, hue) in [0.3, 0.08].enumerated() {
-                app.store.storeAttachment(photo(hue: hue, side: 320), type: "image/jpeg", turnID: prompt, index: index, thumbnail: true)
-                app.store.storeAttachment(photo(hue: hue, side: 1600), type: "image/jpeg", turnID: prompt, index: index, thumbnail: false)
-            }
-            app.store.storeAttachment(recipePDF(), type: "application/pdf", turnID: prompt, index: 2, thumbnail: false)
-        }
-        // Every row but the group has been read on this phone, so the inbox shows one unread dot.
-        for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
-        if name != .pairing && name != .pairingPaste {
-            let command = RemoteCommand(action: .sendPrivate(conversationID: group, agentID: "claude", text: replyText, attachmentIDs: []))
-            try! app.store.recordSent(command, at: now.addingTimeInterval(-50 * 60 + 119))
-            app.store.handle(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, conversationID: group)))
-            app.store.recordReply(command.clientCommandID, quoting: "\(group)-r1")
-        }
-        return app
+        app.store.storeAttachment(recipePDF(), type: "application/pdf", turnID: prompt, index: 2, thumbnail: false)
+    }
+
+    @MainActor private static func recordFixtureReply(_ app: MobileApp) {
+        let command = RemoteCommand(action: .sendPrivate(conversationID: group, agentID: "claude", text: replyText, attachmentIDs: []))
+        try! app.store.recordSent(command, at: now.addingTimeInterval(-50 * 60 + 119))
+        app.store.handle(.commandResult(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .applied, conversationID: group)))
+        app.store.recordReply(command.clientCommandID, quoting: "\(group)-r1")
     }
 
     // MARK: Projection
@@ -92,6 +112,18 @@ enum DesignFixtures {
         state.macStatus = MacStatus(macName: "Studio Mac", variant: .production, locked: name == .locked, awake: true, databaseAvailable: true, databaseStatus: "Connected",
                                     messagesBusy: false, broadcastBusy: false, sendingAgentIDs: ["codexCLI"], keepAwakeEnabled: true, keepAwakeHeld: name != .locked,
                                     messagesSendsAllowed: true, observedAt: now)
+        addAgents(&state, name)
+        addGroup(&state, name)
+        addDirectThreads(&state)
+        if name == .incomplete { addUnfinished(&state) }
+        if name == .conversationPinned { addPinnedQuestions(&state) }
+        if name == .conversationMany { addManyAgents(&state) }
+        if name == .conversationShort || name == .inbox { addMuseThreads(&state, name) }
+        if name == .blocked { addBlocked(&state) }
+        return state
+    }
+
+    private static func addAgents(_ state: inout ProjectionState, _ name: Name) {
         let museBlocked = name == .incomplete
         let agents = [
             agent("claude", .claude, .website, "Claude", .ready, []),
@@ -114,8 +146,10 @@ enum DesignFixtures {
             state.agents[agent.agentID] = agent; state.agentOrder.append(agent.agentID)
         }
         state.grid = ["claude", "chatgptApp", "museApp", "codexCLI", "dotsApp", "grok", "geminiApp", cedar]
+    }
 
-        // A group of three: every chip state across two of your messages, replies, one Mac app failure.
+    /// A group of three: every chip state across two of your messages, replies, one Mac app failure.
+    private static func addGroup(_ state: inout ProjectionState, _ name: Name) {
         let t0 = now.addingTimeInterval(-50 * 60)
         conversation(&state, group, "Best pasta shape for pesto?", ["claude", "chatgptApp", "museApp"], created: t0, last: now.addingTimeInterval(-4 * 60))
         user(&state, group, "p1", "Best pasta shape for pesto? One answer each.", at: t0,
@@ -141,7 +175,9 @@ enum DesignFixtures {
         attempt(&state, group, "claude", "What about gnocchi?", name == .typing ? .submitted : .sending, at: t1)
         attempt(&state, group, "chatgptApp", "What about gnocchi?", .submitted, at: t1)
         attempt(&state, group, "museApp", "What about gnocchi?", .uncertain, at: t1, detail: "Outgoing message observed in the app. Waiting for its reply.")
+    }
 
+    private static func addDirectThreads(_ state: inout ProjectionState) {
         // Direct: two commands without a confirmed result.
         let t2 = now.addingTimeInterval(-26 * 3600)
         conversation(&state, codexDirect, "Rename the build script", ["codexCLI"], created: t2, last: t2.addingTimeInterval(300), unresolved: 2)
@@ -155,74 +191,77 @@ enum DesignFixtures {
              attachments: [RemoteAttachmentRef(id: "a1", filename: "Menu.jpg", mimeType: "image/jpeg", byteCount: 240_000)])
         attempt(&state, cedarDirect, cedar, "Dinner Friday? This place looks good.", .submitted, at: t3)
         reply(&state, cedarDirect, cedar, "m2", "Yes! 7:30?", at: t3.addingTimeInterval(600))
+    }
 
-        if name == .incomplete {
-            let t4 = now.addingTimeInterval(-90)
-            conversation(&state, unfinished, "Weekend in Lisbon", ["museApp", "chatgptApp"], created: t4, last: t4, unresolved: 2,
-                         incomplete: [RemoteIncompleteAttempt(agentID: "museApp", attemptID: "wa:11111111-0000-4000-8000-000000000001", reasonCode: .incompleteRequestBlocking),
-                                      RemoteIncompleteAttempt(agentID: "chatgptApp", attemptID: "wa:11111111-0000-4000-8000-000000000002", reasonCode: .incompleteRequestBlocking)])
-            user(&state, unfinished, "w1", "Plan two days in Lisbon.", at: t4)
-            state.attempts["wa:11111111-0000-4000-8000-000000000001"] = RemoteAttempt(id: "wa:11111111-0000-4000-8000-000000000001", conversationID: unfinished, agentID: "museApp",
-                text: "Plan two days in Lisbon.", status: .attempting, detail: "Outgoing message observed in the app. Waiting for its reply.", created: t4)
-            state.attempts["wa:11111111-0000-4000-8000-000000000002"] = RemoteAttempt(id: "wa:11111111-0000-4000-8000-000000000002", conversationID: unfinished, agentID: "chatgptApp",
-                text: "Plan two days in Lisbon.", status: .uncertain, detail: "ChatGPT stopped answering before its reply finished.", created: t4)
+    private static func addUnfinished(_ state: inout ProjectionState) {
+        let t4 = now.addingTimeInterval(-90)
+        conversation(&state, unfinished, "Weekend in Lisbon", ["museApp", "chatgptApp"], created: t4, last: t4, unresolved: 2,
+                     incomplete: [RemoteIncompleteAttempt(agentID: "museApp", attemptID: "wa:11111111-0000-4000-8000-000000000001", reasonCode: .incompleteRequestBlocking),
+                                  RemoteIncompleteAttempt(agentID: "chatgptApp", attemptID: "wa:11111111-0000-4000-8000-000000000002", reasonCode: .incompleteRequestBlocking)])
+        user(&state, unfinished, "w1", "Plan two days in Lisbon.", at: t4)
+        state.attempts["wa:11111111-0000-4000-8000-000000000001"] = RemoteAttempt(id: "wa:11111111-0000-4000-8000-000000000001", conversationID: unfinished, agentID: "museApp",
+            text: "Plan two days in Lisbon.", status: .attempting, detail: "Outgoing message observed in the app. Waiting for its reply.", created: t4)
+        state.attempts["wa:11111111-0000-4000-8000-000000000002"] = RemoteAttempt(id: "wa:11111111-0000-4000-8000-000000000002", conversationID: unfinished, agentID: "chatgptApp",
+            text: "Plan two days in Lisbon.", status: .uncertain, detail: "ChatGPT stopped answering before its reply finished.", created: t4)
+    }
+
+    /// A longer group thread, so the first prompt scrolls away and the pinned row shows.
+    private static func addPinnedQuestions(_ state: inout ProjectionState) {
+        let more = ["Which olive oil?", "Pine nuts or walnuts?", "How much garlic?", "Pecorino or Parmigiano?"]
+        for (index, question) in more.enumerated() {
+            let at = now.addingTimeInterval(Double(-30 + index * 5) * 60)
+            user(&state, group, "q\(index)", question, at: at)
+            attempt(&state, group, "claude", question, .observed, at: at)
+            reply(&state, group, "claude", "a\(index)", "For \(question.lowercased().dropLast()) keep it simple: use what tastes good raw.", at: at.addingTimeInterval(30))
         }
-        if name == .conversationPinned {
-            // A longer group thread, so the first prompt scrolls away and the pinned row shows.
-            let more = ["Which olive oil?", "Pine nuts or walnuts?", "How much garlic?", "Pecorino or Parmigiano?"]
-            for (index, question) in more.enumerated() {
-                let at = now.addingTimeInterval(Double(-30 + index * 5) * 60)
-                user(&state, group, "q\(index)", question, at: at)
-                attempt(&state, group, "claude", question, .observed, at: at)
-                reply(&state, group, "claude", "a\(index)", "For \(question.lowercased().dropLast()) keep it simple: use what tastes good raw.", at: at.addingTimeInterval(30))
+    }
+
+    /// Six agents, so the agent tabs scroll.
+    private static func addManyAgents(_ state: inout ProjectionState) {
+        let t7 = now.addingTimeInterval(-20 * 60)
+        let members = ["claude", "chatgptApp", "museApp", "codexCLI", "dotsApp", "grok"]
+        conversation(&state, manyConversation, "Name for a bakery", members, created: t7, last: t7.addingTimeInterval(90))
+        user(&state, manyConversation, "m0", "Suggest one name for a small neighborhood bakery.", at: t7)
+        for (index, (agent, answer)) in [("claude", "Crumb & Co."), ("museApp", "Morning Proof"), ("codexCLI", "Flour Hour")].enumerated() {
+            attempt(&state, manyConversation, agent, "Suggest one name for a small neighborhood bakery.", .observed, at: t7)
+            reply(&state, manyConversation, agent, "m\(index + 1)", answer, at: t7.addingTimeInterval(Double(30 + index * 20)))
+        }
+    }
+
+    private static func addMuseThreads(_ state: inout ProjectionState, _ name: Name) {
+        // A real Muse thread started by a prompt; direct threads are titled by it. In
+        // `conversation-short` it runs on, so the prompt scrolls away and pins.
+        let t6 = now.addingTimeInterval(-6 * 60)
+        conversation(&state, shortConversation, "Plan a quiet Sunday in Lisbon.", ["museApp"], created: t6, last: t6.addingTimeInterval(40))
+        user(&state, shortConversation, "s1", "Plan a quiet Sunday in Lisbon.", at: t6, agent: "museApp")
+        attempt(&state, shortConversation, "museApp", "Plan a quiet Sunday in Lisbon.", .observed, at: t6)
+        reply(&state, shortConversation, "museApp", "s2", "Coffee in Príncipe Real, the Gulbenkian garden, then sunset at Miradouro da Senhora do Monte.", at: t6.addingTimeInterval(40))
+        if name == .conversationShort {
+            for (index, (question, answer)) in [("Where for lunch?", "Taberna da Rua das Flores, if you book ahead."), ("And if it rains?", "The Gulbenkian museum and a long lunch."),
+                                                ("Best custard tart?", "Manteigaria, warm, with cinnamon."), ("Getting around?", "Tram 28 early, then walk."),
+                                                ("A view at dusk?", "Miradouro de Santa Luzia, before the crowds."), ("Dinner?", "Something small in Alfama, no reservation needed."),
+                                                ("Music after?", "A fado house on Rua de São Miguel.")].enumerated() {
+                let at = t6.addingTimeInterval(Double(60 + index * 60))
+                user(&state, shortConversation, "s\(index)q", question, at: at, agent: "museApp")
+                reply(&state, shortConversation, "museApp", "s\(index)a", answer, at: at.addingTimeInterval(20))
             }
         }
-        if name == .conversationMany {
-            // Six agents, so the agent tabs scroll.
-            let t7 = now.addingTimeInterval(-20 * 60)
-            let members = ["claude", "chatgptApp", "museApp", "codexCLI", "dotsApp", "grok"]
-            conversation(&state, manyConversation, "Name for a bakery", members, created: t7, last: t7.addingTimeInterval(90))
-            user(&state, manyConversation, "m0", "Suggest one name for a small neighborhood bakery.", at: t7)
-            for (index, (agent, answer)) in [("claude", "Crumb & Co."), ("museApp", "Morning Proof"), ("codexCLI", "Flour Hour")].enumerated() {
-                attempt(&state, manyConversation, agent, "Suggest one name for a small neighborhood bakery.", .observed, at: t7)
-                reply(&state, manyConversation, agent, "m\(index + 1)", answer, at: t7.addingTimeInterval(Double(30 + index * 20)))
-            }
-        }
-        if name == .conversationShort || name == .inbox {
-            // A real Muse thread started by a prompt; direct threads are titled by it. In
-            // `conversation-short` it runs on, so the prompt scrolls away and pins.
-            let t6 = now.addingTimeInterval(-6 * 60)
-            conversation(&state, shortConversation, "Plan a quiet Sunday in Lisbon.", ["museApp"], created: t6, last: t6.addingTimeInterval(40))
-            user(&state, shortConversation, "s1", "Plan a quiet Sunday in Lisbon.", at: t6, agent: "museApp")
-            attempt(&state, shortConversation, "museApp", "Plan a quiet Sunday in Lisbon.", .observed, at: t6)
-            reply(&state, shortConversation, "museApp", "s2", "Coffee in Príncipe Real, the Gulbenkian garden, then sunset at Miradouro da Senhora do Monte.", at: t6.addingTimeInterval(40))
-            if name == .conversationShort {
-                for (index, (question, answer)) in [("Where for lunch?", "Taberna da Rua das Flores, if you book ahead."), ("And if it rains?", "The Gulbenkian museum and a long lunch."),
-                                                    ("Best custard tart?", "Manteigaria, warm, with cinnamon."), ("Getting around?", "Tram 28 early, then walk."),
-                                                    ("A view at dusk?", "Miradouro de Santa Luzia, before the crowds."), ("Dinner?", "Something small in Alfama, no reservation needed."),
-                                                    ("Music after?", "A fado house on Rua de São Miguel.")].enumerated() {
-                    let at = t6.addingTimeInterval(Double(60 + index * 60))
-                    user(&state, shortConversation, "s\(index)q", question, at: at, agent: "museApp")
-                    reply(&state, shortConversation, "museApp", "s\(index)a", answer, at: at.addingTimeInterval(20))
-                }
-            }
-            // A second Muse thread reads differently in the inbox.
-            let t8 = now.addingTimeInterval(-3 * 3600)
-            let gift = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000008")!
-            conversation(&state, gift, "Gift ideas for Ana", ["museApp"], created: t8, last: t8.addingTimeInterval(60))
-            user(&state, gift, "g1", "Gift ideas for Ana, who loves ceramics?", at: t8, agent: "museApp")
-            reply(&state, gift, "museApp", "g2", "A workshop voucher at a local studio.", at: t8.addingTimeInterval(60))
-        }
-        if name == .blocked {
-            let t5 = now.addingTimeInterval(-15 * 60)
-            conversation(&state, blockedConversation, "Summarize this article", ["claude", "dotsApp"], created: t5, last: t5.addingTimeInterval(30))
-            user(&state, blockedConversation, "b1", "Summarize this article in three bullets.", at: t5)
-            attempt(&state, blockedConversation, "claude", "Summarize this article in three bullets.", .observed, at: t5)
-            attempt(&state, blockedConversation, "dotsApp", "Summarize this article in three bullets.", .notSent, at: t5,
-                    detail: "Allow Accessibility for msgblast in System Settings on your Mac.")
-            reply(&state, blockedConversation, "claude", "b2", "• The study tracked 4,000 people\n• Sleep mattered more than diet\n• Effects showed after six weeks", at: t5.addingTimeInterval(30))
-        }
-        return state
+        // A second Muse thread reads differently in the inbox.
+        let t8 = now.addingTimeInterval(-3 * 3600)
+        let gift = UUID(uuidString: "6F1C2B4A-0000-4000-8000-000000000008")!
+        conversation(&state, gift, "Gift ideas for Ana", ["museApp"], created: t8, last: t8.addingTimeInterval(60))
+        user(&state, gift, "g1", "Gift ideas for Ana, who loves ceramics?", at: t8, agent: "museApp")
+        reply(&state, gift, "museApp", "g2", "A workshop voucher at a local studio.", at: t8.addingTimeInterval(60))
+    }
+
+    private static func addBlocked(_ state: inout ProjectionState) {
+        let t5 = now.addingTimeInterval(-15 * 60)
+        conversation(&state, blockedConversation, "Summarize this article", ["claude", "dotsApp"], created: t5, last: t5.addingTimeInterval(30))
+        user(&state, blockedConversation, "b1", "Summarize this article in three bullets.", at: t5)
+        attempt(&state, blockedConversation, "claude", "Summarize this article in three bullets.", .observed, at: t5)
+        attempt(&state, blockedConversation, "dotsApp", "Summarize this article in three bullets.", .notSent, at: t5,
+                detail: "Allow Accessibility for msgblast in System Settings on your Mac.")
+        reply(&state, blockedConversation, "claude", "b2", "• The study tracked 4,000 people\n• Sleep mattered more than diet\n• Effects showed after six weeks", at: t5.addingTimeInterval(30))
     }
 
     /// Generated artwork with the agent's letter (no third-party art).

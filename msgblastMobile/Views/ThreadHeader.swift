@@ -161,55 +161,67 @@ struct ThreadDetailsSheet: View {
     @ViewBuilder private var sharedSections: some View {
         let shared = presenter.sharedContent(in: conversationID)
         if !shared.photos.isEmpty {
-            Section("Photos") {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Space.tight), count: 3), spacing: Space.tight) {
-                    ForEach(shared.photos) { file in
-                        Button { opening = .photo(file) } label: {
-                            Color.clear.aspectRatio(1, contentMode: .fit)
-                                .overlay { AttachmentThumbnail(app: app, file: file) }
-                                .clipShape(RoundedRectangle(cornerRadius: Space.tight, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .listRowInsets(EdgeInsets(top: Space.gap, leading: Space.gap, bottom: Space.gap, trailing: Space.gap))
-            }
+            photosSection(shared.photos)
         }
         if !shared.links.isEmpty {
-            Section("Links") {
-                ForEach(shared.links) { link in
-                    Button { opening = .link(link.url) } label: {
-                        HStack(spacing: Space.inset) {
-                            senderAvatar(link.agentID)
-                            VStack(alignment: .leading, spacing: Space.hairline) {
-                                Text(link.host).foregroundStyle(.primary).lineLimit(1)
-                                Text(link.context).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            Spacer(minLength: Space.gap)
-                            if let date = link.date { Text(ProjectionPresenter.inboxTimestamp(date)).font(.caption).foregroundStyle(.secondary) }
-                        }
-                    }
-                    .buttonStyle(.plain).contentShape(Rectangle())
-                }
-            }
+            linksSection(shared.links)
         }
         if !shared.documents.isEmpty {
-            Section("Documents") {
-                ForEach(shared.documents) { file in
-                    Button { opening = .document(file) } label: {
-                        HStack(spacing: Space.inset) {
-                            Image(systemName: Self.symbol(for: file.filename)).font(.title2).foregroundStyle(.tint).frame(width: Space.avatarList)
-                            VStack(alignment: .leading, spacing: Space.hairline) {
-                                Text(file.filename).foregroundStyle(.primary).lineLimit(1)
-                                Text([file.byteCount.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) },
-                                      file.agentID.map(presenter.shortName) ?? "You",
-                                      file.date.map { ProjectionPresenter.inboxTimestamp($0) }].compactMap { $0 }.joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
+            documentsSection(shared.documents)
+        }
+    }
+
+    private func photosSection(_ photos: [SharedAttachment]) -> some View {
+        Section("Photos") {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Space.tight), count: 3), spacing: Space.tight) {
+                ForEach(photos) { file in
+                    Button { opening = .photo(file) } label: {
+                        Color.clear.aspectRatio(1, contentMode: .fit)
+                            .overlay { AttachmentThumbnail(app: app, file: file) }
+                            .clipShape(RoundedRectangle(cornerRadius: Space.tight, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .listRowInsets(EdgeInsets(top: Space.gap, leading: Space.gap, bottom: Space.gap, trailing: Space.gap))
+        }
+    }
+
+    private func linksSection(_ links: [SharedLink]) -> some View {
+        Section("Links") {
+            ForEach(links) { link in
+                Button { opening = .link(link.url) } label: {
+                    HStack(spacing: Space.inset) {
+                        senderAvatar(link.agentID)
+                        VStack(alignment: .leading, spacing: Space.hairline) {
+                            Text(link.host).foregroundStyle(.primary).lineLimit(1)
+                            Text(link.context).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: Space.gap)
+                        if let date = link.date { Text(ProjectionPresenter.inboxTimestamp(date)).font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
+                .buttonStyle(.plain).contentShape(Rectangle())
+            }
+        }
+    }
+
+    private func documentsSection(_ documents: [SharedAttachment]) -> some View {
+        Section("Documents") {
+            ForEach(documents) { file in
+                Button { opening = .document(file) } label: {
+                    HStack(spacing: Space.inset) {
+                        Image(systemName: Self.symbol(for: file.filename)).font(.title2).foregroundStyle(.tint).frame(width: Space.avatarList)
+                        VStack(alignment: .leading, spacing: Space.hairline) {
+                            Text(file.filename).foregroundStyle(.primary).lineLimit(1)
+                            Text([file.byteCount.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) },
+                                  file.agentID.map(presenter.shortName) ?? "You",
+                                  file.date.map { ProjectionPresenter.inboxTimestamp($0) }].compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    .buttonStyle(.plain).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain).contentShape(Rectangle())
             }
         }
     }
@@ -253,51 +265,14 @@ struct ThreadDetailsSheet: View {
                 List {
                     // Every thread can be named, direct ones too.
                     if !app.unsupportedActions.contains("renameConversation") {
-                        Section {
-                            HStack(spacing: Space.gap) {
-                                TextField("Name", text: $name)
-                                    .submitLabel(.done)
-                                    .onSubmit { rename(conversation) }
-                                    .disabled(renaming)
-                                if renaming { ProgressView() }
-                                else if name.trimmingCharacters(in: .whitespacesAndNewlines) != conversation.title {
-                                    Button("Done") { rename(conversation) }.buttonStyle(.borderless).bold()
-                                }
-                            }
-                        } header: { Text("Name") } footer: {
-                            if let renameError { Text(renameError).foregroundStyle(.red) }
-                        }
+                        nameSection(conversation)
                     }
                     if !selection.isEmpty && conversation.agentIDs.count > 1 {
                         Section { Button("Show All", systemImage: "person.3") { selection = [] } }
                     }
                     Section {
                         ForEach(conversation.agentIDs, id: \.self) { id in
-                            HStack(spacing: Space.inset) {
-                                AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: Space.avatarRow)
-                                VStack(alignment: .leading, spacing: Space.hairline) {
-                                    Text(presenter.shortName(id))
-                                    if let agent = app.store.projection.agents[id] {
-                                        Text([ProjectionPresenter.formLabel(agent.form), ProjectionPresenter.agentStatus(agent) ?? "Ready"].joined(separator: " · "))
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                Spacer(minLength: Space.gap)
-                                if conversation.agentIDs.count > 1 {
-                                    // All means everyone: every row is checked until a subset is chosen.
-                                    let checked = ProjectionPresenter.isChecked(id, selection: selection)
-                                    Image(systemName: checked ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(checked ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                                        .font(.title3)
-                                }
-                            }
-                            .listRowInsets(Space.row)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                guard conversation.agentIDs.count > 1 else { return }
-                                selection = ProjectionPresenter.toggling(id, selection: selection, members: conversation.agentIDs)
-                            }
-                            .accessibilityAddTraits(ProjectionPresenter.isChecked(id, selection: selection) ? [.isButton, .isSelected] : .isButton)
+                            agentRow(id, in: conversation)
                         }
                     }
                     sharedSections
@@ -332,5 +307,51 @@ struct ThreadDetailsSheet: View {
         // Design review: `MSGBLAST_FIXTURE_DETAILS=large` opens the sheet full height.
         .onAppear { if ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_DETAILS"] == "large" { detent = .large } }
         #endif
+    }
+
+    private func nameSection(_ conversation: RemoteConversation) -> some View {
+        Section {
+            HStack(spacing: Space.gap) {
+                TextField("Name", text: $name)
+                    .submitLabel(.done)
+                    .onSubmit { rename(conversation) }
+                    .disabled(renaming)
+                if renaming { ProgressView() }
+                else if name.trimmingCharacters(in: .whitespacesAndNewlines) != conversation.title {
+                    Button("Done") { rename(conversation) }.buttonStyle(.borderless).bold()
+                }
+            }
+        } header: { Text("Name") } footer: {
+            if let renameError { Text(renameError).foregroundStyle(.red) }
+        }
+    }
+
+    /// One member: avatar, form and status, and in a group its check; tapping toggles it.
+    private func agentRow(_ id: String, in conversation: RemoteConversation) -> some View {
+        HStack(spacing: Space.inset) {
+            AgentAvatar(app: app, agentID: id, name: presenter.shortName(id), size: Space.avatarRow)
+            VStack(alignment: .leading, spacing: Space.hairline) {
+                Text(presenter.shortName(id))
+                if let agent = app.store.projection.agents[id] {
+                    Text([ProjectionPresenter.formLabel(agent.form), ProjectionPresenter.agentStatus(agent) ?? "Ready"].joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: Space.gap)
+            if conversation.agentIDs.count > 1 {
+                // All means everyone: every row is checked until a subset is chosen.
+                let checked = ProjectionPresenter.isChecked(id, selection: selection)
+                Image(systemName: checked ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(checked ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                    .font(.title3)
+            }
+        }
+        .listRowInsets(Space.row)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard conversation.agentIDs.count > 1 else { return }
+            selection = ProjectionPresenter.toggling(id, selection: selection, members: conversation.agentIDs)
+        }
+        .accessibilityAddTraits(ProjectionPresenter.isChecked(id, selection: selection) ? [.isButton, .isSelected] : .isButton)
     }
 }

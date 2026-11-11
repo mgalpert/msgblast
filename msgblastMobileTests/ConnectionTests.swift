@@ -8,6 +8,10 @@ final class ConnectionTests: XCTestCase {
     private func settle(_ until: () -> Bool) async {
         for _ in 0..<200 { if until() { return }; try? await Task.sleep(for: .milliseconds(5)) }
     }
+    /// Sleeps in 5 ms steps (at most 200) while `condition` holds; cancellation throws.
+    private func pollWhile(_ condition: () -> Bool) async throws {
+        for _ in 0..<200 where condition() { try await Task.sleep(for: .milliseconds(5)) }
+    }
     private func make(_ mac: FakeMac, paired: PairedMac? = nil) -> (MacConnection, () -> [RemoteClientDriver.Event], () -> PairedMac?) {
         var saved: PairedMac? = paired
         var events: [RemoteClientDriver.Event] = []
@@ -116,7 +120,7 @@ final class ConnectionTests: XCTestCase {
         let app = try MobileApp(database: try LocalDatabase(url: nil), keys: keys, defaults: UserDefaults(suiteName: "pair-\(UUID().uuidString)")!,
                             makeTransport: { [mac] in mac.transport(for: $0, spki: $1) })
         let paired = try await app.pair(offer: mac.offer(), deviceName: "Phone")
-        for _ in 0..<200 where app.store.projection.seq == nil { try await Task.sleep(for: .milliseconds(5)) }
+        try await pollWhile { app.store.projection.seq == nil }
         app.store.setDraft("Keep me", for: "new|all")
         let cached = app.store.projection
         let key = try XCTUnwrap(keys.storedPublicKey)
@@ -129,9 +133,9 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(app.store.projection.seq, cached.seq)
         XCTAssertEqual(app.store.projection.agents, cached.agents, "The cache is intact")
         XCTAssertEqual(app.store.draft("new|all"), "Keep me")
-        for _ in 0..<200 where app.connection.state != .connected { try await Task.sleep(for: .milliseconds(5)) }
+        try await pollWhile { app.connection.state != .connected }
         XCTAssertEqual(app.connection.state, .connected, "The previous Mac reconnects and still authenticates")
-        for _ in 0..<200 where !mac.sessions.contains(where: { $0.sinceSeq == cached.seq && $0.sinceSeq != nil }) { try await Task.sleep(for: .milliseconds(5)) }
+        try await pollWhile { !mac.sessions.contains(where: { $0.sinceSeq == cached.seq && $0.sinceSeq != nil }) }
         XCTAssertTrue(mac.sessions.contains { $0.sinceSeq == cached.seq }, "Resumed with the old pairing")
 
         // An unreachable Mac during a new pairing also leaves everything in place.

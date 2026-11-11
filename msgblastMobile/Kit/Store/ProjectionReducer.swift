@@ -78,28 +78,13 @@ public enum ProjectionReducer {
         var next = state
         switch event {
         case .snapshot(let part):
-            if part.partIndex == 0 { next.pendingSnapshot = part }
-            else if var pending = next.pendingSnapshot, pending.seq == part.seq { pending.turns += part.turns; next.pendingSnapshot = pending }
-            else { next.needsSnapshot = true; return next }
-            guard part.partIndex == part.partCount - 1, let full = next.pendingSnapshot else { return next }
-            next = ProjectionState()
-            next.seq = full.seq
-            next.macStatus = full.macStatus
-            next.grid = full.grid.visibleAgentIDs
-            for agent in full.agents { next.agents[agent.agentID] = agent; next.agentOrder.append(agent.agentID) }
-            for conversation in full.conversations { next.conversations[conversation.id] = conversation }
-            for turn in full.turns { next.turns[turn.id] = turn }
-            for attempt in full.attempts { next.attempts[attempt.id] = attempt }
+            return receive(part, into: next)
         case .events(let events, let latest):
             for event in events where state.seq.map({ event.seq > $0 }) ?? true { apply(event.change, to: &next) }
             next.seq = max(latest, state.seq ?? 0)
             next.macLocked = next.macStatus?.locked ?? false
         case .error(let error):
-            switch error.code {
-            case .macLocked: next.macLocked = true
-            case .notPaired, .authenticationFailed, .forgotten: next.pairingLost = error.message
-            default: break
-            }
+            receive(error, into: &next)
         case .paired, .authenticated:
             next.pairingLost = nil
         case .commandResult, .pong:
@@ -108,7 +93,43 @@ public enum ProjectionReducer {
         return next
     }
 
+    /// One part of a snapshot: the state is replaced once the last part arrives.
+    private static func receive(_ part: RemoteSnapshot, into state: ProjectionState) -> ProjectionState {
+        var next = state
+        if part.partIndex == 0 { next.pendingSnapshot = part }
+        else if var pending = next.pendingSnapshot, pending.seq == part.seq { pending.turns += part.turns; next.pendingSnapshot = pending }
+        else { next.needsSnapshot = true; return next }
+        guard part.partIndex == part.partCount - 1, let full = next.pendingSnapshot else { return next }
+        return fullState(full)
+    }
+
+    private static func fullState(_ full: RemoteSnapshot) -> ProjectionState {
+        var next = ProjectionState()
+        next.seq = full.seq
+        next.macStatus = full.macStatus
+        next.grid = full.grid.visibleAgentIDs
+        for agent in full.agents { next.agents[agent.agentID] = agent; next.agentOrder.append(agent.agentID) }
+        for conversation in full.conversations { next.conversations[conversation.id] = conversation }
+        for turn in full.turns { next.turns[turn.id] = turn }
+        for attempt in full.attempts { next.attempts[attempt.id] = attempt }
+        return next
+    }
+
+    private static func receive(_ error: RemoteErrorMessage, into next: inout ProjectionState) {
+        switch error.code {
+        case .macLocked: next.macLocked = true
+        case .notPaired, .authenticationFailed, .forgotten: next.pairingLost = error.message
+        default: break
+        }
+    }
+
     static func apply(_ change: RemoteChange, to state: inout ProjectionState) {
+        if applyMacChange(change, to: &state) { return }
+        applyThreadChange(change, to: &state)
+    }
+
+    /// The Mac, its grid and its agents; false for any other change.
+    private static func applyMacChange(_ change: RemoteChange, to state: inout ProjectionState) -> Bool {
         switch change {
         case .macStatus(let status): state.macStatus = status
         case .grid(let grid): state.grid = grid.visibleAgentIDs
@@ -116,6 +137,15 @@ public enum ProjectionReducer {
             if state.agents[agent.agentID] == nil { state.agentOrder.append(agent.agentID) }
             state.agents[agent.agentID] = agent
         case .agentRemove(let id): state.agents[id] = nil; state.agentOrder.removeAll { $0 == id }
+        case .unknown: state.needsSnapshot = true
+        default: return false
+        }
+        return true
+    }
+
+    /// Conversations, turns and attempts.
+    private static func applyThreadChange(_ change: RemoteChange, to state: inout ProjectionState) {
+        switch change {
         case .conversationUpsert(let conversation): state.conversations[conversation.id] = conversation
         case .conversationRemove(let id):
             state.conversations[id] = nil
@@ -125,7 +155,7 @@ public enum ProjectionReducer {
         case .turnRemove(let id): state.turns[id] = nil
         case .attemptUpsert(let attempt): state.attempts[attempt.id] = attempt
         case .attemptRemove(let id): state.attempts[id] = nil
-        case .unknown: state.needsSnapshot = true
+        default: break
         }
     }
 }
