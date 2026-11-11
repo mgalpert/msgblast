@@ -189,7 +189,7 @@ final class AgentControlHTTPTests: XCTestCase {
         XCTAssertEqual((try json(batch)["error"] as? [String: Any])?["code"] as? Int, -32600)
     }
 
-    func testHashOnlyStorageRevokeAndUnreadableFile() throws {
+    func testHashOnlyStorageAndRevoke() throws {
         let file = try scratch()
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         var store = AgentControlTailnetStore(enabled: true, port: 47480)
@@ -211,7 +211,12 @@ final class AgentControlHTTPTests: XCTestCase {
         XCTAssertNil(after.client(matching: token))
         XCTAssertNil(after.hashes[AgentControlTailnet.grokBotClient])
         XCTAssertFalse(String(decoding: try Data(contentsOf: file), as: UTF8.self).contains(token))
+    }
 
+    func testLegacyTokensMigrateAndUnreadableFilesAreKept() throws {
+        let file = try scratch()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let token = "never-issued"
         let legacy = file.deletingLastPathComponent().appendingPathComponent("legacy.json")
         let secret = "legacy-secret-token"
         try Data(#"{"enabled":true,"port":47480,"token":"\#(secret)"}"#.utf8).write(to: legacy)

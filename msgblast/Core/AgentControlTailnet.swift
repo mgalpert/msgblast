@@ -110,50 +110,33 @@ public enum AgentControlTailnet {
     }
 
     private static func ipv6(_ text: String) -> [UInt8]? {
-        var head = text
-        var tail: [UInt8] = []
-        if head.contains(".") {
-            guard let colon = head.lastIndex(of: ":") else { return nil }
-            let octets = head[head.index(after: colon)...].split(separator: ".", omittingEmptySubsequences: false)
-            guard octets.count == 4, let a = octet(octets[0]), let b = octet(octets[1]), let c = octet(octets[2]), let d = octet(octets[3]) else { return nil }
-            tail = [a, b, c, d]
-            head = String(head[..<colon])
+        guard let split = ipv4Tail(text) else { return nil }
+        let halves = split.head.split(separator: "::", omittingEmptySubsequences: false)
+        guard (1...2).contains(halves.count), let left = groups(halves[0]), let right = halves.count == 2 ? groups(halves[1]) : [] else { return nil }
+        let missing = 8 - split.tail.count / 2 - left.count - right.count
+        guard halves.count == 1 ? missing == 0 : missing >= 1 else { return nil }
+        let combined = left + Array(repeating: 0, count: missing) + right
+        return combined.flatMap { [UInt8($0 >> 8), UInt8($0 & 0xff)] } + split.tail
+    }
+
+    /// Splits off a trailing dotted IPv4 part (`::ffff:1.2.3.4`); an address without one has an empty tail.
+    private static func ipv4Tail(_ text: String) -> (head: String, tail: [UInt8])? {
+        guard text.contains(".") else { return (text, []) }
+        guard let colon = text.lastIndex(of: ":") else { return nil }
+        let octets = text[text.index(after: colon)...].split(separator: ".", omittingEmptySubsequences: false)
+        let bytes = octets.compactMap(octet)
+        guard octets.count == 4, bytes.count == 4 else { return nil }
+        return (String(text[..<colon]), bytes)
+    }
+
+    private static func groups(_ part: Substring) -> [UInt16]? {
+        if part.isEmpty { return [] }
+        var values: [UInt16] = []
+        for piece in part.split(separator: ":", omittingEmptySubsequences: false) {
+            guard (1...4).contains(piece.count), let value = UInt16(piece, radix: 16) else { return nil }
+            values.append(value)
         }
-        let halves = head.split(separator: "::", omittingEmptySubsequences: false)
-        guard (1...2).contains(halves.count) else { return nil }
-        func groups(_ part: Substring) -> [UInt16]? {
-            if part.isEmpty { return [] }
-            var values: [UInt16] = []
-            for piece in part.split(separator: ":", omittingEmptySubsequences: false) {
-                guard (1...4).contains(piece.count), let value = UInt16(piece, radix: 16) else { return nil }
-                values.append(value)
-            }
-            return values
-        }
-        guard let left = groups(halves[0]) else { return nil }
-        let right: [UInt16]
-        if halves.count == 2 {
-            guard let parsed = groups(halves[1]) else { return nil }
-            right = parsed
-        } else {
-            right = []
-        }
-        let slots = 8 - tail.count / 2
-        let combined: [UInt16]
-        if halves.count == 1 {
-            guard left.count == slots else { return nil }
-            combined = left
-        } else {
-            let missing = slots - left.count - right.count
-            guard missing >= 1 else { return nil }
-            combined = left + Array(repeating: 0, count: missing) + right
-        }
-        var bytes: [UInt8] = []
-        for group in combined {
-            bytes.append(UInt8(group >> 8))
-            bytes.append(UInt8(group & 0xff))
-        }
-        return bytes + tail
+        return values
     }
 }
 
