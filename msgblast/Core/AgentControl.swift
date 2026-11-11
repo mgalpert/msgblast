@@ -165,7 +165,8 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
             throw AgentControlError.refused("Too many sends from \(client) in a short time. Wait a minute, then try again. Nothing was sent (tooManySends).")
         }
         let result = await host.controlSend(command, client: client)
-        return try AgentControlSend.result(result, requestID: request, agents: host.controlAgents(), refusalThrows: true)
+        return try AgentControlSend.result(result, requestID: request, agents: host.controlAgents(), refusalThrows: true,
+                                           named: input.requestId != nil)
     }
 
     private static func decode(_ data: Data) throws -> Arguments {

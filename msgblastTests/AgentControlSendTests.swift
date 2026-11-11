@@ -122,9 +122,20 @@ import msgblastRemoteProtocol
         let host = Host()
         host.answer = { RemoteCommandResult(clientCommandID: $0.clientCommandID, outcome: .rejected, code: .agentUnavailable, message: "Not every agent was ready",
                                             agentReasons: ["chatgpt": "Open ChatGPT on your Mac and sign in"]) }
-        let error = await refusal("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"]}"#, host: host)
-        XCTAssertEqual(error, .refused("Not every agent was ready. ChatGPT: Open ChatGPT on your Mac and sign in. Nothing was sent (agentUnavailable). "
+        let named = await refusal("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"],"requestId":"r1"}"#, host: host)
+        XCTAssertEqual(named, .refused("Not every agent was ready. ChatGPT: Open ChatGPT on your Mac and sign in. Nothing was sent (agentUnavailable). "
                                        + "A repeat with the same requestId gets this same answer, so use a new requestId to try again."))
+        // Without a requestId the caller has nothing to repeat, so it isn't told how.
+        let unnamed = await refusal("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"]}"#, host: host)
+        XCTAssertEqual(unnamed, .refused("Not every agent was ready. ChatGPT: Open ChatGPT on your Mac and sign in. Nothing was sent (agentUnavailable)."))
+    }
+
+    func testAStopRefusalSaysTheSameCallCanGoOutOnceSendsAreAllowed() async {
+        let host = Host()
+        host.answer = { .rejected($0.clientCommandID, .agentSendsStopped, "Agent sends are stopped in msgblast. The person can allow them again in msgblast") }
+        let error = await refusal("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"],"requestId":"r1"}"#, host: host)
+        XCTAssertEqual(error, .refused("Agent sends are stopped in msgblast. The person can allow them again in msgblast. Nothing was sent (agentSendsStopped). "
+                                       + "Once the person allows agent sends, the same call can be repeated."))
     }
 
     func testTooManySendsAreRefusedButRepeatsOfAKnownRequestAreNot() async throws {
