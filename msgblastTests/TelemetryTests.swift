@@ -5,7 +5,7 @@ final class TelemetryTests: XCTestCase {
     func testOnlyConfiguredOfficialAndDevelopmentBundlesCanUpload() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        for (index, entry) in [("com.msgblast.mac", false, true), ("com.msgblast.development", false, true), ("com.msgblast.demo", true, false), ("com.example.fork", false, false)].enumerated() {
+        for (index, entry) in [("com.msgblast.mac", false, true), ("com.msgblast.development", false, true), ("com.msgblast.development.remote", false, true), ("com.msgblast.demo", true, false), ("com.msgblast.developmentx", false, false), ("com.example.fork", false, false)].enumerated() {
             let url = directory.appendingPathComponent("test\(index).bundle")
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             let plist: [String: Any] = ["CFBundleIdentifier": entry.0, "msgblastTelemetryEndpoint": "https://msgblast.app/api/telemetry"]

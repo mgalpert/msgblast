@@ -398,6 +398,7 @@ actor DesktopAppConversation {
             try await runProcess(executable, callArguments, environment, callTimeout, cancellation)
         } onCancel: { cancellation.cancel() }
         guard result.status == 0, let data = result.stdout.data(using: .utf8) else {
+            DesktopAccessibilityDiagnostics.driverCallFailed(tool: tool, status: result.status, stderr: result.stderr)
             throw DesktopAppError.unavailable("App control could not complete this request. Review msgblast permissions; nothing will be retried automatically.")
         }
         let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]

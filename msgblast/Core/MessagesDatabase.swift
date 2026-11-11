@@ -186,7 +186,7 @@ public final class MessagesDatabase {
         func column(_ name: String) -> String { attachmentColumns.contains(name) ? "a.\(name)" : "NULL" }
         let sql = """
         SELECT ma.message_id,a.ROWID AS attachment_id,a.filename,\(column("guid")) AS guid,
-        \(column("transfer_name")) AS name,\(column("mime_type")) AS mime,\(column("total_bytes")) AS bytes
+        \(column("transfer_name")) AS name,\(column("mime_type")) AS mime,\(column("total_bytes")) AS bytes,\(column("uti")) AS uti
         FROM attachment a JOIN message_attachment_join ma ON ma.attachment_id=a.ROWID
         JOIN chat_message_join cm ON cm.message_id=ma.message_id JOIN chat c ON c.ROWID=cm.chat_id
         WHERE c.guid=? AND ma.message_id>=? ORDER BY ma.message_id,a.ROWID
@@ -195,6 +195,7 @@ public final class MessagesDatabase {
         for row in try rows(sql, values: [chatID, String(after)]) {
             guard let id = Int64(row["message_id"] ?? ""), let path = row["filename"], !path.isEmpty else { continue }
             let name = row["name"].flatMap { $0.isEmpty ? nil : $0 } ?? URL(fileURLWithPath: path).lastPathComponent
+            guard MessageAttachment.isUserFile(filename: name, path: path, uti: row["uti"], byteCount: row["bytes"].flatMap(Int64.init)) else { continue }
             result[id, default: []].append(MessageAttachment(id: row["guid"] ?? row["attachment_id"] ?? path, filename: name, path: path, mimeType: row["mime"], byteCount: row["bytes"].flatMap(Int64.init)))
         }
         return result
