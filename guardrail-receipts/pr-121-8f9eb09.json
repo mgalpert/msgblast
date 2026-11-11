@@ -1,0 +1,27 @@
+{
+ "pr": 121,
+ "base_sha": "94ea9c9db9eeb1e2cb134b0b1e1a8d6f865dd083",
+ "head_sha": "8f9eb09ac88b8c78feba7fd1a17610876aacf544",
+ "date": "2026-11-11",
+ "authors": "Claude Opus agent on the person's behalf",
+ "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+ "verdict": "approve with notes",
+ "coverage": {
+  "read_fully": ["scripts/ci/studio-job-started.sh", "scripts/tests/test_studio_job_hook.py", "docs/studio-runner.md", "diffstat of the PR"],
+  "method": "static read at new head; ran python unittest discover (150 tests, OK, skipped=3). Hook not run on a real runner."
+ },
+ "verified_sound": [
+  "prior blocker resolved in design: the guard is now a root-owned hook outside the repo, which a PR cannot edit; hook fails closed on unknown event, repo mismatch, non-main push, fork or null head repo, unreadable event file",
+  "hook bash/python is sound: set -euo pipefail, python -I, exec, env read, exit 1 before any step",
+  "docs now state the real threat model; approval setting is confirmed before the variable is set; comments no longer claim the expression is the guard",
+  "tests pass: 150 run, OK, skipped=3; hook tests cover allowed and refused cases"
+ ],
+ "open_findings": [
+  "question: scripts/ci/studio-job-started.sh:12-15 - hook trusts GITHUB_REPOSITORY/GITHUB_EVENT_NAME/GITHUB_EVENT_PATH from its environment. I believe the runner sets these and workflow job env: is not applied to the job-started hook, but I could not verify this against the runner source or a real run; confirm once on the Studio with a throwaway fork-style job",
+  "should-fix: docs/studio-runner.md:67-71 - add a verification step (the hook prints 'Studio runner accepted' in the job log; confirm that line appears) because a mistyped .env path or unrestarted service makes the hook silently not run and the guard fails open",
+  "note: docs/studio-runner.md:67-71 - the runner user owns .env, so same-repo write-access code can remove the hook for later jobs; acceptable given write users are already trusted, but the docs should say so",
+  "note: shared persistent DerivedData across same-repo branches and main remains (not an escalation); scripts/tests only pin strings for the workflow itself",
+  "note: hook needs /usr/bin/python3 on macOS (Command Line Tools); the test skips if absent"
+ ],
+ "limits": "Not run on GitHub or a real self-hosted runner; whether job-level env reaches the hook is unverified; GitHub repo settings not inspected."
+}

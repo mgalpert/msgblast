@@ -1,0 +1,31 @@
+{
+ "pr": 121,
+ "base_sha": "94ea9c9db9eeb1e2cb134b0b1e1a8d6f865dd083",
+ "head_sha": "4014443dd0131603cdb7eeba3b78dd694448f052",
+ "date": "2026-11-11",
+ "authors": "Claude Opus agent on the person's behalf",
+ "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+ "verdict": "request changes",
+ "coverage": {
+  "read_fully": ["pr121.diff", "validate.yml native/preview jobs and header", "docs/studio-runner.md", "test_validate_workflow.py change", "derived-data consumer scripts (test_updates.py, test_crash_reporting.sh, test_web_comparisons.sh, test_app_permissions.sh)"],
+  "method": "static read of diff and checked-out head, grep for hardcoded paths and privacy strings, ran python unittest discover (148 tests, OK, 3 skipped). Workflow never executed on GitHub."
+ },
+ "verified_sound": [
+  "runs-on expression is valid: unset var gives '' so false || '\"xcode-27\"' -> fromJSON string -> hosted; true gives array JSON -> self-hosted labels",
+  "push to main and workflow_dispatch reach the Studio only when the variable is 'true'",
+  "all four derived-data consumers in native job use $MSGBLAST_DERIVED_DATA; test_app_permissions.sh uses none; hosted path unchanged",
+  "MSGBLAST_DERIVED_DATA is set before xcodebuild; mkdir -p done; RUNNER_NAME quoted",
+  "no public IPs, tailnet names or macOS usernames in the diff",
+  "unit tests pass: 148 run, OK, skipped=3"
+ ],
+ "open_findings": [
+  "blocker: .github/workflows/validate.yml:51,224 - the fork guard lives in the workflow file, and pull_request runs the workflow from the merge ref, so a fork or same-repo PR can edit runs-on to the msgblast-studio label and run on the Studio; the expression does not stop this. Only the fork-approval setting and runner-group/repo restrictions do, and approval of an attacker-edited workflow runs their code on the Studio. The comment and docs claim 'outside code never runs on the Studio' is false as written",
+  "should-fix: docs/studio-runner.md:17-20 - reword the claim; state the real control is approval (reviewer must read any .github/ change before approving), add --ephemeral or a dedicated isolated machine/VLAN, restrict via runner group, and note GitHub advises against self-hosted runners on public repos",
+  "should-fix: docs/studio-runner.md:47-48 - 'Require approval for all external contributors' is a repo setting that may not be applied when the variable is set; the variable should be turned on only after confirming it",
+  "note: validate.yml:70-79 - persistent derived data is shared across same-repo branches and main; a write-access user can poison caches, so main native results are not hermetic. Not an escalation since write users can already target the runner. cancel-in-progress can leave a half-written cache; doc mentions deleting it",
+  "note: scripts/tests/test_validate_workflow.py:78-95 - test pins strings only; it cannot catch the PR-edits-runs-on bypass or expression semantics; no actionlint/real run",
+  "note: .github/workflows/release-adhoc.yml:34,99,113 and docs/cloud-agent.md:76 still hardcode build/updater-validation; fine since those stay hosted",
+  "question: should preview (cursor/* same-repo PRs, builds signed-adhoc apps) really share the Studio's persistent environment?"
+ ],
+ "limits": "Not run on GitHub or a real self-hosted runner; GitHub repo/org settings (fork approval, runner groups) not inspected; expression semantics reasoned from documented Actions behavior."
+}

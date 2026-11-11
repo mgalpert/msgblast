@@ -1,0 +1,27 @@
+{
+ "pr": 121,
+ "base_sha": "94ea9c9db9eeb1e2cb134b0b1e1a8d6f865dd083",
+ "head_sha": "1fb8b9c7ee44bb58ff186975e4b33f69bc04c6ee",
+ "date": "2026-11-11",
+ "authors": "Claude Opus agent on the person's behalf",
+ "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+ "prior_review": "pr-121-8f9eb09.json (approve with notes)",
+ "verdict": "approve with notes",
+ "coverage": {
+  "read_fully": ["delta 8f9eb09..1fb8b9c (one file, docs/studio-runner.md, +8/-1)"],
+  "method": "git diff --stat and full delta read; ran python unittest discover (150 tests, OK, skipped=3). Hook and workflow files unchanged since 8f9eb09, so earlier review of them stands."
+ },
+ "verified_sound": [
+  "delta is docs-only: docs/studio-runner.md only; no workflow, hook or test change",
+  "docs should-fix resolved: verification step added, telling the operator to look for 'Studio runner accepted' and turn the variable off if missing",
+  "docs .env note resolved: write-access code editing .env to drop the hook is now stated",
+  "hook python dependency documented",
+  "tests pass: 150 run, OK, skipped=3"
+ ],
+ "open_findings": [
+  "question: scripts/ci/studio-job-started.sh:12-15 - still unverified that job-level env: cannot override GITHUB_* vars seen by the hook; confirm once on the Studio",
+  "note: docs/studio-runner.md:74-79 - verification is placed before the variable is set in step 7 but says 'after the first job'; the first job only runs on the Studio after step 7, so order is slightly confusing. The hook output appears in the 'Set up job' log, not exactly as named",
+  "note: shared persistent DerivedData across same-repo branches and main remains (not an escalation); workflow tests only pin strings"
+ ],
+ "limits": "Not run on GitHub or a real self-hosted runner; delta review only; GitHub repo settings not inspected."
+}
