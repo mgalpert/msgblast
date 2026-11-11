@@ -66,6 +66,8 @@ public actor AgentControlMCPServer {
         case "server/discover": result = discover()
         case "tools/list": result = try await listTools(client: client)
         case "tools/call": result = try await callTool(params, client: client)
+        case "resources/list": result = ["resources": [AgentControlMCPApp.listing()]]
+        case "resources/read": result = try readResource(params)
         default: throw Failure(code: -32601, message: "msgblast has no method \(method).")
         }
         if requested != nil { result["resultType"] = "complete" }
@@ -78,13 +80,28 @@ public actor AgentControlMCPServer {
         handshakeClient = Self.name(params["clientInfo"] as? [String: Any])
         let asked = params["protocolVersion"] as? String ?? ""
         return ["protocolVersion": Self.legacyVersions.contains(asked) ? asked : Self.legacyVersions[0],
-                "capabilities": ["tools": [String: Any]()], "serverInfo": serverInfo, "instructions": Self.instructions]
+                "capabilities": capabilities(experimental: true), "serverInfo": serverInfo, "instructions": Self.instructions]
     }
 
     private func discover() -> [String: Any] {
-        ["supportedVersions": [Self.modernVersion] + Self.legacyVersions, "capabilities": ["tools": [String: Any]()],
+        ["supportedVersions": [Self.modernVersion] + Self.legacyVersions, "capabilities": capabilities(experimental: false),
          "_meta": ["io.modelcontextprotocol/serverInfo": serverInfo], "instructions": Self.instructions,
          "ttlMs": 3_600_000, "cacheScope": "public"]
+    }
+
+    /// `experimental` repeats the UI extension for clients that still look there on `initialize`.
+    private func capabilities(experimental: Bool) -> [String: Any] {
+        var caps: [String: Any] = ["tools": [String: Any](), "resources": [String: Any](),
+                                   "extensions": AgentControlMCPApp.extensionCapability()]
+        if experimental { caps["experimental"] = AgentControlMCPApp.extensionCapability() }
+        return caps
+    }
+
+    /// The comparison view is static. Reading it does not call the app, so it works while msgblast is off.
+    private func readResource(_ params: [String: Any]) throws -> [String: Any] {
+        let uri = params["uri"] as? String ?? ""
+        guard uri == AgentControlMCPApp.viewURI else { throw Failure(code: -32002, message: "No msgblast resource at \(uri).") }
+        return AgentControlMCPApp.contents()
     }
 
     private func listTools(client: String) async throws -> [String: Any] {
@@ -97,9 +114,15 @@ public actor AgentControlMCPServer {
             if tool["allowed"] as? Bool != true {
                 description += " Needs \(access) access. The person can change this in msgblast → Settings → Outside agents."
             }
-            return ["name": tool["name"] ?? "", "title": tool["title"] ?? "", "description": description,
+            var listed: [String: Any] = ["name": tool["name"] ?? "", "title": tool["title"] ?? "", "description": description,
                     "inputSchema": tool["inputSchema"] ?? ["type": "object"],
                     "annotations": ["readOnlyHint": access == AgentControlAccess.readOnly.label, "openWorldHint": false]]
+            if let name = listed["name"] as? String, let extra = AgentControlMCPApp.toolMeta(name) {
+                var meta = tool["_meta"] as? [String: Any] ?? [:]
+                extra.forEach { meta[$0] = $1 }
+                listed["_meta"] = meta
+            }
+            return listed
         }]
     }
 

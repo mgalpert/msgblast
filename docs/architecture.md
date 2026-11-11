@@ -32,6 +32,8 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Feedback handler | `feedback/` | Validated private R2 intake; template integrated into a separate production landing Worker |
 | Build/release tooling | `scripts/`, `.github/workflows/` | Project generation, helpers, previews, installers, validation, and distribution |
 
+Outside agents can open comparisons as an MCP App. The UI resource is `ui://msgblast/comparison` (`text/html;profile=mcp-app`). `msgblast_comparisons_list`, `msgblast_comparison_read`, and `msgblast_blast_wait` each carry it in `_meta.ui.resourceUri`. `msgblast_comparisons_list` is the global entry point, so Claude Desktop, Codex, and ChatGPT can open the side-by-side view from their own navigation. The view only reads; it cannot send.
+
 ## Runtime boundaries
 
 The app creates its model only after installation checks allow startup. The model
