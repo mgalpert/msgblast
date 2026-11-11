@@ -158,7 +158,8 @@ later copy built into that slot keeps the grants.
 - Saved state is per name, in `~/Library/Application Support/msgblast-Dev-<name>-<hash>`.
   Preferences (`defaults`) and keychain items belong to the slot, so a new name
   in a slot starts with the previous copy's preferences.
-- The script refuses to replace a running copy or to put a second running copy
-  in a busy slot. It never edits TCC or System Settings.
+- The script refuses to replace a running copy or to build into a slot whose
+  copy is running. It cannot stop you launching two older copies that share a
+  slot, so quit one first. It never edits TCC or System Settings.
 - These copies are for this Mac only. Shared downloads still go through the
   notarized flow above.
