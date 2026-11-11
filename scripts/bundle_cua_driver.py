@@ -62,7 +62,7 @@ def bundle(selected, destination, cache):
         for arch in selected:
             downloaded = workspace / (arch + "-download")
             downloaded.write_bytes(fetch_binary(manifest["assets"][arch], cache))
-            subprocess.run(["xcrun", "lipo", "-verify_arch", arch, str(downloaded)], check=True)
+            subprocess.run(["xcrun", "lipo", str(downloaded), "-verify_arch", arch], check=True)
             binary = workspace / arch
             subprocess.run(["xcrun", "lipo", str(downloaded), "-thin", arch, "-output", str(binary)], check=True)
             binaries.append(binary)
