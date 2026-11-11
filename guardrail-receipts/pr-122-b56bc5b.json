@@ -1,0 +1,13 @@
+{
+  "pr": 122,
+  "reviewed_head": "b56bc5b48355001f70509aba661b7f0ea9a4b683",
+  "base": "94ea9c9db9eeb1e2cb134b0b1e1a8d6f865dd083",
+  "previous_reviewed_head": "f6bb4592d6bb9c7cf739d7643507db743ed21d1c",
+  "previous_receipt": "guardrail-receipts/pr-122-f6bb459.json",
+  "reviewer": "independent model (Sonnet subagent), not the authoring model",
+  "scope": "merge of main (#94) into the PR; one conflict in scripts/build_preview_apps.py resolved by keeping local_identity signing and using main's archive_name()",
+  "verdict": "approve",
+  "findings": [],
+  "carried_low_notes": ["slot exclusivity enforced at build time only", "case-sensitive app path comparisons"],
+  "tests": "python3 -m unittest discover -s scripts/tests: 164 tests OK (3 skipped)"
+}
