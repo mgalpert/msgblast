@@ -38,7 +38,7 @@ class ScopeTests(unittest.TestCase):
         return subprocess.run(command, cwd=self.root, text=True, capture_output=True)
 
     def test_soft_and_hard_boundaries(self):
-        for count, status in [(250, 0), (251, 0), (600, 0), (601, 1)]:
+        for count, status in [(250, 0), (251, 0), (1200, 0), (1201, 1)]:
             with self.subTest(count=count):
                 result = self.check(count)
                 self.assertEqual(result.returncode, status, result.stdout + result.stderr)
@@ -49,11 +49,11 @@ class ScopeTests(unittest.TestCase):
             self.assertEqual(self.check(1, body).returncode, 1)
 
     def test_exception_only_waives_size(self):
-        self.assertEqual(self.check(601, approved=True).returncode, 0)
-        self.assertEqual(self.check(601, 'Scope: other.txt', True).returncode, 1)
+        self.assertEqual(self.check(1201, approved=True).returncode, 0)
+        self.assertEqual(self.check(1201, 'Scope: other.txt', True).returncode, 1)
 
     def test_deletions_count(self):
-        (self.root / 'change.txt').write_text('old\n' * 601)
+        (self.root / 'change.txt').write_text('old\n' * 1201)
         self.commit('large base')
         self.base = self.git('rev-parse', 'HEAD').strip()
         self.assertEqual(self.check(0).returncode, 1)
