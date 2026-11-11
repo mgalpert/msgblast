@@ -32,21 +32,41 @@ public enum AgentControlCLI {
 
     public struct UsageError: Error, Equatable { public let message: String }
 
+    static let flags: Set<String> = ["--json", "--all", "--help"]
+    static let valueOptions: Set<String> = ["--client", "--query", "--limit", "--after", "--comparison", "--timeout"]
+
+    /// True when the arguments ask for the msgblast command rather than the app: the first
+    /// word that is not one of the command's own options names a command, or there are only
+    /// such options. The app's own launch options, such as --demo, still open a window.
+    public static func isCommand(_ arguments: [String]) -> Bool {
+        var index = 0
+        while index < arguments.count {
+            let word = arguments[index]
+            if flags.contains(word) { index += 1 } else if valueOptions.contains(word) { index += 2 } else { return commands.contains(word) }
+        }
+        return !arguments.isEmpty
+    }
+
     public static func parse(_ arguments: [String], environment: [String: String]) throws -> (command: Command, json: Bool) {
         var words: [String] = [], options: [String: String] = [:], flags: Set<String> = []
         var index = 0
         while index < arguments.count {
             let word = arguments[index]
             index += 1
-            if ["--json", "--all"].contains(word) { flags.insert(word) }
-            else if word.hasPrefix("--") {
+            if Self.flags.contains(word) { flags.insert(word) }
+            else if Self.valueOptions.contains(word) {
                 guard index < arguments.count else { throw UsageError(message: "\(word) needs a value.") }
                 options[word] = arguments[index]
                 index += 1
-            } else { words.append(word) }
+            } else if word.hasPrefix("--") { throw UsageError(message: "Unknown option \(word).") }
+            else { words.append(word) }
         }
         let json = flags.contains("--json")
-        let client = options["--client"] ?? environment["MSGBLAST_CLIENT"] ?? (environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
+        let named = options["--client"] ?? environment["MSGBLAST_CLIENT"] ?? (environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
+        guard let client = AgentControlGate.clientName(named) else {
+            throw UsageError(message: "--client must be a name of 1 to 80 characters.")
+        }
+        if flags.contains("--help") { return (.help, json) }
         func call(_ tool: String, _ input: [String: Any]) throws -> (command: Command, json: Bool) {
             (.request(try line(["method": "tools/call", "client": client, "name": tool, "arguments": input])), json)
         }

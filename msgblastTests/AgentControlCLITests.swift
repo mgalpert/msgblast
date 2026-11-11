@@ -51,6 +51,26 @@ final class AgentControlCLITests: XCTestCase {
         XCTAssertEqual(usageError(["blast"]), "Unknown command blast.")
     }
 
+    func testLeadingOptionsStillRunTheCommandButAppLaunchOptionsOpenTheApp() throws {
+        XCTAssertTrue(AgentControlCLI.isCommand(["--client", "Hermes", "status"]))
+        XCTAssertTrue(AgentControlCLI.isCommand(["--json", "agents"]))
+        XCTAssertTrue(AgentControlCLI.isCommand(["--help"]))
+        XCTAssertTrue(AgentControlCLI.isCommand(["wait", "--timeout", "5"]))
+        XCTAssertFalse(AgentControlCLI.isCommand([]))
+        XCTAssertFalse(AgentControlCLI.isCommand(["--demo"]))
+        XCTAssertFalse(AgentControlCLI.isCommand(["--update-probe"]))
+        XCTAssertFalse(AgentControlCLI.isCommand(["-NSDocumentRevisionsDebugMode", "YES"]))
+        XCTAssertEqual(try request(["--client", "Hermes", "--json", "status"])["client"] as? String, "Hermes")
+        XCTAssertEqual(try AgentControlCLI.parse(["--help"], environment: [:]).command, .help)
+    }
+
+    func testClientNamesAreCheckedAndUnknownOptionsRefused() throws {
+        XCTAssertEqual(try request(["status", "--client", "Her\u{202E}mes\n"])["client"] as? String, "Her mes")
+        XCTAssertEqual(usageError(["status", "--client", String(repeating: "x", count: 81)]), "--client must be a name of 1 to 80 characters.")
+        XCTAssertEqual(usageError(["status", "--client", "\u{0007}"]), "--client must be a name of 1 to 80 characters.")
+        XCTAssertEqual(usageError(["status", "--bogus", "x"]), "Unknown option --bogus.")
+    }
+
     func testRepliesMapToOutputAndExitStatus() {
         let ok = AgentControlCLI.render(Data(#"{"id":1,"result":{"b":1,"a":[2]}}"#.utf8), json: true)
         XCTAssertEqual(ok, AgentControlCLI.Output(stdout: "{\"a\":[2],\"b\":1}\n", stderr: "", status: 0))
