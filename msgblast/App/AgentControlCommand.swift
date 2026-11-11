@@ -36,8 +36,12 @@ enum AgentControlCommand {
         case .mcp(let client):
             return serve(client: client, socket: path)
         case .request(let line):
-            guard let reply = try? AgentControlSocketClient.exchange(line, socket: path) else {
-                FileHandle.standardError.write(Data("msgblast is not running, or Settings → Outside agents is off.\n".utf8))
+            let reply: Data
+            do { reply = try AgentControlSocketClient.exchange(line, socket: path) } catch is AgentControlSocketClient.NoReply {
+                FileHandle.standardError.write(Data("\(AgentControlCLI.noReply)\n".utf8))
+                return AgentControlCLI.noReplyStatus
+            } catch {
+                FileHandle.standardError.write(Data("\(AgentControlCLI.unavailable)\n".utf8))
                 return AgentControlCLI.unavailableStatus
             }
             let output = AgentControlCLI.render(reply, json: parsed.json)
