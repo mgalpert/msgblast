@@ -111,7 +111,6 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"after":{"type":"integer","minimum":0},"comparisonId":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":0,"maximum":300}}}"#)
     ] + AgentControlSend.tools
 
-    /// Runs one tool. Arguments and the result are JSON.
     /// Sends allowed per agent name; see `AgentControlSendLimit`.
     static var sendLimit = AgentControlSendLimit()
 
