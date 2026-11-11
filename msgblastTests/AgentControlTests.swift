@@ -177,6 +177,26 @@ import XCTest
         XCTAssertEqual(feed.cursor, 5, "the first look after a reset only records")
     }
 
+    func testAComparisonThatJoinsTheWatchedSetIsRecordedButANewOneIsAnnounced() {
+        let feed = AgentControlEvents()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var look = AgentControlSnapshot()
+        feed.observe(look, date: start)
+        let older = UUID(), newer = UUID()
+        let old = AgentControlSnapshot.Key(comparisonID: older, agent: "Fo")
+        let new = AgentControlSnapshot.Key(comparisonID: newer, agent: "Fo")
+        look.replies = [old: 4, new: 1]
+        look.states = [old: "submitted", new: "submitted"]
+        look.created = [older: start.addingTimeInterval(-3600), newer: start.addingTimeInterval(0.5)]
+        feed.observe(look, date: start.addingTimeInterval(1))
+        XCTAssertEqual(feed.events.map(\.kind), [.replyArrived, .sendResult])
+        XCTAssertEqual(Set(feed.events.map(\.comparisonID)), [newer])
+        look.replies[old] = 5
+        feed.observe(look, date: start.addingTimeInterval(2))
+        XCTAssertEqual(feed.events.last?.comparisonID, older, "once watched, its new replies are announced")
+        XCTAssertEqual(feed.cursor, 3)
+    }
+
     func testFeedKeepsOnlyRecentEvents() {
         let feed = AgentControlEvents()
         for _ in 0..<(AgentControlEvents.retained + 5) { feed.publish(.agentBusy) }
