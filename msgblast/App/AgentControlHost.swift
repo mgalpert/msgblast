@@ -49,6 +49,7 @@ extension AppModel: AgentControlHost {
         snapshot.busy = Set(busy.map(\.name))
         let recent = state.comparisons.filter { $0.endedAt == nil }.sorted { $0.created > $1.created }.prefix(AgentControlSnapshot.watchedComparisons)
         for comparison in recent {
+            snapshot.created[comparison.id] = comparison.created
             for member in comparison.members {
                 let key = AgentControlSnapshot.Key(comparisonID: comparison.id, agent: member.name)
                 snapshot.replies[key] = transcript(comparison, member: member).filter { !$0.outgoing }.count

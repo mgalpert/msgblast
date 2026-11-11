@@ -53,6 +53,17 @@ import Foundation
         saveError = nil
     }
 
+    /// A change made in Settings. If it can't be saved it still applies until msgblast quits,
+    /// and Settings shows why.
+    public func change(_ level: AgentControlAccess?, for client: String) {
+        guard !loadFailed else { return }
+        do { try set(level, for: client) } catch {
+            approvals[client] = level
+            refused.remove(client)
+            saveError = "msgblast could not save the change for \(client), so it lasts until msgblast quits."
+        }
+    }
+
     /// Lets an agent the person refused ask again.
     public func forgetRefusal(_ client: String) { refused.remove(client) }
 
@@ -111,7 +122,9 @@ public enum AgentControlWire {
     @MainActor private static func call(_ request: [String: Any], id: Any?, access: AgentControlAccess, host: AgentControlHost,
                                          client: String) async -> Data {
         guard let name = request["name"] as? String else { return reply(id, error: "invalidRequest", "tools/call needs \"name\".") }
-        let arguments = (request["arguments"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) } ?? Data()
+        guard let arguments = encoded(request["arguments"]) else {
+            return reply(id, error: "invalidArguments", "arguments must be a JSON object.")
+        }
         do {
             let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host, client: client)
             return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
@@ -120,6 +133,16 @@ public enum AgentControlWire {
         } catch {
             // Other errors can carry paths or app details; the agent gets a fixed line.
             return reply(id, error: "failed", "msgblast could not run \(name).")
+        }
+    }
+
+    /// Missing or null arguments are empty. Anything but an object is refused here, because
+    /// JSONSerialization raises an uncatchable exception for a bare string or number.
+    private static func encoded(_ arguments: Any?) -> Data? {
+        switch arguments {
+        case nil, is NSNull: Data()
+        case let object as [String: Any]: try? JSONSerialization.data(withJSONObject: object)
+        default: nil
         }
     }
 

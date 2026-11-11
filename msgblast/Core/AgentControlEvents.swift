@@ -64,15 +64,17 @@ public struct AgentControlEvent: Codable, Equatable, Sendable {
     }
 
     private var last: AgentControlSnapshot?
+    private var lastLook = Date.distantPast
 
     /// Compares the app's state with the previous look and publishes what changed. The first
     /// look after `resetObservation()` only records, so turning agent control on replays nothing.
     public func observe(_ snapshot: AgentControlSnapshot, date: Date = Date()) {
+        defer { lastLook = date }
         guard let old = last else { last = snapshot; return }
         var next = snapshot
         // A reply still streaming is counted once its agent is no longer busy.
         for key in snapshot.settling { next.replies[key] = old.replies[key] }
-        for change in next.changes(since: old) {
+        for change in next.changes(since: old.adopting(next, createdBefore: lastLook)) {
             publish(change.kind, comparisonID: change.comparisonID, agent: change.agent, detail: change.detail, date: date)
         }
         last = next
@@ -101,8 +103,22 @@ public struct AgentControlSnapshot: Equatable, Sendable {
     public var settling: Set<Key> = []
     /// Agents busy right now, by name.
     public var busy: Set<String> = []
+    /// When each watched comparison was created.
+    public var created: [UUID: Date] = [:]
 
     public init() {}
+
+    /// This look plus `next`'s counts and states for comparisons that joined the watched set
+    /// but already existed at `date` (for example when a newer one ended): their history is
+    /// recorded, not announced. Comparisons created since then are compared from zero.
+    func adopting(_ next: Self, createdBefore date: Date) -> Self {
+        let watched = Set(replies.keys.map(\.comparisonID)).union(states.keys.map(\.comparisonID))
+        let joined = { (id: UUID) in !watched.contains(id) && (next.created[id] ?? .distantPast) < date }
+        var base = self
+        for (key, count) in next.replies where joined(key.comparisonID) { base.replies[key] = count }
+        for (key, state) in next.states where joined(key.comparisonID) { base.states[key] = state }
+        return base
+    }
 
     public func changes(since old: Self) -> [Change] {
         var changes: [Change] = []

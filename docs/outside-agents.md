@@ -17,6 +17,11 @@ one level or chooses Don't Allow, which msgblast remembers until it quits.
 
 Settings lists each approved agent with its level and a Remove button.
 
+msgblast knows an agent only by the name it gives. Any program running as you on
+this Mac can run the `msgblast` command with an approved name, such as "Claude
+Code", and get that name's level. Give Full access only if you trust what runs on
+this Mac under your account, and remove names you no longer use.
+
 ## Tools
 
 | Tool | Level | What it does |
