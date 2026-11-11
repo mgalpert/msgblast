@@ -15,7 +15,7 @@ msgblast speaks `http://` only. It does not serve `https://` yet. Settings check
 
 1. In msgblast, turn on Settings → Outside agents, then turn on "Let Grok Bot use msgblast over Tailscale".
 2. In Grok Bot, open Connect apps → Your plugins → Tailscale → Authenticate.
-3. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the Server URL and the header from msgblast ("Copy URL" and "Copy header", or both at once with "Copy Grok Bot setup"). Put the key only in the connector's header field, never in a chat message.
+3. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the MCP server URL and the header from Settings → Outside agents ("Copy URL" and "Copy header", or both at once with "Copy Grok Bot setup"). Put the key only in the connector's header field, never in a chat message.
 4. Ask Grok Bot to call `msgblast_status`. Approve it in msgblast. The prompt names the client "Grok Bot (Tailscale)".
 
 The copied block looks like this, with your own URL and key:

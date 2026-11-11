@@ -19,6 +19,16 @@ struct OutsideAgentsSettingsView: View {
             LabeledContent("Terminal") {
                 Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
             }
+            LabeledContent("MCP server on this Mac") {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Command: msgblast mcp (stdio, no URL)")
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    Button("Copy MCP command") { copy(Self.mcpCommand()) }
+                }
+            }
+            Text("Other MCP apps on this Mac, such as Cursor, add msgblast as a command server with this command. Agents on other devices use the MCP server URL below.")
+                .font(.caption).foregroundStyle(.secondary)
             TailnetControls(tailnet: listener.tailnet)
         }
         ForEach(gate.approvals.keys.sorted(), id: \.self) { client in
@@ -44,7 +54,12 @@ struct OutsideAgentsSettingsView: View {
 
     /// The command that adds msgblast as an MCP server to `claude` or `codex`. Each asks for approval on first use.
     static func setup(_ tool: String, executable: String = AgentControlCommand.executable) -> String {
-        "\(tool) mcp add msgblast -- '\(executable.replacingOccurrences(of: "'", with: "'\\''"))' mcp"
+        "\(tool) mcp add msgblast -- \(mcpCommand(executable: executable))"
+    }
+
+    /// The stdio MCP server command, for any MCP client on this Mac.
+    static func mcpCommand(executable: String = AgentControlCommand.executable) -> String {
+        "'\(executable.replacingOccurrences(of: "'", with: "'\\''"))' mcp"
     }
 
     private func copy(_ text: String) {
@@ -63,17 +78,25 @@ private struct TailnetControls: View {
         Group {
             Toggle("Let Grok Bot use msgblast over Tailscale", isOn: Binding(get: { tailnet.enabled }, set: { tailnet.enabled = $0 }))
                 .disabled(tailnet.loadFailed)
+            if !tailnet.enabled {
+                Text("Turn this on to get an MCP server URL that agents on other devices, such as Grok Bot, can reach over your tailnet.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(tailnet.readiness, id: \.self) { line in
                 Text(line).font(.caption).foregroundStyle(.secondary)
             }
             if tailnet.enabled, let url = tailnet.serverURL {
-                Text(url)
-                    .font(.system(.caption, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button("Copy URL") { copy(url) }
+                LabeledContent("MCP server URL") {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(url)
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("outside-agents-mcp-url")
+                        Button("Copy URL") { copy(url) }
+                    }
+                }
                 if tailnet.showsAddressFallback {
                     Text("Tailscale's name for this Mac wasn't found, so this is its 100.x address.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -100,7 +123,7 @@ private struct TailnetControls: View {
                 Text("Make a new key to see it again").font(.caption).foregroundStyle(.secondary)
                 Button("New key") { tailnet.rotateToken() }
             }
-            Text("1. In Grok Bot: Connect apps → Your plugins → Tailscale → Authenticate.\n2. In Grok Bot: Add a custom connector → Remote HTTPS, Server URL = the URL above, header = the header above.\n3. Ask Grok Bot to call msgblast_status; approve it here.")
+            Text("1. In Grok Bot: Connect apps → Your plugins → Tailscale → Authenticate.\n2. In Grok Bot: Add a custom connector → Remote HTTPS, Server URL = the MCP server URL above, header = the header above.\n3. Ask Grok Bot to call msgblast_status; approve it here.")
                 .font(.caption).foregroundStyle(.secondary)
             if let error = tailnet.error { Text(error).font(.caption).foregroundStyle(.red) }
         }
