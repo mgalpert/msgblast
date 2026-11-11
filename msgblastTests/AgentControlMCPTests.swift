@@ -163,4 +163,14 @@ final class AgentControlMCPTests: XCTestCase {
         XCTAssertEqual(result["isError"] as? Bool, true)
         XCTAssertEqual((result["content"] as? [[String: Any]])?.first?["text"] as? String, AgentControlMCPServer.unavailable)
     }
+
+    func testALostReplyIsNotReportedAsMsgblastBeingOff() async throws {
+        let server = AgentControlMCPServer(version: "9.9", client: nil) { _ in throw AgentControlSocketClient.NoReply() }
+        let call = try await send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"msgblast_status"}}"#)
+        let result = try XCTUnwrap(call["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, true)
+        XCTAssertEqual((result["content"] as? [[String: Any]])?.first?["text"] as? String, AgentControlCLI.noReply)
+        let list = try await send(server, #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
+        XCTAssertEqual((list["error"] as? [String: Any])?["message"] as? String, AgentControlCLI.noReply)
+    }
 }

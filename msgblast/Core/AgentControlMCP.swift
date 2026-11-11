@@ -107,7 +107,7 @@ public actor AgentControlMCPServer {
         guard let name = params["name"] as? String else { throw Failure(code: -32602, message: "tools/call needs a name.") }
         let reply: WireReply
         do { reply = try await send(["method": "tools/call", "name": name, "arguments": params["arguments"] ?? [String: Any]()], client: client) }
-        catch { return ["content": [["type": "text", "text": Self.unavailable]], "isError": true] }
+        catch { return ["content": [["type": "text", "text": (error as? Failure)?.message ?? Self.unavailable]], "isError": true] }
         let result = reply.result
         if let error = reply.error {
             if error.code == "unknownTool" { throw Failure(code: -32602, message: error.message) }
@@ -120,7 +120,8 @@ public actor AgentControlMCPServer {
         return output
     }
 
-    /// One request on the app's socket. Throws only when the app cannot be reached.
+    /// One request on the app's socket. Throws only when the app cannot be reached, or when it
+    /// got the request and stopped before answering (the request may then have run).
     private func send(_ request: [String: Any], client: String) async throws -> WireReply {
         wireID += 1
         var body = request
@@ -129,7 +130,9 @@ public actor AgentControlMCPServer {
         var line = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         line.append(0x0A)
         let reply: Data
-        do { reply = try await exchange(line) } catch { throw Failure(code: -32002, message: Self.unavailable) }
+        do { reply = try await exchange(line) } catch is AgentControlSocketClient.NoReply {
+            throw Failure(code: -32002, message: AgentControlCLI.noReply)
+        } catch { throw Failure(code: -32002, message: Self.unavailable) }
         let object = try? JSONSerialization.jsonObject(with: reply) as? [String: Any]
         if let error = object?["error"] as? [String: Any] {
             return WireReply(result: nil, error: (error["code"] as? String ?? "failed", error["message"] as? String ?? "msgblast could not do that."))
