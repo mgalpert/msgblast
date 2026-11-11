@@ -117,6 +117,7 @@ final class AppModel: ObservableObject {
     var lastTelemetryActivityDay: Int?
     var telemetryTimer: Timer?
     let controlEvents = AgentControlEvents()
+    lazy var agentSends = AgentControlSends(model: self)
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     var database: MessagesDatabase?

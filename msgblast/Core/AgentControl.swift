@@ -1,4 +1,5 @@
 import Foundation
+import msgblastRemoteProtocol
 
 /// How much an outside agent may do. Approval in msgblast picks one level per agent.
 /// Raw values are saved; 1 was a removed middle level and must never read as Full access.
@@ -12,12 +13,15 @@ public enum AgentControlAccess: Int, Codable, CaseIterable, Comparable, Sendable
 
 public enum AgentControlError: LocalizedError, Equatable {
     case unknownTool(String), needsAccess(AgentControlAccess), invalidArguments(String), notFound(String)
+    /// msgblast did not send: the Mac is locked or busy, an agent isn't ready, or too many sends.
+    case refused(String)
     public var errorDescription: String? {
         switch self {
         case .unknownTool(let name): "No msgblast tool is named \(name)."
         case .needsAccess(let level): "This needs \(level.label) access in msgblast."
         case .invalidArguments(let detail): "Invalid arguments: \(detail)"
         case .notFound(let id): "Nothing in msgblast matches \(id)."
+        case .refused(let why): why
         }
     }
 }
@@ -68,6 +72,17 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
     func controlComparisons() -> [Comparison]
     func controlTranscript(_ comparison: Comparison) -> [AgentControlTurn]
     var controlEvents: AgentControlEvents { get }
+    /// Runs a send command and returns its final result. Never retries.
+    func controlSend(_ command: RemoteCommand) async -> RemoteCommandResult
+    /// The stored result of an earlier send command. Never runs anything.
+    func controlSendStatus(_ id: UUID) -> RemoteCommandResult
+}
+
+public extension AgentControlHost {
+    func controlSend(_ command: RemoteCommand) async -> RemoteCommandResult {
+        .rejected(command.clientCommandID, .unsupported, "This msgblast can't send for outside agents")
+    }
+    func controlSendStatus(_ id: UUID) -> RemoteCommandResult { .rejected(id, .unknownCommand, "No record of this request") }
 }
 
 public struct AgentControlWaitResult: Codable, Equatable, Sendable {
@@ -91,10 +106,14 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         AgentControlTool(name: "msgblast_blast_wait", title: "Wait for replies",
                          summary: "Waits up to timeoutSeconds for events after cursor `after` (a reply arrived, a send finished, an agent turned busy or ready). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"after":{"type":"integer","minimum":0},"comparisonId":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":0,"maximum":300}}}"#)
-    ]
+    ] + AgentControlSend.tools
 
     /// Runs one tool. Arguments and the result are JSON.
-    public static func call(_ name: String, arguments: Data, access: AgentControlAccess, host: AgentControlHost) async throws -> Data {
+    /// Sends allowed per agent name; see `AgentControlSendLimit`.
+    static var sendLimit = AgentControlSendLimit()
+
+    /// Runs one tool for `client`, the approved agent name. Arguments and the result are JSON.
+    public static func call(_ name: String, arguments: Data, access: AgentControlAccess, host: AgentControlHost, client: String = "") async throws -> Data {
         guard let tool = tools.first(where: { $0.name == name }) else { throw AgentControlError.unknownTool(name) }
         guard access >= tool.access else { throw AgentControlError.needsAccess(tool.access) }
         let input = try arguments.isEmpty ? Arguments() : decode(arguments)
@@ -109,6 +128,8 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
             return try encoder.encode(comparisons(host, query: input.query, limit: input.limit ?? 20))
         case "msgblast_blast_wait":
             return try await encoder.encode(wait(host, after: input.after, comparisonID: input.comparisonId, timeout: input.timeoutSeconds ?? 60))
+        case _ where name == "msgblast_request_status" || AgentControlSend.names.contains(name):
+            return try await encoder.encode(send(name, input, client: client, host: host))
         default:
             return try encoder.encode(comparison(host, id: input.id))
         }
@@ -117,6 +138,34 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
     private struct Arguments: Decodable {
         var includeHidden: Bool?, query: String?, limit: Int?, id: String?
         var after: Int?, comparisonId: String?, timeoutSeconds: Int?
+        var text: String?, agents: [String]?, agent: String?, requestId: String?
+    }
+
+    /// `msgblast_request_status`: the stored result, or `unknown`. Never runs anything.
+    private static func status(_ requestId: String?, client: String, host: AgentControlHost) throws -> AgentControlSendResult {
+        guard let request = requestId else { throw AgentControlError.invalidArguments("requestId is required") }
+        let stored = host.controlSendStatus(AgentControlSend.commandID(client: client, requestID: try requestID(request)))
+        return try AgentControlSend.result(stored, requestID: request, agents: host.controlAgents(), refusalThrows: false)
+    }
+
+    private static func requestID(_ raw: String) throws -> String {
+        guard !raw.isEmpty, raw.count <= 200 else { throw AgentControlError.invalidArguments("requestId must be 1 to 200 characters") }
+        return raw
+    }
+
+    /// One send tool call. A requestId msgblast already knows returns its stored result
+    /// without counting against the limit; anything new waits for its final result.
+    private static func send(_ name: String, _ input: Arguments, client: String, host: AgentControlHost) async throws -> AgentControlSendResult {
+        if name == "msgblast_request_status" { return try status(input.requestId, client: client, host: host) }
+        let request = try input.requestId.map(requestID) ?? UUID().uuidString
+        let id = AgentControlSend.commandID(client: client, requestID: request)
+        let fields = AgentControlSend.Input(text: input.text, agents: input.agents, agent: input.agent, comparisonID: input.comparisonId)
+        let command = try AgentControlSend.command(name, fields, id: id)
+        if host.controlSendStatus(id).code == .unknownCommand, !sendLimit.allow(client) {
+            throw AgentControlError.refused("Too many sends from \(client) in a short time. Wait a minute, then try again. Nothing was sent.")
+        }
+        let result = await host.controlSend(command)
+        return try AgentControlSend.result(result, requestID: request, agents: host.controlAgents(), refusalThrows: true)
     }
 
     private static func decode(_ data: Data) throws -> Arguments {

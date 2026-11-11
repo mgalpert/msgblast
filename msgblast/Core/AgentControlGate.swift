@@ -102,7 +102,7 @@ public enum AgentControlWire {
             guard let name = request["name"] as? String else { return reply(id, error: "invalidRequest", "tools/call needs \"name\".") }
             let arguments = (request["arguments"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) } ?? Data()
             do {
-                let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host)
+                let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host, client: client)
                 return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
             } catch let error as AgentControlError {
                 return reply(id, error: code(error), error.localizedDescription)
@@ -121,6 +121,7 @@ public enum AgentControlWire {
         case .needsAccess: "needsAccess"
         case .invalidArguments: "invalidArguments"
         case .notFound: "notFound"
+        case .refused: "refused"
         case nil: "failed"
         }
     }
