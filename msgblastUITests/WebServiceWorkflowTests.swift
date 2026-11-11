@@ -444,6 +444,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         return settings
     }
 
+    @MainActor
     private func capture(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         attachment.name = name
