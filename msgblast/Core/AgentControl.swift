@@ -88,7 +88,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
                          summary: "A comparison's prompt, each agent's submission state, and the conversation so far.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}"#),
         AgentControlTool(name: "msgblast_blast_wait", title: "Wait for replies",
-                         summary: "Waits up to timeoutSeconds for events after cursor `after` (replies, busy or ready agents, send results, new Messages-agent messages, finished reports). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
+                         summary: "Waits up to timeoutSeconds for events after cursor `after` (a reply arrived, a send finished, an agent turned busy or ready). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"after":{"type":"integer","minimum":0},"comparisonId":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":0,"maximum":300}}}"#)
     ]
 

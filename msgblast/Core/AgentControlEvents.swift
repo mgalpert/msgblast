@@ -62,4 +62,62 @@ public struct AgentControlEvent: Codable, Equatable, Sendable {
         sleeper?.cancel()
         return found
     }
+
+    private var last: AgentControlSnapshot?
+
+    /// Compares the app's state with the previous look and publishes what changed. The first
+    /// look after `resetObservation()` only records, so turning agent control on replays nothing.
+    public func observe(_ snapshot: AgentControlSnapshot, date: Date = Date()) {
+        guard let old = last else { last = snapshot; return }
+        var next = snapshot
+        // A reply still streaming is counted once its agent is no longer busy.
+        for key in snapshot.settling { next.replies[key] = old.replies[key] }
+        for change in next.changes(since: old) {
+            publish(change.kind, comparisonID: change.comparisonID, agent: change.agent, detail: change.detail, date: date)
+        }
+        last = next
+    }
+
+    public func resetObservation() { last = nil }
+}
+
+/// What the event feed compares between looks at the app: replies and send states for each
+/// agent in recent comparisons, and which agents are busy.
+public struct AgentControlSnapshot: Equatable, Sendable {
+    /// Only the most recent open comparisons are watched, which keeps each look cheap.
+    public static let watchedComparisons = 20
+    public struct Key: Hashable, Sendable {
+        public var comparisonID: UUID, agent: String
+        public init(comparisonID: UUID, agent: String) { self.comparisonID = comparisonID; self.agent = agent }
+    }
+    public struct Change: Equatable, Sendable {
+        public var kind: AgentControlEvent.Kind, comparisonID: UUID?, agent: String?, detail: String?
+    }
+    /// Replies from each agent, counted.
+    public var replies: [Key: Int] = [:]
+    /// Each Messages agent's send state (`Submission` raw values).
+    public var states: [Key: String] = [:]
+    /// Agents still writing a reply; their counts wait until they finish.
+    public var settling: Set<Key> = []
+    /// Agents busy right now, by name.
+    public var busy: Set<String> = []
+
+    public init() {}
+
+    public func changes(since old: Self) -> [Change] {
+        var changes: [Change] = []
+        for key in replies.keys.sorted(by: Self.order) where (replies[key] ?? 0) > (old.replies[key] ?? 0) {
+            changes.append(Change(kind: .replyArrived, comparisonID: key.comparisonID, agent: key.agent, detail: nil))
+        }
+        for key in states.keys.sorted(by: Self.order) {
+            guard let state = states[key], state != old.states[key], Self.settledStates.contains(state) else { continue }
+            changes.append(Change(kind: .sendResult, comparisonID: key.comparisonID, agent: key.agent, detail: state))
+        }
+        for name in busy.subtracting(old.busy).sorted() { changes.append(Change(kind: .agentBusy, comparisonID: nil, agent: name, detail: nil)) }
+        for name in old.busy.subtracting(busy).sorted() { changes.append(Change(kind: .agentReady, comparisonID: nil, agent: name, detail: nil)) }
+        return changes
+    }
+
+    private static let settledStates: Set<String> = ["submitted", "failed", "uncertain"]
+    private static func order(_ a: Key, _ b: Key) -> Bool { (a.comparisonID.uuidString, a.agent) < (b.comparisonID.uuidString, b.agent) }
 }

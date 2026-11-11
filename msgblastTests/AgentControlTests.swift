@@ -145,6 +145,38 @@ import XCTest
         XCTAssertEqual(feed.waiterCount, 0)
     }
 
+    func testObservingTheAppPublishesRepliesSendResultsAndBusyChanges() {
+        let feed = AgentControlEvents()
+        let blast = UUID()
+        let fo = AgentControlSnapshot.Key(comparisonID: blast, agent: "Fo")
+        let chat = AgentControlSnapshot.Key(comparisonID: blast, agent: "ChatGPT")
+        var look = AgentControlSnapshot()
+        look.replies = [fo: 2, chat: 0]
+        look.states = [fo: "sending"]
+        feed.observe(look)
+        XCTAssertEqual(feed.events, [], "the first look only records")
+        look.replies[fo] = 3
+        look.states[fo] = "submitted"
+        look.replies[chat] = 1
+        look.settling = [chat]
+        look.busy = ["ChatGPT"]
+        feed.observe(look)
+        XCTAssertEqual(feed.events.map(\.kind), [.replyArrived, .sendResult, .agentBusy])
+        XCTAssertEqual(feed.events.first?.agent, "Fo")
+        XCTAssertEqual(feed.events[1].detail, "submitted")
+        look.settling = []
+        look.busy = []
+        feed.observe(look)
+        XCTAssertEqual(feed.events.suffix(2).map(\.kind), [.replyArrived, .agentReady])
+        XCTAssertEqual(feed.events.suffix(2).first?.agent, "ChatGPT")
+        feed.observe(look)
+        XCTAssertEqual(feed.cursor, 5, "an unchanged look publishes nothing")
+        feed.resetObservation()
+        look.replies[fo] = 9
+        feed.observe(look)
+        XCTAssertEqual(feed.cursor, 5, "the first look after a reset only records")
+    }
+
     func testFeedKeepsOnlyRecentEvents() {
         let feed = AgentControlEvents()
         for _ in 0..<(AgentControlEvents.retained + 5) { feed.publish(.agentBusy) }
