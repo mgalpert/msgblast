@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import msgblastCore
 
@@ -87,22 +88,23 @@ final class AgentControlCLITests: XCTestCase {
         let path = NSTemporaryDirectory() + "mb-\(UUID().uuidString.prefix(8)).sock"
         let line = Data("{}\n".utf8)
         XCTAssertThrowsError(try AgentControlSocketClient.exchange(line, socket: path)) { XCTAssertTrue($0 is AgentControlSocketClient.Unavailable) }
-        let server = socket(AF_UNIX, SOCK_STREAM, 0)
-        defer { close(server); unlink(path) }
+        // NSObject has bind(_:to:withKeyPath:options:), so the socket calls are qualified.
+        let server = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        defer { Darwin.close(server); Darwin.unlink(path) }
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: Array(path.utf8)) }
         let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(server, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(server, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         XCTAssertEqual(bound, 0)
-        XCTAssertEqual(listen(server, 1), 0)
+        XCTAssertEqual(Darwin.listen(server, 1), 0)
         // The app reads the whole request, then goes away without answering.
         Thread {
-            let client = accept(server, nil, nil)
+            let client = Darwin.accept(server, nil, nil)
             var buffer = [UInt8](repeating: 0, count: 64)
-            _ = read(client, &buffer, buffer.count)
-            close(client)
+            _ = Darwin.read(client, &buffer, buffer.count)
+            Darwin.close(client)
         }.start()
         XCTAssertThrowsError(try AgentControlSocketClient.exchange(line, socket: path)) { XCTAssertTrue($0 is AgentControlSocketClient.NoReply) }
     }
