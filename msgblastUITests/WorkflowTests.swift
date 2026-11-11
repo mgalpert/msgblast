@@ -37,7 +37,7 @@ final class WorkflowTests: XCTestCase {
             }
         }
         settings.staticTexts["settings-page-outsideAgents"].click()
-        XCTAssertTrue(settings.switches["Let agents on this Mac use msgblast"].waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.switches["outside-agents-enabled"].waitForExistence(timeout: 5))
         settings.staticTexts["settings-page-apps"].click()
         settings.buttons["Manage permissions"].click()
         XCTAssertTrue(settings.switches["enable-cua-host-permission"].exists)

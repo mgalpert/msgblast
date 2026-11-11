@@ -2,10 +2,11 @@ import Foundation
 import Network
 import msgblastCore
 
-/// HTTP MCP on this Mac's Tailscale addresses, for Grok Bot. Nothing listens unless Outside agents is on and the person turns this on.
+/// HTTP MCP on this Mac's Tailscale addresses, for Grok Bot and any other MCP client on the tailnet, each with its own key. Nothing listens unless Outside agents is on and the person turns this on.
 @MainActor final class AgentControlTailnetListener: ObservableObject {
     @Published private var store: AgentControlTailnetStore
-    @Published private(set) var plaintext: String?
+    /// Keys shown once, by client, while msgblast runs. Only hashes are saved.
+    @Published private(set) var keys: [String: String] = [:]
     @Published private(set) var error: String?
     @Published private var addresses: [String] = []
     @Published private var magicName: String?
@@ -34,7 +35,7 @@ import msgblastCore
         self.host = host
         let loaded = AgentControlTailnetStore.load(location)
         store = loaded
-        if loaded.loadFailed { error = "Saved Tailscale settings could not be read, so Grok Bot stays off." }
+        if loaded.loadFailed { error = "Saved Tailscale settings could not be read, so agents over Tailscale stay off." }
     }
 
     var loadFailed: Bool { store.loadFailed }
@@ -44,11 +45,11 @@ import msgblastCore
         set {
             guard !store.loadFailed, localOn || !newValue else { return }
             let previous = store
-            let previousPlain = plaintext
+            let previousPlain = keys
             if newValue {
-                if store.hashes[AgentControlTailnet.grokBotClient] == nil {
+                if store.hashes.isEmpty {
                     guard let issued = store.issue(AgentControlTailnet.grokBotClient) else { return }
-                    plaintext = issued
+                    keys[AgentControlTailnet.grokBotClient] = issued
                 }
                 store.enabled = true
             } else {
@@ -71,31 +72,47 @@ import msgblastCore
     /// True when the URL had to use a 100.x address because MagicDNS had no name.
     var showsAddressFallback: Bool { serverURL != nil && (magicName ?? "").isEmpty }
 
-    var authorizationHeader: String? { plaintext.map { "Authorization: Bearer \($0)" } }
+    /// Every agent with a Tailscale key, by name.
+    var clients: [String] { store.hashes.keys.sorted() }
+
+    func authorizationHeader(for client: String) -> String? { keys[client].map { "Authorization: Bearer \($0)" } }
 
     /// Path token, only while the plaintext is still in memory.
-    var pathURL: String? {
-        guard let serverURL, let plaintext else { return nil }
-        return "\(serverURL)/\(plaintext)"
+    func pathURL(for client: String) -> String? {
+        guard let serverURL, let key = keys[client] else { return nil }
+        return "\(serverURL)/\(key)"
     }
 
     /// The setup block, only while the plaintext key and a server URL are both in memory.
-    var setupText: String? {
-        guard let serverURL, let plaintext else { return nil }
-        return AgentControlTailnetSetup.text(url: serverURL, key: plaintext)
+    func setupText(for client: String) -> String? {
+        guard let serverURL, let key = keys[client] else { return nil }
+        return AgentControlTailnetSetup.text(url: serverURL, key: key, client: client)
     }
 
+    /// Tailscale and certificates; the Grok Bot line only while Grok Bot has a key.
     var readiness: [String] {
-        AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
+        let lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
+        return store.hashes[AgentControlTailnet.grokBotClient] == nil ? Array(lines.prefix(2)) : lines
     }
 
-    func rotateToken() {
+    /// Adds an agent with its own key. Returns a message when the name can't be used.
+    func add(_ typed: String) -> String? {
+        guard store.enabled, !store.loadFailed else { return "Turn on Tailscale access first." }
+        guard let client = AgentControlTailnet.remoteClientName(typed) else {
+            return "Use a name of 1 to \(AgentControlTailnet.maximumClientName) characters."
+        }
+        guard store.hashes[client] == nil else { return "\(client) already has a key." }
+        rotateToken(client)
+        return nil
+    }
+
+    func rotateToken(_ client: String = AgentControlTailnet.grokBotClient) {
         guard store.enabled, !store.loadFailed else { return }
         let previous = store
-        let previousPlain = plaintext
-        guard let issued = store.issue(AgentControlTailnet.grokBotClient) else { return }
-        plaintext = issued
-        lastCalled = nil
+        let previousPlain = keys
+        guard let issued = store.issue(client) else { return }
+        keys[client] = issued
+        if client == AgentControlTailnet.grokBotClient { lastCalled = nil }
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -103,10 +120,17 @@ import msgblastCore
     func revoke(_ client: String) {
         guard !store.loadFailed, store.hashes[client] != nil else { return }
         let previous = store
-        let previousPlain = plaintext
+        let previousPlain = keys
         store.revoke(client)
-        if client == AgentControlTailnet.grokBotClient { plaintext = nil; lastCalled = nil }
+        keys[client] = nil
+        if client == AgentControlTailnet.grokBotClient { lastCalled = nil }
         rebuild(previous: previous, previousPlain: previousPlain)
+    }
+
+    /// Removes the key and any approval, so the agent must be added and approved again.
+    func remove(_ client: String) {
+        revoke(client)
+        gate.change(nil, for: client)
     }
 
     /// The local Outside agents socket turned on or off. This listens only while that is on.
@@ -121,17 +145,17 @@ import msgblastCore
         return "http://\(host):\(store.port)/mcp"
     }
 
-    private func persist(previous: AgentControlTailnetStore, previousPlain: String?, then: () -> Void) {
+    private func persist(previous: AgentControlTailnetStore, previousPlain: [String: String], then: () -> Void) {
         do { try store.save(file) } catch {
             store = previous
-            plaintext = previousPlain
+            keys = previousPlain
             self.error = error.localizedDescription
             return
         }
         then()
     }
 
-    private func rebuild(previous: AgentControlTailnetStore, previousPlain: String?) {
+    private func rebuild(previous: AgentControlTailnetStore, previousPlain: [String: String]) {
         persist(previous: previous, previousPlain: previousPlain) {
             error = nil
             endpoint = nil

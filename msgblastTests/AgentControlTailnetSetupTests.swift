@@ -12,6 +12,34 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertFalse(text.hasSuffix("\n"))
     }
 
+    func testSetupTextNamesOtherAgents() {
+        let text = AgentControlTailnetSetup.text(url: "http://mac.example.ts.net:47480/mcp", key: "k", client: "Laptop Claude Code (Tailscale)")
+        XCTAssertEqual(text.split(separator: "\n").first, "msgblast MCP server for Laptop Claude Code")
+    }
+
+    func testRemoteClientNames() {
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Grok Bot"), AgentControlTailnet.grokBotClient)
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("  Laptop Claude Code  "), "Laptop Claude Code (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Cursor (Tailscale)"), "Cursor (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Cursor (tailscale) (Tailscale)"), "Cursor (Tailscale)")
+        XCTAssertNil(AgentControlTailnet.remoteClientName("   "))
+        XCTAssertNil(AgentControlTailnet.remoteClientName("(Tailscale)"))
+        XCTAssertNil(AgentControlTailnet.remoteClientName("bad\nname"))
+        XCTAssertNil(AgentControlTailnet.remoteClientName(String(repeating: "a", count: AgentControlTailnet.maximumClientName + 1)))
+    }
+
+    func testStoreKeepsOneKeyPerClient() {
+        var store = AgentControlTailnetStore(enabled: true)
+        let grok = store.issue(AgentControlTailnet.grokBotClient)
+        let laptop = store.issue("Laptop (Tailscale)")
+        XCTAssertNotEqual(grok, laptop)
+        XCTAssertEqual(store.client(matching: grok), AgentControlTailnet.grokBotClient)
+        XCTAssertEqual(store.client(matching: laptop), "Laptop (Tailscale)")
+        store.revoke("Laptop (Tailscale)")
+        XCTAssertNil(store.client(matching: laptop))
+        XCTAssertEqual(store.client(matching: grok), AgentControlTailnet.grokBotClient)
+    }
+
     func testStatusParsing() {
         let named = #"{"Self":{"DNSName":"mac.example.ts.net."},"CertDomains":["mac.example.ts.net"],"Peer":{"n1":{"HostName":"laptop","DNSName":"laptop.example.ts.net."},"n2":{"HostName":"GrokBot","DNSName":"other.example.ts.net."}}}"#
         let parsed = AgentControlTailnetStatus.parse(Data(named.utf8))

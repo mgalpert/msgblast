@@ -36,8 +36,8 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 
 Settings uses a native sidebar with General, Outside agents, Permissions, Sharing,
 and Updates, plus a Connections group containing Mac apps, Websites, CLI tools, and Webhooks.
-Outside agents holds the agent control switch, setup commands, the MCP command for this Mac and the MCP server URL for the Tailscale endpoint
-for Grok Bot, and each approved agent's Read only or Full access level.
+Outside agents holds the agent control switch, setup commands, the MCP command for this Mac, and the MCP server URL and per-agent keys for the Tailscale endpoint
+(Grok Bot or any other MCP client), and each approved agent's Read only or Full access level.
 Webhooks currently contains Grok Bot routines; the Grok Bot Mac app remains under Mac apps.
 Mac app setup links directly to Permissions. Website profiles and CLI accounts
 keep their separate sign-in and execution boundaries.

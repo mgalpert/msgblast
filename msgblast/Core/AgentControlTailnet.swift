@@ -6,6 +6,20 @@ import Security
 /// Tailscale's CGNAT ranges, and the per-client secret a remote MCP client must present.
 public enum AgentControlTailnet {
     public static let grokBotClient = "Grok Bot (Tailscale)"
+    public static let maximumClientName = 48
+
+    /// The saved name for an agent the person adds by hand: trimmed, one " (Tailscale)" suffix, so it never
+    /// shares an approval with a local client. "Grok Bot" becomes `grokBotClient`. Nil when empty, too long,
+    /// or holding control characters.
+    public static func remoteClientName(_ typed: String) -> String? {
+        var name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        while name.lowercased().hasSuffix("(tailscale)") {
+            name = String(name.dropLast("(tailscale)".count)).trimmingCharacters(in: .whitespaces)
+        }
+        guard !name.isEmpty, name.count <= maximumClientName,
+              !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        return "\(name) (Tailscale)"
+    }
 
     /// IPv4 `100.64.0.0/10`, IPv6 `fd7a:115c:a1e0::/48`, including a zone and IPv4-mapped `::ffff:100.x`.
     public static func isTailnetPeer(_ address: String) -> Bool {
