@@ -154,7 +154,16 @@ def retain_icon_diagnostic(output, variant, icns):
     return destination
 
 
-def package_variant(workspace, variant, source_revision, output, enable_dev_telemetry=False, signing=None, universal=False):
+def local_requirement(app, bundle_id):
+    """A certificate-based requirement survives rebuilds; an ad-hoc cdhash does not."""
+    requirement = run(["codesign", "-dr", "-", str(app)], app.parent).split("designated =>", 1)[-1].strip()
+    if "cdhash" in requirement or f'identifier "{bundle_id}"' not in requirement or "certificate leaf" not in requirement:
+        raise RuntimeError("Local test build must have a certificate-based designated requirement for its bundle ID")
+    return requirement
+
+
+def package_variant(workspace, variant, source_revision, output, enable_dev_telemetry=False, signing=None, universal=False,
+                    local_identity=None):
     derived = workspace / "derived" / variant["id"]
     if derived.exists():
         shutil.rmtree(derived)
@@ -209,8 +218,13 @@ def package_variant(workspace, variant, source_revision, output, enable_dev_tele
     if universal:
         verify_universal_bundle(app)
     sign_bundle(app, workspace / "msgblast/msgblastDebug.entitlements",
-                signing.signing_identity if signing else "-", signing.keychain if signing else None)
-    signing_record = notarize_preview(app, signing, variant["bundle_id"]) if signing else {"mode": "ad-hoc"}
+                signing.signing_identity if signing else local_identity or "-", signing.keychain if signing else None)
+    if signing:
+        signing_record = notarize_preview(app, signing, variant["bundle_id"])
+    elif local_identity:
+        signing_record = {"mode": "local-development", "designated_requirement": local_requirement(app, variant["bundle_id"])}
+    else:
+        signing_record = {"mode": "ad-hoc"}
     short = source_revision[:12]
     zip_name = f"{variant['artifact_prefix']}-{short}.zip"
     zip_path = output / zip_name

@@ -132,3 +132,33 @@ without Demo flags, preserve production state and existing Dev drafts, and check
 manual replacement/relaunch before reporting the hosted path verified. Any new
 macOS permission approval belongs to the user. No real messages or paid calls
 are needed for this activation check.
+
+## Local test copies that keep their permissions
+
+Each agent thread that tests on the maintainer's Mac needs its own visibly named
+Dev copy. Ad-hoc copies lose Full Disk Access, Accessibility and Screen
+Recording on every rebuild because macOS ties those grants to the bundle ID and
+the code's designated requirement, and an ad-hoc requirement is a hash of that
+exact build. Build local copies with:
+
+```sh
+python3 scripts/build_test_app.py --name "Fixes 1111"
+```
+
+It installs `~/Applications/msgblast PR Testing/Fixes 1111/msgblast Dev (Fixes 1111).app`,
+signed with the maintainer's Apple Development certificate (named once with
+`--identity-name` and saved in `~/.config/msgblast/test-builds.json`; a renewed
+certificate keeps the same name). The bundle ID is one of four slots,
+`com.msgblast.development.test-a` to `test-d`. Approve each slot once; every
+later copy built into that slot keeps the grants.
+
+- A rebuild of the same name reuses its slot. A new name takes the first slot
+  with no running copy, so up to four copies can run at once with separate
+  preferences. Launch with `open -n` so macOS does not just focus another copy.
+- Saved state is per name, in `~/Library/Application Support/msgblast-Dev-<name>`.
+  Preferences (`defaults`) and keychain items belong to the slot, so a new name
+  in a slot starts with the previous copy's preferences.
+- The script refuses to replace a running copy or to put a second running copy
+  in a busy slot. It never edits TCC or System Settings.
+- These copies are for this Mac only. Shared downloads still go through the
+  notarized flow above.
