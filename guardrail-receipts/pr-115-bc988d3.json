@@ -1,0 +1,24 @@
+{
+  "pr": 115,
+  "base_sha": "d71d582c15b4a4f8b04dd3a64a8a1befa4208c7b",
+  "head_sha": "bc988d3629055a0abd82aace1a768b9e7080ab38",
+  "date": "2026-11-11",
+  "authors": "Claude Opus agent, at the owner's request to double the PR size limit",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code; one pass at bc988d3",
+  "verdict": "approve with notes",
+  "findings": [
+    "scripts/check_pr_scope.py: threshold changed from total > 600 to total > 1200 and the failure message says 1,200; the 250 advisory, exception lookup and scope matching are unchanged",
+    "scripts/tests/test_pr_scope.py: boundaries (250,0), (251,0), (1200,0), (1201,1); 1201 with approval passes, 1201 with wrong scope fails, 1201 deletions fail",
+    "AGENTS.md and docs/review-guardrails.md say 1,200; the 200-300 target and 250 advisory text are unchanged",
+    "no stale 600 limit remains in the head tree; other '600' hits are unrelated"
+  ],
+  "open_notes": [
+    "pr-scope.yml runs the base branch's copy of the script, so this PR is itself checked against 600, and stacked PRs keep 600 until main is merged into their bases",
+    "the limit is a literal in the script and the docs, with no shared constant"
+  ],
+  "checks_run_locally_at_head": {
+    "test_pr_scope.py": "7 tests OK (author run and reviewer run)",
+    "PR scope": "PASS, 18 lines, 4 files, all in declared scope"
+  },
+  "limits": "Checks ran in a Linux cloud container, not in hosted Actions; the GitHub workflow and live exception lookup were not exercised."
+}
