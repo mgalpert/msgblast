@@ -15,6 +15,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var closingAll = false
     var workspaceWindow: NSWindow?
     var workspaceComparisonID: UUID?
+    var workspaceWillDismiss: (() -> Bool)?
     private var confirming: Set<ObjectIdentifier> = []
 
     @discardableResult
@@ -66,7 +67,10 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
     func dismissConversationWindow(_ window: NSWindow) {
         // Closing a SwiftUI scene tears down its hosting graph. Retain the main
         // workspace while dismissing its window so reopening remains interactive.
-        if window === workspaceWindow { window.orderOut(nil) }
+        if window === workspaceWindow {
+            guard workspaceWillDismiss?() != false else { NSSound.beep(); return }
+            window.orderOut(nil)
+        }
         else { window.close() }
     }
 

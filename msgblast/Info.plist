@@ -24,6 +24,8 @@
 	<string>Submit separate messages to your selected existing Messages conversations.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Talk with GPT-Live about the conversation you choose to share. Microphone audio is sent to OpenAI only during your active voice session.</string>
 	<key>msgblastTelemetryEndpoint</key>
 	<string>$(MSGBLAST_TELEMETRY_ENDPOINT)</string>
 	<key>SUFeedURL</key>
