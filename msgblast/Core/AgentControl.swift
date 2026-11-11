@@ -142,8 +142,11 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
 
     private static func wait(_ host: AgentControlHost, after: Int?, comparisonID: String?, timeout: Int) async throws -> AgentControlWaitResult {
         guard (0...300).contains(timeout) else { throw AgentControlError.invalidArguments("timeoutSeconds must be 0 to 300") }
+        if let after, after < 0 { throw AgentControlError.invalidArguments("after must be 0 or more") }
         let feed = host.controlEvents
-        let start = after ?? feed.cursor
+        // The feed starts again at 0 when msgblast restarts, so a cursor past its end is
+        // from an earlier run: read from the start rather than wait for events that already came.
+        let start = after.map { $0 > feed.cursor ? 0 : $0 } ?? feed.cursor
         var comparison: UUID?
         if let comparisonID {
             guard let id = UUID(uuidString: comparisonID) else { throw AgentControlError.invalidArguments("comparisonId is not a comparison id") }
