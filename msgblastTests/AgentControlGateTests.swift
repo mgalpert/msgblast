@@ -11,6 +11,21 @@ import XCTest
     }
 
     private final class Counter { var value = 0 }
+    /// Parks an approval until `finish`, so another client can be served while it waits.
+    @MainActor private final class Pause {
+        private var continuation: CheckedContinuation<AgentControlAccess?, Never>?
+        var started = false
+        func wait() async -> AgentControlAccess? {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                started = true
+            }
+        }
+        func finish(_ level: AgentControlAccess?) {
+            continuation?.resume(returning: level)
+            continuation = nil
+        }
+    }
     private var file: URL!
 
     override func setUp() async throws {
@@ -76,5 +91,44 @@ import XCTest
         let anonymous = try await send(#"{"id":1,"method":"tools/list"}"#, gate: gate)
         XCTAssertEqual((anonymous["error"] as? [String: Any])?["code"] as? String, "invalidRequest")
         XCTAssertTrue(gate.approvals.isEmpty)
+    }
+
+    func testApprovedClientReturnsWhileAnotherApprovalIsPending() async throws {
+        let gate = AgentControlGate(file: file)
+        try gate.set(.readOnly, for: "Approved")
+        let pause = Pause()
+        let pending = Task { await gate.access(for: "Pending") { _ in await pause.wait() } }
+        for _ in 0..<100 where !pause.started { await Task.yield() }
+        XCTAssertTrue(pause.started)
+        let level = await gate.access(for: "Approved") { _ in nil }
+        XCTAssertEqual(level, .readOnly)
+        XCTAssertNil(gate.approvals["Pending"])
+        pause.finish(.sendToAgents)
+        let saved = await pending.value
+        XCTAssertEqual(saved, .sendToAgents)
+        XCTAssertEqual(gate.approvals["Pending"], .sendToAgents)
+    }
+
+    func testWireListsToolsWhileAnotherApprovalIsPending() async throws {
+        let gate = AgentControlGate(file: file)
+        try gate.set(.readOnly, for: "Approved")
+        let pause = Pause()
+        let pending = Task {
+            await AgentControlWire.respond(to: Data(#"{"id":1,"client":"Pending","method":"tools/list"}"#.utf8), host: Host(), gate: gate) { _ in await pause.wait() }
+        }
+        for _ in 0..<100 where !pause.started { await Task.yield() }
+        XCTAssertTrue(pause.started)
+        let list = try await send(#"{"id":2,"client":"Approved","method":"tools/list"}"#, gate: gate) { _ in nil }
+        XCTAssertEqual(list["id"] as? Int, 2)
+        let tools = try XCTUnwrap((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])
+        XCTAssertEqual(tools.count, AgentControl.tools.count)
+        XCTAssertNil(gate.approvals["Pending"])
+        pause.finish(.full)
+        let pendingData = await pending.value
+        XCTAssertEqual(pendingData.last, 0x0A)
+        let pendingBody = try XCTUnwrap(JSONSerialization.jsonObject(with: pendingData) as? [String: Any])
+        XCTAssertEqual(pendingBody["id"] as? Int, 1)
+        XCTAssertNotNil((pendingBody["result"] as? [String: Any])?["tools"])
+        XCTAssertEqual(gate.approvals["Pending"], .full)
     }
 }
