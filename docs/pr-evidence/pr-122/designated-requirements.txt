@@ -1,0 +1,9 @@
+# codesign -dr - output, certificate name redacted
+
+## A: msgblast Dev (Shared Grants A 1111).app (built from ec88bf3)
+designated => identifier "com.msgblast.development.test-a" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: <redacted>" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */
+
+## B: msgblast Dev (Shared Grants B 1111).app (built from f6bb459)
+designated => identifier "com.msgblast.development.test-a" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: <redacted>" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */
+
+Identical: yes
