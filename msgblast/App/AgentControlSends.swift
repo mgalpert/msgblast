@@ -12,10 +12,12 @@ import msgblastRemoteProtocol
 @MainActor final class AgentControlSends {
     let executor: RemoteCommandExecutor
     private let activity: AgentControlActivity
+    private unowned let model: AppModel
     private let host: AppRemoteHost
     private let availability: AvailabilityModel
 
     init(model: AppModel) {
+        self.model = model
         let remote = model.remote
         // AppRemoteHost reads settings only on the main actor.
         let settings = { () -> RemoteSettings in
@@ -32,9 +34,14 @@ import msgblastRemoteProtocol
     }
 
     /// Shows the send in the banner and the activity list, and refuses new sends while the person has stopped them.
+    /// A new send first refreshes permissions and app installs, as the phone's probe loop does while it is
+    /// connected, so readiness is current. A repeat returns its stored result.
     func send(_ command: RemoteCommand, client: String) async -> RemoteCommandResult {
         let known = executor.status(of: command.clientCommandID).code != .unknownCommand
-        return await activity.run(command, client: client, known: known) { await self.executor.execute($0) }
+        return await activity.run(command, client: client, known: known) { command in
+            if !known { await self.model.remoteAvailabilityProbe(slow: false) }
+            return await self.executor.execute(command)
+        }
     }
 }
 

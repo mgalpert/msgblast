@@ -35,15 +35,17 @@ public struct AgentControlActivityLog: Equatable, Sendable {
     public var running: AgentControlActivityEntry? { entries.first { $0.result == nil } }
 
     public mutating func begin(_ command: RemoteCommand, client: String, now: Date = Date()) {
-        guard let described = Self.describe(command.action) else { return }
+        guard let described = Self.describe(command.action),
+              !entries.contains(where: { $0.id == command.clientCommandID && $0.result == nil }) else { return }
         let entry = AgentControlActivityEntry(id: command.clientCommandID, client: client, action: described.name,
                                               agentCount: described.agents, started: now)
         entries.insert(entry, at: 0)
         if entries.count > Self.limit { entries.removeLast(entries.count - Self.limit) }
     }
 
+    /// A replayed result belongs to a call already listed, so it changes nothing.
     public mutating func finish(_ result: RemoteCommandResult) {
-        guard let index = entries.firstIndex(where: { $0.id == result.clientCommandID && $0.result == nil }) else { return }
+        guard !result.replayed, let index = entries.firstIndex(where: { $0.id == result.clientCommandID && $0.result == nil }) else { return }
         entries[index].result = Self.describe(result)
     }
 

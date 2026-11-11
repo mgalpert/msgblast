@@ -92,7 +92,10 @@ import XCTest
         XCTAssertEqual(list["id"] as? Int, 1)
         let tools = try XCTUnwrap((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])
         XCTAssertEqual(tools.count, AgentControl.tools.count)
-        XCTAssertTrue(tools.allSatisfy { $0["allowed"] as? Bool == true && $0["inputSchema"] is [String: Any] })
+        XCTAssertTrue(tools.allSatisfy { $0["inputSchema"] is [String: Any] })
+        // Read only: the read tools are allowed and the send tools are listed but not allowed.
+        XCTAssertEqual(tools.compactMap { $0["allowed"] as? Bool }, AgentControl.tools.map { $0.access == .readOnly })
+        XCTAssertTrue(tools.contains { $0["allowed"] as? Bool == false })
         let status = try await send(#"{"id":"a","client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":{}}"#, gate: gate)
         XCTAssertEqual((status["result"] as? [String: Any])?["version"] as? String, "1.0")
         let unknown = try await send(#"{"id":3,"client":"Claude Code","method":"tools/call","name":"msgblast_nope"}"#, gate: gate)

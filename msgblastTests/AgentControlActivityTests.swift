@@ -59,6 +59,20 @@ import msgblastRemoteProtocol
         XCTAssertTrue(activity.log.entries.isEmpty)
     }
 
+    func testASecondCallForARunningRequestNeitherAddsAnEntryNorFinishesIt() {
+        var log = AgentControlActivityLog()
+        let command = start()
+        log.begin(command, client: "Codex")
+        log.begin(command, client: "Codex")
+        var replay = RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .accepted)
+        replay.replayed = true
+        log.finish(replay)
+        XCTAssertEqual(log.entries.count, 1)
+        XCTAssertEqual(log.running?.id, command.clientCommandID)
+        log.finish(.init(clientCommandID: command.clientCommandID, outcome: .applied))
+        XCTAssertEqual(log.entries.map(\.result), ["Done"])
+    }
+
     func testEachSendKindIsDescribedAndOtherCommandsAreNotListed() {
         var log = AgentControlActivityLog()
         let conversation = UUID()
