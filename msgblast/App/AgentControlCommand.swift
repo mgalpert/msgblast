@@ -57,17 +57,28 @@ enum AgentControlCommand {
         }
         let output = LockedOutput()
         let group = DispatchGroup()
+        // At most this many requests run at once; reading pauses until one finishes.
+        let slots = DispatchSemaphore(value: maximumInFlight)
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            guard line.utf8.count <= maximumLineBytes else {
+                output.write(Data((#"{"error":{"code":-32600,"message":"Message too large."},"id":null,"jsonrpc":"2.0"}"# + "\n").utf8))
+                continue
+            }
+            slots.wait()
             group.enter()
             Task.detached {
                 if let reply = await server.handle(Data(line.utf8)) { output.write(reply) }
+                slots.signal()
                 group.leave()
             }
         }
         group.wait()
         return 0
     }
+
+    static let maximumInFlight = 64
+    static let maximumLineBytes = 1_048_576
 
     private final class LockedOutput: @unchecked Sendable {
         private let lock = NSLock()

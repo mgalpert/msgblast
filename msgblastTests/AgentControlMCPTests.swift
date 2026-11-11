@@ -63,7 +63,7 @@ final class AgentControlMCPTests: XCTestCase {
         let (server, socket) = makeServer(["msgblast_status": #"{"id":1,"result":{"version":"9.9"}}"#])
         let discover = try await send(server, #"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{\#(Self.modern("Codex"))}}"#)
         let found = try XCTUnwrap(discover["result"] as? [String: Any])
-        XCTAssertEqual(found["supportedVersions"] as? [String], ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"])
+        XCTAssertEqual(found["supportedVersions"] as? [String], ["2026-07-28", "2025-11-25", "2025-06-18"])
         XCTAssertEqual(found["resultType"] as? String, "complete")
         XCTAssertNotNil((found["_meta"] as? [String: Any])?["io.modelcontextprotocol/serverInfo"])
         let call = try await send(server, #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"msgblast_status","arguments":{},\#(Self.modern("Codex"))}}"#)
@@ -96,6 +96,49 @@ final class AgentControlMCPTests: XCTestCase {
         XCTAssertEqual((garbage["error"] as? [String: Any])?["code"] as? Int, -32700)
         let ping = try await send(server, #"{"jsonrpc":"2.0","id":4,"method":"ping"}"#)
         XCTAssertNotNil(ping["result"] as? [String: Any])
+        for line in [#"[{"jsonrpc":"2.0","id":5,"method":"ping"}]"#, "7", #""ping""#] {
+            let invalid = try await send(server, line)
+            XCTAssertEqual((invalid["error"] as? [String: Any])?["code"] as? Int, -32600, line)
+        }
+        let badMethod = try await send(server, #"{"jsonrpc":"2.0","id":6,"method":3}"#)
+        XCTAssertEqual((badMethod["error"] as? [String: Any])?["code"] as? Int, -32600)
+        XCTAssertEqual(badMethod["id"] as? Int, 6)
+        let oldHandshake = try await send(server, #"{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#)
+        XCTAssertEqual((oldHandshake["result"] as? [String: Any])?["protocolVersion"] as? String, "2025-11-25")
+    }
+
+    func testReportedClientNamesAreMadeSafe() async throws {
+        let (server, socket) = makeServer(["tools/list": Self.tools])
+        _ = try await send(server, #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"title":"\u202e\u0000","name":"Evil\u202eAgent\n"}}}"#)
+        _ = try await send(server, #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
+        let request = try await forwarded(socket)
+        XCTAssertEqual(request["client"] as? String, "Evil Agent")
+    }
+
+    func testALongWaitDoesNotHoldUpOtherRequests() async throws {
+        let gate = WaitGate()
+        let server = AgentControlMCPServer(version: "9.9", client: "Codex") { line in
+            let request = try XCTUnwrap(JSONSerialization.jsonObject(with: line) as? [String: Any])
+            if request["name"] as? String == "msgblast_blast_wait" { await gate.hold() }
+            return Data((#"{"id":1,"result":{"version":"9.9"}}"# + "\n").utf8)
+        }
+        let wait = Task { await server.handle(Data(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"msgblast_blast_wait"}}"#.utf8)) }
+        while await !gate.holding { await Task.yield() }
+        let status = try await send(server, #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"msgblast_status"}}"#)
+        XCTAssertEqual((status["result"] as? [String: Any])?["isError"] as? Bool, false)
+        let ping = try await send(server, #"{"jsonrpc":"2.0","id":3,"method":"ping"}"#)
+        XCTAssertNotNil(ping["result"])
+        await gate.release()
+        let waited = await wait.value
+        XCTAssertNotNil(waited)
+    }
+
+    /// Holds the first caller until `release()`.
+    private actor WaitGate {
+        private(set) var holding = false
+        private var continuation: CheckedContinuation<Void, Never>?
+        func hold() async { holding = true; await withCheckedContinuation { continuation = $0 } }
+        func release() { continuation?.resume(); continuation = nil }
     }
 
     func testRefusalsBecomeToolErrorsAndUnknownToolsBecomeProtocolErrors() async throws {
