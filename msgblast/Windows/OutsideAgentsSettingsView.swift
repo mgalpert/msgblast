@@ -12,6 +12,7 @@ struct OutsideAgentsSettingsView: View {
         Text("Agents such as Claude Code and Codex connect through the msgblast command. Each one asks you once, here in msgblast, and gets the level you choose.")
             .font(.caption).foregroundStyle(.secondary)
         if let error = listener.error { Text(error).font(.caption).foregroundStyle(.red) }
+        if let error = gate.saveError { Text(error).font(.caption).foregroundStyle(.red) }
         if listener.enabled {
             LabeledContent("Claude Code") { Button("Copy setup command") { copy(Self.setup("claude")) } }
             LabeledContent("Codex") { Button("Copy setup command") { copy(Self.setup("codex")) } }
@@ -25,6 +26,14 @@ struct OutsideAgentsSettingsView: View {
                     ForEach(AgentControlAccess.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 Button("Remove") { try? gate.set(nil, for: client) }
+            }
+        }
+        ForEach(gate.refused.sorted(), id: \.self) { client in
+            HStack {
+                Text(client)
+                Spacer()
+                Text("Refused until msgblast quits").font(.caption).foregroundStyle(.secondary)
+                Button("Ask Again") { gate.forgetRefusal(client) }
             }
         }
     }

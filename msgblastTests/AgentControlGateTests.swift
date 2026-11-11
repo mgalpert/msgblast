@@ -11,6 +11,7 @@ import XCTest
     }
 
     private final class Counter { var value = 0 }
+    private final class Names { var values: [String] = [] }
     private var file: URL!
 
     override func setUp() async throws {
@@ -45,6 +46,35 @@ import XCTest
         try gate.set(.full, for: "Hermes")
         try gate.set(nil, for: "Hermes")
         XCTAssertNil(AgentControlGate(file: file).approvals["Hermes"])
+    }
+
+    func testDontAllowIsRememberedUntilClearedOrApproved() async throws {
+        let asked = Counter()
+        let gate = AgentControlGate(file: file)
+        let refuse: AgentControlGate.Approve = { _ in asked.value += 1; return nil }
+        _ = try await send(#"{"id":1,"client":"Hermes","method":"tools/list"}"#, gate: gate, approve: refuse)
+        let again = try await send(#"{"id":2,"client":"Hermes","method":"tools/list"}"#, gate: gate, approve: refuse)
+        XCTAssertEqual(asked.value, 1, "a refused agent is not asked again")
+        XCTAssertTrue(((again["error"] as? [String: Any])?["message"] as? String)?.contains("Don’t Allow") == true)
+        XCTAssertEqual(gate.refused, ["Hermes"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "a refusal is not saved")
+        gate.forgetRefusal("Hermes")
+        let level = await gate.access(for: "Hermes") { _ in .readOnly }
+        XCTAssertEqual(level, .readOnly)
+        XCTAssertEqual(gate.refused, [])
+    }
+
+    func testClientNamesAreMadeSafeToShow() async throws {
+        XCTAssertEqual(AgentControlGate.clientName("  Claude\u{202E}Code \n\t "), "Claude Code")
+        XCTAssertEqual(AgentControlGate.clientName("Grok Bot (Tailscale)"), "Grok Bot (Tailscale)")
+        XCTAssertNil(AgentControlGate.clientName("\u{0007}\u{200B}"))
+        XCTAssertNil(AgentControlGate.clientName(String(repeating: "a", count: 81)))
+        let gate = AgentControlGate(file: file)
+        let shown = Names()
+        _ = try await send(#"{"id":1,"client":"Evil\u202eAgent","method":"tools/list"}"#, gate: gate) { name in shown.values.append(name); return .readOnly }
+        XCTAssertEqual(shown.values, ["Evil Agent"])
+        let empty = try await send(#"{"id":2,"client":"\u0000","method":"tools/list"}"#, gate: gate)
+        XCTAssertEqual((empty["error"] as? [String: Any])?["code"] as? String, "invalidRequest")
     }
 
     func testUnreadableApprovalsRefuseEveryoneAndAreKept() async throws {

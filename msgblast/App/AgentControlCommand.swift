@@ -17,7 +17,7 @@ enum AgentControlCommand {
     /// Runs and exits when the first argument is a msgblast command. Otherwise returns and the app starts.
     static func runIfRequested() {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        guard let first = arguments.first, AgentControlCLI.commands.contains(first) else { return }
+        guard AgentControlCLI.isCommand(arguments) else { return }
         exit(run(arguments))
     }
 
