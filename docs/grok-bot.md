@@ -36,6 +36,10 @@ The key is stored as a SHA-256 hash in `outside-agents-tailnet.json` (mode 0600)
 
 msgblast shows the approval prompt only after a valid key. Choose what that client may do. Remove in Settings deletes the approval and the key's hash.
 
+Any device on the tailnet that has the key can call msgblast as Grok Bot, so treat the key like a password. New key stops the old key at once but keeps Grok Bot's approval level; Remove clears both. Copies that contain the key are marked concealed, so clipboard history apps skip them, and are cleared after 2 minutes.
+
+Limits: a request over 1 MB gets 413, a request must arrive whole within 10 seconds (408), a connection idle for 60 seconds closes, and at most 16 connections are open at once.
+
 On a personal tailnet, Grok Bot's device has the person's own tailnet access. A grant can limit that device to this Mac on the msgblast port. Replace the placeholders with the device and the Mac:
 
 ```hujson

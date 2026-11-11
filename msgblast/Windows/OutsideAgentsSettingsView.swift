@@ -86,15 +86,16 @@ private struct TailnetControls: View {
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Button("Copy header") { copy(header) }
+                Button("Copy header") { copySecret(header) }
                 if let path = tailnet.pathURL {
-                    Button("Copy link with key (if headers aren't available)") { copy(path) }
+                    Button("Copy link with key (if headers aren't available)") { copySecret(path) }
                         .controlSize(.small)
                 }
                 Button("New key") { confirmingNewKey = true }
                 if let setup = tailnet.setupText {
-                    Button("Copy Grok Bot setup") { copy(setup) }
+                    Button("Copy Grok Bot setup") { copySecret(setup) }
                 }
+                Text("Copies with the key are cleared from the clipboard after 2 minutes.").font(.caption).foregroundStyle(.secondary)
             } else if tailnet.enabled {
                 Text("Make a new key to see it again").font(.caption).foregroundStyle(.secondary)
                 Button("New key") { tailnet.rotateToken() }
@@ -115,5 +116,18 @@ private struct TailnetControls: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Marked concealed so clipboard history apps skip it, and cleared after 2 minutes
+    /// unless something else was copied since.
+    private func copySecret(_ text: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+        board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        let copied = board.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
+            if NSPasteboard.general.changeCount == copied { NSPasteboard.general.clearContents() }
+        }
     }
 }

@@ -194,6 +194,8 @@ import msgblastCore
 
     private func stopSockets() {
         cancelListeners()
+        monitor?.cancel()
+        monitor = nil
         let open = links
         links = []
         open.forEach { $0.close() }
@@ -208,8 +210,13 @@ import msgblastCore
         listeners = []
     }
 
+    /// Open connections at once. Grok Bot needs a few; more are refused.
+    static let maximumLinks = 16
+
     private func accept(_ connection: NWConnection) {
-        let link = AgentControlTailnetLink(connection: connection, peer: AgentControlTailnetConnection.peer(connection), owner: self)
+        let peer = AgentControlTailnetConnection.peer(connection)
+        guard links.count < Self.maximumLinks, AgentControlTailnet.isTailnetPeer(peer) else { connection.cancel(); return }
+        let link = AgentControlTailnetLink(connection: connection, peer: peer, owner: self)
         links.append(link)
         link.start()
     }
@@ -236,7 +243,6 @@ import msgblastCore
 
     /// Status when the card appears and when the network changes. At most one fetch every 30 seconds.
     func refreshStatus() {
-        observeNetwork()
         if statusTask != nil { statusQueued = true; return }
         let now = Date()
         if let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
