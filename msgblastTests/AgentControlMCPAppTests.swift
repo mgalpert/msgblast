@@ -36,6 +36,13 @@ final class AgentControlMCPAppTests: XCTestCase {
         XCTAssertEqual(uiExtension(found, "extensions")?["mimeTypes"] as? [String], [AgentControlMCPApp.mimeType])
         XCTAssertNil(found?["experimental"])
         XCTAssertNotNil(found?["resources"] as? [String: Any])
+        XCTAssertEqual(Self.mentionsTool(caps, "extensions"), "msgblast_mentions")
+        XCTAssertEqual(Self.mentionsTool(caps, "experimental"), "msgblast_mentions")
+        XCTAssertEqual(Self.mentionsTool(found, "extensions"), "msgblast_mentions")
+    }
+
+    private static func mentionsTool(_ capabilities: [String: Any]?, _ key: String) -> String? {
+        ((capabilities?[key] as? [String: Any])?["openai/mentions"] as? [String: Any])?["searchTool"] as? String
     }
 
     func testResourcesListAndReadTheViewWithoutTheApp() async throws {
@@ -71,7 +78,7 @@ final class AgentControlMCPAppTests: XCTestCase {
             XCTAssertFalse(catalog?.name.contains(".") == true)
             XCTAssertFalse(catalog?.inputSchema.contains("\"required\"") == true)
         }
-        let tools = #"{"id":1,"result":{"tools":[{"name":"msgblast_status","title":"msgblast status","description":"Status.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_comparisons_list","title":"List comparisons","description":"Saved.","access":"Read only","allowed":true,"inputSchema":{"type":"object","properties":{}}},{"name":"msgblast_comparison_read","title":"Read a comparison","description":"Read.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_blast_wait","title":"Wait for replies","description":"Wait.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}}]}}"#
+        let tools = #"{"id":1,"result":{"tools":[{"name":"msgblast_status","title":"msgblast status","description":"Status.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_comparisons_list","title":"List comparisons","description":"Saved.","access":"Read only","allowed":true,"inputSchema":{"type":"object","properties":{}}},{"name":"msgblast_comparison_read","title":"Read a comparison","description":"Read.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_blast_wait","title":"Wait for replies","description":"Wait.","access":"Read only","allowed":true,"inputSchema":{"type":"object"}},{"name":"msgblast_mentions","title":"Mention comparisons","description":"Search.","access":"Read only","allowed":true,"inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}]}}"#
         let server = AgentControlMCPServer(version: "9.9", client: "Codex") { _ in Data((tools + "\n").utf8) }
         let list = try await send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
         let listed = try XCTUnwrap((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])
@@ -88,6 +95,60 @@ final class AgentControlMCPAppTests: XCTestCase {
             } else {
                 XCTAssertNil(entries, name)
             }
+            if name == "msgblast_mentions" {
+                let visibility = (meta?["ui"] as? [String: Any])?["visibility"] as? [String]
+                XCTAssertEqual(visibility, ["model", "app"])
+                XCTAssertEqual((tool["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool, true)
+            }
         }
+    }
+
+    func testMentionsAndComparisonResources() async throws {
+        let id = "00000000-0000-4000-8000-000000000001"
+        let found = "00000000-0000-4000-8000-000000000002"
+        let capture = Capture()
+        let server = AgentControlMCPServer(version: "9.9", client: "Codex") { line in
+            await capture.add(line)
+            let request = try XCTUnwrap(JSONSerialization.jsonObject(with: line) as? [String: Any])
+            let name = request["name"] as? String
+            if name == "msgblast_mentions" {
+                return Data(("{\"id\":1,\"result\":{\"items\":[{\"type\":\"resource_link\",\"uri\":\"msgblast://comparison/\(id)\",\"name\":\"Hi\",\"description\":\"1970-01-01T00:00:00Z · 1 agent\",\"mimeType\":\"application/json\"}]}}\n").utf8)
+            }
+            if name == "msgblast_comparison_read" {
+                let asked = (request["arguments"] as? [String: Any])?["id"] as? String ?? ""
+                if asked == id { return Data(("{\"id\":1,\"error\":{\"code\":\"notFound\",\"message\":\"Nothing in msgblast matches \(id).\"}}\n").utf8) }
+                return Data(("{\"id\":1,\"result\":{\"prompt\":\"Hi\",\"id\":\"\(asked)\"}}\n").utf8)
+            }
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let mentioned = try await send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"msgblast_mentions","arguments":{"query":""}}}"#)
+        let items = ((mentioned["result"] as? [String: Any])?["structuredContent"] as? [String: Any])?["items"] as? [[String: Any]]
+        XCTAssertEqual(items?.first?["type"] as? String, "resource_link")
+        XCTAssertEqual(items?.first?["uri"] as? String, "msgblast://comparison/\(id)")
+        let read = try await send(server, #"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"msgblast://comparison/\#(found)"}}"#)
+        let forwardedLine = await capture.line(1)
+        let forwarded = try XCTUnwrap(JSONSerialization.jsonObject(with: forwardedLine) as? [String: Any])
+        XCTAssertEqual(forwarded["method"] as? String, "tools/call")
+        XCTAssertEqual(forwarded["name"] as? String, "msgblast_comparison_read")
+        XCTAssertEqual((forwarded["arguments"] as? [String: Any])?["id"] as? String, found)
+        let content = ((read["result"] as? [String: Any])?["contents"] as? [[String: Any]])?.first
+        XCTAssertEqual(content?["mimeType"] as? String, "application/json")
+        XCTAssertEqual(content?["uri"] as? String, "msgblast://comparison/\(found)")
+        XCTAssertTrue((content?["text"] as? String ?? "").contains("\"prompt\":\"Hi\""))
+        let missing = try await send(server, #"{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"msgblast://comparison/\#(id)"}}"#)
+        let error = try XCTUnwrap(missing["error"] as? [String: Any])
+        XCTAssertEqual(error["code"] as? Int, -32002)
+        XCTAssertEqual(error["message"] as? String, "No msgblast resource at msgblast://comparison/\(id).")
+        let offline = try await send(self.offline(), #"{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"msgblast://comparison/\#(id)"}}"#)
+        XCTAssertEqual((offline["error"] as? [String: Any])?["code"] as? Int, -32002)
+        XCTAssertEqual((offline["error"] as? [String: Any])?["message"] as? String, AgentControlMCPServer.unavailable)
+        let list = try await send(self.offline(), #"{"jsonrpc":"2.0","id":5,"method":"resources/list"}"#)
+        XCTAssertEqual(((list["result"] as? [String: Any])?["resources"] as? [[String: Any]])?.map { $0["uri"] as? String }, [AgentControlMCPApp.viewURI])
+    }
+
+    private actor Capture {
+        private var lines: [Data] = []
+        func add(_ line: Data) { lines.append(line) }
+        func line(_ index: Int) -> Data { lines[index] }
     }
 }

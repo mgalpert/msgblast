@@ -20,6 +20,14 @@ public enum AgentControlCLI {
     /// The request reached msgblast but no reply came back, so it may have run.
     public static let noReplyStatus: Int32 = 6
     public static let unavailable = "msgblast is not running, or Settings → Outside agents is off."
+
+    /// Pretty-printed stdio MCP config for Cursor, Gemini CLI, and other clients.
+    public static func mcpConfig(executable: String) -> String {
+        let body: [String: Any] = ["mcpServers": ["msgblast": ["command": executable, "args": ["mcp"]]]]
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return "" }
+        return text.hasSuffix("\n") ? text : text + "\n"
+    }
     public static let noReply = "msgblast got the request but stopped before answering, so it may have run. Check before repeating it."
     public static let usage = """
     usage: msgblast <command> [--client NAME] [--json]

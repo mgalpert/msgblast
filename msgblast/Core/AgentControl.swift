@@ -83,8 +83,11 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
                          summary: "Agents msgblast can send to. Hidden agents only with includeHidden.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"includeHidden":{"type":"boolean"}}}"#),
         AgentControlTool(name: "msgblast_comparisons_list", title: "List comparisons",
-                         summary: "Saved comparisons, newest first. query filters by prompt text.",
+                         summary: "Saved comparisons, newest first. query filters by name or prompt.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}}}"#),
+        AgentControlTool(name: "msgblast_mentions", title: "Mention comparisons",
+                         summary: "Comparisons whose name or prompt matches query, as resource links for @-mentions. query may be empty.",
+                         access: .readOnly, inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#),
         AgentControlTool(name: "msgblast_comparison_read", title: "Read a comparison",
                          summary: "A comparison's prompt, each agent's submission state, and the conversation so far.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}"#),
@@ -107,6 +110,8 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
             return try encoder.encode(host.controlAgents().filter { $0.visible || input.includeHidden == true })
         case "msgblast_comparisons_list":
             return try encoder.encode(comparisons(host, query: input.query, limit: input.limit ?? 20))
+        case "msgblast_mentions":
+            return try encoder.encode(mentions(host, query: input.query))
         case "msgblast_blast_wait":
             return try await encoder.encode(wait(host, after: input.after, comparisonID: input.comparisonId, timeout: input.timeoutSeconds ?? 60))
         default:
@@ -124,6 +129,29 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         catch { throw AgentControlError.invalidArguments(error.localizedDescription) }
     }
 
+    private struct MentionLink: Encodable {
+        var type, uri, name, description, mimeType: String
+    }
+    private struct MentionResult: Encodable { var items: [MentionLink] }
+
+    /// Name or prompt, one place, for the list tool and for @-mentions.
+    private static func matches(_ comparison: Comparison, query: String) -> Bool {
+        query.isEmpty || comparison.prompt.localizedCaseInsensitiveContains(query) || comparison.title.localizedCaseInsensitiveContains(query)
+    }
+
+    private static func mentions(_ host: AgentControlHost, query: String?) throws -> MentionResult {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let items = try comparisons(host, query: query, limit: 20).map { summary -> MentionLink in
+            let count = summary.agents.count
+            return MentionLink(type: "resource_link", uri: "msgblast://comparison/\(summary.id.uuidString)",
+                               name: String(summary.title.prefix(80)),
+                               description: "\(formatter.string(from: summary.created)) · \(count) \(count == 1 ? "agent" : "agents")",
+                               mimeType: "application/json")
+        }
+        return MentionResult(items: items)
+    }
+
     private static func names(_ comparison: Comparison, agents: [AgentControlAgent]) -> [String] {
         let web = comparison.resolvedWebAgentIDs.map { id in agents.first { $0.id == id.gridID.id }?.name ?? id.provider.rawValue }
         return comparison.members.map(\.name) + web
@@ -134,7 +162,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         let agents = host.controlAgents()
         let text = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return host.controlComparisons()
-            .filter { text.isEmpty || $0.prompt.localizedCaseInsensitiveContains(text) }
+            .filter { matches($0, query: text) }
             .sorted { $0.created > $1.created }
             .prefix(limit)
             .map { AgentControlComparisonSummary(id: $0.id, title: $0.title, created: $0.created, ended: $0.endedAt, agents: names($0, agents: agents)) }

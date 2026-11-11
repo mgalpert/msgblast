@@ -20,6 +20,9 @@ struct OutsideAgentsSettingsView: View {
         if listener.enabled {
             LabeledContent("Claude Code") { Button("Copy setup command") { copy(Self.setup("claude")) } }
             LabeledContent("Codex") { Button("Copy setup command") { copy(Self.setup("codex")) } }
+            LabeledContent("Cursor, Gemini CLI") {
+                Button("Copy MCP config") { copy(AgentControlCLI.mcpConfig(executable: AgentControlCommand.executable)) }
+            }
             LabeledContent("Terminal") {
                 Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
             }

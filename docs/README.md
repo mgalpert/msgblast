@@ -27,6 +27,8 @@ Local development does not need production release credentials.
   and bundled helper.
 - [Grok Bot over Tailscale](grok-bot.md): the tailnet MCP endpoint, setup, and
   readiness checks.
+- [Connect your agents](outside-agents.md): local MCP for Claude Code, Codex,
+  Cursor, Gemini CLI, and Claude Desktop, plus @-mentions and access levels.
 - [Update recovery](update-recovery.md): preserving state when an older app cannot
   read state written by a newer one.
 

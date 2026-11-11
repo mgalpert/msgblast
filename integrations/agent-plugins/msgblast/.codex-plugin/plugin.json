@@ -1,0 +1,15 @@
+{
+  "name": "msgblast",
+  "version": "0.1.0",
+  "description": "Read your msgblast agents, comparisons and replies on this Mac, and show comparisons side by side.",
+  "author": {
+    "name": "msgblast contributors"
+  },
+  "skills": "./skills/",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/setup/SKILL.md"
+    }
+  },
+  "mcpServers": "./.mcp.json"
+}

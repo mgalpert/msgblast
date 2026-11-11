@@ -11,6 +11,7 @@ import msgblastCore
     @Published private var magicName: String?
     @Published private var httpsEnabled = false
     @Published private var grokBotPeer = false
+    @Published private var firewall: AgentControlFirewall.State?
     @Published private(set) var lastCalled: Date?
 
     private let file: URL
@@ -55,7 +56,7 @@ import msgblastCore
                 store.enabled = false
             }
             persist(previous: previous, previousPlain: previousPlain) {
-                if newValue { listen() } else { stopSockets(); error = nil }
+                if newValue { listen() } else { stopSockets(); error = nil; firewall = nil }
             }
         }
     }
@@ -86,7 +87,11 @@ import msgblastCore
     }
 
     var readiness: [String] {
-        AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
+        var lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
+        if enabled, let firewall, let line = AgentControlFirewall.line(firewall) {
+            lines.insert(line, at: 1)
+        }
+        return lines
     }
 
     func rotateToken() {
@@ -256,10 +261,13 @@ import msgblastCore
     }
 
     /// Status when the card appears and when the network changes. At most one fetch every 30 seconds.
+    /// A Tailscale toggle that is on with no firewall reading yet fetches immediately. The firewall
+    /// queries run only then, and they are read-only.
     func refreshStatus() {
         if statusTask != nil { statusQueued = true; return }
         let now = Date()
-        if let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
+        let firewallPending = enabled && firewall == nil
+        if !firewallPending, let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
             statusQueued = true
             let wait = 30 - now.timeIntervalSince(lastStatusAt)
             statusTask = Task { @MainActor [weak self] in
@@ -273,12 +281,17 @@ import msgblastCore
             return
         }
         lastStatusAt = now
+        let includeFirewall = enabled
+        let appPath = Bundle.main.bundlePath
         statusTask = Task { @MainActor [weak self] in
-            let parsed = await Task.detached(priority: .utility) { AgentControlTailnetDNS.fetch() }.value
+            let parsed = await Task.detached(priority: .utility) {
+                (AgentControlTailnetDNS.fetch(), includeFirewall ? AgentControlTailnetDNS.firewall(appPath: appPath) : nil)
+            }.value
             guard let self, !Task.isCancelled else { return }
-            self.magicName = parsed?.magicName
-            self.httpsEnabled = parsed?.httpsEnabled ?? false
-            self.grokBotPeer = parsed?.grokBotPeer ?? false
+            self.magicName = parsed.0?.magicName
+            self.httpsEnabled = parsed.0?.httpsEnabled ?? false
+            self.grokBotPeer = parsed.0?.grokBotPeer ?? false
+            if includeFirewall, self.enabled { self.firewall = parsed.1 }
             self.statusTask = nil
             let queued = self.statusQueued
             self.statusQueued = false

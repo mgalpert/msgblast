@@ -8,7 +8,7 @@ public enum AgentControlMCPApp {
 
     /// Advertised under `capabilities.extensions` and, on `initialize`, `capabilities.experimental`.
     static func extensionCapability() -> [String: Any] {
-        [extensionID: ["mimeTypes": [mimeType]]]
+        [extensionID: ["mimeTypes": [mimeType]], "openai/mentions": ["searchTool": "msgblast_mentions"]]
     }
 
     /// `_meta` on the UI resource in both `resources/list` and `resources/read`. No domain or CSP:

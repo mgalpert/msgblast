@@ -7,7 +7,7 @@ public actor AgentControlMCPServer {
     public static let modernVersion = "2026-07-28"
     /// 2025-03-26 is left out on purpose: it requires JSON-RPC batches, which msgblast refuses.
     public static let legacyVersions = ["2025-11-25", "2025-06-18"]
-    static let instructions = "msgblast sends one prompt to many AI agents and Messages contacts at once and keeps their replies side by side as a comparison. Use msgblast_agents_list to see the agents, msgblast_comparisons_list and msgblast_comparison_read to read comparisons, and msgblast_blast_wait to wait for replies instead of polling. Each agent gets the access level the person chose in msgblast."
+    static let instructions = "msgblast sends one prompt to many AI agents and Messages contacts at once and keeps their replies side by side as a comparison. Use msgblast_agents_list to see the agents, msgblast_comparisons_list and msgblast_comparison_read to read comparisons, msgblast_mentions to search them for @-mentions, and msgblast_blast_wait to wait for replies instead of polling. Each agent gets the access level the person chose in msgblast."
     static let unavailable = "msgblast is not running, or Settings → Outside agents is off."
 
     private struct Failure: Error { let code: Int, message: String; var requested: String? = nil }
@@ -67,7 +67,7 @@ public actor AgentControlMCPServer {
         case "tools/list": result = try await listTools(client: client)
         case "tools/call": result = try await callTool(params, client: client)
         case "resources/list": result = ["resources": [AgentControlMCPApp.listing()]]
-        case "resources/read": result = try readResource(params)
+        case "resources/read": result = try await readResource(params, client: client)
         default: throw Failure(code: -32601, message: "msgblast has no method \(method).")
         }
         if requested != nil { result["resultType"] = "complete" }
@@ -97,11 +97,30 @@ public actor AgentControlMCPServer {
         return caps
     }
 
-    /// The comparison view is static. Reading it does not call the app, so it works while msgblast is off.
-    private func readResource(_ params: [String: Any]) throws -> [String: Any] {
+    /// The comparison view is static. A `msgblast://comparison/<id>` read is a gated `msgblast_comparison_read`.
+    private func readResource(_ params: [String: Any], client: String) async throws -> [String: Any] {
         let uri = params["uri"] as? String ?? ""
-        guard uri == AgentControlMCPApp.viewURI else { throw Failure(code: -32002, message: "No msgblast resource at \(uri).") }
-        return AgentControlMCPApp.contents()
+        if uri == AgentControlMCPApp.viewURI { return AgentControlMCPApp.contents() }
+        if let id = Self.comparisonID(uri) { return try await readComparison(uri: uri, id: id, client: client) }
+        throw Failure(code: -32002, message: "No msgblast resource at \(uri).")
+    }
+
+    private static let comparisonScheme = "msgblast://comparison/"
+
+    private static func comparisonID(_ uri: String) -> String? {
+        guard uri.lowercased().hasPrefix(comparisonScheme) else { return nil }
+        let id = String(uri.dropFirst(comparisonScheme.count))
+        return UUID(uuidString: id) == nil ? nil : id
+    }
+
+    private func readComparison(uri: String, id: String, client: String) async throws -> [String: Any] {
+        let reply = try await send(["method": "tools/call", "name": "msgblast_comparison_read", "arguments": ["id": id]], client: client)
+        if let error = reply.error {
+            throw Failure(code: -32002, message: error.code == "notFound" ? "No msgblast resource at \(uri)." : error.message)
+        }
+        let text = (try? JSONSerialization.data(withJSONObject: reply.result ?? NSNull(), options: [.sortedKeys, .fragmentsAllowed]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        return ["contents": [["uri": uri, "mimeType": "application/json", "text": text]]]
     }
 
     private func listTools(client: String) async throws -> [String: Any] {
@@ -117,10 +136,15 @@ public actor AgentControlMCPServer {
             var listed: [String: Any] = ["name": tool["name"] ?? "", "title": tool["title"] ?? "", "description": description,
                     "inputSchema": tool["inputSchema"] ?? ["type": "object"],
                     "annotations": ["readOnlyHint": access == AgentControlAccess.readOnly.label, "openWorldHint": false]]
-            if let name = listed["name"] as? String, let extra = AgentControlMCPApp.toolMeta(name) {
+            if let name = listed["name"] as? String {
                 var meta = tool["_meta"] as? [String: Any] ?? [:]
-                extra.forEach { meta[$0] = $1 }
-                listed["_meta"] = meta
+                AgentControlMCPApp.toolMeta(name)?.forEach { meta[$0] = $1 }
+                if name == "msgblast_mentions" {
+                    var ui = meta["ui"] as? [String: Any] ?? [:]
+                    ui["visibility"] = ["model", "app"]
+                    meta["ui"] = ui
+                }
+                if !meta.isEmpty { listed["_meta"] = meta }
             }
             return listed
         }]
