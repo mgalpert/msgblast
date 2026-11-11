@@ -266,8 +266,8 @@ need that Linux installer command. See [Cloud agents](cloud-agent.md).
   signed Dev/Demo ZIPs and a manifest; artifacts last 14 days. Ordinary fork PRs
   do not automatically get preview ZIPs.
 
-The separate, non-required `build-timing.yml` measures Debug build times on a
-GitHub-hosted macOS runner; see [Measure build times](build-from-source.md#measure-build-times).
+The separate, non-required `build-timing.yml` measures Debug build times on the
+GitHub-hosted `xcode-27` image; see [Measure build times](build-from-source.md#measure-build-times).
 
 The workflow does not run native UI tests or capture PR interaction video.
 `pr-evidence.yml` separately checks remote media structure and Evidence-SHA.

@@ -1,13 +1,16 @@
 name: Measure build times
 
-# Informational only: not a required check, and it runs on GitHub-hosted macOS
-# rather than the xcode-27 runner the required native job uses.
+# Informational only: not a required check. Uses the same GitHub-hosted image
+# and Xcode as the required native job, in a separate job.
 on:
   workflow_dispatch:
     inputs:
       runner:
         description: GitHub-hosted macOS image label
-        default: macos-26
+        default: xcode-27
+      xcode:
+        description: Xcode app on that image
+        default: /Applications/Xcode_27.0.app
       repeat:
         description: Runs per warm step
         default: '3'
@@ -25,9 +28,10 @@ concurrency:
 
 jobs:
   timing:
-    runs-on: ${{ inputs.runner || 'macos-26' }}
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
     timeout-minutes: 90
     env:
+      DEVELOPER_DIR: ${{ inputs.xcode || '/Applications/Xcode_27.0.app' }}/Contents/Developer
       PYTHONDONTWRITEBYTECODE: '1'
       REVIEW_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -37,12 +41,10 @@ jobs:
           ref: ${{ env.REVIEW_SHA }}
           persist-credentials: false
 
-      - name: Select the newest installed Xcode 27, else the newest Xcode
+      - name: Show selected Xcode and hardware
         run: |
-          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
-          [ -n "$xcode" ] || xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
-          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
-          DEVELOPER_DIR="$xcode/Contents/Developer" xcodebuild -version
+          xcodebuild -version
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
 
       - name: Time cold, no-op, leaf and core rebuilds
         run: |

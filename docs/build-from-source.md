@@ -164,7 +164,7 @@ other files, `--skip-cold` to reuse the existing folder, and `--type-check` to
 add an instrumented cold build listing the 15 slowest function bodies and
 expressions over 200 ms (`--threshold`, `--top`). The
 **Measure build times** workflow (`build-timing.yml`) runs the same command on a
-GitHub-hosted macOS runner when dispatched or when a PR changes the script. It
+GitHub-hosted `xcode-27` runner when dispatched or when a PR changes the script. It
 is informational and not a required check.
 
 ## Dependencies and generated files
