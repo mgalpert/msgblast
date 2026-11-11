@@ -48,61 +48,94 @@ public enum AgentControlCLI {
     }
 
     public static func parse(_ arguments: [String], environment: [String: String]) throws -> (command: Command, json: Bool) {
-        var words: [String] = [], options: [String: String] = [:], flags: Set<String> = []
+        let words = try split(arguments)
+        let json = words.flags.contains("--json")
+        let names = try clientNames(words.options, environment: environment)
+        if words.flags.contains("--help") { return (.help, json) }
+        return (try command(words, names: names), json)
+    }
+
+    struct Words { var words: [String] = [], options: [String: String] = [:], flags: Set<String> = [] }
+
+    /// Command words, options with their values, and flags. Unknown options are refused.
+    static func split(_ arguments: [String]) throws -> Words {
+        var result = Words()
         var index = 0
         while index < arguments.count {
             let word = arguments[index]
             index += 1
-            if Self.flags.contains(word) { flags.insert(word) }
-            else if Self.valueOptions.contains(word) {
+            if flags.contains(word) { result.flags.insert(word) }
+            else if valueOptions.contains(word) {
                 guard index < arguments.count else { throw UsageError(message: "\(word) needs a value.") }
-                options[word] = arguments[index]
+                result.options[word] = arguments[index]
                 index += 1
             } else if word.hasPrefix("--") { throw UsageError(message: "Unknown option \(word).") }
-            else { words.append(word) }
+            else { result.words.append(word) }
         }
-        let json = flags.contains("--json")
-        let named = options["--client"] ?? environment["MSGBLAST_CLIENT"] ?? (environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
-        guard let client = AgentControlGate.clientName(named) else {
-            throw UsageError(message: "--client must be a name of 1 to 80 characters.")
+        return result
+    }
+
+    /// The name the person gave (--client or MSGBLAST_CLIENT), if any, and the name to send.
+    static func clientNames(_ options: [String: String], environment: [String: String]) throws -> (given: String?, client: String) {
+        guard let raw = options["--client"] ?? environment["MSGBLAST_CLIENT"] else {
+            return (nil, environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
         }
-        if flags.contains("--help") { return (.help, json) }
-        func call(_ tool: String, _ input: [String: Any]) throws -> (command: Command, json: Bool) {
-            (.request(try line(["method": "tools/call", "client": client, "name": tool, "arguments": input])), json)
-        }
-        func number(_ option: String) throws -> Int? {
-            guard let raw = options[option] else { return nil }
-            guard let value = Int(raw) else { throw UsageError(message: "\(option) must be a whole number.") }
-            return value
-        }
-        switch words.first {
-        case nil, "help": return (.help, json)
-        case "status": return try call("msgblast_status", [:])
-        case "agents": return try call("msgblast_agents_list", ["includeHidden": flags.contains("--all")])
-        case "comparisons":
-            var input: [String: Any] = [:]
-            input["query"] = options["--query"]
-            input["limit"] = try number("--limit")
-            return try call("msgblast_comparisons_list", input)
+        guard let name = AgentControlGate.clientName(raw) else { throw UsageError(message: "--client must be a name of 1 to 80 characters.") }
+        return (name, name)
+    }
+
+    /// Commands that call one tool with arguments taken from options.
+    static let optionTools = ["status": "msgblast_status", "agents": "msgblast_agents_list", "comparisons": "msgblast_comparisons_list", "wait": "msgblast_blast_wait"]
+
+    static func command(_ words: Words, names: (given: String?, client: String)) throws -> Command {
+        let client = names.client
+        switch words.words.first {
+        case nil, "help": return .help
+        case "tools": return .request(try line(["method": "tools/list", "client": client]))
         case "show":
-            guard words.count == 2 else { throw UsageError(message: "show needs one comparison id.") }
-            return try call("msgblast_comparison_read", ["id": words[1]])
-        case "wait":
-            var input: [String: Any] = [:]
-            input["after"] = try number("--after")
-            input["comparisonId"] = options["--comparison"]
-            input["timeoutSeconds"] = try number("--timeout")
-            return try call("msgblast_blast_wait", input)
-        case "tools": return (.request(try line(["method": "tools/list", "client": client])), json)
-        case "call":
-            guard (2...3).contains(words.count) else { throw UsageError(message: "call needs a tool name and optional JSON arguments.") }
-            let raw = words.count == 3 ? words[2] : "{}"
-            guard let input = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
-                throw UsageError(message: "Arguments must be one JSON object.")
-            }
-            return try call(words[1], input)
-        case let other?: throw UsageError(message: "Unknown command \(other).")
+            guard words.words.count == 2 else { throw UsageError(message: "show needs one comparison id.") }
+            return try call("msgblast_comparison_read", ["id": words.words[1]], client: client)
+        case "call": return try call(words.words, client: client)
+        case let other?:
+            guard let tool = optionTools[other] else { throw UsageError(message: "Unknown command \(other).") }
+            return try call(tool, try arguments(other, words), client: client)
         }
+    }
+
+    static func arguments(_ command: String, _ words: Words) throws -> [String: Any] {
+        var input: [String: Any] = [:]
+        switch command {
+        case "agents": input["includeHidden"] = words.flags.contains("--all")
+        case "comparisons":
+            input["query"] = words.options["--query"]
+            input["limit"] = try number("--limit", words)
+        case "wait":
+            input["after"] = try number("--after", words)
+            input["comparisonId"] = words.options["--comparison"]
+            input["timeoutSeconds"] = try number("--timeout", words)
+        default: break
+        }
+        return input
+    }
+
+    static func number(_ option: String, _ words: Words) throws -> Int? {
+        guard let raw = words.options[option] else { return nil }
+        guard let value = Int(raw) else { throw UsageError(message: "\(option) must be a whole number.") }
+        return value
+    }
+
+    /// `call TOOL [JSON]`.
+    static func call(_ words: [String], client: String) throws -> Command {
+        guard (2...3).contains(words.count) else { throw UsageError(message: "call needs a tool name and optional JSON arguments.") }
+        let raw = words.count == 3 ? words[2] : "{}"
+        guard let input = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
+            throw UsageError(message: "Arguments must be one JSON object.")
+        }
+        return try call(words[1], input, client: client)
+    }
+
+    static func call(_ tool: String, _ input: [String: Any], client: String) throws -> Command {
+        .request(try line(["method": "tools/call", "client": client, "name": tool, "arguments": input]))
     }
 
     /// Turns the app's reply into what the command prints and its exit status.
