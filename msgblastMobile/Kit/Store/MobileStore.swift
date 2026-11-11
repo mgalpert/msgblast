@@ -14,6 +14,10 @@ public final class MobileStore: ObservableObject {
     @Published public private(set) var avatars: [String: Data]
     /// When each conversation was last opened on this phone, for the unread dot.
     @Published public private(set) var lastOpened: [UUID: Date]
+    /// Undated replies (Mac apps, websites, CLIs, bots) have no time to compare: each agent's
+    /// transcript position when the conversation was last opened. Kept under its own key, so
+    /// saved state from before it decodes unchanged.
+    @Published public private(set) var readPositions: [UUID: [String: Int]]
     /// When this phone first heard from the paired Mac; older replies are not unread.
     public private(set) var unreadSince: Date?
     /// Replies made from this phone: command id → the quoted turn. Local only; the Mac
@@ -30,6 +34,7 @@ public final class MobileStore: ObservableObject {
         commands = try database.value([UUID: CommandRecord].self, "commands") ?? [:]
         drafts = try database.value([String: String].self, "drafts") ?? [:]
         lastOpened = try database.value([UUID: Date].self, "lastOpened") ?? [:]
+        readPositions = try database.value([UUID: [String: Int]].self, "readPositions") ?? [:]
         unreadSince = try database.value(Date.self, "unreadSince")
         replyTo = try database.value([UUID: String].self, "replyTo") ?? [:]
         let refs = try database.value([String].self, "avatarRefs") ?? []
@@ -112,6 +117,11 @@ public final class MobileStore: ObservableObject {
     // MARK: Unread
 
     public func markOpened(_ conversation: UUID, at date: Date = Date()) {
+        let positions = (readPositions[conversation] ?? [:]).merging(projection.transcriptPositions(in: conversation), uniquingKeysWith: max)
+        if readPositions[conversation] != positions {
+            readPositions[conversation] = positions
+            database.setValue(readPositions, "readPositions")
+        }
         guard (lastOpened[conversation] ?? .distantPast) < date else { return }
         lastOpened[conversation] = date
         database.setValue(lastOpened, "lastOpened")
@@ -138,6 +148,7 @@ public final class MobileStore: ObservableObject {
         drafts = [:]
         avatars = [:]
         lastOpened = [:]
+        readPositions = [:]
         unreadSince = nil
         replyTo = [:]
         database.removeAll()

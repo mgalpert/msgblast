@@ -155,6 +155,31 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(rows[old], false, "Replies from before this phone started tracking are not unread")
     }
 
+    /// App, website, CLI and bot replies carry no time: unread goes by each agent's transcript position.
+    func testAnUndatedReplyPastTheLastReadPositionIsUnread() {
+        let id = UUID(), opened = fixedNow, since = fixedNow.addingTimeInterval(-3600)
+        var state = ProjectionState()
+        state.conversations[id] = RemoteConversation(id: id, title: "T", prompt: "P", created: fixedNow.addingTimeInterval(-600), endedAt: nil, agentIDs: ["claude"],
+                                                     canEnd: true, unresolvedAttemptCount: 0, lastActivity: fixedNow.addingTimeInterval(-600))
+        func add(_ ordinal: Int, _ role: RemoteTurnRole) {
+            state.turns["w\(ordinal)"] = RemoteTurn(id: "w\(ordinal)", conversationID: id, agentID: "claude", role: role, origin: .agentTranscript,
+                                                    text: "\(ordinal)", created: nil, ordinal: ordinal, contentHash: "h")
+        }
+        add(0, .user); add(1, .assistant)
+        let read = [id: state.transcriptPositions(in: id)]
+        XCTAssertEqual(read[id], ["claude": 1], "Opening records the agent's position")
+        XCTAssertEqual(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since, readPositions: read).inbox.first?.unread, false, "Already read")
+        add(2, .user); add(3, .assistant)
+        XCTAssertEqual(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since, readPositions: read).inbox.first?.unread, true,
+                       "An undated reply newer than the last-read position is unread")
+        XCTAssertFalse(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since, readPositions: [id: state.transcriptPositions(in: id)]).isUnread(id),
+                       "Opening it again reads it")
+        XCTAssertFalse(ProjectionPresenter(state: state, lastOpened: [id: opened], unreadSince: since).isUnread(id),
+                       "No position kept yet: a conversation older than its last opening is not marked")
+        XCTAssertTrue(ProjectionPresenter(state: state, unreadSince: fixedNow.addingTimeInterval(-7200)).isUnread(id),
+                      "No position kept yet: a conversation begun since tracking began is new")
+    }
+
     func testInboxIsOneListByRecencyAndAReplyOrSendMovesARowToTheTop() {
         var state = ProjectionState()
         let group = UUID(), direct = UUID(), contact = UUID()
@@ -506,8 +531,10 @@ final class PresenterTests: XCTestCase {
         store.markOpened(id, at: opened)
         store.markOpened(id, at: opened.addingTimeInterval(-10))
         XCTAssertEqual(try MobileStore(database: database).lastOpened[id], opened, "Kept across launches; never moves back")
+        XCTAssertEqual(try MobileStore(database: database).readPositions[id], [:], "Read positions are kept under their own key")
         store.forgetMac()
         XCTAssertNil(try MobileStore(database: database).lastOpened[id])
+        XCTAssertNil(try MobileStore(database: database).readPositions[id])
     }
 
     func testBlockedLinesKeepTheMacsLongerReasonAsDetail() throws {

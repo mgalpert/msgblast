@@ -24,14 +24,52 @@ public struct ProjectionState: Codable, Equatable, Sendable {
     public var orderedAgents: [AgentAvailability] { agentOrder.compactMap { agents[$0] } }
     public var sortedConversations: [RemoteConversation] { conversations.values.sorted { $0.lastActivity > $1.lastActivity } }
     public func turns(in conversation: UUID) -> [RemoteTurn] {
-        turns.values.filter { $0.conversationID == conversation }.sorted { a, b in
-            switch (a.created, b.created) {
-            case let (x?, y?) where x != y: return x < y
-            default: return (a.agentID ?? "", a.ordinal, a.id) < (b.agentID ?? "", b.ordinal, b.id)
-            }
-        }
+        TurnOrder.sorted(turns.values.filter { $0.conversationID == conversation })
     }
     public func attempts(in conversation: UUID) -> [RemoteAttempt] { attempts.values.filter { $0.conversationID == conversation } }
+
+    /// The read position of each agent's undated transcript (Mac apps, websites, CLIs, bots):
+    /// its highest ordinal in this conversation. Those turns carry no time, so unread is by position.
+    public func transcriptPositions(in conversation: UUID) -> [String: Int] {
+        var positions: [String: Int] = [:]
+        for turn in turns.values where turn.conversationID == conversation && turn.created == nil {
+            guard let agentID = turn.agentID else { continue }
+            positions[agentID] = max(positions[agentID] ?? turn.ordinal, turn.ordinal)
+        }
+        return positions
+    }
+}
+
+/// The order of a conversation's turns. Dated turns go by date. An undated transcript turn's
+/// ordinal counts only within its agent's transcript, so it is placed after the shared question
+/// it follows: the k-th question that agent's transcript shows (the prompt when it shows none).
+/// Then ordinal, then agent id only as the final tie-break. A later question never comes before
+/// an earlier reply, and the keys form a total order.
+enum TurnOrder {
+    struct Key: Comparable {
+        var date: Date, undated: Int, ordinal: Int, agentID: String, id: String
+        static func < (a: Key, b: Key) -> Bool {
+            (a.date, a.undated, a.ordinal, a.agentID, a.id) < (b.date, b.undated, b.ordinal, b.agentID, b.id)
+        }
+    }
+
+    static func sorted(_ turns: [RemoteTurn]) -> [RemoteTurn] {
+        let questions = turns.filter { $0.agentID == nil && $0.role == .user }
+            .map { ($0.created ?? .distantPast, $0.ordinal) }.sorted { $0 < $1 }.map { $0.0 }
+        var asked: [String: [Int]] = [:]
+        for turn in turns where turn.created == nil && turn.role == .user {
+            asked[turn.agentID ?? "", default: []].append(turn.ordinal)
+        }
+        return turns.map { (key($0, questions: questions, asked: asked), $0) }.sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    static func key(_ turn: RemoteTurn, questions: [Date], asked: [String: [Int]]) -> Key {
+        let agentID = turn.agentID ?? ""
+        if let created = turn.created { return Key(date: created, undated: 0, ordinal: turn.ordinal, agentID: agentID, id: turn.id) }
+        let seen = (asked[agentID] ?? []).filter { $0 <= turn.ordinal }.count
+        let anchor = questions.isEmpty ? Date.distantPast : questions[min(max(seen - 1, 0), questions.count - 1)]
+        return Key(date: anchor, undated: 1, ordinal: turn.ordinal, agentID: agentID, id: turn.id)
+    }
 }
 
 /// A pure function from client events to phone state, so it is tested with recorded fixtures.

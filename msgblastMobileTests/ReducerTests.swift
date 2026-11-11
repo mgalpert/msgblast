@@ -94,6 +94,30 @@ final class ReducerTests: XCTestCase {
         XCTAssertTrue(unknown.needsSnapshot)
     }
 
+    /// A question, the agents' undated replies, then a shared follow-up: a later question never
+    /// comes before an earlier reply, though transcript ordinals count only within each agent.
+    func testUndatedRepliesStayBetweenTheirQuestionAndTheNextOne() {
+        let conversation = UUID()
+        var state = ProjectionState()
+        func add(_ id: String, _ agentID: String?, _ role: RemoteTurnRole, _ origin: RemoteTurnOrigin, _ created: Date?, _ ordinal: Int) {
+            state.turns[id] = RemoteTurn(id: id, conversationID: conversation, agentID: agentID, role: role, origin: origin, text: id, created: created, ordinal: ordinal, contentHash: "h")
+        }
+        add("prompt", nil, .user, .sharedPrompt, fixedNow, 0)
+        add("claude-q", "claude", .user, .agentTranscript, nil, 0)
+        add("claude-a", "claude", .assistant, .agentTranscript, nil, 1)
+        add("codex-a", "codexCLI", .assistant, .agentTranscript, nil, 0)
+        add("muse-q", "museApp", .user, .agentTranscript, nil, 0)
+        add("muse-a", "museApp", .assistant, .agentTranscript, nil, 1)
+        add("cedar-a", "messages:cedar", .assistant, .messagesHistory, fixedNow.addingTimeInterval(30), 1)
+        add("follow-up", nil, .user, .followUp, fixedNow.addingTimeInterval(60), 1)
+        add("claude-q2", "claude", .user, .agentTranscript, nil, 2)
+        add("claude-a2", "claude", .assistant, .agentTranscript, nil, 3)
+        XCTAssertEqual(state.turns(in: conversation).map(\.id),
+                       ["prompt", "claude-q", "codex-a", "muse-q", "claude-a", "muse-a", "cedar-a", "follow-up", "claude-q2", "claude-a2"])
+        XCTAssertEqual(ProjectionPresenter(state: state).turns(in: conversation, agentID: nil).map(\.id),
+                       ["prompt", "codex-a", "claude-a", "muse-a", "cedar-a", "follow-up", "claude-a2"], "The All view, as the conversation renders it")
+    }
+
     func testCommandLedger() throws {
         var records: [UUID: CommandRecord] = [:]
         let send = RemoteCommand(action: .sendPrivate(conversationID: nil, agentID: "codexCLI", text: "Hi", attachmentIDs: []))
