@@ -85,33 +85,40 @@ public enum AgentControlWire {
             return reply(id, error: "invalidRequest", "Name the agent in \"client\", in 80 characters or fewer.")
         }
         guard let access = await gate.access(for: client, approve: approve) else {
-            if gate.refused.contains(client) {
-                return reply(id, error: "notApproved", "The person chose Don’t Allow for \(client) in msgblast. It won’t ask again until msgblast restarts or the refusal is cleared in Settings → Outside agents.")
-            }
-            return reply(id, error: "notApproved", "msgblast has not approved \(client). Approve it in msgblast → Settings → Outside agents.")
+            return reply(id, error: "notApproved", notApproved(client, gate: gate))
         }
         switch request["method"] as? String {
-        case "tools/list":
-            let tools = AgentControl.tools.map { tool -> [String: Any] in
-                ["name": tool.name, "title": tool.title, "description": tool.summary, "access": tool.access.label,
-                 "allowed": access >= tool.access,
-                 "inputSchema": (try? JSONSerialization.jsonObject(with: Data(tool.inputSchema.utf8))) ?? [:]]
-            }
-            return reply(id, result: ["tools": tools])
-        case "tools/call":
-            guard let name = request["name"] as? String else { return reply(id, error: "invalidRequest", "tools/call needs \"name\".") }
-            let arguments = (request["arguments"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) } ?? Data()
-            do {
-                let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host)
-                return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
-            } catch let error as AgentControlError {
-                return reply(id, error: code(error), error.localizedDescription)
-            } catch {
-                // Other errors can carry paths or app details; the agent gets a fixed line.
-                return reply(id, error: "failed", "msgblast could not run \(name).")
-            }
-        default:
-            return reply(id, error: "invalidRequest", "Unknown method. Use tools/list or tools/call.")
+        case "tools/list": return reply(id, result: ["tools": toolList(access)])
+        case "tools/call": return await call(request, id: id, access: access, host: host)
+        default: return reply(id, error: "invalidRequest", "Unknown method. Use tools/list or tools/call.")
+        }
+    }
+
+    @MainActor private static func notApproved(_ client: String, gate: AgentControlGate) -> String {
+        gate.refused.contains(client)
+            ? "The person chose Don’t Allow for \(client) in msgblast. It won’t ask again until msgblast restarts or the refusal is cleared in Settings → Outside agents."
+            : "msgblast has not approved \(client). Approve it in msgblast → Settings → Outside agents."
+    }
+
+    @MainActor private static func toolList(_ access: AgentControlAccess) -> [[String: Any]] {
+        AgentControl.tools.map { tool -> [String: Any] in
+            ["name": tool.name, "title": tool.title, "description": tool.summary, "access": tool.access.label,
+             "allowed": access >= tool.access,
+             "inputSchema": (try? JSONSerialization.jsonObject(with: Data(tool.inputSchema.utf8))) ?? [:]]
+        }
+    }
+
+    @MainActor private static func call(_ request: [String: Any], id: Any?, access: AgentControlAccess, host: AgentControlHost) async -> Data {
+        guard let name = request["name"] as? String else { return reply(id, error: "invalidRequest", "tools/call needs \"name\".") }
+        let arguments = (request["arguments"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) } ?? Data()
+        do {
+            let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host)
+            return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
+        } catch let error as AgentControlError {
+            return reply(id, error: code(error), error.localizedDescription)
+        } catch {
+            // Other errors can carry paths or app details; the agent gets a fixed line.
+            return reply(id, error: "failed", "msgblast could not run \(name).")
         }
     }
 
