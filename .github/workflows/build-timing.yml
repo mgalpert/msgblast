@@ -1,0 +1,66 @@
+name: Measure build times
+
+# Informational only: not a required check. Uses the same GitHub-hosted image
+# and Xcode as the required native job, in a separate job.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: GitHub-hosted macOS image label
+        default: xcode-27
+      xcode:
+        description: Xcode app on that image
+        default: /Applications/Xcode_27.0.app
+      repeat:
+        description: Runs per warm step
+        default: '3'
+  pull_request:
+    paths:
+      - scripts/build_timing.py
+      - scripts/tests/test_build_timing.py
+      - .github/workflows/build-timing.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msgblast-build-timing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  timing:
+    runs-on: ${{ inputs.runner || 'xcode-27' }}
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: ${{ inputs.xcode || '/Applications/Xcode_27.0.app' }}/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+      REVIEW_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out the branch head
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+
+      - name: Show selected Xcode and hardware
+        run: |
+          xcodebuild -version
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+
+      - name: Time cold, no-op, leaf and core rebuilds
+        run: |
+          python3 scripts/build_timing.py --repeat "${{ inputs.repeat || '3' }}" --type-check \
+            --json build/build-timing/report.json --markdown build/build-timing/summary.md
+          cat build/build-timing/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload timing report and build logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msgblast-build-timing-${{ env.REVIEW_SHA }}
+          path: |
+            build/build-timing/report.json
+            build/build-timing/summary.md
+            build/build-timing/logs
+          if-no-files-found: ignore
+          retention-days: 14
