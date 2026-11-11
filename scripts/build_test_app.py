@@ -9,6 +9,7 @@ IDs, so each slot is approved once and every later build in it keeps the grant.
 Each copy still gets its own visible name and its own support folder.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,7 +35,8 @@ def test_variant(name, slot):
         raise ValueError("Name must be 1-40 letters, digits, spaces, dots, dashes or underscores")
     if slot not in SLOTS:
         raise ValueError(f"Slot must be one of {', '.join(SLOTS)}")
-    folder = "msgblast-Dev-" + re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-")[:28]
+    tag = hashlib.sha256(name.lower().encode()).hexdigest()[:6]
+    folder = f"msgblast-Dev-{re.sub(r'[^A-Za-z0-9]+', '-', name).strip('-')[:21]}-{tag}"
     variant = dict(preview.VARIANTS["development"])
     variant.update({"app_name": f"msgblast Dev ({name}).app", "bundle_id": BUNDLE_PREFIX + slot,
                     "bundle_name": f"msgblast Dev ({name})", "display_name": f"msgblast Dev ({name})",
@@ -67,14 +69,12 @@ def choose_slot(app, copies, commands, requested=None):
     """Reuse this copy's slot; otherwise take the first slot with nothing running."""
     if is_running(app, commands):
         raise RuntimeError(f"{app.name} is running; quit it before replacing it")
-    if requested:
-        busy = [path for path, slot in copies.items() if slot == requested and is_running(path, commands)]
-        if busy:
-            raise RuntimeError(f"Slot {requested} is in use by running {busy[0].name}")
-        return requested
-    if app in copies:
-        return copies[app]
-    busy = {slot for path, slot in copies.items() if is_running(path, commands)}
+    busy = {slot: path for path, slot in copies.items() if is_running(path, commands)}
+    slot = requested or copies.get(app)
+    if slot in busy:
+        raise RuntimeError(f"Slot {slot} is in use by running {busy[slot].name}; quit it first")
+    if slot:
+        return slot
     free = [slot for slot in SLOTS if slot not in busy]
     if not free:
         raise RuntimeError("Every slot has a running test copy; quit one first")
@@ -91,9 +91,10 @@ def signing_identity(requested_name, config=CONFIG):
         raise RuntimeError("Pass --identity-name 'Apple Development: …' once; it is saved for later builds")
     listing = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"],
                              capture_output=True, text=True, check=True).stdout
-    hashes = re.findall(r'\)\s+([0-9A-F]{40})\s+"' + re.escape(name) + '"', listing)
-    if len(hashes) != 1:
-        raise RuntimeError(f"Expected one valid certificate named {name!r}, found {len(hashes)}")
+    # A renewal can leave two valid certificates with this name; both satisfy the same requirement.
+    hashes = sorted(set(re.findall(r'\)\s+([0-9A-F]{40})\s+"' + re.escape(name) + '"', listing)))
+    if not hashes:
+        raise RuntimeError(f"No valid certificate named {name!r}")
     if not saved:
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(json.dumps({"identity_name": name}) + "\n")
@@ -105,9 +106,12 @@ def install(built, destination):
     staged = destination.with_name(destination.name + ".new")
     shutil.rmtree(staged, ignore_errors=True)
     builder.run(["ditto", str(built), str(staged)], destination.parent)
+    previous = destination.with_name(destination.name + ".old")
+    shutil.rmtree(previous, ignore_errors=True)
     if destination.exists():
-        shutil.rmtree(destination)
+        destination.rename(previous)
     staged.rename(destination)
+    shutil.rmtree(previous, ignore_errors=True)
 
 
 def main():

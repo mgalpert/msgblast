@@ -30,9 +30,14 @@ class VariantTests(unittest.TestCase):
         self.assertEqual(variant["display_name"], "msgblast Dev (Fixes 1111)")
         self.assertEqual(variant["app_name"], "msgblast Dev (Fixes 1111).app")
         self.assertEqual(variant["bundle_id"], "com.msgblast.development.test-b")
-        self.assertEqual(variant["support_directory"], "msgblast-Dev-Fixes-1111")
+        self.assertRegex(variant["support_directory"], r"^msgblast-Dev-Fixes-1111-[0-9a-f]{6}$")
         self.assertFalse(variant["demo"])
         self.assertEqual(tool.preview.VARIANTS["development"]["bundle_id"], "com.msgblast.development")
+
+    def test_similar_names_get_separate_support_folders(self):
+        folders = {tool.test_variant(name, "a")["support_directory"]
+                   for name in ("Fix 1", "Fix-1", "Fix.1", "a" * 30 + "x", "a" * 30 + "y")}
+        self.assertEqual(len(folders), 5)
 
     def test_support_folder_passes_the_app_sanitizer_rule(self):
         import re
@@ -81,6 +86,12 @@ class SlotTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "in use"):
             tool.choose_slot(new, tool.installed(self.root), self.running(a), "a")
 
+    def test_rebuild_refuses_when_another_copy_runs_in_its_slot(self):
+        a = make_copy(self.root, "One", "a")
+        b = make_copy(self.root, "Two", "a")
+        with self.assertRaisesRegex(RuntimeError, "in use"):
+            tool.choose_slot(a, tool.installed(self.root), self.running(b))
+
     def test_all_slots_busy(self):
         apps = [make_copy(self.root, f"N{slot}", slot) for slot in tool.SLOTS]
         new = self.root / "New" / "msgblast Dev (New).app"
@@ -122,6 +133,11 @@ class IdentityTests(unittest.TestCase):
         tool.signing_identity("Apple Development: Example (AAAA)", self.config)
         with self.assertRaisesRegex(RuntimeError, "resets every grant"):
             tool.signing_identity("Apple Development: Other (BBBB)", self.config)
+
+    def test_renewal_overlap_with_the_same_name_is_accepted(self):
+        listing = LISTING + '  3) 3333333333333333333333333333333333333333 "Apple Development: Example (AAAA)"\n'
+        with mock.patch.object(tool.subprocess, "run", return_value=mock.Mock(stdout=listing)):
+            self.assertEqual(tool.signing_identity("Apple Development: Example (AAAA)", self.config), "1" * 40)
 
     def test_requires_an_apple_development_certificate(self):
         for name in (None, "Developer ID Application: Example (AAAA)", "Apple Development: Missing (CCCC)"):

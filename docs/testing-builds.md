@@ -155,7 +155,7 @@ later copy built into that slot keeps the grants.
 - A rebuild of the same name reuses its slot. A new name takes the first slot
   with no running copy, so up to four copies can run at once with separate
   preferences. Launch with `open -n` so macOS does not just focus another copy.
-- Saved state is per name, in `~/Library/Application Support/msgblast-Dev-<name>`.
+- Saved state is per name, in `~/Library/Application Support/msgblast-Dev-<name>-<hash>`.
   Preferences (`defaults`) and keychain items belong to the slot, so a new name
   in a slot starts with the previous copy's preferences.
 - The script refuses to replace a running copy or to put a second running copy
