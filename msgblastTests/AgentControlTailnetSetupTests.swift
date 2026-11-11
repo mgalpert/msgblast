@@ -59,6 +59,25 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertEqual(recent[2], "\u{2713} Grok Bot last called just now.")
     }
 
+    func testFirewallParseAndLines() {
+        let off = "Firewall is disabled. (State = 0)"
+        let on = "Firewall is enabled. (State = 1)"
+        let block = "Firewall is enabled. (State = 2)"
+        XCTAssertEqual(AgentControlFirewall.parse(globalState: off, appBlocked: "Incoming connection is blocked."), .off)
+        XCTAssertEqual(AgentControlFirewall.parse(globalState: on, appBlocked: "Incoming connection to /Applications/msgblast.app is permitted."), .onAllowed)
+        XCTAssertEqual(AgentControlFirewall.parse(globalState: on, appBlocked: "Incoming connection to /Applications/msgblast.app is blocked."), .onBlocked)
+        XCTAssertEqual(AgentControlFirewall.parse(globalState: on, appBlocked: nil), .onUnknown)
+        XCTAssertEqual(AgentControlFirewall.parse(globalState: on, appBlocked: "not in the firewall list"), .onUnknown)
+        XCTAssertEqual(AgentControlFirewall.parse(globalState: "no such state", appBlocked: nil), .onUnknown)
+        XCTAssertEqual(AgentControlFirewall.parse(globalState: block, appBlocked: "is permitted"), .blockAll)
+
+        XCTAssertNil(AgentControlFirewall.line(.off))
+        XCTAssertEqual(AgentControlFirewall.line(.onAllowed), "\u{2713} The macOS firewall allows msgblast incoming connections.")
+        XCTAssertEqual(AgentControlFirewall.line(.onBlocked), "\u{26A0}\u{FE0E} The macOS firewall blocks msgblast, so Grok Bot can't reach it. Allow msgblast in System Settings → Network → Firewall → Options.")
+        XCTAssertEqual(AgentControlFirewall.line(.onUnknown), "\u{26A0}\u{FE0E} The macOS firewall is on. If Grok Bot can't connect, allow msgblast in System Settings → Network → Firewall → Options.")
+        XCTAssertEqual(AgentControlFirewall.line(.blockAll), "\u{26A0}\u{FE0E} The macOS firewall blocks all incoming connections, so Grok Bot can't reach msgblast. Turn off \"Block all incoming connections\" in System Settings → Network → Firewall → Options.")
+    }
+
     func testAuthorizedRequestRecordsLastCalled() async throws {
         let token = "secret-token"
         let endpoint = AgentControlHTTPEndpoint(hashes: [AgentControlTailnet.grokBotClient: AgentControlTailnet.tokenHash(token)], version: "9.9") { _ in

@@ -21,6 +21,29 @@ enum AgentControlTailnetDNS {
         guard process.terminationStatus == 0, data.count <= 8_388_608 else { return nil }
         return AgentControlTailnetStatus.parse(data)
     }
+
+    /// Read-only `socketfilterfw` queries. No sudo and no setting flags. A failed global query is unknown.
+    nonisolated static func firewall(appPath: String) -> AgentControlFirewall.State {
+        let global = run(["--getglobalstate"])
+        let app = run(["--getappblocked", appPath])
+        guard let global else { return .onUnknown }
+        return AgentControlFirewall.parse(globalState: global, appBlocked: app)
+    }
+
+    private nonisolated static func run(_ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/libexec/ApplicationFirewall/socketfilterfw")
+        process.arguments = arguments
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if process.isRunning { process.terminate() } }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0, let text = String(data: data, encoding: .utf8), !text.isEmpty else { return nil }
+        return text
+    }
 }
 
 enum AgentControlTailnetConnection {

@@ -56,7 +56,7 @@ On a personal tailnet, Grok Bot's device has the person's own tailnet access. A 
 
 ## Readiness
 
-The Tailscale card shows three lines.
+The Tailscale card shows three lines. When the macOS firewall is on, a fourth line after the Tailscale line says whether msgblast may accept incoming connections. msgblast only reads that state.
 
 - "Tailscale isn't connected on this Mac." Open Tailscale on this Mac and sign in. "Connected as" followed by the MagicDNS name means that name was found.
 - "HTTPS certificates are off for this tailnet." This line is information only. msgblast uses `http://`, and Tailscale encrypts the connection, so nothing needs changing. Turning certificates on does not make msgblast serve `https://`. "HTTPS certificates are on for this tailnet" means that array is set.
@@ -65,6 +65,7 @@ The Tailscale card shows three lines.
 ## Troubleshooting
 
 - Grok Bot cannot reach the URL. Use the MagicDNS name from the card, not a public DNS name that points at a 100.x address.
+- Grok Bot can't connect, and the macOS firewall is on: open System Settings → Network → Firewall → Options and allow msgblast to accept incoming connections (or answer Allow when macOS asks). msgblast only reads the firewall state; it never changes it.
 - The key was copied before a relaunch. Make a new key and copy the setup block again.
 - Remove was clicked. Turn the Tailscale toggle on again if it is off, make a new key, and approve the next call.
 - A company tailnet refuses the Tailscale plugin. A team admin enables it at cursor.com → Integrations → Tailscale. The tailnet needs Tailscale Premium or Enterprise.

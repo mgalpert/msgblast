@@ -12,11 +12,18 @@ struct OutsideAgentsSettingsView: View {
         Toggle("Let agents on this Mac use msgblast", isOn: Binding(get: { listener.enabled }, set: { listener.enabled = $0 }))
         Text("Agents such as Claude Code and Codex connect through the msgblast command. Each one asks you once, here in msgblast, and gets the level you choose.")
             .font(.caption).foregroundStyle(.secondary)
+        Text("Read only: see agents, comparisons and replies; can't send anything.")
+            .font(.caption).foregroundStyle(.secondary)
+        Text("Full access: everything, including sends to your AI agents and Messages contacts.")
+            .font(.caption).foregroundStyle(.secondary)
         if let error = listener.error { Text(error).font(.caption).foregroundStyle(.red) }
         if let error = gate.saveError { Text(error).font(.caption).foregroundStyle(.red) }
         if listener.enabled {
             LabeledContent("Claude Code") { Button("Copy setup command") { copy(Self.setup("claude")) } }
             LabeledContent("Codex") { Button("Copy setup command") { copy(Self.setup("codex")) } }
+            LabeledContent("Cursor, Gemini CLI") {
+                Button("Copy MCP config") { copy(AgentControlCLI.mcpConfig(executable: AgentControlCommand.executable)) }
+            }
             LabeledContent("Terminal") {
                 Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
             }

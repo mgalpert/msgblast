@@ -5,6 +5,25 @@ Agents on this Mac, such as Claude Code and Codex, can use msgblast through the
 same tools over Tailscale; see [Grok Bot over Tailscale](grok-bot.md). Everything
 is off until Settings → Outside agents → "Let agents on this Mac use msgblast" is on.
 
+## Connect your agents
+
+The paths below are the installed app. Settings → Outside agents copies the
+command for the build you are running.
+
+- **Claude Code:** `claude mcp add msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp`
+- **Codex:** `codex mcp add msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp`
+- **Cursor and Gemini CLI:** Settings → Outside agents → Copy MCP config, then
+  paste that JSON into the client's MCP config. It names the msgblast command and
+  the `mcp` argument.
+- **Claude Desktop:** add the same MCP server in Claude Desktop's developer
+  settings. The comparison view is an MCP App and renders inline.
+- **Grok Bot:** uses Tailscale, not this stdio command. If the macOS firewall is
+  on, allow msgblast incoming connections. See [Grok Bot over Tailscale](grok-bot.md).
+
+[integrations/agent-plugins/msgblast/](../integrations/agent-plugins/msgblast/README.md)
+is a draft plugin for Codex and Claude Code. It is not published. `codex plugin add`
+and `claude plugin install` install from a marketplace, not from this folder alone.
+
 ## Approval and levels
 
 The first call from each agent name opens a prompt in msgblast. The person picks
@@ -29,12 +48,20 @@ this Mac under your account, and remove names you no longer use.
 | `msgblast_status` | Read only | Version, permissions, busy agents |
 | `msgblast_agents_list` | Read only | Agents and their ids |
 | `msgblast_comparisons_list`, `msgblast_comparison_read` | Read only | Saved comparisons and their conversations |
+| `msgblast_mentions` | Read only | Comparisons as links for @-mentions |
 | `msgblast_blast_wait` | Read only | Waits for replies, send results and busy changes |
 | `msgblast_request_status` | Read only | The stored result of an earlier send call |
 | `msgblast_blast_start` | Full access | One message to several agents, as a new comparison |
 | `msgblast_blast_follow_up` | Full access | A follow-up in a comparison |
 | `msgblast_agent_message` | Full access | A private message to one agent |
 | `msgblast_comparison_end` | Full access | Ends a comparison |
+
+## Comparison view and mentions
+
+`msgblast_comparison_read` and `msgblast_blast_wait` open the side-by-side
+comparison view in clients that support MCP Apps. The view only shows; it never
+sends. In Codex and ChatGPT, @-mention a comparison: `msgblast_mentions` returns
+`msgblast://comparison/<id>` links, and reading one runs `msgblast_comparison_read`.
 
 ## How sends behave
 
