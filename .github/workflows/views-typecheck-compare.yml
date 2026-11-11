@@ -1,0 +1,91 @@
+name: Temporary Views.swift type-check comparison
+
+# Throwaway measurement branch; never merged.
+on:
+  push:
+    branches: [cursor/views-typecheck-measure-0ebe]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: xcode-27
+    timeout-minutes: 150
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+      BEFORE_SHA: d71d582c15b4a4f8b04dd3a64a8a1befa4208c7b
+      AFTER_SHA: 68024ba22ac592a48b39bd30956542d08df5754d
+      OUT: ${{ github.workspace }}/compare-out
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create before/after worktrees with the timing script
+        run: |
+          mkdir -p "$OUT"
+          xcodebuild -version | tee "$OUT/xcode.txt"
+          sysctl -n machdep.cpu.brand_string hw.ncpu >> "$OUT/xcode.txt"
+          for side in before after; do
+            sha_var=$(echo "${side}_SHA" | tr a-z A-Z)
+            git worktree add "../$side" "${!sha_var}"
+            cp scripts/build_timing.py "../$side/scripts/build_timing.py"
+          done
+
+      - name: Time Views.swift leaf edits and type-checks
+        run: |
+          for side in before after; do
+            (cd "../$side" && python3 scripts/build_timing.py --leaf msgblast/Windows/Views.swift --repeat 5 \
+              --type-check --threshold 20 --top 80 --json "$OUT/$side-timing.json" --markdown "$OUT/$side-timing.md")
+            cp "../$side/build/build-timing/logs/cold-build-with-type-check-warnings.log" "$OUT/$side-typecheck.log"
+          done
+
+      - name: Capture the main window from each Debug build
+        continue-on-error: true
+        run: |
+          set -x
+          for side in before after; do
+            app="../$side/build/build-timing/DerivedData/Build/Products/Debug/msgblast.app"
+            screencapture -v -V 14 -x "$OUT/$side-main-window.mov" &
+            recorder=$!
+            sleep 1
+            "$app/Contents/MacOS/msgblast" --demo --isolated-demo > "$OUT/$side-app.log" 2>&1 &
+            pid=$!
+            wid=$(swift .github/compare/window_id.swift "$pid")
+            sleep 8
+            screencapture -x -o -l "$wid" "$OUT/$side-main-window.png"
+            wait "$recorder" || true
+            kill "$pid" || true
+            wait "$pid" || true
+            sleep 2
+          done
+          swift .github/compare/image_diff.swift "$OUT/before-main-window.png" "$OUT/after-main-window.png" "$OUT/main-window-diff.png" | tee "$OUT/main-window-diff.txt"
+
+      - name: Run main-window and onboarding UI tests on each side
+        continue-on-error: true
+        run: |
+          for side in before after; do
+            if (cd "../$side" && xcodebuild -project msgblast.xcodeproj -scheme msgblast \
+              -derivedDataPath build/uitests -destination 'platform=macOS,arch=arm64' \
+              -resultBundlePath "$OUT/$side-ui.xcresult" ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
+              -only-testing:msgblastUITests/WorkflowTests \
+              -only-testing:msgblastUITests/OnboardingWorkflowTests/testPartialPermissionsCannotContinueUntilOneWholeSectionIsReady \
+              test > "$OUT/$side-ui.log" 2>&1); then code=0; else code=$?; fi
+            echo "$side exit $code" | tee -a "$OUT/ui-exit.txt"
+            grep -E "Test Case .* (passed|failed)|Executed" "$OUT/$side-ui.log" | tee "$OUT/$side-ui-summary.txt" || true
+            mkdir -p "$OUT/$side-attachments"
+            xcrun xcresulttool export attachments --path "$OUT/$side-ui.xcresult" --output-path "$OUT/$side-attachments" || true
+          done
+
+      - name: Upload comparison
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: views-typecheck-compare
+          path: |
+            compare-out
+            !compare-out/*.xcresult
+          retention-days: 14
