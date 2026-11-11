@@ -12,6 +12,7 @@ import msgblastCore
     private weak var host: AppModel?
     private var listener: NWListener?
     lazy var tailnet = AgentControlTailnetListener(directory: socket.deletingLastPathComponent(), gate: gate, host: host)
+    private var observer: Timer?
 
     init(directory: URL, host: AppModel) {
         socket = directory.appendingPathComponent("agent-control.sock")
@@ -48,12 +49,29 @@ import msgblastCore
             }
             listener.start(queue: .main)
             self.listener = listener
+            startObserving()
             error = gate.loadFailed ? "Saved outside-agent approvals could not be read, so every agent is refused." : nil
             tailnet.noteLocal(true)
         } catch { self.error = error.localizedDescription }
     }
 
+    /// Looks at the app once a second so `msgblast_blast_wait` wakes on replies, send
+    /// results and busy changes.
+    private func startObserving() {
+        host?.controlEvents.resetObservation()
+        observer?.invalidate()
+        observer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let host = self?.host else { return }
+                host.controlEvents.observe(host.controlSnapshot())
+            }
+        }
+        if let host { host.controlEvents.observe(host.controlSnapshot()) }
+    }
+
     private func stop() {
+        observer?.invalidate()
+        observer = nil
         listener?.cancel()
         listener = nil
         try? FileManager.default.removeItem(at: socket)
@@ -69,14 +87,16 @@ import msgblastCore
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, failure in
             Task { @MainActor in
                 guard let self, failure == nil else { return connection.cancel() }
-                var pending = buffer + (data ?? Data())
+                let pending = buffer + (data ?? Data())
                 guard pending.count <= 1_048_576 else { return connection.cancel() }
-                while let end = pending.firstIndex(of: 0x0A) {
-                    let line = pending[pending.startIndex..<end]
-                    pending = Data(pending[pending.index(after: end)...])
-                    Task { @MainActor in await self.answer(Data(line), on: connection) }
+                // One pass over the bytes, so a buffer of many short lines stays linear.
+                var start = pending.startIndex
+                while let end = pending[start...].firstIndex(of: 0x0A) {
+                    let line = Data(pending[start..<end])
+                    start = pending.index(after: end)
+                    Task { @MainActor in await self.answer(line, on: connection) }
                 }
-                if !complete { self.receive(connection, buffer: pending) }
+                if !complete { self.receive(connection, buffer: Data(pending[start...])) }
             }
         }
     }

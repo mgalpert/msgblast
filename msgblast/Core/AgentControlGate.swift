@@ -5,6 +5,11 @@ import Foundation
 @MainActor public final class AgentControlGate: ObservableObject {
     public typealias Approve = @MainActor (String) async -> AgentControlAccess?
     @Published public private(set) var approvals: [String: AgentControlAccess] = [:]
+    /// Agents the person chose Don't Allow for. They are refused without asking again until
+    /// msgblast quits, or until the person clears them in Settings.
+    @Published public private(set) var refused: Set<String> = []
+    /// Set when an approval could not be saved; it then lasts only until msgblast quits.
+    @Published public private(set) var saveError: String?
     public let loadFailed: Bool
     private let file: URL
     private var pending: [String: Task<AgentControlAccess?, Never>] = [:]
@@ -22,14 +27,18 @@ import Foundation
 
     /// The client's level, asking the person once if it is new. Nil means refused.
     public func access(for client: String, approve: @escaping Approve) async -> AgentControlAccess? {
-        guard !loadFailed else { return nil }
+        guard !loadFailed, !refused.contains(client) else { return nil }
         if let level = approvals[client] { return level }
         if let waiting = pending[client] { return await waiting.value }
         let task = Task { @MainActor in await approve(client) }
         pending[client] = task
         let level = await task.value
         pending[client] = nil
-        if let level { try? set(level, for: client) }
+        guard let level else { refused.insert(client); return nil }
+        do { try set(level, for: client) } catch {
+            approvals[client] = level
+            saveError = "msgblast could not save the approval for \(client), so it lasts until msgblast quits."
+        }
         return level
     }
 
@@ -40,6 +49,26 @@ import Foundation
         try JSONEncoder().encode(next).write(to: file, options: [.atomic])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         approvals = next
+        refused.remove(client)
+        saveError = nil
+    }
+
+    /// Lets an agent the person refused ask again.
+    public func forgetRefusal(_ client: String) { refused.remove(client) }
+
+    /// The name an agent gives, made safe to show in a prompt and to save: control, format
+    /// and bidirectional characters are removed, runs of spaces become one, and the result
+    /// must be 1 to 80 characters. Nil when nothing is left.
+    public nonisolated static func clientName(_ raw: String) -> String? {
+        let kept = raw.unicodeScalars.map { scalar -> Character in
+            switch scalar.properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator, .privateUse, .surrogate, .unassigned: " "
+            default: scalar.properties.isWhitespace ? " " : Character(scalar)
+            }
+        }
+        let name = String(kept).split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
+        guard !name.isEmpty, name.count <= 80 else { return nil }
+        return name
     }
 }
 
@@ -52,10 +81,13 @@ public enum AgentControlWire {
             return reply(nil, error: "invalidRequest", "Each line must be one JSON object.")
         }
         let id = request["id"]
-        guard let client = (request["client"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !client.isEmpty, client.count <= 80 else {
-            return reply(id, error: "invalidRequest", "Name the agent in \"client\".")
+        guard let client = (request["client"] as? String).flatMap(AgentControlGate.clientName) else {
+            return reply(id, error: "invalidRequest", "Name the agent in \"client\", in 80 characters or fewer.")
         }
         guard let access = await gate.access(for: client, approve: approve) else {
+            if gate.refused.contains(client) {
+                return reply(id, error: "notApproved", "The person chose Don’t Allow for \(client) in msgblast. It won’t ask again until msgblast restarts or the refusal is cleared in Settings → Outside agents.")
+            }
             return reply(id, error: "notApproved", "msgblast has not approved \(client). Approve it in msgblast → Settings → Outside agents.")
         }
         switch request["method"] as? String {
@@ -72,8 +104,11 @@ public enum AgentControlWire {
             do {
                 let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host)
                 return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
-            } catch {
+            } catch let error as AgentControlError {
                 return reply(id, error: code(error), error.localizedDescription)
+            } catch {
+                // Other errors can carry paths or app details; the agent gets a fixed line.
+                return reply(id, error: "failed", "msgblast could not run \(name).")
             }
         default:
             return reply(id, error: "invalidRequest", "Unknown method. Use tools/list or tools/call.")
