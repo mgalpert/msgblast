@@ -95,6 +95,7 @@ import msgblastCore
         let previousPlain = plaintext
         guard let issued = store.issue(AgentControlTailnet.grokBotClient) else { return }
         plaintext = issued
+        lastCalled = nil
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -104,7 +105,7 @@ import msgblastCore
         let previous = store
         let previousPlain = plaintext
         store.revoke(client)
-        if client == AgentControlTailnet.grokBotClient { plaintext = nil }
+        if client == AgentControlTailnet.grokBotClient { plaintext = nil; lastCalled = nil }
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -157,15 +158,25 @@ import msgblastCore
         guard !found.isEmpty else {
             error = "Tailscale isn't connected on this Mac."
             cancelListeners()
+            closeLinks()
             bound = []
             return
         }
         if found == bound, listeners.count == found.count, error == nil { return }
         cancelListeners()
+        // A connection on an address this Mac no longer has would never be closed otherwise.
+        if found != bound { closeLinks() }
         guard let port = NWEndpoint.Port(rawValue: UInt16(store.port)) else {
             error = "Could not listen on port \(store.port)."
             return
         }
+        let failure = bind(found, port: port)
+        bound = found
+        if listeners.count == found.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
+    }
+
+    /// Starts a listener on each Tailscale address. Returns the last error, if any.
+    private func bind(_ found: [String], port: NWEndpoint.Port) -> String? {
         var failure: String?
         for address in found {
             guard AgentControlTailnet.isTailnetPeer(address) else { continue }
@@ -188,15 +199,14 @@ import msgblastCore
                 failure = error.localizedDescription
             }
         }
-        bound = found
-        if listeners.count == found.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
+        return failure
     }
 
     private func stopSockets() {
         cancelListeners()
-        let open = links
-        links = []
-        open.forEach { $0.close() }
+        monitor?.cancel()
+        monitor = nil
+        closeLinks()
         endpoint = nil
         endpointHashes = [:]
         bound = []
@@ -208,8 +218,19 @@ import msgblastCore
         listeners = []
     }
 
+    private func closeLinks() {
+        let open = links
+        links = []
+        open.forEach { $0.close() }
+    }
+
+    /// Open connections at once. Grok Bot needs a few; more are refused.
+    static let maximumLinks = 16
+
     private func accept(_ connection: NWConnection) {
-        let link = AgentControlTailnetLink(connection: connection, peer: AgentControlTailnetConnection.peer(connection), owner: self)
+        let peer = AgentControlTailnetConnection.peer(connection)
+        guard links.count < Self.maximumLinks, AgentControlTailnet.isTailnetPeer(peer) else { connection.cancel(); return }
+        let link = AgentControlTailnetLink(connection: connection, peer: peer, owner: self)
         links.append(link)
         link.start()
     }
@@ -236,7 +257,6 @@ import msgblastCore
 
     /// Status when the card appears and when the network changes. At most one fetch every 30 seconds.
     func refreshStatus() {
-        observeNetwork()
         if statusTask != nil { statusQueued = true; return }
         let now = Date()
         if let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {

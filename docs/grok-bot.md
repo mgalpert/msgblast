@@ -36,6 +36,10 @@ The key is stored as a SHA-256 hash in `outside-agents-tailnet.json` (mode 0600)
 
 msgblast shows the approval prompt only after a valid key. Choose what that client may do. Remove in Settings deletes the approval and the key's hash.
 
+Any device on the tailnet that has the key can call msgblast as Grok Bot, so treat the key like a password. New key stops the old key at once but keeps Grok Bot's approval level; Remove clears both. Copies that contain the key are marked concealed, so clipboard history apps skip them, and are cleared after 2 minutes.
+
+Limits: a request over 1 MB gets 413, a request must arrive whole within 10 seconds (408), a connection idle for 60 seconds closes, and at most 16 connections are open at once.
+
 On a personal tailnet, Grok Bot's device has the person's own tailnet access. A grant can limit that device to this Mac on the msgblast port. Replace the placeholders with the device and the Mac:
 
 ```hujson
@@ -55,7 +59,7 @@ On a personal tailnet, Grok Bot's device has the person's own tailnet access. A 
 The Tailscale card shows three lines.
 
 - "Tailscale isn't connected on this Mac." Open Tailscale on this Mac and sign in. "Connected as" followed by the MagicDNS name means that name was found.
-- "HTTPS certificates are off for this tailnet." msgblast keeps using `http://`. If Grok Bot asks for `https://`, an admin can turn certificates on in the Tailscale admin console under DNS. "HTTPS certificates are on for this tailnet" means that array is set. msgblast still does not serve `https://`.
+- "HTTPS certificates are off for this tailnet." This line is information only. msgblast uses `http://`, and Tailscale encrypts the connection, so nothing needs changing. Turning certificates on does not make msgblast serve `https://`. "HTTPS certificates are on for this tailnet" means that array is set.
 - "No Grok Bot device on your tailnet yet" means the Tailscale plugin is not connected. In Grok Bot, use Connect apps → Your plugins → Tailscale → Authenticate. "A Grok Bot device is on your tailnet" means that device is visible and has not called yet. Copy the setup block and add the connector, then ask for `msgblast_status`. "Grok Bot last called …" means a request passed the key check. Approve it in msgblast if the prompt is waiting.
 
 ## Troubleshooting

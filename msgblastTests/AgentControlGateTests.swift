@@ -11,6 +11,7 @@ import XCTest
     }
 
     private final class Counter { var value = 0 }
+    private final class Names { var values: [String] = [] }
     private var file: URL!
 
     override func setUp() async throws {
@@ -47,6 +48,35 @@ import XCTest
         XCTAssertNil(AgentControlGate(file: file).approvals["Hermes"])
     }
 
+    func testDontAllowIsRememberedUntilClearedOrApproved() async throws {
+        let asked = Counter()
+        let gate = AgentControlGate(file: file)
+        let refuse: AgentControlGate.Approve = { _ in asked.value += 1; return nil }
+        _ = try await send(#"{"id":1,"client":"Hermes","method":"tools/list"}"#, gate: gate, approve: refuse)
+        let again = try await send(#"{"id":2,"client":"Hermes","method":"tools/list"}"#, gate: gate, approve: refuse)
+        XCTAssertEqual(asked.value, 1, "a refused agent is not asked again")
+        XCTAssertTrue(((again["error"] as? [String: Any])?["message"] as? String)?.contains("Don’t Allow") == true)
+        XCTAssertEqual(gate.refused, ["Hermes"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "a refusal is not saved")
+        gate.forgetRefusal("Hermes")
+        let level = await gate.access(for: "Hermes") { _ in .readOnly }
+        XCTAssertEqual(level, .readOnly)
+        XCTAssertEqual(gate.refused, [])
+    }
+
+    func testClientNamesAreMadeSafeToShow() async throws {
+        XCTAssertEqual(AgentControlGate.clientName("  Claude\u{202E}Code \n\t "), "Claude Code")
+        XCTAssertEqual(AgentControlGate.clientName("Grok Bot (Tailscale)"), "Grok Bot (Tailscale)")
+        XCTAssertNil(AgentControlGate.clientName("\u{0007}\u{200B}"))
+        XCTAssertNil(AgentControlGate.clientName(String(repeating: "a", count: 81)))
+        let gate = AgentControlGate(file: file)
+        let shown = Names()
+        _ = try await send(#"{"id":1,"client":"Evil\u202eAgent","method":"tools/list"}"#, gate: gate) { name in shown.values.append(name); return .readOnly }
+        XCTAssertEqual(shown.values, ["Evil Agent"])
+        let empty = try await send(#"{"id":2,"client":"\u0000","method":"tools/list"}"#, gate: gate)
+        XCTAssertEqual((empty["error"] as? [String: Any])?["code"] as? String, "invalidRequest")
+    }
+
     func testUnreadableApprovalsRefuseEveryoneAndAreKept() async throws {
         try Data("not json".utf8).write(to: file)
         let gate = AgentControlGate(file: file)
@@ -62,11 +92,40 @@ import XCTest
         XCTAssertEqual(list["id"] as? Int, 1)
         let tools = try XCTUnwrap((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])
         XCTAssertEqual(tools.count, AgentControl.tools.count)
-        XCTAssertTrue(tools.allSatisfy { $0["allowed"] as? Bool == true && $0["inputSchema"] is [String: Any] })
+        XCTAssertTrue(tools.allSatisfy { $0["inputSchema"] is [String: Any] })
+        // Read only: the read tools are allowed and the send tools are listed but not allowed.
+        XCTAssertEqual(tools.compactMap { $0["allowed"] as? Bool }, AgentControl.tools.map { $0.access == .readOnly })
+        XCTAssertTrue(tools.contains { $0["allowed"] as? Bool == false })
         let status = try await send(#"{"id":"a","client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":{}}"#, gate: gate)
         XCTAssertEqual((status["result"] as? [String: Any])?["version"] as? String, "1.0")
         let unknown = try await send(#"{"id":3,"client":"Claude Code","method":"tools/call","name":"msgblast_nope"}"#, gate: gate)
         XCTAssertEqual((unknown["error"] as? [String: Any])?["code"] as? String, "unknownTool")
+    }
+
+    func testWireRefusesArgumentsThatAreNotAnObject() async throws {
+        let gate = AgentControlGate(file: file)
+        for arguments in [#""x""#, "[1]", "7"] {
+            let reply = try await send(#"{"id":1,"client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":"# + arguments + "}", gate: gate)
+            XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "invalidArguments", arguments)
+        }
+        let null = try await send(#"{"id":2,"client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":null}"#, gate: gate)
+        XCTAssertEqual((null["result"] as? [String: Any])?["version"] as? String, "1.0")
+    }
+
+    func testASettingsChangeThatCantBeSavedStillAppliesAndSaysSo() async throws {
+        let unwritable = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString)/approvals.json")
+        let gate = AgentControlGate(file: unwritable)
+        gate.change(.full, for: "Codex")
+        XCTAssertEqual(gate.approvals["Codex"], .full)
+        XCTAssertNotNil(gate.saveError)
+        gate.change(nil, for: "Codex")
+        XCTAssertNil(gate.approvals["Codex"])
+        gate.change(.readOnly, for: "Claude Code")
+        XCTAssertEqual(AgentControlGate(file: unwritable).approvals, [:])
+        let saved = AgentControlGate(file: file)
+        saved.change(.full, for: "Codex")
+        XCTAssertNil(saved.saveError)
+        XCTAssertEqual(AgentControlGate(file: file).approvals["Codex"], .full)
     }
 
     func testWireRejectsMalformedLinesAndMissingClient() async throws {

@@ -118,6 +118,85 @@ import XCTest
         XCTAssertEqual(empty["next"] as? Int, 1)
     }
 
+    func testWaitReadsFromTheStartWhenTheCursorIsFromAnEarlierRun() async throws {
+        let host = Host()
+        host.controlEvents.publish(.replyArrived, agent: "Fo")
+        let staleReply = try await call("msgblast_blast_wait", #"{"after":99,"timeoutSeconds":0}"#, host: host)
+        let stale = try XCTUnwrap(staleReply as? [String: Any])
+        XCTAssertEqual((stale["events"] as? [[String: Any]])?.map { $0["agent"] as? String }, ["Fo"])
+        XCTAssertEqual(stale["next"] as? Int, 1)
+        let negative = await refusal("msgblast_blast_wait", #"{"after":-1,"timeoutSeconds":0}"#, host: host)
+        XCTAssertEqual(negative, .invalidArguments("after must be 0 or more"))
+    }
+
+    func testTooManyWaitsEndTheOldestEarly() async {
+        let feed = AgentControlEvents()
+        let first = Task { @MainActor in await feed.wait(after: 0, comparisonID: nil, timeout: .seconds(30)) }
+        while feed.waiterCount < 1 { await Task.yield() }
+        var later: [Task<[AgentControlEvent], Never>] = []
+        for _ in 0..<AgentControlEvents.maximumWaiters {
+            later.append(Task { @MainActor in await feed.wait(after: 0, comparisonID: nil, timeout: .seconds(30)) })
+        }
+        let early = await first.value
+        XCTAssertEqual(early, [])
+        XCTAssertEqual(feed.waiterCount, AgentControlEvents.maximumWaiters)
+        feed.publish(.agentReady)
+        for task in later { let events = await task.value; XCTAssertEqual(events.count, 1) }
+        XCTAssertEqual(feed.waiterCount, 0)
+    }
+
+    func testObservingTheAppPublishesRepliesSendResultsAndBusyChanges() {
+        let feed = AgentControlEvents()
+        let blast = UUID()
+        let fo = AgentControlSnapshot.Key(comparisonID: blast, agent: "Fo")
+        let chat = AgentControlSnapshot.Key(comparisonID: blast, agent: "ChatGPT")
+        var look = AgentControlSnapshot()
+        look.replies = [fo: 2, chat: 0]
+        look.states = [fo: "sending"]
+        feed.observe(look)
+        XCTAssertEqual(feed.events, [], "the first look only records")
+        look.replies[fo] = 3
+        look.states[fo] = "submitted"
+        look.replies[chat] = 1
+        look.settling = [chat]
+        look.busy = ["ChatGPT"]
+        feed.observe(look)
+        XCTAssertEqual(feed.events.map(\.kind), [.replyArrived, .sendResult, .agentBusy])
+        XCTAssertEqual(feed.events.first?.agent, "Fo")
+        XCTAssertEqual(feed.events[1].detail, "submitted")
+        look.settling = []
+        look.busy = []
+        feed.observe(look)
+        XCTAssertEqual(feed.events.suffix(2).map(\.kind), [.replyArrived, .agentReady])
+        XCTAssertEqual(feed.events.suffix(2).first?.agent, "ChatGPT")
+        feed.observe(look)
+        XCTAssertEqual(feed.cursor, 5, "an unchanged look publishes nothing")
+        feed.resetObservation()
+        look.replies[fo] = 9
+        feed.observe(look)
+        XCTAssertEqual(feed.cursor, 5, "the first look after a reset only records")
+    }
+
+    func testAComparisonThatJoinsTheWatchedSetIsRecordedButANewOneIsAnnounced() {
+        let feed = AgentControlEvents()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var look = AgentControlSnapshot()
+        feed.observe(look, date: start)
+        let older = UUID(), newer = UUID()
+        let old = AgentControlSnapshot.Key(comparisonID: older, agent: "Fo")
+        let new = AgentControlSnapshot.Key(comparisonID: newer, agent: "Fo")
+        look.replies = [old: 4, new: 1]
+        look.states = [old: "submitted", new: "submitted"]
+        look.created = [older: start.addingTimeInterval(-3600), newer: start.addingTimeInterval(0.5)]
+        feed.observe(look, date: start.addingTimeInterval(1))
+        XCTAssertEqual(feed.events.map(\.kind), [.replyArrived, .sendResult])
+        XCTAssertEqual(Set(feed.events.map(\.comparisonID)), [newer])
+        look.replies[old] = 5
+        feed.observe(look, date: start.addingTimeInterval(2))
+        XCTAssertEqual(feed.events.last?.comparisonID, older, "once watched, its new replies are announced")
+        XCTAssertEqual(feed.cursor, 3)
+    }
+
     func testFeedKeepsOnlyRecentEvents() {
         let feed = AgentControlEvents()
         for _ in 0..<(AgentControlEvents.retained + 5) { feed.publish(.agentBusy) }

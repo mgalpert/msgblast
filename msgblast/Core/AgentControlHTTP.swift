@@ -25,36 +25,41 @@ public struct AgentControlHTTPRequest: Equatable, Sendable {
         }
         let headerCount = buffer.distance(from: buffer.startIndex, to: range.lowerBound)
         if headerCount > headerLimit { return .tooLarge }
-        guard let head = String(data: buffer.subdata(in: 0..<headerCount), encoding: .utf8) else { return .invalid }
-        var lines = head.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first, !requestLine.isEmpty else { return .invalid }
-        lines.removeFirst()
-        let parts = requestLine.split(separator: " ", omittingEmptySubsequences: false)
-        guard parts.count == 3, !parts[0].isEmpty, !parts[1].isEmpty, parts[2] == "HTTP/1.1" else { return .invalid }
-        var headers: [String: String] = [:]
-        for line in lines {
-            guard let colon = line.firstIndex(of: ":") else { return .invalid }
-            let rawName = line[..<colon]
-            guard !rawName.isEmpty, rawName.unicodeScalars.allSatisfy({ (33...126).contains($0.value) && $0.value != 58 }) else { return .invalid }
-            let name = rawName.lowercased()
-            guard headers[name] == nil else { return .invalid }
-            headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-        }
-        if headers["transfer-encoding"] != nil { return .invalid }
-        let length: Int
-        if let raw = headers["content-length"] {
-            guard !raw.isEmpty, raw.allSatisfy(\.isNumber), let value = Int(raw) else { return .invalid }
-            length = value
-        } else {
-            length = 0
-        }
-        if length > bodyLimit { return .tooLarge }
+        guard let text = String(data: buffer.subdata(in: 0..<headerCount), encoding: .utf8), let parsed = Self.head(text),
+              parsed.headers["transfer-encoding"] == nil, let bodyLength = Self.length(parsed.headers) else { return .invalid }
+        if bodyLength > bodyLimit { return .tooLarge }
         let bodyStart = headerCount + marker.count
-        let consumed = bodyStart + length
+        let consumed = bodyStart + bodyLength
         guard buffer.count >= consumed else { return .incomplete }
-        let request = AgentControlHTTPRequest(method: String(parts[0]), path: String(parts[1]), headers: headers,
+        let request = AgentControlHTTPRequest(method: parsed.method, path: parsed.path, headers: parsed.headers,
                                               body: buffer.subdata(in: bodyStart..<consumed))
         return .complete(request: request, consumed: consumed)
+    }
+
+    /// The request line and header fields; nil when either is malformed or a header repeats.
+    static func head(_ text: String) -> (method: String, path: String, headers: [String: String])? {
+        var lines = text.components(separatedBy: "\r\n")
+        guard let requestLine = lines.first, !requestLine.isEmpty else { return nil }
+        lines.removeFirst()
+        let parts = requestLine.split(separator: " ", omittingEmptySubsequences: false)
+        guard parts.count == 3, !parts[0].isEmpty, !parts[1].isEmpty, parts[2] == "HTTP/1.1" else { return nil }
+        var headers: [String: String] = [:]
+        for line in lines {
+            guard let colon = line.firstIndex(of: ":") else { return nil }
+            let rawName = line[..<colon]
+            guard !rawName.isEmpty, rawName.unicodeScalars.allSatisfy({ (33...126).contains($0.value) && $0.value != 58 }) else { return nil }
+            let name = rawName.lowercased()
+            guard headers[name] == nil else { return nil }
+            headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        return (String(parts[0]), String(parts[1]), headers)
+    }
+
+    /// `Content-Length`: 0 when absent, nil when it is not a plain number.
+    static func length(_ headers: [String: String]) -> Int? {
+        guard let raw = headers["content-length"] else { return 0 }
+        guard !raw.isEmpty, raw.allSatisfy(\.isNumber), let value = Int(raw) else { return nil }
+        return value
     }
 }
 
@@ -84,21 +89,10 @@ public struct AgentControlHTTPResponse: Sendable {
         return data
     }
 
-    private static func reason(_ status: Int) -> String {
-        switch status {
-        case 200: "OK"
-        case 202: "Accepted"
-        case 204: "No Content"
-        case 400: "Bad Request"
-        case 401: "Unauthorized"
-        case 403: "Forbidden"
-        case 404: "Not Found"
-        case 405: "Method Not Allowed"
-        case 413: "Content Too Large"
-        case 503: "Service Unavailable"
-        default: "Error"
-        }
-    }
+    private static let reasons = [200: "OK", 202: "Accepted", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
+                                  404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout", 413: "Content Too Large",
+                                  503: "Service Unavailable"]
+    private static func reason(_ status: Int) -> String { reasons[status] ?? "Error" }
 }
 
 /// POST-only HTTP MCP. `Authorization: Bearer` is the token; `/mcp/<token>` is a fallback. One server per client.

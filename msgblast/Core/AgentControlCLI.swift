@@ -17,6 +17,10 @@ public enum AgentControlCLI {
 
     public static let commands: Set<String> = ["help", "mcp", "status", "agents", "comparisons", "show", "wait", "tools", "call"]
     public static let unavailableStatus: Int32 = 5
+    /// The request reached msgblast but no reply came back, so it may have run.
+    public static let noReplyStatus: Int32 = 6
+    public static let unavailable = "msgblast is not running, or Settings → Outside agents is off."
+    public static let noReply = "msgblast got the request but stopped before answering, so it may have run. Check before repeating it."
     public static let usage = """
     usage: msgblast <command> [--client NAME] [--json]
 
@@ -30,64 +34,117 @@ public enum AgentControlCLI {
       mcp                                 Serve MCP on stdin and stdout
 
     --client names the agent asking. msgblast asks the person once per name.
-    Exit status: 0 done, 1 failed, 2 invalid, 3 not approved, 4 not found, 5 msgblast unreachable.
+    Exit status: 0 done, 1 failed, 2 invalid, 3 not approved, 4 not found, 5 msgblast unreachable,
+    6 no answer after the request was sent (it may have run).
     """
 
     public struct UsageError: Error, Equatable { public let message: String }
 
+    static let flags: Set<String> = ["--json", "--all", "--help"]
+    static let valueOptions: Set<String> = ["--client", "--query", "--limit", "--after", "--comparison", "--timeout"]
+
+    /// True when the arguments ask for the msgblast command rather than the app: the first
+    /// word that is not one of the command's own options names a command, or there are only
+    /// such options. The app's own launch options, such as --demo, still open a window.
+    public static func isCommand(_ arguments: [String]) -> Bool {
+        var index = 0
+        while index < arguments.count {
+            let word = arguments[index]
+            if flags.contains(word) { index += 1 } else if valueOptions.contains(word) { index += 2 } else { return commands.contains(word) }
+        }
+        return !arguments.isEmpty
+    }
+
     public static func parse(_ arguments: [String], environment: [String: String]) throws -> (command: Command, json: Bool) {
-        var words: [String] = [], options: [String: String] = [:], flags: Set<String> = []
+        let words = try split(arguments)
+        let json = words.flags.contains("--json")
+        let names = try clientNames(words.options, environment: environment)
+        if words.flags.contains("--help") { return (.help, json) }
+        return (try command(words, names: names), json)
+    }
+
+    struct Words { var words: [String] = [], options: [String: String] = [:], flags: Set<String> = [] }
+
+    /// Command words, options with their values, and flags. Unknown options are refused.
+    static func split(_ arguments: [String]) throws -> Words {
+        var result = Words()
         var index = 0
         while index < arguments.count {
             let word = arguments[index]
             index += 1
-            if ["--json", "--all"].contains(word) { flags.insert(word) }
-            else if word.hasPrefix("--") {
+            if flags.contains(word) { result.flags.insert(word) }
+            else if valueOptions.contains(word) {
                 guard index < arguments.count else { throw UsageError(message: "\(word) needs a value.") }
-                options[word] = arguments[index]
+                result.options[word] = arguments[index]
                 index += 1
-            } else { words.append(word) }
+            } else if word.hasPrefix("--") { throw UsageError(message: "Unknown option \(word).") }
+            else { result.words.append(word) }
         }
-        let json = flags.contains("--json")
-        let named = options["--client"] ?? environment["MSGBLAST_CLIENT"]
-        let client = named ?? (environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
-        func call(_ tool: String, _ input: [String: Any]) throws -> (command: Command, json: Bool) {
-            (.request(try line(["method": "tools/call", "client": client, "name": tool, "arguments": input])), json)
+        return result
+    }
+
+    /// The name the person gave (--client or MSGBLAST_CLIENT), if any, and the name to send.
+    static func clientNames(_ options: [String: String], environment: [String: String]) throws -> (given: String?, client: String) {
+        guard let raw = options["--client"] ?? environment["MSGBLAST_CLIENT"] else {
+            return (nil, environment["CLAUDECODE"] == "1" ? "Claude Code" : "Terminal")
         }
-        func number(_ option: String) throws -> Int? {
-            guard let raw = options[option] else { return nil }
-            guard let value = Int(raw) else { throw UsageError(message: "\(option) must be a whole number.") }
-            return value
-        }
-        switch words.first {
-        case nil, "help": return (.help, json)
-        case "mcp": return (.mcp(client: named), json)
-        case "status": return try call("msgblast_status", [:])
-        case "agents": return try call("msgblast_agents_list", ["includeHidden": flags.contains("--all")])
-        case "comparisons":
-            var input: [String: Any] = [:]
-            input["query"] = options["--query"]
-            input["limit"] = try number("--limit")
-            return try call("msgblast_comparisons_list", input)
+        guard let name = AgentControlGate.clientName(raw) else { throw UsageError(message: "--client must be a name of 1 to 80 characters.") }
+        return (name, name)
+    }
+
+    /// Commands that call one tool with arguments taken from options.
+    static let optionTools = ["status": "msgblast_status", "agents": "msgblast_agents_list", "comparisons": "msgblast_comparisons_list", "wait": "msgblast_blast_wait"]
+
+    static func command(_ words: Words, names: (given: String?, client: String)) throws -> Command {
+        let client = names.client
+        switch words.words.first {
+        case nil, "help": return .help
+        case "mcp": return .mcp(client: names.given)
+        case "tools": return .request(try line(["method": "tools/list", "client": client]))
         case "show":
-            guard words.count == 2 else { throw UsageError(message: "show needs one comparison id.") }
-            return try call("msgblast_comparison_read", ["id": words[1]])
-        case "wait":
-            var input: [String: Any] = [:]
-            input["after"] = try number("--after")
-            input["comparisonId"] = options["--comparison"]
-            input["timeoutSeconds"] = try number("--timeout")
-            return try call("msgblast_blast_wait", input)
-        case "tools": return (.request(try line(["method": "tools/list", "client": client])), json)
-        case "call":
-            guard (2...3).contains(words.count) else { throw UsageError(message: "call needs a tool name and optional JSON arguments.") }
-            let raw = words.count == 3 ? words[2] : "{}"
-            guard let input = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
-                throw UsageError(message: "Arguments must be one JSON object.")
-            }
-            return try call(words[1], input)
-        case let other?: throw UsageError(message: "Unknown command \(other).")
+            guard words.words.count == 2 else { throw UsageError(message: "show needs one comparison id.") }
+            return try call("msgblast_comparison_read", ["id": words.words[1]], client: client)
+        case "call": return try call(words.words, client: client)
+        case let other?:
+            guard let tool = optionTools[other] else { throw UsageError(message: "Unknown command \(other).") }
+            return try call(tool, try arguments(other, words), client: client)
         }
+    }
+
+    static func arguments(_ command: String, _ words: Words) throws -> [String: Any] {
+        var input: [String: Any] = [:]
+        switch command {
+        case "agents": input["includeHidden"] = words.flags.contains("--all")
+        case "comparisons":
+            input["query"] = words.options["--query"]
+            input["limit"] = try number("--limit", words)
+        case "wait":
+            input["after"] = try number("--after", words)
+            input["comparisonId"] = words.options["--comparison"]
+            input["timeoutSeconds"] = try number("--timeout", words)
+        default: break
+        }
+        return input
+    }
+
+    static func number(_ option: String, _ words: Words) throws -> Int? {
+        guard let raw = words.options[option] else { return nil }
+        guard let value = Int(raw) else { throw UsageError(message: "\(option) must be a whole number.") }
+        return value
+    }
+
+    /// `call TOOL [JSON]`.
+    static func call(_ words: [String], client: String) throws -> Command {
+        guard (2...3).contains(words.count) else { throw UsageError(message: "call needs a tool name and optional JSON arguments.") }
+        let raw = words.count == 3 ? words[2] : "{}"
+        guard let input = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
+            throw UsageError(message: "Arguments must be one JSON object.")
+        }
+        return try call(words[1], input, client: client)
+    }
+
+    static func call(_ tool: String, _ input: [String: Any], client: String) throws -> Command {
+        .request(try line(["method": "tools/call", "client": client, "name": tool, "arguments": input]))
     }
 
     /// Turns the app's reply into what the command prints and its exit status.
@@ -122,34 +179,53 @@ public enum AgentControlCLI {
 /// A blocking client for the app's Unix socket, used by the command-line process only.
 public enum AgentControlSocketClient {
     public struct Unavailable: Error {}
+    /// The whole request was sent but no reply came back: msgblast may have acted on it.
+    public struct NoReply: Error {}
 
-    /// Sends one request line and returns the reply line. Throws `Unavailable` when nothing is listening.
+    /// Sends one request line and returns the reply line. Throws `Unavailable` when nothing is
+    /// listening or the request could not be sent whole (msgblast ignores a partial line), and
+    /// `NoReply` when it was sent but the reply never came.
     public static func exchange(_ line: Data, socket path: String) throws -> Data {
+        let descriptor = try connect(to: path)
+        defer { close(descriptor) }
+        try writeAll(line, to: descriptor)
+        return try readReply(from: descriptor)
+    }
+
+    private static func connect(to path: String) throws -> Int32 {
         let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw Unavailable() }
-        defer { close(descriptor) }
         var on: Int32 = 1
         setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw Unavailable() }
+        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { close(descriptor); throw Unavailable() }
         withUnsafeMutableBytes(of: &address.sun_path) { buffer in buffer.copyBytes(from: bytes) }
         let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        guard connected == 0 else { throw Unavailable() }
+        guard connected == 0 else { close(descriptor); throw Unavailable() }
+        return descriptor
+    }
+
+    private static func writeAll(_ line: Data, to descriptor: Int32) throws {
         var sent = 0
         while sent < line.count {
             let count = line[sent...].withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+            if count < 0, errno == EINTR { continue }
             guard count > 0 else { throw Unavailable() }
             sent += count
         }
+    }
+
+    private static func readReply(from descriptor: Int32) throws -> Data {
         var reply = Data()
         var chunk = [UInt8](repeating: 0, count: 65_536)
         while !reply.contains(0x0A) {
             let count = read(descriptor, &chunk, chunk.count)
-            guard count > 0 else { throw Unavailable() }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { throw NoReply() }
             reply.append(contentsOf: chunk[0..<count])
         }
         return reply.prefix(while: { $0 != 0x0A }) + Data([0x0A])

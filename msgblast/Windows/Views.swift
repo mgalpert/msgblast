@@ -269,7 +269,7 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                if model.usesMessages { MessagesAccessBanner(model: model) }
+                StatusBanners(model: model)
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
             }
@@ -325,6 +325,15 @@ struct MainView: View {
             Spacer()
             Button("Reset sample data") { model.resetDemo() }
         }.font(.caption).padding(12).disabled(model.busy)
+    }
+}
+
+/// Banners above the agents workspace.
+private struct StatusBanners: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        if model.usesMessages { MessagesAccessBanner(model: model) }
+        AgentSendsBanner(activity: model.agentSendActivity)
     }
 }
 
@@ -736,7 +745,7 @@ struct AppSettingsView: View {
                 AppAgentsSettingsView(model: model, web: model.webAgents, permissions: model.onboarding.appPermissions)
             }
             Section("Outside agents") {
-                OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate)
+                OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate, activity: model.agentSendActivity)
             }
             Picker("Conversations", selection: Binding(get: { model.state.effectiveWindowStyle }, set: { model.setWindowStyle($0) })) {
                 Text("One window").tag(ComparisonWindowStyle.connected)
@@ -751,6 +760,7 @@ struct AppSettingsView: View {
             Section("Grok Bot") {
                 GrokBotConnectionsView(model: model, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
             }
+            Section("Remote") { RemoteSettingsView(service: model.remote) }
             Section("Updates") {
                 Text(updater.version).foregroundStyle(.secondary)
                 if updater.configuration.isEnabled {

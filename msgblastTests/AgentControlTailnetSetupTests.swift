@@ -46,7 +46,7 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         let missing = AgentControlTailnetSetup.lines(magicName: nil, httpsEnabled: false, grokBotPeer: false, lastCalled: nil, now: now)
         XCTAssertEqual(missing, [
             "\u{26A0}\u{FE0E} Tailscale isn't connected on this Mac.",
-            "\u{26A0}\u{FE0E} HTTPS certificates are off for this tailnet. If Grok Bot asks for an https:// address, an admin can turn them on in the Tailscale admin console under DNS.",
+            "\u{2139}\u{FE0E} HTTPS certificates are off for this tailnet. Nothing to change: msgblast uses http://, and Tailscale encrypts the connection.",
             "\u{26A0}\u{FE0E} Grok Bot hasn't called msgblast yet. No Grok Bot device on your tailnet yet — connect it in Grok Bot: Connect apps → Your plugins → Tailscale → Authenticate.",
         ])
         let device = AgentControlTailnetSetup.lines(magicName: "mac.example.ts.net", httpsEnabled: true, grokBotPeer: true, lastCalled: nil, now: now)

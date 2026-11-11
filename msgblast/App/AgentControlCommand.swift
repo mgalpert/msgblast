@@ -17,7 +17,7 @@ enum AgentControlCommand {
     /// Runs and exits when the first argument is a msgblast command. Otherwise returns and the app starts.
     static func runIfRequested() {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        guard let first = arguments.first, AgentControlCLI.commands.contains(first) else { return }
+        guard AgentControlCLI.isCommand(arguments) else { return }
         exit(run(arguments))
     }
 
@@ -36,8 +36,12 @@ enum AgentControlCommand {
         case .mcp(let client):
             return serve(client: client, socket: path)
         case .request(let line):
-            guard let reply = try? AgentControlSocketClient.exchange(line, socket: path) else {
-                FileHandle.standardError.write(Data("msgblast is not running, or Settings → Outside agents is off.\n".utf8))
+            let reply: Data
+            do { reply = try AgentControlSocketClient.exchange(line, socket: path) } catch is AgentControlSocketClient.NoReply {
+                FileHandle.standardError.write(Data("\(AgentControlCLI.noReply)\n".utf8))
+                return AgentControlCLI.noReplyStatus
+            } catch {
+                FileHandle.standardError.write(Data("\(AgentControlCLI.unavailable)\n".utf8))
                 return AgentControlCLI.unavailableStatus
             }
             let output = AgentControlCLI.render(reply, json: parsed.json)
@@ -57,17 +61,28 @@ enum AgentControlCommand {
         }
         let output = LockedOutput()
         let group = DispatchGroup()
+        // At most this many requests run at once; reading pauses until one finishes.
+        let slots = DispatchSemaphore(value: maximumInFlight)
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            guard line.utf8.count <= maximumLineBytes else {
+                output.write(Data((#"{"error":{"code":-32600,"message":"Message too large."},"id":null,"jsonrpc":"2.0"}"# + "\n").utf8))
+                continue
+            }
+            slots.wait()
             group.enter()
             Task.detached {
                 if let reply = await server.handle(Data(line.utf8)) { output.write(reply) }
+                slots.signal()
                 group.leave()
             }
         }
         group.wait()
         return 0
     }
+
+    static let maximumInFlight = 64
+    static let maximumLineBytes = 1_048_576
 
     private final class LockedOutput: @unchecked Sendable {
         private let lock = NSLock()

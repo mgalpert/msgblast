@@ -14,9 +14,11 @@ enum AgentControlTailnetDNS {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
+        // A stuck tailscale is stopped after 5 seconds, which ends the read below.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { if process.isRunning { process.terminate() } }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
+        guard process.terminationStatus == 0, data.count <= 8_388_608 else { return nil }
         return AgentControlTailnetStatus.parse(data)
     }
 }
@@ -49,13 +51,16 @@ final class AgentControlTailnetBridge: @unchecked Sendable {
     }
 }
 
-/// One keep-alive connection. Idle for 60 seconds with no bytes closes it.
+/// One keep-alive connection. Idle for 60 seconds with no bytes closes it, and a request
+/// that has started must arrive whole within 10 seconds.
 @MainActor final class AgentControlTailnetLink {
+    static let requestDeadline: Duration = .seconds(10)
     private let connection: NWConnection
     private let peer: String
     private weak var owner: AgentControlTailnetListener?
     private var buffer = Data()
     private var idle: Task<Void, Never>?
+    private var deadline: Task<Void, Never>?
     private var open = true
 
     init(connection: NWConnection, peer: String, owner: AgentControlTailnetListener) {
@@ -74,6 +79,7 @@ final class AgentControlTailnetBridge: @unchecked Sendable {
         guard open else { return }
         open = false
         idle?.cancel()
+        deadline?.cancel()
         connection.cancel()
         owner?.drop(self)
     }
@@ -87,13 +93,26 @@ final class AgentControlTailnetBridge: @unchecked Sendable {
         }
     }
 
+    /// Slow senders can't hold a connection by trickling bytes under the idle limit.
+    private func startDeadline() {
+        deadline?.cancel()
+        deadline = Task { [weak self] in
+            try? await Task.sleep(for: Self.requestDeadline)
+            guard !Task.isCancelled else { return }
+            await self?.fail(408, "request timeout")
+        }
+    }
+
     private func read() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, failure in
             Task { @MainActor in
                 guard let self, self.open else { return }
                 self.idle?.cancel()
                 guard failure == nil else { self.close(); return }
-                if let data { self.buffer.append(data) }
+                if let data, !data.isEmpty {
+                    if self.buffer.isEmpty { self.startDeadline() }
+                    self.buffer.append(data)
+                }
                 await self.drain(closed: complete)
             }
         }
@@ -114,6 +133,8 @@ final class AgentControlTailnetBridge: @unchecked Sendable {
             case .complete(let request, let consumed):
                 guard consumed > 0 else { close(); return }
                 buffer.removeFirst(consumed)
+                deadline?.cancel()
+                if !buffer.isEmpty { startDeadline() }
                 let response = await owner?.respond(request, peer: peer) ?? AgentControlHTTPResponse(status: 503, headers: [], body: Data())
                 await send(response)
                 if response.status >= 400 { close(); return }

@@ -6,12 +6,14 @@ import msgblastCore
 struct OutsideAgentsSettingsView: View {
     @ObservedObject var listener: AgentControlListener
     @ObservedObject var gate: AgentControlGate
+    @ObservedObject var activity: AgentControlActivity
 
     var body: some View {
         Toggle("Let agents on this Mac use msgblast", isOn: Binding(get: { listener.enabled }, set: { listener.enabled = $0 }))
         Text("Agents such as Claude Code and Codex connect through the msgblast command. Each one asks you once, here in msgblast, and gets the level you choose.")
             .font(.caption).foregroundStyle(.secondary)
         if let error = listener.error { Text(error).font(.caption).foregroundStyle(.red) }
+        if let error = gate.saveError { Text(error).font(.caption).foregroundStyle(.red) }
         if listener.enabled {
             LabeledContent("Claude Code") { Button("Copy setup command") { copy(Self.setup("claude")) } }
             LabeledContent("Codex") { Button("Copy setup command") { copy(Self.setup("codex")) } }
@@ -19,16 +21,25 @@ struct OutsideAgentsSettingsView: View {
                 Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
             }
             TailnetControls(tailnet: listener.tailnet)
+            AgentSendsSettings(activity: activity)
         }
         ForEach(gate.approvals.keys.sorted(), id: \.self) { client in
             HStack {
-                Picker(client, selection: Binding(get: { gate.approvals[client] ?? .readOnly }, set: { try? gate.set($0, for: client) })) {
+                Picker(client, selection: Binding(get: { gate.approvals[client] ?? .readOnly }, set: { gate.change($0, for: client) })) {
                     ForEach(AgentControlAccess.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 Button("Remove") {
-                    try? gate.set(nil, for: client)
+                    gate.change(nil, for: client)
                     listener.tailnet.revoke(client)
                 }
+            }
+        }
+        ForEach(gate.refused.sorted(), id: \.self) { client in
+            HStack {
+                Text(client)
+                Spacer()
+                Text("Refused until msgblast quits").font(.caption).foregroundStyle(.secondary)
+                Button("Ask Again") { gate.forgetRefusal(client) }
             }
         }
     }
@@ -77,15 +88,16 @@ private struct TailnetControls: View {
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Button("Copy header") { copy(header) }
+                Button("Copy header") { copySecret(header) }
                 if let path = tailnet.pathURL {
-                    Button("Copy link with key (if headers aren't available)") { copy(path) }
+                    Button("Copy link with key (if headers aren't available)") { copySecret(path) }
                         .controlSize(.small)
                 }
                 Button("New key") { confirmingNewKey = true }
                 if let setup = tailnet.setupText {
-                    Button("Copy Grok Bot setup") { copy(setup) }
+                    Button("Copy Grok Bot setup") { copySecret(setup) }
                 }
+                Text("Copies with the key are cleared from the clipboard after 2 minutes.").font(.caption).foregroundStyle(.secondary)
             } else if tailnet.enabled {
                 Text("Make a new key to see it again").font(.caption).foregroundStyle(.secondary)
                 Button("New key") { tailnet.rotateToken() }
@@ -106,5 +118,18 @@ private struct TailnetControls: View {
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Marked concealed so clipboard history apps skip it, and cleared after 2 minutes
+    /// unless something else was copied since.
+    private func copySecret(_ text: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+        board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        let copied = board.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
+            if NSPasteboard.general.changeCount == copied { NSPasteboard.general.clearContents() }
+        }
     }
 }
