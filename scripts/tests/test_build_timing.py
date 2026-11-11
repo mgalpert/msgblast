@@ -1,6 +1,9 @@
 """Build timing parses xcodebuild output and only ever wipes its own folder under build/."""
+import argparse
 import importlib.util
+import os
 from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -43,6 +46,21 @@ class BuildTimingTests(unittest.TestCase):
                        ROOT / 'build/../msgblast']:
             with self.assertRaises(SystemExit, msg=str(unsafe)):
                 timing.owned_build_dir(unsafe)
+
+    def test_touch_keeps_content_and_restores_original_modification_time(self):
+        (ROOT / 'build').mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / 'build') as work:
+            source = Path(work) / 'Leaf.swift'
+            source.write_text('struct Leaf {}\n')
+            os.utime(source, ns=(1_000_000_000, 2_000_000_000))
+            timer = timing.Timer(argparse.Namespace(work_dir=Path(work) / 'timing'))
+            relative = source.relative_to(ROOT)
+            timer.touch(relative)
+            timer.touch(relative)
+            self.assertGreater(source.stat().st_mtime_ns, 2_000_000_000)
+            timer.restore()
+            self.assertEqual(source.stat().st_mtime_ns, 2_000_000_000)
+            self.assertEqual(source.read_text(), 'struct Leaf {}\n')
 
     def test_table_reports_median_min_and_runs(self):
         steps = [{'step': 'cold build', 'seconds': [120.0], 'swift_files_compiled': 96},

@@ -17,6 +17,7 @@ on:
   pull_request:
     paths:
       - scripts/build_timing.py
+      - scripts/tests/test_build_timing.py
       - .github/workflows/build-timing.yml
 
 permissions:
