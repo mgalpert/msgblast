@@ -100,7 +100,7 @@ public enum AgentControlWire {
         }
         switch request["method"] as? String {
         case "tools/list": return reply(id, result: ["tools": toolList(access)])
-        case "tools/call": return await call(request, id: id, access: access, host: host)
+        case "tools/call": return await call(request, id: id, access: access, host: host, client: client)
         default: return reply(id, error: "invalidRequest", "Unknown method. Use tools/list or tools/call.")
         }
     }
@@ -119,13 +119,14 @@ public enum AgentControlWire {
         }
     }
 
-    @MainActor private static func call(_ request: [String: Any], id: Any?, access: AgentControlAccess, host: AgentControlHost) async -> Data {
+    @MainActor private static func call(_ request: [String: Any], id: Any?, access: AgentControlAccess, host: AgentControlHost,
+                                         client: String) async -> Data {
         guard let name = request["name"] as? String else { return reply(id, error: "invalidRequest", "tools/call needs \"name\".") }
         guard let arguments = encoded(request["arguments"]) else {
             return reply(id, error: "invalidArguments", "arguments must be a JSON object.")
         }
         do {
-            let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host)
+            let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host, client: client)
             return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
         } catch let error as AgentControlError {
             return reply(id, error: code(error), error.localizedDescription)
@@ -151,6 +152,7 @@ public enum AgentControlWire {
         case .needsAccess: "needsAccess"
         case .invalidArguments: "invalidArguments"
         case .notFound: "notFound"
+        case .refused: "refused"
         case nil: "failed"
         }
     }
