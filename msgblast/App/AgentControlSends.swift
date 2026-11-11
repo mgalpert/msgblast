@@ -4,7 +4,7 @@ import msgblastRemoteProtocol
 
 /// Runs outside agents' sends through the iPhone controller's command executor and the
 /// Mac's own send paths, so they get every duplicate-send guard and are never retried.
-/// It keeps its own queue: while the phone or the Mac UI is sending, an agent's send is
+/// Agent sends take turns. While the phone or the Mac UI is sending, an agent's send is
 /// refused as "Mac busy" rather than waiting behind it.
 ///
 /// Full access is what allows an agent to message Messages contacts, so the phone's
@@ -34,13 +34,13 @@ import msgblastRemoteProtocol
     }
 
     /// Shows the send in the banner and the activity list, and refuses new sends while the person has stopped them.
-    /// A new send first refreshes permissions and app installs, as the phone's probe loop does while it is
-    /// connected, so readiness is current. A repeat returns its stored result.
+    /// A new send waits for earlier agent sends, then refreshes permissions and app installs, as the phone's
+    /// probe loop does while it is connected, so readiness is current. A repeat returns its stored result.
     func send(_ command: RemoteCommand, client: String) async -> RemoteCommandResult {
-        let known = executor.status(of: command.clientCommandID).code != .unknownCommand
-        return await activity.run(command, client: client, known: known) { command in
-            if !known { await self.model.remoteAvailabilityProbe(slow: false) }
-            return await self.executor.execute(command)
+        let id = command.clientCommandID
+        return await activity.run(command, client: client, isKnown: { self.executor.status(of: id).code != .unknownCommand },
+                                  prepare: { await self.model.remoteAvailabilityProbe(slow: false) }) { command in
+            await self.executor.execute(command)
         }
     }
 }
