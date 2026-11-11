@@ -52,3 +52,17 @@ the Mac or the phone applies:
 
 The phone's "Send iMessages from the phone" setting does not apply to outside
 agents; Full access is what allows Messages contacts.
+
+## Seeing and stopping agent sends
+
+While an agent's send runs, a banner above the agents says who is sending and
+what (for example "Codex · Started a blast · 3 agents") and offers **Stop Agent
+Sends**. The send already under way finishes, because stopping it halfway could
+leave a message half sent; nothing new goes out after it.
+
+While sends are stopped, the banner says so and offers **Allow Agent Sends**.
+Every new send call is refused with code `agentSendsStopped`, and agents can
+still read. The setting is saved, so quitting msgblast doesn't turn sends back on.
+Settings → Outside agents has the same switch and lists the last agent sends since
+msgblast opened, with each one's result. The list never holds message text and
+is not saved.

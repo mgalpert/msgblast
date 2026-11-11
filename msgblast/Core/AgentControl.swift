@@ -72,14 +72,14 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
     func controlComparisons() -> [Comparison]
     func controlTranscript(_ comparison: Comparison) -> [AgentControlTurn]
     var controlEvents: AgentControlEvents { get }
-    /// Runs a send command and returns its final result. Never retries.
-    func controlSend(_ command: RemoteCommand) async -> RemoteCommandResult
+    /// Runs a send command for `client` and returns its final result. Never retries.
+    func controlSend(_ command: RemoteCommand, client: String) async -> RemoteCommandResult
     /// The stored result of an earlier send command. Never runs anything.
     func controlSendStatus(_ id: UUID) -> RemoteCommandResult
 }
 
 public extension AgentControlHost {
-    func controlSend(_ command: RemoteCommand) async -> RemoteCommandResult {
+    func controlSend(_ command: RemoteCommand, client: String) async -> RemoteCommandResult {
         .rejected(command.clientCommandID, .unsupported, "This msgblast can't send for outside agents")
     }
     func controlSendStatus(_ id: UUID) -> RemoteCommandResult { .rejected(id, .unknownCommand, "No record of this request") }
@@ -164,7 +164,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         if host.controlSendStatus(id).code == .unknownCommand, !sendLimit.allow(client) {
             throw AgentControlError.refused("Too many sends from \(client) in a short time. Wait a minute, then try again. Nothing was sent.")
         }
-        let result = await host.controlSend(command)
+        let result = await host.controlSend(command, client: client)
         return try AgentControlSend.result(result, requestID: request, agents: host.controlAgents(), refusalThrows: true)
     }
 

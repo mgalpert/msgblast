@@ -16,9 +16,11 @@ import msgblastRemoteProtocol
         }
         func controlComparisons() -> [Comparison] { [] }
         func controlTranscript(_ comparison: Comparison) -> [AgentControlTurn] { [] }
-        func controlSend(_ command: RemoteCommand) async -> RemoteCommandResult {
+        var clients: [String] = []
+        func controlSend(_ command: RemoteCommand, client: String) async -> RemoteCommandResult {
             if var stored = ledger[command.clientCommandID] { stored.replayed = true; return stored }
             commands.append(command)
+            clients.append(client)
             let result = answer(command)
             ledger[command.clientCommandID] = result
             return result
@@ -59,6 +61,7 @@ import msgblastRemoteProtocol
         XCTAssertEqual(host.commands.count, 1)
         XCTAssertEqual(host.commands.first?.action, .createConversation(text: "Where to eat?", agentIDs: ["chatgpt", "messages:\(Host.fo.uuidString)"], attachmentIDs: []))
         XCTAssertEqual(host.commands.first?.clientCommandID, AgentControlSend.commandID(client: "Codex", requestID: "trip-1"))
+        XCTAssertEqual(host.clients, ["Codex"])
         XCTAssertEqual(reply["outcome"] as? String, "done")
         XCTAssertEqual(reply["requestId"] as? String, "trip-1")
         XCTAssertEqual(reply["comparisonId"] as? String, comparison.uuidString)

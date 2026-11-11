@@ -11,6 +11,7 @@ import msgblastRemoteProtocol
 /// "Send iMessages from the phone" setting does not apply here.
 @MainActor final class AgentControlSends {
     let executor: RemoteCommandExecutor
+    private let activity: AgentControlActivity
     private let host: AppRemoteHost
     private let availability: AvailabilityModel
 
@@ -27,10 +28,17 @@ import msgblastRemoteProtocol
         self.availability = availability
         host = AppRemoteHost(model: model, availability: availability, avatars: remote.avatars, keepAwake: remote.keepAwake, power: remote.power, settings: settings)
         executor = RemoteCommandExecutor(host: host)
+        activity = model.agentSendActivity
+    }
+
+    /// Shows the send in the banner and the activity list, and refuses new sends while the person has stopped them.
+    func send(_ command: RemoteCommand, client: String) async -> RemoteCommandResult {
+        let known = executor.status(of: command.clientCommandID).code != .unknownCommand
+        return await activity.run(command, client: client, known: known) { await self.executor.execute($0) }
     }
 }
 
 extension AppModel {
-    func controlSend(_ command: RemoteCommand) async -> RemoteCommandResult { await agentSends.executor.execute(command) }
+    func controlSend(_ command: RemoteCommand, client: String) async -> RemoteCommandResult { await agentSends.send(command, client: client) }
     func controlSendStatus(_ id: UUID) -> RemoteCommandResult { agentSends.executor.status(of: id) }
 }

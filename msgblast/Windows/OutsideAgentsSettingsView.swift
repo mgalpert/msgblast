@@ -6,6 +6,7 @@ import msgblastCore
 struct OutsideAgentsSettingsView: View {
     @ObservedObject var listener: AgentControlListener
     @ObservedObject var gate: AgentControlGate
+    @ObservedObject var activity: AgentControlActivity
 
     var body: some View {
         Toggle("Let agents on this Mac use msgblast", isOn: Binding(get: { listener.enabled }, set: { listener.enabled = $0 }))
@@ -20,6 +21,7 @@ struct OutsideAgentsSettingsView: View {
                 Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
             }
             TailnetControls(tailnet: listener.tailnet)
+            AgentSendsSettings(activity: activity)
         }
         ForEach(gate.approvals.keys.sorted(), id: \.self) { client in
             HStack {
