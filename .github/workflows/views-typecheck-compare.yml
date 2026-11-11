@@ -18,6 +18,7 @@ jobs:
       BEFORE_SHA: d71d582c15b4a4f8b04dd3a64a8a1befa4208c7b
       AFTER_SHA: b010b4cec7354147649f0994aa63d8a66d500758
       OUT: ${{ github.workspace }}/compare-out
+      RUN_TIMING: 'false'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -36,6 +37,7 @@ jobs:
           done
 
       - name: Time Views.swift leaf edits and type-checks
+        if: env.RUN_TIMING == 'true'
         run: |
           for side in before after; do
             (cd "../$side" && python3 scripts/build_timing.py --leaf msgblast/Windows/Views.swift --repeat 5 \
@@ -44,6 +46,7 @@ jobs:
           done
 
       - name: Capture the main window from each Debug build
+        if: env.RUN_TIMING == 'true'
         continue-on-error: true
         run: |
           set -x
@@ -64,6 +67,12 @@ jobs:
           done
           swift .github/compare/image_diff.swift "$OUT/before-main-window.png" "$OUT/after-main-window.png" "$OUT/main-window-diff.png" | tee "$OUT/main-window-diff.txt"
 
+      - name: Auto-hide the Dock so tall onboarding windows stay clickable
+        run: |
+          defaults write com.apple.dock autohide -bool true
+          killall Dock || true
+          sleep 3
+
       - name: Run main-window and onboarding UI tests on each side
         continue-on-error: true
         run: |
@@ -71,8 +80,7 @@ jobs:
             if (cd "../$side" && xcodebuild -project msgblast.xcodeproj -scheme msgblast \
               -derivedDataPath build/uitests -destination 'platform=macOS,arch=arm64' \
               -resultBundlePath "$OUT/$side-ui.xcresult" ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
-              -only-testing:msgblastUITests/WorkflowTests \
-              -only-testing:msgblastUITests/OnboardingWorkflowTests/testPartialPermissionsCannotContinueUntilOneWholeSectionIsReady \
+              -only-testing:msgblastUITests/OnboardingWorkflowTests \
               test > "$OUT/$side-ui.log" 2>&1); then code=0; else code=$?; fi
             echo "$side exit $code" | tee -a "$OUT/ui-exit.txt"
             grep -E "Test Case .* (passed|failed)|Executed" "$OUT/$side-ui.log" | tee "$OUT/$side-ui-summary.txt" || true
