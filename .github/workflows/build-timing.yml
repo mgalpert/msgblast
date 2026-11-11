@@ -1,0 +1,63 @@
+name: Measure build times
+
+# Informational only: not a required check, and it runs on GitHub-hosted macOS
+# rather than the xcode-27 runner the required native job uses.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: GitHub-hosted macOS image label
+        default: macos-26
+      repeat:
+        description: Runs per warm step
+        default: '3'
+  pull_request:
+    paths:
+      - scripts/build_timing.py
+      - .github/workflows/build-timing.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msgblast-build-timing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  timing:
+    runs-on: ${{ inputs.runner || 'macos-26' }}
+    timeout-minutes: 90
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      REVIEW_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out the branch head
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+
+      - name: Select the newest installed Xcode 27, else the newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$xcode" ] || xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$xcode/Contents/Developer" xcodebuild -version
+
+      - name: Time cold, no-op, leaf and core rebuilds
+        run: |
+          python3 scripts/build_timing.py --repeat "${{ inputs.repeat || '3' }}" --type-check \
+            --json build/build-timing/report.json --markdown build/build-timing/summary.md
+          cat build/build-timing/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload timing report and build logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msgblast-build-timing-${{ env.REVIEW_SHA }}
+          path: |
+            build/build-timing/report.json
+            build/build-timing/summary.md
+            build/build-timing/logs
+          if-no-files-found: ignore
+          retention-days: 14

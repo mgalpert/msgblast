@@ -143,6 +143,30 @@ settings out of the PR. They do not authorize live sends or production state res
 An unbundled `swift run` is not the supported GUI setup: Xcode registers the icon,
 Info.plist, entitlements, frameworks, resources, and helper.
 
+## Measure build times
+
+To check how long the edit-build loop takes on your Mac, run:
+
+```sh
+python3 scripts/build_timing.py --repeat 3 --json build/build-timing/report.json
+```
+
+It runs the compile command above (Debug, signing disabled) in its own
+`build/build-timing` folder and prints a wall-clock table for four builds: a cold
+build, a no-op rebuild, a rebuild after touching a leaf view
+(`msgblast/Windows/InstallationView.swift`), and a rebuild after touching the
+widely used `msgblast/Core/Models.swift`. Package checkouts and the pinned
+helper archives are fetched once before timing starts, so the cold number
+excludes network time. Touching only changes the modification time, and the
+original time is restored when the script exits. The script does not touch
+Xcode's default DerivedData or launch the app. Use `--leaf`/`--core` to choose
+other files, `--skip-cold` to reuse the existing folder, and `--type-check` to
+add an instrumented cold build listing the 15 slowest function bodies and
+expressions over 200 ms (`--threshold`, `--top`). The
+**Measure build times** workflow (`build-timing.yml`) runs the same command on a
+GitHub-hosted macOS runner when dispatched or when a PR changes the script. It
+is informational and not a required check.
+
 ## Dependencies and generated files
 
 - Xcode resolves **Sparkle 2.10.0**, pinned in the generator and Package.swift.
