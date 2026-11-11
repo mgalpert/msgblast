@@ -1,0 +1,20 @@
+{
+  "pr": 122,
+  "reviewed_head": "f6bb4592d6bb9c7cf739d7643507db743ed21d1c",
+  "base": "0f35af5",
+  "reviewer": "independent model (Sonnet subagent), not the authoring model",
+  "verdict": "approve with notes",
+  "rounds": [
+    {"head": "ec88bf3c65a3d5301ee990a32b62d21941f36d4d", "verdict": "approve with notes",
+     "findings": ["MEDIUM choose_slot reused slot skipped busy check", "LOW-MEDIUM support folder name collisions",
+                  "LOW strict certificate count breaks on renewal overlap", "LOW non-atomic install",
+                  "LOW corrupt config traceback", "LOW copies outside --root not seen"]},
+    {"head": "8d7e3349165855a39692c993bfd68e8a866191e1", "verdict": "approve with notes",
+     "resolved": ["busy check on reused slot", "name hash in support folder", "dedupe certificate hashes", "rename-based install"],
+     "remaining": ["LOW docs overstated launch-time slot exclusivity (fixed in f6bb459, docs only)",
+                   "LOW case-only name differences on case-insensitive volumes", "LOW corrupt config traceback",
+                   "LOW copies outside --root not seen"]}
+  ],
+  "delta_8d7e334_to_f6bb459": "docs/testing-builds.md wording only",
+  "tests": "python3 -m unittest discover -s scripts/tests: 158 tests OK (3 skipped)"
+}
