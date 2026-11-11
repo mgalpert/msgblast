@@ -11,6 +11,8 @@ import msgblastCore
     @Published private(set) var error: String?
     private weak var host: AppModel?
     private var listener: NWListener?
+    /// Accepted connections, closed when Outside agents is switched off.
+    private let sessions: AgentControlSessions<NWConnection>
     lazy var tailnet = AgentControlTailnetListener(directory: socket.deletingLastPathComponent(), gate: gate, host: host)
     private var observer: Timer?
 
@@ -18,6 +20,7 @@ import msgblastCore
         socket = directory.appendingPathComponent("agent-control.sock")
         gate = AgentControlGate(file: directory.appendingPathComponent("outside-agents.json"))
         self.host = host
+        sessions = AgentControlSessions { $0.cancel() }
         if UserDefaults.standard.bool(forKey: Self.enabledKey) { start() }
     }
 
@@ -49,6 +52,7 @@ import msgblastCore
             }
             listener.start(queue: .main)
             self.listener = listener
+            sessions.open()
             startObserving()
             error = gate.loadFailed ? "Saved outside-agent approvals could not be read, so every agent is refused." : nil
             tailnet.noteLocal(true)
@@ -74,11 +78,13 @@ import msgblastCore
         observer = nil
         listener?.cancel()
         listener = nil
+        sessions.close()
         try? FileManager.default.removeItem(at: socket)
         tailnet.noteLocal(false)
     }
 
     private func serve(_ connection: NWConnection) {
+        guard sessions.add(connection) else { return }
         connection.start(queue: .main)
         receive(connection, buffer: Data())
     }
@@ -86,24 +92,32 @@ import msgblastCore
     private func receive(_ connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, failure in
             Task { @MainActor in
-                guard let self, failure == nil else { return connection.cancel() }
+                guard let self else { return connection.cancel() }
+                guard failure == nil, self.sessions.isOpen else { return self.sessions.drop(connection) }
                 let pending = buffer + (data ?? Data())
-                guard pending.count <= 1_048_576 else { return connection.cancel() }
+                guard pending.count <= 1_048_576 else { return self.sessions.drop(connection) }
                 // One pass over the bytes, so a buffer of many short lines stays linear.
                 var start = pending.startIndex
                 while let end = pending[start...].firstIndex(of: 0x0A) {
                     let line = Data(pending[start..<end])
                     start = pending.index(after: end)
+                    guard self.sessions.begin(connection) else { return }
                     Task { @MainActor in await self.answer(line, on: connection) }
                 }
-                if !complete { self.receive(connection, buffer: Data(pending[start...])) }
+                if complete { self.sessions.end(connection) } else { self.receive(connection, buffer: Data(pending[start...])) }
             }
         }
     }
 
+    /// Answers one request. Nothing is answered once Outside agents is off, even a request that was
+    /// already running when it was switched off.
     private func answer(_ line: Data, on connection: NWConnection) async {
-        guard let host else { return }
+        guard sessions.contains(connection) else { return }
+        guard let host else { return sessions.drop(connection) }
         let reply = await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0) })
-        connection.send(content: reply, completion: .contentProcessed { _ in })
+        guard sessions.contains(connection) else { return }
+        connection.send(content: reply, completion: .contentProcessed { [weak self] _ in
+            Task { @MainActor in self?.sessions.finish(connection) }
+        })
     }
 }
