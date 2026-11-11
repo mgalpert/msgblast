@@ -24,7 +24,14 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertEqual(AgentControlTailnet.remoteClientName("Cursor (tailscale) (Tailscale)"), "Cursor (Tailscale)")
         XCTAssertNil(AgentControlTailnet.remoteClientName("   "))
         XCTAssertNil(AgentControlTailnet.remoteClientName("(Tailscale)"))
-        XCTAssertNil(AgentControlTailnet.remoteClientName("bad\nname"))
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("bad\nname"), "bad name (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Grok\u{200B}Bot"), AgentControlTailnet.grokBotClient)
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Foo  Bar"), "Foo Bar (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Evil\u{202E}Name"), "Evil Name (Tailscale)")
+        for typed in ["Foo  Bar", "Grok\u{200B}Bot", "Evil\u{202E}Name", "  Laptop  "] {
+            let saved = AgentControlTailnet.remoteClientName(typed)!
+            XCTAssertEqual(AgentControlGate.clientName(saved), saved, "the key's name must equal its approval name")
+        }
         XCTAssertNil(AgentControlTailnet.remoteClientName(String(repeating: "a", count: AgentControlTailnet.maximumClientName + 1)))
     }
 
@@ -102,6 +109,8 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertEqual(accepted.status, 200)
         let stamp = await endpoint.lastAuthorized
         XCTAssertNotNil(stamp)
+        let byClient = await endpoint.lastAuthorizedByClient
+        XCTAssertEqual(byClient, [AgentControlTailnet.grokBotClient: stamp!])
         let wrongAgain = await endpoint.handle(try request("POST", "/mcp/nope", #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#), peer: "100.64.0.1")
         XCTAssertEqual(wrongAgain.status, 401)
         let afterWrong = await endpoint.lastAuthorized

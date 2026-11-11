@@ -8,16 +8,15 @@ public enum AgentControlTailnet {
     public static let grokBotClient = "Grok Bot (Tailscale)"
     public static let maximumClientName = 48
 
-    /// The saved name for an agent the person adds by hand: trimmed, one " (Tailscale)" suffix, so it never
-    /// shares an approval with a local client. "Grok Bot" becomes `grokBotClient`. Nil when empty, too long,
-    /// or holding control characters.
+    /// The saved name for an agent the person adds by hand, cleaned exactly as `AgentControlGate.clientName`
+    /// cleans approval names (so the key's name and its approval's name always match), with one " (Tailscale)"
+    /// suffix. "Grok Bot" becomes `grokBotClient`. Nil when empty or too long.
     public static func remoteClientName(_ typed: String) -> String? {
-        var name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var name = AgentControlGate.clientName(typed) else { return nil }
         while name.lowercased().hasSuffix("(tailscale)") {
             name = String(name.dropLast("(tailscale)".count)).trimmingCharacters(in: .whitespaces)
         }
-        guard !name.isEmpty, name.count <= maximumClientName,
-              !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        guard !name.isEmpty, name.count <= maximumClientName else { return nil }
         return "\(name) (Tailscale)"
     }
 

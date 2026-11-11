@@ -264,7 +264,8 @@ import msgblastCore
     func respond(_ request: AgentControlHTTPRequest, peer: String) async -> AgentControlHTTPResponse {
         guard let endpoint else { return AgentControlHTTPResponse(status: 503, headers: [], body: Data()) }
         let response = await endpoint.handle(request, peer: peer)
-        if let when = await endpoint.lastAuthorized, when != lastCalled { lastCalled = when }
+        // The readiness line is about Grok Bot, so only its key counts.
+        if let when = await endpoint.lastAuthorizedByClient[AgentControlTailnet.grokBotClient], when != lastCalled { lastCalled = when }
         return response
     }
 
