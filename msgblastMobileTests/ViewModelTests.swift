@@ -772,6 +772,44 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(mac.commands.filter { $0.action.kind == "createConversation" }.count, 1, "Never sent a second time")
     }
 
+    /// A send times out, the user sends again, and only then does the Mac confirm the first. The
+    /// late confirmation is bound to the first send (its text and new conversation id), the second
+    /// stays tracked until its own answer, and neither is resent.
+    func testALateConfirmationAfterASecondSendIsBoundToItsOwnSend() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        app.commandTimeout = .milliseconds(300)
+        var pending = ComposeSend.Pending()
+        // As ComposeBar tracks them: started when sent, marked when the timeout gives up.
+        let (first, firstSend) = try await startSend(app, mac, .createConversation(text: "Hi", agentIDs: ["codexCLI", "claudeCLI"], attachmentIDs: []))
+        pending.start(.init(id: first, text: "Hi", attachmentIDs: [], quoting: nil))
+        do { _ = try await firstSend.value; XCTFail("No answer must end in unconfirmed") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
+        pending.timedOut(first)
+        app.commandTimeout = .seconds(5)
+        let (second, secondSend) = try await startSend(app, mac, .createConversation(text: "Hi again", agentIDs: ["codexCLI"], attachmentIDs: ["a1"]))
+        pending.start(.init(id: second, text: "Hi again", attachmentIDs: ["a1"], quoting: "turn-1"))
+        // A reconnect's queries: the Mac created the first conversation and then the second.
+        let created = UUID(), createdAgain = UUID()
+        mac.queryAnswers[first] = RemoteCommandResult(clientCommandID: first, outcome: .applied, conversationID: created, replayed: true)
+        mac.queryAnswers[second] = RemoteCommandResult(clientCommandID: second, outcome: .applied, conversationID: createdAgain, replayed: true)
+        mac.sessions.last!.transport.drop()
+        await settle { app.store.commands[first]?.status == .applied }
+        let late = pending.lateConfirmations(in: app.store.commands)
+        XCTAssertEqual(late.map { $0.send.id }, [first], "The late confirmation is bound to the first send")
+        XCTAssertEqual(late.first?.send.text, "Hi", "It clears what the first send carried")
+        XCTAssertEqual(late.first?.confirmation.conversationID, created, "It names the conversation the first send created")
+        XCTAssertEqual(pending.sends.map(\.id), [second], "The second send is still tracked")
+        let secondResult = try await secondSend.value
+        XCTAssertEqual(secondResult.conversationID, createdAgain, "The second send gets its own answer")
+        pending.answered(second)
+        XCTAssertTrue(pending.sends.isEmpty, "Nothing is tracked once both are final")
+        XCTAssertTrue(pending.lateConfirmations(in: app.store.commands).isEmpty, "A confirmation is bound once")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "createConversation" }.count, 2, "Never sent a second time")
+    }
+
     /// No manual save: the record is on disk before the send leaves, so an app ended right after
     /// dispatch (before any debounced save) still knows it, shows it unconfirmed and asks about it.
     func testASendInterruptedRightAfterDispatchIsKnownAfterRelaunch() async throws {

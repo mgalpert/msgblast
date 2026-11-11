@@ -89,4 +89,35 @@ public enum ComposeSend {
         guard let record, record.status == .applied else { return nil }
         return LateConfirmation(conversationID: record.result?.conversationID ?? record.conversationID)
     }
+
+    /// The sends the compose bar is waiting on, so a late `applied` (after the field already said
+    /// unconfirmed) finishes each as a prompt answer would. Not stored: the ledger keeps the records.
+    public struct Pending: Sendable {
+        public struct Send: Equatable, Sendable {
+            public var id: UUID
+            public var text: String
+            public var attachmentIDs: [String]
+            /// The turn it replied to, if any.
+            public var quoting: String?
+            /// The phone's timeout gave up on it; only then is an `applied` late.
+            public var timedOut = false
+            public init(id: UUID, text: String, attachmentIDs: [String], quoting: String?) {
+                self.id = id; self.text = text; self.attachmentIDs = attachmentIDs; self.quoting = quoting
+            }
+        }
+        public private(set) var sends: [Send] = []
+        public init() {}
+
+        public mutating func start(_ send: Send) { sends = [send] }
+        /// The Mac answered before the timeout.
+        public mutating func answered(_ id: UUID) { sends.removeAll() }
+        public mutating func timedOut(_ id: UUID) { if !sends.isEmpty { sends[sends.count - 1].timedOut = true } }
+
+        /// Timed-out sends the Mac has since applied, each with its own confirmation.
+        public mutating func lateConfirmations(in commands: [UUID: CommandRecord]) -> [(send: Send, confirmation: LateConfirmation)] {
+            guard let flight = sends.first, flight.timedOut, let confirmed = ComposeSend.lateConfirmation(commands[flight.id]) else { return [] }
+            sends = []
+            return [(flight, confirmed)]
+        }
+    }
 }
