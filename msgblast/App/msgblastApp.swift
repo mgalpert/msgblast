@@ -166,6 +166,7 @@ private struct BlastCommands: Commands {
 @main
 enum msgblastMain {
     @MainActor static func main() {
+        AgentControlCommand.runIfRequested()
         #if DEBUG
         if UpdateProbe.isLocalFixture {
             if ProcessInfo.processInfo.arguments.contains("--update-probe") { UpdateProbe.run() }
