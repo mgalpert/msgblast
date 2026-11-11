@@ -9,7 +9,7 @@ final class WorkflowTests: XCTestCase {
         defer { app.terminate() }
         XCTAssertTrue(app.textViews["Shared prompt"].waitForExistence(timeout: 10))
         let settings = openSettings(app)
-        for name in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "permissions", "sharing", "updates"] {
+        for name in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "remote", "permissions", "sharing", "updates"] {
             XCTAssertTrue(settings.staticTexts["settings-page-\(name)"].isHittable)
         }
         settings.buttons["Record Shortcut"].click()
@@ -38,7 +38,7 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         settings.staticTexts["settings-page-sharing"].click()
         XCTAssertEqual(String(describing: usage.value ?? ""), unsavedValue, "Saved choices must survive reopening")
-        for page in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "permissions", "sharing", "updates"] {
+        for page in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "remote", "permissions", "sharing", "updates"] {
             settings.staticTexts["settings-page-\(page)"].click()
             XCTAssertTrue(settings.buttons["settings-send-feedback"].isHittable)
             XCTAssertTrue(settings.buttons["settings-build-feature"].isHittable)

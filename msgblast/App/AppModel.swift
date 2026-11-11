@@ -9,7 +9,16 @@ final class AppModel: ObservableObject {
     @Published var messages: [String: [Message]] = [:]
     @Published var databaseStatus = "Checking Messages history…"
     @Published var databaseAvailable = false
-    @Published var error: String?
+    // A remote command's errors go to its command result, not to the Mac's modal alert.
+    @Published var error: String? {
+        didSet {
+            guard let error, let capture = RemoteErrorCapture.current, !capture.restoring else { return }
+            capture.record(error)
+            capture.restoring = true
+            self.error = oldValue
+            capture.restoring = false
+        }
+    }
     @Published var busy = false
     @Published var webBroadcastBusy = false
     private(set) var sharedDraftRevision = SharedDraftRevision()
@@ -103,6 +112,8 @@ final class AppModel: ObservableObject {
     let linkPreviews = LinkPreviewStore()
     let accessGuide = MessagesAccessGuide(defaults: ProcessInfo.processInfo.arguments.contains("--demo") ? UserDefaults(suiteName: "com.msgblast.demo-permissions") ?? .standard : .standard)
     let local: LocalStore
+    /// Fixture hook: sees each state written by `save()`.
+    var didSave: ((AppState) -> Void)?
     lazy var telemetry = TelemetryCollector(endpoint: TelemetryCollector.endpoint(demo: demo), queueURL: local.url.deletingLastPathComponent().appendingPathComponent("telemetry-queue.json"))
     var lastTelemetryInventory: [String: Int]?
     var lastTelemetryActivityDay: Int?
@@ -111,6 +122,8 @@ final class AppModel: ObservableObject {
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
     var database: MessagesDatabase?
+    /// Created on first use. The app starts it at launch; fixtures never touch it.
+    lazy var remote = RemoteService(model: self)
     var timer: Timer?
     var coordinator: WindowCoordinator?
     var demoRow: Int64 = 100
@@ -163,6 +176,7 @@ final class AppModel: ObservableObject {
     func save() throws {
         guard !storageLoadFailed else { throw AppFailure.blocked("Saved state is unavailable. It will not be overwritten. You can quit or update after new drafts are saved separately in \(local.url.deletingLastPathComponent().appendingPathComponent("Recovery").path). Repair the saved state before sending.") }
         try local.save(state)
+        didSave?(state)
     }
     func saveForTermination() throws {
         if storageLoadFailed {
@@ -461,11 +475,18 @@ final class AppModel: ObservableObject {
         return result
     }
     func start(recipientIDs: Set<UUID>) async {
-        let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachments = state.attachmentsDraft ?? []
-        guard (!text.isEmpty || !attachments.isEmpty), !busy else { return }
+        await startBlast(text: state.draft, attachments: state.attachmentsDraft ?? [], recipientIDs: recipientIDs, interactive: true)
+    }
+    /// A Messages-only new blast. `interactive` is the Mac composer: it may request
+    /// Contacts access, clears the composer draft, and opens the conversation window.
+    /// Remote callers pass their own text and files and leave the Mac's draft alone.
+    @discardableResult
+    func startBlast(text rawText: String, attachments: [MessageAttachment], recipientIDs: Set<UUID>, interactive: Bool) async -> UUID? {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (!text.isEmpty || !attachments.isEmpty), !busy else { return nil }
         do {
             if !demo, contacts.status == .notDetermined {
+                guard interactive else { throw AppFailure.blocked("Allow Contacts for msgblast on the Mac before sending to Messages agents.") }
                 busy = true
                 defer { busy = false }
                 try await contacts.request()
@@ -478,10 +499,13 @@ final class AppModel: ObservableObject {
             }
             state.comparisons.insert(comparison, at: 0)
             try save() // Durable intent exists before any external send.
-            state.draft = ""; state.attachmentsDraft = nil; try save()
-            coordinator?.open(comparison.id)
+            if interactive {
+                state.draft = ""; state.attachmentsDraft = nil; try save()
+                coordinator?.open(comparison.id)
+            }
             await submit(comparison.id, retry: false)
-        } catch { self.error = error.localizedDescription }
+            return comparison.id
+        } catch { self.error = error.localizedDescription; return nil }
     }
     func setSharedDraft(_ text: String) {
         sharedDraftRevision.edited(from: state.draft, to: text)
@@ -552,17 +576,21 @@ final class AppModel: ObservableObject {
         persist()
     }
 
-    func prepareWebComparison(_ text: String, recipientIDs: Set<UUID>, agents: [WebAgentID]) async -> UUID? {
+    func prepareWebComparison(_ text: String, recipientIDs: Set<UUID>, agents: [WebAgentID], interactive: Bool = true) async -> UUID? {
         guard !busy else { return nil }
         do {
-            if !recipientIDs.isEmpty, !demo, contacts.status == .notDetermined { try await contacts.request() }
+            if !recipientIDs.isEmpty, !demo, contacts.status == .notDetermined {
+                guard interactive else { throw AppFailure.blocked("Allow Contacts for msgblast on the Mac before sending to Messages agents.") }
+                try await contacts.request()
+            }
             let members = recipientIDs.isEmpty ? [] : try validateMembers(prompt: text, selectedIDs: recipientIDs)
             var comparison = Comparison(prompt: text, members: members)
             comparison.setWebAgents(agents)
             state.comparisons.insert(comparison, at: 0)
             do { try save() }
             catch { state.comparisons.removeAll { $0.id == comparison.id }; throw error }
-            selectWorkspace(comparison.id, promotingDraft: true)
+            // The composer's draft becomes this conversation's; a remote send keeps the Mac's draft.
+            selectWorkspace(comparison.id, promotingDraft: interactive)
             return comparison.id
         } catch { self.error = error.localizedDescription; return nil }
     }
@@ -652,6 +680,16 @@ final class AppModel: ObservableObject {
         state.comparisons[i].endedWebHistory = Dictionary(uniqueKeysWithValues: previous.resolvedWebAgentIDs.map { agent in
             (agent.id, webAgents.session(for: agent)?.messagesForComparison(id) ?? [])
         })
+        do { try save(); return true }
+        catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
+    }
+
+    /// Names a conversation; an empty name or the prompt's own title returns to the prompt.
+    func renameConversation(_ id: UUID, title: String) -> Bool {
+        guard let i = index(id) else { return false }
+        let previous = state.comparisons[i]
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.comparisons[i].customTitle = name.isEmpty || name == previous.derivedTitle ? nil : name
         do { try save(); return true }
         catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
     }
@@ -775,91 +813,120 @@ final class AppModel: ObservableObject {
         }
         if changed { try save() }
     }
-    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil, telemetryManagedExternally: Bool = false) async {
+    func followUp(_ id: UUID, only memberID: UUID? = nil, recipients recipientIDs: [UUID]? = nil, retry attemptID: UUID? = nil, resumeUnsent: Bool = false, newAttemptID: UUID? = nil, telemetryManagedExternally: Bool = false,
+                  supplied: (text: String, attachments: [MessageAttachment])? = nil) async {
         guard let i = index(id), state.comparisons[i].endedAt == nil, !busy,
               memberID == nil || !webBroadcastBusy || webBroadcastInputsFinished else { return }
         do { try freezeSharedContext(id) } catch { self.error = error.localizedDescription; return }
         let comparison = state.comparisons[i]
         let selected = recipientIDs.map(Set.init)
-        var targets = comparison.members.filter { member in memberID.map { $0 == member.id } ?? selected?.contains(member.id) ?? true }
-        let text = (memberID.map { comparison.privateDrafts[$0.uuidString] ?? "" } ?? comparison.allDraft).trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachments = attachmentDraft(comparisonID: id, memberID: memberID)
+        let targets = comparison.members.filter { member in memberID.map { $0 == member.id } ?? selected?.contains(member.id) ?? true }
+        // A remote send supplies its own text and files; the Mac's saved drafts are never read or cleared.
+        let text = (supplied?.text ?? memberID.map { comparison.privateDrafts[$0.uuidString] ?? "" } ?? comparison.allDraft).trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachments = supplied?.attachments ?? attachmentDraft(comparisonID: id, memberID: memberID)
         if attemptID == nil && text.isEmpty && attachments.isEmpty { return }
         let telemetryStarted = Date()
-        var k: Int
         do {
-            try RecipientSet.validate(comparison.members)
-            if let attemptID {
-                guard let existing = comparison.followUps.firstIndex(where: { $0.id == attemptID }) else { throw AppFailure.blocked("The saved follow-up is unavailable.") }
-                k = existing
-                let attempt = comparison.followUps[k]
-                let pending = Set(attempt.recipientsForRecovery(resumeUnsent: resumeUnsent))
-                targets = comparison.members.filter { pending.contains($0.id) }
-            } else { k = comparison.followUps.count }
-            guard !targets.isEmpty else { return }
-            guard targets.allSatisfy({ $0.anchor != nil && $0.submission == .submitted }) else { throw AppFailure.blocked("Wait for every target's prompt anchor before following up.") }
-            // Ordinary follow-ups to an older comparison would lose its original prompt context.
-            for member in targets where ComparisonRange.nextAnchor(for: comparison, member: member, comparisons: state.comparisons) != nil {
-                throw AppFailure.blocked("\(member.name) has joined a newer comparison. Genuine inline replies have not been validated on this Mac. Open the original prompt in Messages to reply; the shared follow-up was not sent.")
-            }
-            if attemptID == nil {
-                var attempt = FollowUp(text: text, memberIDs: targets.map(\.id))
-                if let newAttemptID { attempt.id = newAttemptID }
-                attempt.sharedWithAll = memberID == nil && comparison.webProviders == nil && Set(targets.map(\.id)) == Set(comparison.members.map(\.id))
-                for member in targets {
-                    attempt.states[member.id.uuidString] = .ready
-                    if !attachments.isEmpty {
-                        if attempt.payloads == nil { attempt.payloads = [:] }
-                        attempt.payloads?[member.id.uuidString] = OutgoingPayload(text: text, attachments: attachments)
-                    }
-                }
-                state.comparisons[i].followUps.append(attempt); k = state.comparisons[i].followUps.count - 1
-                if memberID == nil { state.comparisons[i].allDraft = "" } else { state.comparisons[i].privateDrafts[memberID!.uuidString] = "" }
-                setAttachmentDraft([], comparisonID: id, memberID: memberID, saveNow: false)
-                try save()
-            }
+            guard let prepared = try prepareFollowUp(id, at: i, comparison: comparison, targets: targets, text: text, attachments: attachments, memberID: memberID,
+                                                     retry: attemptID, resumeUnsent: resumeUnsent, newAttemptID: newAttemptID, clearDrafts: supplied == nil) else { return }
+            let k = prepared.index
             let previouslySubmitted = Set(state.comparisons[i].followUps[k].states.filter { $0.value == .submitted }.map(\.key))
             busy = true
-            for member in targets where state.comparisons[i].followUps[k].memberIDs.contains(member.id) {
-                let key = member.id.uuidString
-                let status = state.comparisons[i].followUps[k].states[key]
-                guard status == .ready || status == .failed else { continue }
-                if let payload = state.comparisons[i].followUps[k].payloads?[key] {
-                    _ = await deliver(payload, to: member.chat) { updated in
-                        self.state.comparisons[i].followUps[k].apply(updated, for: key)
-                        try self.save()
-                    }
-                    if demo && state.comparisons[i].followUps[k].states[key] == .submitted { scheduleDemoReply(id, memberID: member.id) }
-                    continue
-                }
-                var attempted = false
-                do {
-                    try validate(member.chat)
-                    state.comparisons[i].followUps[k].states[key] = .sending; try save()
-                    attempted = true
-                    let body = state.comparisons[i].followUps[k].text
-                    if demo { appendDemo(body, chat: member.chat, outgoing: true) }
-                    else { try await MessageSender().send(body, to: member.chat) }
-                    state.comparisons[i].followUps[k].states[key] = .submitted
-                    state.comparisons[i].followUps[k].errors[key] = nil
-                    try save()
-                    if demo { scheduleDemoReply(id, memberID: member.id) }
-                } catch {
-                    state.comparisons[i].followUps[k].states[key] = Submission.failure(afterAttempt: attempted, error: error)
-                    state.comparisons[i].followUps[k].errors[key] = error.localizedDescription; persist()
-                }
+            for member in prepared.targets where state.comparisons[i].followUps[k].memberIDs.contains(member.id) {
+                await sendFollowUp(id, at: i, attempt: k, to: member)
             }
             try save()
             let completed = state.comparisons[i].followUps[k]
             state.comparisons[i].recordSharedFollowUp(completed)
             try save()
             if !telemetryManagedExternally {
-                let submitted = completed.states.filter { $0.value == .submitted && !previouslySubmitted.contains($0.key) }.count
-                if submitted > 0 { recordMessageSubmission(kind: memberID == nil ? .shared : .private, recipientCount: submitted, started: telemetryStarted, logicalID: completed.id) }
-                else { recordOperation(.send, success: false, started: telemetryStarted) }
+                recordFollowUpTelemetry(completed, previouslySubmitted: previouslySubmitted, memberID: memberID, started: telemetryStarted)
             }
         } catch { self.error = error.localizedDescription }
         busy = false; refresh()
+    }
+    /// Validates the follow-up's targets, resolves a retried attempt or appends a new one, and
+    /// returns its index and the members to send to; nil when there is nobody to send to.
+    private func prepareFollowUp(_ id: UUID, at i: Int, comparison: Comparison, targets selectedTargets: [Member], text: String, attachments: [MessageAttachment], memberID: UUID?,
+                                 retry attemptID: UUID?, resumeUnsent: Bool, newAttemptID: UUID?, clearDrafts: Bool) throws -> (index: Int, targets: [Member])? {
+        var targets = selectedTargets
+        var k: Int
+        try RecipientSet.validate(comparison.members)
+        if let attemptID {
+            guard let existing = comparison.followUps.firstIndex(where: { $0.id == attemptID }) else { throw AppFailure.blocked("The saved follow-up is unavailable.") }
+            k = existing
+            let attempt = comparison.followUps[k]
+            let pending = Set(attempt.recipientsForRecovery(resumeUnsent: resumeUnsent))
+            targets = comparison.members.filter { pending.contains($0.id) }
+        } else { k = comparison.followUps.count }
+        guard !targets.isEmpty else { return nil }
+        guard targets.allSatisfy({ $0.anchor != nil && $0.submission == .submitted }) else { throw AppFailure.blocked("Wait for every target's prompt anchor before following up.") }
+        // Ordinary follow-ups to an older comparison would lose its original prompt context.
+        for member in targets where ComparisonRange.nextAnchor(for: comparison, member: member, comparisons: state.comparisons) != nil {
+            throw AppFailure.blocked("\(member.name) has joined a newer comparison. Genuine inline replies have not been validated on this Mac. Open the original prompt in Messages to reply; the shared follow-up was not sent.")
+        }
+        if attemptID == nil {
+            k = try appendNewFollowUp(id, at: i, comparison: comparison, text: text, attachments: attachments, targets: targets,
+                                      memberID: memberID, newAttemptID: newAttemptID, clearDrafts: clearDrafts)
+        }
+        return (k, targets)
+    }
+    /// Sends follow-up `k` of comparison `i` to one member that is ready or failed; failures are recorded on the follow-up.
+    private func sendFollowUp(_ id: UUID, at i: Int, attempt k: Int, to member: Member) async {
+        let key = member.id.uuidString
+        let status = state.comparisons[i].followUps[k].states[key]
+        guard status == .ready || status == .failed else { return }
+        if let payload = state.comparisons[i].followUps[k].payloads?[key] {
+            _ = await deliver(payload, to: member.chat) { updated in
+                self.state.comparisons[i].followUps[k].apply(updated, for: key)
+                try self.save()
+            }
+            if demo && state.comparisons[i].followUps[k].states[key] == .submitted { scheduleDemoReply(id, memberID: member.id) }
+            return
+        }
+        var attempted = false
+        do {
+            try validate(member.chat)
+            state.comparisons[i].followUps[k].states[key] = .sending; try save()
+            attempted = true
+            let body = state.comparisons[i].followUps[k].text
+            if demo { appendDemo(body, chat: member.chat, outgoing: true) }
+            else { try await MessageSender().send(body, to: member.chat) }
+            state.comparisons[i].followUps[k].states[key] = .submitted
+            state.comparisons[i].followUps[k].errors[key] = nil
+            try save()
+            if demo { scheduleDemoReply(id, memberID: member.id) }
+        } catch {
+            state.comparisons[i].followUps[k].states[key] = Submission.failure(afterAttempt: attempted, error: error)
+            state.comparisons[i].followUps[k].errors[key] = error.localizedDescription; persist()
+        }
+    }
+    private func recordFollowUpTelemetry(_ completed: FollowUp, previouslySubmitted: Set<String>, memberID: UUID?, started: Date) {
+        let submitted = completed.states.filter { $0.value == .submitted && !previouslySubmitted.contains($0.key) }.count
+        if submitted > 0 { recordMessageSubmission(kind: memberID == nil ? .shared : .private, recipientCount: submitted, started: started, logicalID: completed.id) }
+        else { recordOperation(.send, success: false, started: started) }
+    }
+    /// Appends a new follow-up for `targets`, clears the Mac's drafts when they supplied the
+    /// text, saves, and returns the follow-up's index.
+    private func appendNewFollowUp(_ id: UUID, at i: Int, comparison: Comparison, text: String, attachments: [MessageAttachment], targets: [Member],
+                                   memberID: UUID?, newAttemptID: UUID?, clearDrafts: Bool) throws -> Int {
+        var attempt = FollowUp(text: text, memberIDs: targets.map(\.id))
+        if let newAttemptID { attempt.id = newAttemptID }
+        attempt.sharedWithAll = memberID == nil && comparison.webProviders == nil && Set(targets.map(\.id)) == Set(comparison.members.map(\.id))
+        for member in targets {
+            attempt.states[member.id.uuidString] = .ready
+            if !attachments.isEmpty {
+                if attempt.payloads == nil { attempt.payloads = [:] }
+                attempt.payloads?[member.id.uuidString] = OutgoingPayload(text: text, attachments: attachments)
+            }
+        }
+        state.comparisons[i].followUps.append(attempt); let k = state.comparisons[i].followUps.count - 1
+        if clearDrafts {
+            if memberID == nil { state.comparisons[i].allDraft = "" } else { state.comparisons[i].privateDrafts[memberID!.uuidString] = "" }
+            setAttachmentDraft([], comparisonID: id, memberID: memberID, saveNow: false)
+        }
+        try save()
+        return k
     }
     func appendDemo(_ text: String, chat: Chat, outgoing: Bool, replyTo: String? = nil, attachments: [MessageAttachment] = []) {
         demoRow += 1

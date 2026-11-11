@@ -43,6 +43,10 @@ publishing is a separate, explicitly requested maintainer operation.
 - Use full Xcode 27 and Python 3.11+. Package isolated previews with
   `scripts/build_preview_apps.py`. Blue-green Dev uses live accounts; blue Demo
   uses fixtures. Never pass `--demo` or `--isolated-demo` to Dev.
+- Always build stamped previews locally. The stamp in the app name lets
+  Launch Services and System Settings tell copies apart. Delete superseded
+  preview copies, and launch a preview by its explicit path rather than by
+  bundle id.
 - Preserve production and its support folder. A new output path alone does not
   isolate state. Never send real messages, write Contacts, reset permissions, or
   request paid work merely for evidence without authorization for that workflow.

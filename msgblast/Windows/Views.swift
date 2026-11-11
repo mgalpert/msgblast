@@ -723,7 +723,7 @@ struct RecipientPills: View {
 }
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
-    case general = "General", apps = "Mac apps", websites = "Websites", cli = "CLI tools", webhooks = "Webhooks", outsideAgents = "Outside agents", permissions = "Permissions", sharing = "Sharing", updates = "Updates"
+    case general = "General", apps = "Mac apps", websites = "Websites", cli = "CLI tools", webhooks = "Webhooks", outsideAgents = "Outside agents", remote = "Remote", permissions = "Permissions", sharing = "Sharing", updates = "Updates"
     var id: Self { self }
     var symbol: String {
         switch self {
@@ -733,6 +733,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .cli: "terminal"
         case .webhooks: "point.3.connected.trianglepath.dotted"
         case .outsideAgents: "person.badge.key"
+        case .remote: "iphone"
         case .permissions: "hand.raised"
         case .sharing: "chart.bar"
         case .updates: "arrow.down.circle"
@@ -758,6 +759,7 @@ struct AppSettingsView: View {
                 }
                 Section {
                     sidebarRow(.outsideAgents)
+                    sidebarRow(.remote)
                     sidebarRow(.permissions)
                     sidebarRow(.sharing)
                     sidebarRow(.updates)
@@ -826,6 +828,9 @@ struct AppSettingsView: View {
                     settingsPage(.outsideAgents) {
                         Section { OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate) }
                     }
+                    settingsPage(.remote) {
+                        Section { RemoteSettingsView(service: model.remote) }
+                    }
                     settingsPage(.permissions) {
                         Section { PermissionsSettingsView(model: model) }
                     }
@@ -868,6 +873,7 @@ struct AppSettingsView: View {
         case .websites: "Manage separate website profiles for your accounts."
         case .cli: "Connect local command-line tools and accounts."
         case .webhooks: "Connect agents through webhook routines."
+        case .remote: "Pair an iPhone to start and follow blasts on this Mac."
         case .outsideAgents: "Let agents such as Claude Code and Codex use msgblast, with the access you choose."
         case .permissions: "Control what msgblast can access on this Mac."
         case .sharing: "Choose the anonymous statistics you share to improve msgblast."

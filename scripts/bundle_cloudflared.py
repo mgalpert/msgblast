@@ -61,7 +61,7 @@ def bundle(selected, destination, cache):
         for arch in selected:
             binary = workspace / arch
             binary.write_bytes(fetch_binary(manifest["assets"][arch], cache))
-            subprocess.run(["xcrun", "lipo", "-verify_arch", arch, str(binary)], check=True)
+            subprocess.run(["xcrun", "lipo", str(binary), "-verify_arch", arch], check=True)
             binaries.append(binary)
         staged = workspace / "cloudflared"
         if len(binaries) == 1:
