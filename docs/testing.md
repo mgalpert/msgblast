@@ -204,6 +204,12 @@ SIMCTL_CHILD_MSGBLAST_FIXTURE=conversation xcrun simctl launch --terminate-runni
 xcrun simctl io <udid> screenshot build/design-review/conversation.png
 ```
 
+`.github/workflows/iphone-promo-captures.yml` (manual dispatch, or a PR that
+edits that file) does this on the `xcode-27` runner for promo footage: it builds
+the Debug app, records each fixture screen with `simctl io recordVideo` plus a
+screenshot, and uploads them as `msgblast-iphone-promo-<sha>`. It uses only these
+fixtures, no secrets or signing, and publishes nothing.
+
 The reconnecting subtitle explains itself only after 20 seconds, so wait that long
 before capturing `reconnecting`. Scan Code is disabled in the simulator, which has
 no camera scanner.

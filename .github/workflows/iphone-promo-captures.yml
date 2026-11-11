@@ -1,0 +1,154 @@
+name: iPhone promo captures
+
+# Raw simulator recordings of the iPhone app for promo videos. Fixture data only:
+# the Debug build opens on DesignFixtures (MSGBLAST_FIXTURE), with a simulated
+# "Studio Mac", no pairing, no network, no accounts and no sends. Nothing is
+# signed or published; the clips are an Actions artifact.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/iphone-promo-captures.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msgblast-iphone-promo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      REVIEW_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      BUNDLE_ID: com.msgblast.ios
+      OUT: build/promo
+    steps:
+      - name: Check out the branch head
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.REVIEW_SHA }}
+          persist-credentials: false
+
+      - name: Build the Debug iPhone app for the simulator without signing
+        run: |
+          set -o pipefail
+          mkdir -p "$OUT"
+          xcodebuild -version
+          xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile -configuration Debug \
+            -derivedDataPath build/promo-sim -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$OUT/build.log"
+
+      - name: Boot an iPhone simulator and install the app
+        run: |
+          set -euo pipefail
+          # Newest iOS runtime; prefer iPhone 17 Pro, else the first iPhone on it.
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, re, sys
+          devices = json.load(sys.stdin)["devices"]
+          def version(runtime):
+              return [int(n) for n in re.findall(r"\d+", runtime.rsplit("iOS", 1)[-1])]
+          for runtime in sorted((r for r in devices if ".SimRuntime.iOS-" in r), key=version, reverse=True):
+              phones = [d for d in devices[runtime] if d.get("isAvailable") and d["name"].startswith("iPhone")]
+              if phones:
+                  pick = next((d for d in phones if d["name"] == "iPhone 17 Pro"), phones[0])
+                  print(pick["udid"]); sys.exit(0)
+          sys.exit("No available iPhone simulator")
+          ')
+          echo "UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl list devices available | grep "$udid" | tee "$OUT/simulator.txt"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 \
+            --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+          xcrun simctl ui "$udid" appearance light
+          app=build/promo-sim/Build/Products/Debug-iphonesimulator/msgblastMobile.app
+          test -d "$app"
+          xcrun simctl install "$udid" "$app"
+          # Warm-up launch, so the clips do not start with a cold first launch.
+          SIMCTL_CHILD_MSGBLAST_FIXTURE=inbox xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID"
+          sleep 8
+          xcrun simctl terminate "$udid" "$BUNDLE_ID" || true
+
+      - name: Record fixture screens
+        run: |
+          set -euo pipefail
+          # name | appearance | seconds held | fixture environment (MSGBLAST_ prefix implied)
+          clips='
+          01-inbox|light|8|FIXTURE=inbox
+          02-conversation|light|8|FIXTURE=conversation
+          03-conversation-details|light|8|FIXTURE=conversation FIXTURE_DETAILS=1
+          04-conversation-photo|light|7|FIXTURE=conversation FIXTURE_PHOTO=1
+          05-direct-thread|light|7|FIXTURE=conversation-short
+          06-new-conversation|light|7|FIXTURE=new
+          07-pairing|light|7|FIXTURE=pairing
+          08-pairing-paste|light|7|FIXTURE=pairing-paste
+          09-settings|light|8|FIXTURE=settings
+          10-inbox-dark|dark|8|FIXTURE=inbox
+          11-conversation-dark|dark|8|FIXTURE=conversation
+          '
+          # The list is on fd 3 so simctl cannot read it from stdin.
+          while IFS='|' read -r name look hold vars <&3; do
+            name=$(echo "$name" | xargs)
+            [ -n "$name" ] || continue
+            xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
+            xcrun simctl ui "$UDID" appearance "$look"
+            launch_env=()
+            for pair in $vars; do launch_env+=("SIMCTL_CHILD_MSGBLAST_$pair"); done
+            xcrun simctl io "$UDID" recordVideo --codec=h264 --force "$OUT/$name.mp4" &
+            recorder=$!
+            sleep 2
+            env "${launch_env[@]}" xcrun simctl launch "$UDID" "$BUNDLE_ID"
+            sleep "$hold"
+            xcrun simctl io "$UDID" screenshot "$OUT/$name.png"
+            sleep 1
+            kill -INT "$recorder"
+            wait "$recorder" || true
+            test -s "$OUT/$name.mp4"
+            test -s "$OUT/$name.png"
+            echo "$name: ${vars} (${look})"
+          done 3<<<"$clips"
+          xcrun simctl ui "$UDID" appearance light
+          xcrun simctl terminate "$UDID" "$BUNDLE_ID" || true
+
+      - name: Write the clip manifest
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/durations.swift" <<'SWIFT'
+          import AVFoundation
+          for path in CommandLine.arguments.dropFirst() {
+              let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+              let track = asset.tracks(withMediaType: .video).first
+              let size = track.map { "\(Int($0.naturalSize.width))x\(Int($0.naturalSize.height))" } ?? "?"
+              print(String(format: "%@\t%.1f s\t%@", (path as NSString).lastPathComponent, CMTimeGetSeconds(asset.duration), size))
+          }
+          SWIFT
+          {
+            echo "msgblast iPhone promo captures (simulator, DesignFixtures data only)"
+            echo "Source: $REVIEW_SHA"
+            cat "$OUT/simulator.txt"
+            echo
+            xcrun swift "$RUNNER_TEMP/durations.swift" "$OUT"/*.mp4 || echo "Durations unavailable"
+          } | tee "$OUT/manifest.txt"
+          {
+            echo '### iPhone promo captures'
+            echo '```'
+            cat "$OUT/manifest.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload captures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msgblast-iphone-promo-${{ env.REVIEW_SHA }}
+          path: |
+            build/promo/*.mp4
+            build/promo/*.png
+            build/promo/manifest.txt
+            build/promo/build.log
+          if-no-files-found: warn
+          retention-days: 14
