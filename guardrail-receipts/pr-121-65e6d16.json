@@ -1,0 +1,27 @@
+{
+ "pr": 121,
+ "base_sha": "e8923705e660a4c95a20fd6808486effa790a0c8",
+ "head_sha": "65e6d165a2c4f925bb0338923edadbba2ec72da0",
+ "date": "2026-11-12",
+ "authors": "Claude Opus agent on the person's behalf",
+ "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+ "prior_review": "pr-121-1fb8b9c.json (approve with notes)",
+ "verdict": "approve with notes",
+ "coverage": {
+  "read_fully": ["file list and byte comparison of the merge delta"],
+  "method": "git diff 1fb8b9c..65e6d16 compared byte for byte with git diff <merge-base> origin/main (identical); PR diff vs original base (94ea9c9) compared before and after (identical); ran python unittest discover (167 tests, OK, skipped=3)."
+ },
+ "verified_sound": [
+  "merge commit 65e6d16 has parents 1fb8b9c and e892370 and brings in exactly main's changes (diff identical to main's own diff since the old merge-base)",
+  "merge touches only docs/testing-builds.md, scripts/build_preview_apps.py, scripts/build_test_app.py, scripts/tests/test_build_test_app.py; validate.yml, the hook, studio-runner.md and the workflow tests are untouched, so no conflict affected them",
+  "PR's own diff against its merge-base is unchanged from 1fb8b9c",
+  "tests pass: 167 run, OK, skipped=3"
+ ],
+ "open_findings": [
+  "question: scripts/ci/studio-job-started.sh:12-15 - still unverified that job-level env: cannot override GITHUB_* vars seen by the hook; confirm once on the Studio",
+  "note: docs/studio-runner.md:74-79 - verification step is before the variable is set but says 'after the first job'; minor ordering wording",
+  "note: shared persistent DerivedData across same-repo branches and main remains (not an escalation); workflow tests only pin strings",
+  "note: main's #122 changed scripts/build_preview_apps.py, which the preview job runs; I did not review #122's content, only that the merge carries it unchanged"
+ ],
+ "limits": "Merge-only review; #122's own changes not reviewed; not run on GitHub or a real self-hosted runner."
+}
