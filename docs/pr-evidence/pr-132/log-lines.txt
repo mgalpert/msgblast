@@ -1,0 +1,22 @@
+# GitHub Actions job "mobile" (validate.yml), run 43132734859, PR #132 head e63ec33
+# Rendered from the job log text (gh run view --job 130900569518 --log); timestamps trimmed
+$ git checkout --progress --force e63ec3360a3e650be16ba30294ec06367618af3e
+HEAD is now at e63ec33 test: wait on a deadline for the iPhone reconnect test's events reply
+# Step: Run the iPhone scheme's tests on an available simulator
+Test Suite 'ConnectionTests' started at 2026-11-12 01:41:42.953.
+Test Case 'testAFailedPairingKeepsTheExistingPairingKeyAndCache' passed (0.826 seconds).
+Test Case 'testBannerTitlesAreShortAndTheExplanationIsSeparate' passed (0.004 seconds).
+Test Case 'testConnectGivesUpOnSilentAddressesAndBacksOff' passed (0.364 seconds).
+Test Case 'testConnectKeepsAHealthySessionAndReconnectNowReplacesIt' passed (0.044 seconds).
+Test Case 'testLockedMacAndForgottenPhone' passed (6.075 seconds).
+Test Case 'testPairingGivesUpOnSilentAddressesAtTheRaceDeadline' passed (0.126 seconds).
+Test Case 'testPairingRacesEndpointsSavesTheMacAndRequestsKeepAwake' passed (0.011 seconds).
+Test Case 'testReconnectResumesFromSeqAndQueriesUnconfirmedCommands' passed (0.031 seconds).
+Test Case 'testSendsAreNeverQueuedWhileDisconnected' passed (0.100 seconds).
+Test Case 'testUnconfirmedIsNotNotConnected' passed (0.001 seconds).
+Test Case 'testWrongCodeExpiredOfferAndImpostorNeverConnect' passed (1.165 seconds).
+Test Suite 'ConnectionTests' passed at 2026-11-12 01:41:54.863.
+Executed 11 tests, with 0 failures (0 unexpected) in 8.746 (11.910) seconds
+Executed 62 tests, with 0 failures (0 unexpected) in 30.873 (42.547) seconds
+** TEST SUCCEEDED **
+# The same 11 ConnectionTests also passed in the step "Run phone kit tests hosted on macOS".
