@@ -98,7 +98,8 @@ public enum ComposeSend {
 
     /// The sends compose bars are waiting on, so a late `applied` (after the field already said
     /// unconfirmed) finishes each as a prompt answer would. Not stored: the ledger keeps the records.
-    /// `MobileApp` owns it, so it outlives a compose bar New Conversation replaces with the thread.
+    /// `MobileApp` owns it, so it outlives a compose bar New Conversation replaces with the thread,
+    /// and hands each late confirmation only to the completion of the compose bar that sent it.
     public struct Pending: Sendable {
         public struct Send: Equatable, Sendable {
             public var id: UUID
@@ -106,10 +107,13 @@ public enum ComposeSend {
             public var attachmentIDs: [String]
             /// The turn it replied to, if any.
             public var quoting: String?
+            /// The conversation whose compose bar sent it; nil for New Conversation.
+            public var conversationID: UUID?
             /// The phone's timeout gave up on it; only then is an `applied` late.
             public var timedOut = false
-            public init(id: UUID, text: String, attachmentIDs: [String], quoting: String?) {
+            public init(id: UUID, text: String, attachmentIDs: [String], quoting: String?, from conversationID: UUID? = nil) {
                 self.id = id; self.text = text; self.attachmentIDs = attachmentIDs; self.quoting = quoting
+                self.conversationID = conversationID
             }
         }
         public private(set) var sends: [Send] = []

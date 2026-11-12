@@ -91,12 +91,9 @@ struct ComposeBar: View {
         .onAppear {
             text = app.store.draft(draftKey); prepare()
             applyFixtureFocus()
-            finishLateSends()
         }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
-        // The timeout said unconfirmed; then a reconnect's query said the Mac did send it.
-        .onChange(of: app.lateSends) { _, _ in finishLateSends() }
         // A refused prepare runs again once the agents it named can accept a send.
         .onChange(of: presenter.readiness(agentIDs: recipients)) { _, _ in
             if !preparing && presenter.shouldRetryPrepare(prepareReasons: prepareReasons, agentIDs: recipients) { prepare() }
@@ -346,7 +343,12 @@ struct ComposeBar: View {
             do {
                 let result = try await app.perform(action) {
                     sentID = $0.clientCommandID
-                    app.startComposeSend(.init(id: $0.clientCommandID, text: body, attachmentIDs: files, quoting: quoting))
+                    // A late confirmation comes back only here: this bar's field and this
+                    // screen's navigation, even after New Conversation has replaced the bar.
+                    app.startComposeSend(.init(id: $0.clientCommandID, text: body, attachmentIDs: files, quoting: quoting, from: conversationID)) { late in
+                        finishSent(id: late.send.id, text: late.send.text, attachmentIDs: late.send.attachmentIDs, quoting: late.send.quoting)
+                        onSent(late.confirmation.conversationID)
+                    }
                 }
                 app.composeSendAnswered(result.clientCommandID)
                 if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
@@ -357,11 +359,10 @@ struct ComposeBar: View {
                 // resent, and Send stayed off until the timeout). If it does finish, the field
                 // clears itself; otherwise the user checks the conversation before sending again.
                 // A send that left shows the unconfirmed notice until it is final (see `status`).
+                // An `applied` that arrived between the timeout and here is bound now.
+                refusedCount += 1
                 if let sentID { app.composeSendTimedOut(sentID) }
                 else { message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription }
-                refusedCount += 1
-                // An `applied` that arrived between the timeout and here is bound now.
-                finishLateSends()
             }
         }
     }
@@ -377,16 +378,6 @@ struct ComposeBar: View {
         if let quoting {
             app.store.recordReply(id, quoting: quoting)
             if replyTo.wrappedValue?.id == quoting { replyTo.wrappedValue = nil }
-        }
-    }
-
-    /// The Mac finished sends a field had given up on, possibly in a compose bar since replaced
-    /// (the app already bound each and recorded its reply link): each finishes as any send does
-    /// with what it carried, and a new conversation becomes its thread with the id the Mac reported.
-    private func finishLateSends() {
-        for late in app.takeLateSends() {
-            finishSent(id: late.send.id, text: late.send.text, attachmentIDs: late.send.attachmentIDs, quoting: late.send.quoting)
-            onSent(late.confirmation.conversationID)
         }
     }
 

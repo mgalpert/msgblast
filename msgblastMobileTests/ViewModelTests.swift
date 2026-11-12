@@ -586,6 +586,21 @@ final class PresenterTests: XCTestCase {
 /// A value set from a callback and read later; the tests run on the main actor, so no lock.
 @MainActor private final class Slot<T> { var value: T? }
 
+/// A compose bar as `ComposeBar.submit` wires it: its own field and `onSent`, handed to the app
+/// as each send's completion. Kept after the view is gone, as the bar's closure is.
+@MainActor private final class Composer {
+    let conversationID: UUID?
+    var text: String
+    private(set) var sent: [UUID?] = []
+    init(_ conversationID: UUID?, text: String) { self.conversationID = conversationID; self.text = text }
+    func track(_ app: MobileApp, _ command: RemoteCommand, text body: String, quoting: String? = nil) {
+        app.startComposeSend(.init(id: command.clientCommandID, text: body, attachmentIDs: [], quoting: quoting, from: conversationID)) { [self] late in
+            text = ComposeSend.field(text, afterSending: late.send.text)
+            sent.append(late.confirmation.conversationID)
+        }
+    }
+}
+
 @MainActor
 final class MobileAppTests: XCTestCase {
     private func settle(_ until: () -> Bool) async {
@@ -811,9 +826,9 @@ final class MobileAppTests: XCTestCase {
     }
 
     /// New Conversation's path: send A times out, send B confirms first, so New Conversation
-    /// replaces its compose bar with B's thread and nothing in a view still holds A. The app
-    /// owns the pending sends, so A's late confirmation is still bound to A (reply link, its
-    /// conversation id) and the unconfirmed notice stays until A is final.
+    /// replaces its compose bar with B's thread (whose own bar has an empty `onSent`). A's late
+    /// confirmation still reaches A's own completion, once: New Conversation follows A's
+    /// conversation, A's reply link is recorded, and the notice stays until A is final.
     func testALateConfirmationOutlivesTheComposeBarNewConversationReplaces() async throws {
         let mac = FakeMac()
         let app = try makeApp(mac)
@@ -821,11 +836,11 @@ final class MobileAppTests: XCTestCase {
         _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
         mac.answerCommands = false
         app.commandTimeout = .milliseconds(300)
-        // As New Conversation's compose bar sends: tracked by the app when the send leaves.
+        let newConversation = Composer(nil, text: "Hi")
         let first = Slot<RemoteCommand>()
         let firstSend = Task { try await app.perform(.createConversation(text: "Hi", agentIDs: ["codexCLI", "claudeCLI"], attachmentIDs: [])) {
             first.value = $0
-            app.startComposeSend(.init(id: $0.clientCommandID, text: "Hi", attachmentIDs: [], quoting: "turn-1"))
+            newConversation.track(app, $0, text: "Hi", quoting: "turn-1")
         } }
         do { _ = try await firstSend.value; XCTFail("No answer must end in unconfirmed") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
         let a = try XCTUnwrap(first.value).clientCommandID
@@ -835,26 +850,68 @@ final class MobileAppTests: XCTestCase {
         // B confirms promptly; New Conversation then becomes B's thread and drops its compose bar.
         mac.answerCommands = true
         app.commandTimeout = .seconds(5)
+        newConversation.text = "Hi again"
         let b = try await app.perform(.createConversation(text: "Hi again", agentIDs: ["codexCLI"], attachmentIDs: [])) {
-            app.startComposeSend(.init(id: $0.clientCommandID, text: "Hi again", attachmentIDs: [], quoting: nil))
+            newConversation.track(app, $0, text: "Hi again")
         }
         XCTAssertEqual(b.outcome, .applied)
         app.composeSendAnswered(b.clientCommandID)
         XCTAssertEqual(app.composeSends.waitingIDs, [a], "A stays tracked, and its notice stays, after B confirms")
-        XCTAssertTrue(app.lateSends.isEmpty)
+        XCTAssertTrue(newConversation.sent.isEmpty, "B's prompt answer is the bar's own, not a late one")
+        // The thread B became has its own compose bar, with its own draft.
+        let thread = Composer(b.conversationID, text: "Hi")
 
         // Only now does a reconnect's query say the Mac created A's conversation.
         let createdA = UUID()
         mac.queryAnswers[a] = RemoteCommandResult(clientCommandID: a, outcome: .applied, conversationID: createdA, replayed: true)
         mac.sessions.last!.transport.drop()
-        await settle { !app.lateSends.isEmpty }
-        XCTAssertEqual(app.lateSends.map(\.send.id), [a], "A's late confirmation is bound to A with no compose bar on screen")
-        XCTAssertEqual(app.lateSends.first?.confirmation.conversationID, createdA, "It names the conversation A created")
+        await settle { !newConversation.sent.isEmpty }
+        XCTAssertEqual(newConversation.sent, [createdA], "A's own completion runs once, with the conversation A created")
         XCTAssertEqual(app.store.replyTo[a], "turn-1", "A's reply link is recorded")
         XCTAssertTrue(app.composeSends.sends.isEmpty, "Nothing is tracked once both are final, so the notice goes")
-        XCTAssertEqual(app.takeLateSends().map(\.send.id), [a], "The next compose bar finishes A")
-        XCTAssertTrue(app.takeLateSends().isEmpty, "Once")
+        XCTAssertEqual(thread.text, "Hi", "The thread's bar is not A's: its field is untouched")
+        XCTAssertTrue(thread.sent.isEmpty, "Nor does it navigate")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(newConversation.sent, [createdA], "Once")
         XCTAssertEqual(mac.commands.filter { $0.action.kind == "createConversation" }.count, 2, "Never sent a second time")
+    }
+
+    /// A late confirmation goes only to the bar that sent it: another conversation's draft with
+    /// the same text, and that bar's own send still waiting, are left alone.
+    func testALateConfirmationLeavesAnotherConversationsIdenticalDraft() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        app.commandTimeout = .milliseconds(300)
+        let other = UUID()
+        let otherKey = MobileStore.draftKey(conversation: other, agentID: nil)
+        app.store.setDraft("Hi", for: otherKey)
+        let otherBar = Composer(other, text: "Hi")
+        // The other bar has a send of its own waiting, with the same text.
+        otherBar.track(app, RemoteCommand(action: .sendShared(conversationID: other, text: "Hi", agentIDs: ["codexCLI"], attachmentIDs: [])), text: "Hi")
+
+        let newConversation = Composer(nil, text: "Hi")
+        let first = Slot<RemoteCommand>()
+        let firstSend = Task { try await app.perform(.createConversation(text: "Hi", agentIDs: ["codexCLI"], attachmentIDs: [])) {
+            first.value = $0
+            newConversation.track(app, $0, text: "Hi")
+        } }
+        do { _ = try await firstSend.value; XCTFail("No answer must end in unconfirmed") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
+        let a = try XCTUnwrap(first.value).clientCommandID
+        app.composeSendTimedOut(a)
+
+        let createdA = UUID()
+        mac.queryAnswers[a] = RemoteCommandResult(clientCommandID: a, outcome: .applied, conversationID: createdA, replayed: true)
+        mac.sessions.last!.transport.drop()
+        await settle { !newConversation.sent.isEmpty }
+        XCTAssertEqual(newConversation.sent, [createdA])
+        XCTAssertEqual(newConversation.text, "", "A's own field clears")
+        XCTAssertEqual(otherBar.text, "Hi", "Another conversation's identical field is kept")
+        XCTAssertTrue(otherBar.sent.isEmpty, "Nor does it navigate")
+        XCTAssertEqual(app.store.draft(otherKey), "Hi", "Its saved draft is kept")
+        XCTAssertEqual(app.composeSends.sends.map(\.conversationID), [other], "Only the other bar's own send is still tracked")
     }
 
     /// No manual save: the record is on disk before the send leaves, so an app ended right after
