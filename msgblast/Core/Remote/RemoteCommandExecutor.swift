@@ -70,7 +70,9 @@ public enum RemotePhoneText {
         if text.hasPrefix("Outgoing message observed in the app") { return "Sent, waiting for a reply" }
         if text.contains("comparison chat could not open") { return "Open \(named ?? "it") on your Mac and sign in" }
         if let app = between(text, "Finish the open dialog in ", " on your Mac first.") ?? between(text, "Finish the open dialog in ", " first.") {
-            return "Close \(app)’s dialog on your Mac"
+            // A long agent name (such as Alexa Shopping Web) would not fit one phone line; the row already names it.
+            let line = "Close \(app)’s dialog on your Mac"
+            return line.count <= 44 ? line : "Close the open dialog on your Mac"
         }
         if text.hasPrefix("Wait for"), text.hasSuffix("current reply.") { return "\(named ?? "It") is still replying" }
         if text.contains("already has a draft") { return "Clear the draft in \(named ?? "it") on your Mac" }
