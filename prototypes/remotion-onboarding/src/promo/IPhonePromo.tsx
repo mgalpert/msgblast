@@ -1,7 +1,8 @@
 import React from 'react';
 import {AbsoluteFill, Easing, Img, Sequence, interpolate, staticFile, useCurrentFrame} from 'remotion';
 
-// 1080 × 1920, 30 fps, 48 s. Script and sources: ../../PROMO.md.
+// 1080 × 1920, 30 fps, 38 s, silent. Script and sources: ../../PROMO.md.
+// Only features merged on main appear (today: the iPhone app, #94).
 // Phone screens are the simulator fixture captures from the iPhone promo
 // captures workflow (#130), fetched into public/promo/ (ignored by Git).
 
@@ -13,37 +14,20 @@ const font = '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
 export const PROMO_FPS = 30;
 
 type PhoneScene = {kind: 'phone'; dur: number; shot: string; title: string; sub: string; dark?: boolean};
-type Scene = PhoneScene | {kind: 'hook' | 'mac' | 'end'; dur: number};
+type Scene = PhoneScene | {kind: 'hook' | 'end'; dur: number};
 
 export const SCENES: Scene[] = [
   {kind: 'hook', dur: 90},
   {kind: 'phone', dur: 150, shot: '01-inbox', title: 'Your Mac’s AI chats.\nIn your pocket.', sub: 'Every conversation on your Mac, on your iPhone.'},
   {kind: 'phone', dur: 180, shot: '02-conversation', title: 'One prompt.\nEvery answer.', sub: 'Claude, ChatGPT and Muse reply side by side.'},
   {kind: 'phone', dur: 150, shot: '03-conversation-details', title: 'Pick who answers.', sub: 'Websites and Mac apps, in one thread.'},
-  {kind: 'phone', dur: 150, shot: '07-pairing', title: 'Pair in seconds.', sub: 'Scan the code in the new Phone section of the Mac sidebar.'},
-  {kind: 'phone', dur: 150, shot: '11-conversation-dark', title: 'Read it here.\nRead on your Mac.', sub: 'Catching up on the phone clears iMessage unread on the Mac.', dark: true},
-  {kind: 'mac', dur: 300},
+  {kind: 'phone', dur: 150, shot: '07-pairing', title: 'Pair in seconds.', sub: 'Scan a one-time code in Settings › Remote on your Mac.'},
+  {kind: 'phone', dur: 150, shot: '11-conversation-dark', title: 'Every reply,\nas it lands.', sub: 'Typing bubbles, tapbacks and replies, like Messages.', dark: true},
   {kind: 'phone', dur: 150, shot: '09-settings', title: 'Private by design.', sub: 'Encrypted device to device. Interrupted sends are never resent.'},
   {kind: 'end', dur: 120},
 ];
 
 export const PROMO_FRAMES = SCENES.reduce((sum, s) => sum + s.dur, 0);
-
-// Mac-side changes in this release, one line each (PR numbers in PROMO.md).
-const MAC_FEATURES: [string, string][] = [
-  ['Messages-style conversations', 'A redesigned Mac conversation window'],
-  ['Phone in the sidebar', 'Pairing QR code and phone settings, always visible'],
-  ['Voice control', 'Drive msgblast by voice with your own OpenAI key'],
-  ['Agents that can send', 'Full-access outside agents, with a Stop banner'],
-  ['ChatGPT and Dots in the background', 'Sends no longer steal the foreground'],
-  ['Alexa Shopping', 'New optional agent in onboarding'],
-  ['Muse connects quietly', 'And says why when a connect fails'],
-  ['Clear “needs you” stops', 'When an app prompt covers the composer'],
-  ['Long Dots DMs', 'Read all the way to the composer'],
-  ['Ended chats scroll again', 'Link cards open in your browser'],
-  ['A new Settings sidebar', 'Every page one click away'],
-  ['Sturdier phone sends', 'Upload and queue caps, late confirmations matched'],
-];
 
 const Background: React.FC<{dark?: boolean}> = ({dark}) => (
   <AbsoluteFill style={{background: dark
@@ -88,29 +72,6 @@ const Hook: React.FC = () => {
   </AbsoluteFill>;
 };
 
-const MacRelease: React.FC = () => {
-  const f = useCurrentFrame();
-  const head = interpolate(f, [0, 16], [0, 1], {...clamp, easing: ease});
-  return <AbsoluteFill style={{fontFamily: font}}>
-    <div style={{position: 'absolute', top: 110, width: '100%', textAlign: 'center', opacity: head}}>
-      <div style={{fontSize: 30, fontWeight: 600, color: GREEN, letterSpacing: 2}}>ALSO NEW ON THE MAC</div>
-      <div style={{fontSize: 72, fontWeight: 700, letterSpacing: -2, marginTop: 10}}>This release</div>
-    </div>
-    {MAC_FEATURES.map(([title, sub], i) => {
-      const t = interpolate(f, [18 + i * 12, 34 + i * 12], [0, 1], {...clamp, easing: ease});
-      return <div key={title} style={{position: 'absolute', left: 70, right: 70, top: 340 + i * 124, height: 108,
-        display: 'flex', alignItems: 'center', gap: 28, padding: '0 34px', borderRadius: 30, background: '#fff',
-        boxShadow: '0 6px 24px #0000000f', border: '1px solid #ececec', opacity: t, transform: `translateX(${(1 - t) * 80}px)`}}>
-        <div style={{width: 18, height: 18, borderRadius: 9, background: GREEN, flex: 'none'}}/>
-        <div>
-          <div style={{fontSize: 36, fontWeight: 600, letterSpacing: -.6, color: '#111'}}>{title}</div>
-          <div style={{fontSize: 26, color: '#6b716d', marginTop: 4}}>{sub}</div>
-        </div>
-      </div>;
-    })}
-  </AbsoluteFill>;
-};
-
 const End: React.FC = () => {
   const f = useCurrentFrame();
   const a = interpolate(f, [0, 20], [0, 1], {...clamp, easing: ease});
@@ -135,7 +96,7 @@ export const IPhonePromo: React.FC = () => {
       const last = i === SCENES.length - 1;
       const body = s.kind === 'phone'
         ? <><Background dark={s.dark}/><Phone shot={s.shot} dur={s.dur}/><Caption title={s.title} sub={s.sub} dark={s.dark}/></>
-        : <><Background/>{s.kind === 'hook' ? <Hook/> : s.kind === 'mac' ? <MacRelease/> : <End/>}</>;
+        : <><Background/>{s.kind === 'hook' ? <Hook/> : <End/>}</>;
       return <Sequence key={i} from={start} durationInFrames={s.dur}>
         {last ? <AbsoluteFill>{body}</AbsoluteFill> : <FadeOut dur={s.dur}>{body}</FadeOut>}
       </Sequence>;
