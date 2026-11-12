@@ -28,18 +28,8 @@ struct ComposeBar: View {
     /// How long the phone waits for the Mac's readiness answer (the Mac bounds it at 20 s).
     static let prepareTimeout: Duration = .seconds(25)
     @State private var sending = false
-    /// The send waiting on the Mac: what it carried, so a late `applied` (after the field already
-    /// said unconfirmed) finishes it as a prompt answer would.
-    private struct InFlight {
-        var id: UUID
-        var text: String
-        var attachmentIDs: [String]
-        /// The turn it replied to, if any.
-        var quoting: String?
-        /// The phone's timeout gave up on it; only then is an `applied` late.
-        var timedOut = false
-    }
-    @State private var inFlight: InFlight?
+    /// Every send waiting on the Mac, so each late `applied` finishes its own send.
+    @State private var pending = ComposeSend.Pending()
     @State private var message: String?
     @State private var attachments: [(id: String, name: String)] = []
     @State private var photo: PhotosPickerItem?
@@ -107,7 +97,7 @@ struct ComposeBar: View {
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
         // The timeout said unconfirmed; then a reconnect's query said the Mac did send it.
-        .onChange(of: inFlight.flatMap { app.store.commands[$0.id]?.status }) { _, status in if status == .applied { lateApplied() } }
+        .onChange(of: pending.waitingIDs.map { app.store.commands[$0]?.status }) { _, _ in lateApplied() }
         // A refused prepare runs again once the agents it named can accept a send.
         .onChange(of: presenter.readiness(agentIDs: recipients)) { _, _ in
             if !preparing && presenter.shouldRetryPrepare(prepareReasons: prepareReasons, agentIDs: recipients) { prepare() }
@@ -351,9 +341,13 @@ struct ComposeBar: View {
         message = nil
         Task {
             defer { sending = false }
+            var sentID: UUID?
             do {
-                let result = try await app.perform(action) { inFlight = InFlight(id: $0.clientCommandID, text: body, attachmentIDs: files, quoting: quoting) }
-                inFlight = nil
+                let result = try await app.perform(action) {
+                    sentID = $0.clientCommandID
+                    pending.start(.init(id: $0.clientCommandID, text: body, attachmentIDs: files, quoting: quoting))
+                }
+                pending.answered(result.clientCommandID)
                 if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
                 finishSent(id: result.clientCommandID, text: body, attachmentIDs: files, quoting: quoting)
                 onSent(result.conversationID)
@@ -361,7 +355,7 @@ struct ComposeBar: View {
                 // Keep the text and files: the Mac may still be finishing this send (it is never
                 // resent, and Send stayed off until the timeout). If it does finish, the field
                 // clears itself; otherwise the user checks the conversation before sending again.
-                inFlight?.timedOut = true
+                if let sentID { pending.timedOut(sentID) }
                 message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
                 refusedCount += 1
                 // An `applied` that arrived between the timeout and here changes nothing later.
@@ -384,14 +378,16 @@ struct ComposeBar: View {
         }
     }
 
-    /// The Mac finished a send the field had given up on: it went, so it finishes as any send
-    /// does, and a new conversation becomes its thread with the id the Mac reported.
+    /// The Mac finished sends the field had given up on: each went, so each finishes as any send
+    /// does with what it carried, and a new conversation becomes its thread with the id the Mac reported.
     private func lateApplied() {
-        guard let flight = inFlight, flight.timedOut, let confirmed = ComposeSend.lateConfirmation(app.store.commands[flight.id]) else { return }
-        inFlight = nil
-        message = nil
-        finishSent(id: flight.id, text: flight.text, attachmentIDs: flight.attachmentIDs, quoting: flight.quoting)
-        onSent(confirmed.conversationID)
+        let late = pending.lateConfirmations(in: app.store.commands)
+        for (flight, confirmed) in late {
+            finishSent(id: flight.id, text: flight.text, attachmentIDs: flight.attachmentIDs, quoting: flight.quoting)
+            onSent(confirmed.conversationID)
+        }
+        // The unconfirmed notice stays while another send is still unconfirmed.
+        if !late.isEmpty && pending.waitingIDs.isEmpty { message = nil }
     }
 
     private func upload(_ item: PhotosPickerItem) async {

@@ -108,16 +108,26 @@ public enum ComposeSend {
         public private(set) var sends: [Send] = []
         public init() {}
 
-        public mutating func start(_ send: Send) { sends = [send] }
-        /// The Mac answered before the timeout.
-        public mutating func answered(_ id: UUID) { sends.removeAll() }
-        public mutating func timedOut(_ id: UUID) { if !sends.isEmpty { sends[sends.count - 1].timedOut = true } }
+        /// A new send joins the others; one still unconfirmed stays tracked until it is final.
+        public mutating func start(_ send: Send) { sends.append(send) }
+        /// The Mac answered this send before the timeout.
+        public mutating func answered(_ id: UUID) { sends.removeAll { $0.id == id } }
+        public mutating func timedOut(_ id: UUID) {
+            if let index = sends.firstIndex(where: { $0.id == id }) { sends[index].timedOut = true }
+        }
+        /// The timed-out sends, whose records the compose bar watches.
+        public var waitingIDs: [UUID] { sends.filter(\.timedOut).map(\.id) }
 
-        /// Timed-out sends the Mac has since applied, each with its own confirmation.
+        /// Timed-out sends the Mac has since applied, oldest first, each with its own confirmation.
+        /// They leave, as does one the Mac refused; the rest stay until they are final.
         public mutating func lateConfirmations(in commands: [UUID: CommandRecord]) -> [(send: Send, confirmation: LateConfirmation)] {
-            guard let flight = sends.first, flight.timedOut, let confirmed = ComposeSend.lateConfirmation(commands[flight.id]) else { return [] }
-            sends = []
-            return [(flight, confirmed)]
+            var confirmed: [(send: Send, confirmation: LateConfirmation)] = []
+            sends.removeAll { send in
+                guard send.timedOut, let record = commands[send.id], record.isFinal else { return false }
+                if let late = ComposeSend.lateConfirmation(record) { confirmed.append((send, late)) }
+                return true
+            }
+            return confirmed
         }
     }
 }
