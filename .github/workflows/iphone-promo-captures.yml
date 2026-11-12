@@ -45,7 +45,9 @@ jobs:
       - name: Boot an iPhone simulator and install the app
         run: |
           set -euo pipefail
-          # Newest iOS runtime; prefer iPhone 17 Pro, else the first iPhone on it.
+          # Newest iOS runtime with a single-screen numbered iPhone: the newest
+          # "iPhone N Pro", else the newest "iPhone N". Two-display models such as
+          # iPhone Duo need --display for every capture, so they are skipped.
           udid=$(xcrun simctl list devices available --json | python3 -c '
           import json, re, sys
           devices = json.load(sys.stdin)["devices"]
@@ -53,10 +55,13 @@ jobs:
               return [int(n) for n in re.findall(r"\d+", runtime.rsplit("iOS", 1)[-1])]
           for runtime in sorted((r for r in devices if ".SimRuntime.iOS-" in r), key=version, reverse=True):
               phones = [d for d in devices[runtime] if d.get("isAvailable") and d["name"].startswith("iPhone")]
-              if phones:
-                  pick = next((d for d in phones if d["name"] == "iPhone 17 Pro"), phones[0])
-                  print(pick["udid"]); sys.exit(0)
-          sys.exit("No available iPhone simulator")
+              print(runtime, [d["name"] for d in phones], file=sys.stderr)
+              for pattern in (r"iPhone (\d+) Pro", r"iPhone (\d+)"):
+                  matches = [d for d in phones if re.fullmatch(pattern, d["name"])]
+                  if matches:
+                      pick = max(matches, key=lambda d: int(re.fullmatch(pattern, d["name"]).group(1)))
+                      print(pick["udid"]); sys.exit(0)
+          sys.exit("No available single-screen iPhone simulator")
           ')
           echo "UDID=$udid" >> "$GITHUB_ENV"
           xcrun simctl list devices available | grep "$udid" | tee "$OUT/simulator.txt"
