@@ -1,0 +1,15 @@
+msgblast iPhone promo captures (simulator, DesignFixtures data only)
+Source: 69ee8a912cbc8fc2a844725043573e1d462e21f2
+    iPhone 18 Pro (A8CE73D2-F54C-4FB2-B688-BC6BD7612FA8) (Shutdown) 
+
+01-inbox.mp4	12.8 s	1206x2622
+02-conversation.mp4	15.3 s	1206x2622
+03-conversation-details.mp4	12.4 s	1206x2622
+04-conversation-photo.mp4	28.1 s	1206x2622
+05-direct-thread.mp4	17.2 s	1206x2622
+06-new-conversation.mp4	28.6 s	1206x2622
+07-pairing.mp4	12.2 s	1206x2622
+08-pairing-paste.mp4	13.0 s	1206x2622
+09-settings.mp4	12.2 s	1206x2622
+10-inbox-dark.mp4	14.5 s	1206x2622
+11-conversation-dark.mp4	12.4 s	1206x2622
