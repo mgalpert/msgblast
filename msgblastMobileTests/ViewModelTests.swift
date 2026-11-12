@@ -810,6 +810,53 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(mac.commands.filter { $0.action.kind == "createConversation" }.count, 2, "Never sent a second time")
     }
 
+    /// New Conversation's path: send A times out, send B confirms first, so New Conversation
+    /// replaces its compose bar with B's thread and nothing in a view still holds A. The app
+    /// owns the pending sends, so A's late confirmation is still bound to A (reply link, its
+    /// conversation id) and the unconfirmed notice stays until A is final.
+    func testALateConfirmationOutlivesTheComposeBarNewConversationReplaces() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        app.connection.timing.backoff = [.milliseconds(50)]
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        mac.answerCommands = false
+        app.commandTimeout = .milliseconds(300)
+        // As New Conversation's compose bar sends: tracked by the app when the send leaves.
+        let first = Slot<RemoteCommand>()
+        let firstSend = Task { try await app.perform(.createConversation(text: "Hi", agentIDs: ["codexCLI", "claudeCLI"], attachmentIDs: [])) {
+            first.value = $0
+            app.startComposeSend(.init(id: $0.clientCommandID, text: "Hi", attachmentIDs: [], quoting: "turn-1"))
+        } }
+        do { _ = try await firstSend.value; XCTFail("No answer must end in unconfirmed") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
+        let a = try XCTUnwrap(first.value).clientCommandID
+        app.composeSendTimedOut(a)
+        XCTAssertEqual(app.composeSends.waitingIDs, [a], "The notice shows while A is unconfirmed")
+
+        // B confirms promptly; New Conversation then becomes B's thread and drops its compose bar.
+        mac.answerCommands = true
+        app.commandTimeout = .seconds(5)
+        let b = try await app.perform(.createConversation(text: "Hi again", agentIDs: ["codexCLI"], attachmentIDs: [])) {
+            app.startComposeSend(.init(id: $0.clientCommandID, text: "Hi again", attachmentIDs: [], quoting: nil))
+        }
+        XCTAssertEqual(b.outcome, .applied)
+        app.composeSendAnswered(b.clientCommandID)
+        XCTAssertEqual(app.composeSends.waitingIDs, [a], "A stays tracked, and its notice stays, after B confirms")
+        XCTAssertTrue(app.lateSends.isEmpty)
+
+        // Only now does a reconnect's query say the Mac created A's conversation.
+        let createdA = UUID()
+        mac.queryAnswers[a] = RemoteCommandResult(clientCommandID: a, outcome: .applied, conversationID: createdA, replayed: true)
+        mac.sessions.last!.transport.drop()
+        await settle { !app.lateSends.isEmpty }
+        XCTAssertEqual(app.lateSends.map(\.send.id), [a], "A's late confirmation is bound to A with no compose bar on screen")
+        XCTAssertEqual(app.lateSends.first?.confirmation.conversationID, createdA, "It names the conversation A created")
+        XCTAssertEqual(app.store.replyTo[a], "turn-1", "A's reply link is recorded")
+        XCTAssertTrue(app.composeSends.sends.isEmpty, "Nothing is tracked once both are final, so the notice goes")
+        XCTAssertEqual(app.takeLateSends().map(\.send.id), [a], "The next compose bar finishes A")
+        XCTAssertTrue(app.takeLateSends().isEmpty, "Once")
+        XCTAssertEqual(mac.commands.filter { $0.action.kind == "createConversation" }.count, 2, "Never sent a second time")
+    }
+
     /// No manual save: the record is on disk before the send leaves, so an app ended right after
     /// dispatch (before any debounced save) still knows it, shows it unconfirmed and asks about it.
     func testASendInterruptedRightAfterDispatchIsKnownAfterRelaunch() async throws {

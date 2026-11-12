@@ -90,8 +90,15 @@ public enum ComposeSend {
         return LateConfirmation(conversationID: record.result?.conversationID ?? record.conversationID)
     }
 
-    /// The sends the compose bar is waiting on, so a late `applied` (after the field already said
+    /// A timed-out send the Mac then applied, bound to that send.
+    public struct Late: Equatable, Sendable {
+        public var send: Pending.Send
+        public var confirmation: LateConfirmation
+    }
+
+    /// The sends compose bars are waiting on, so a late `applied` (after the field already said
     /// unconfirmed) finishes each as a prompt answer would. Not stored: the ledger keeps the records.
+    /// `MobileApp` owns it, so it outlives a compose bar New Conversation replaces with the thread.
     public struct Pending: Sendable {
         public struct Send: Equatable, Sendable {
             public var id: UUID
@@ -120,11 +127,11 @@ public enum ComposeSend {
 
         /// Timed-out sends the Mac has since applied, oldest first, each with its own confirmation.
         /// They leave, as does one the Mac refused; the rest stay until they are final.
-        public mutating func lateConfirmations(in commands: [UUID: CommandRecord]) -> [(send: Send, confirmation: LateConfirmation)] {
-            var confirmed: [(send: Send, confirmation: LateConfirmation)] = []
+        public mutating func lateConfirmations(in commands: [UUID: CommandRecord]) -> [Late] {
+            var confirmed: [Late] = []
             sends.removeAll { send in
                 guard send.timedOut, let record = commands[send.id], record.isFinal else { return false }
-                if let late = ComposeSend.lateConfirmation(record) { confirmed.append((send, late)) }
+                if let late = ComposeSend.lateConfirmation(record) { confirmed.append(Late(send: send, confirmation: late)) }
                 return true
             }
             return confirmed

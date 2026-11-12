@@ -28,6 +28,13 @@ public final class MobileApp: ObservableObject {
     private var avatarRequests: [UUID: String] = [:]
     /// References the Mac could not serve this session (for example an older Mac); not asked again.
     private var avatarsUnavailable: Set<String> = []
+    /// Every send a compose bar is waiting on, until it is final. Kept here, not in a compose bar:
+    /// New Conversation replaces its compose bar with the thread once a later send creates it,
+    /// and a send that timed out before then must still be bound when the Mac confirms it.
+    @Published public private(set) var composeSends = ComposeSend.Pending()
+    /// Late confirmations already bound (reply link recorded), for the mounted compose bar to
+    /// finish its field and follow a new conversation. `takeLateSends` hands each out once.
+    @Published public private(set) var lateSends: [ComposeSend.Late] = []
 
     public init(database: LocalDatabase, keys: DeviceKeyStore, defaults: UserDefaults = .standard,
                 makeTransport: ((MacEndpoint, Data) -> ClientTransport)? = nil) throws {
@@ -99,6 +106,7 @@ public final class MobileApp: ObservableObject {
             return
         }
         store.handle(event)
+        if case .commandResult(let result) = event, composeSends.waitingIDs.contains(result.clientCommandID) { bindLateSends() }
         if case .commandResult(let result) = event, awaitsResult(result.clientCommandID) || requeries[result.clientCommandID] != nil {
             if result.outcome != .accepted {
                 requeries.removeValue(forKey: result.clientCommandID)?.task.cancel()
@@ -169,6 +177,35 @@ public final class MobileApp: ObservableObject {
         }
     }
 
+    // MARK: Compose sends
+
+    /// A compose bar's send left; it stays tracked until it is final.
+    public func startComposeSend(_ send: ComposeSend.Pending.Send) { composeSends.start(send) }
+    /// The Mac answered it before the timeout; the compose bar finishes it.
+    public func composeSendAnswered(_ id: UUID) { composeSends.answered(id) }
+    /// The timeout gave up on it: a later `applied` binds it to this send. One that arrived
+    /// between the timeout and here is bound now.
+    public func composeSendTimedOut(_ id: UUID) {
+        composeSends.timedOut(id)
+        bindLateSends()
+    }
+    /// The late confirmations not yet finished by a compose bar, once each.
+    public func takeLateSends() -> [ComposeSend.Late] {
+        guard !lateSends.isEmpty else { return [] }
+        defer { lateSends = [] }
+        return lateSends
+    }
+    /// Binds each timed-out send the Mac has since applied, whether or not a compose bar is
+    /// still on screen: its reply link is recorded now; the field and navigation wait for one.
+    private func bindLateSends() {
+        guard !composeSends.waitingIDs.isEmpty else { return }
+        let late = composeSends.lateConfirmations(in: store.commands)
+        for bound in late {
+            if let quoting = bound.send.quoting { store.recordReply(bound.send.id, quoting: quoting) }
+        }
+        if !late.isEmpty { lateSends += late }
+    }
+
     /// A waiter in this run, or a recorded command (for example restored after a relaunch) not yet final.
     private func awaitsResult(_ id: UUID) -> Bool { waiting[id] != nil || store.commands[id]?.isFinal == false }
 
@@ -221,6 +258,8 @@ public final class MobileApp: ObservableObject {
     public func forgetMac() {
         avatarRequests = [:]
         avatarsUnavailable = []
+        composeSends = ComposeSend.Pending()
+        lateSends = []
         failWaiting()
         connection.forget()
         store.forgetMac()

@@ -28,8 +28,6 @@ struct ComposeBar: View {
     /// How long the phone waits for the Mac's readiness answer (the Mac bounds it at 20 s).
     static let prepareTimeout: Duration = .seconds(25)
     @State private var sending = false
-    /// Every send waiting on the Mac, so each late `applied` finishes its own send.
-    @State private var pending = ComposeSend.Pending()
     @State private var message: String?
     @State private var attachments: [(id: String, name: String)] = []
     @State private var photo: PhotosPickerItem?
@@ -93,11 +91,12 @@ struct ComposeBar: View {
         .onAppear {
             text = app.store.draft(draftKey); prepare()
             applyFixtureFocus()
+            finishLateSends()
         }
         .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
         // The timeout said unconfirmed; then a reconnect's query said the Mac did send it.
-        .onChange(of: pending.waitingIDs.map { app.store.commands[$0]?.status }) { _, _ in lateApplied() }
+        .onChange(of: app.lateSends) { _, _ in finishLateSends() }
         // A refused prepare runs again once the agents it named can accept a send.
         .onChange(of: presenter.readiness(agentIDs: recipients)) { _, _ in
             if !preparing && presenter.shouldRetryPrepare(prepareReasons: prepareReasons, agentIDs: recipients) { prepare() }
@@ -245,6 +244,8 @@ struct ComposeBar: View {
         }
         if preparing { return Status(text: "Getting ready…", progress: true) }
         if let message { return Status(text: message, progress: uploading) }
+        // Until every send the timeout gave up on is final, from this bar or one it replaced.
+        if !app.composeSends.waitingIDs.isEmpty { return Status(text: MobileConnectionError.unconfirmed.errorDescription ?? "Not confirmed") }
         // A launch note matters only once there is something to send.
         let drafting = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
         let notes = drafting ? presenter.launchNotes(agentIDs: recipients) : []
@@ -345,9 +346,9 @@ struct ComposeBar: View {
             do {
                 let result = try await app.perform(action) {
                     sentID = $0.clientCommandID
-                    pending.start(.init(id: $0.clientCommandID, text: body, attachmentIDs: files, quoting: quoting))
+                    app.startComposeSend(.init(id: $0.clientCommandID, text: body, attachmentIDs: files, quoting: quoting))
                 }
-                pending.answered(result.clientCommandID)
+                app.composeSendAnswered(result.clientCommandID)
                 if result.outcome == .rejected { message = result.message; refusedCount += 1; return }
                 finishSent(id: result.clientCommandID, text: body, attachmentIDs: files, quoting: quoting)
                 onSent(result.conversationID)
@@ -355,11 +356,12 @@ struct ComposeBar: View {
                 // Keep the text and files: the Mac may still be finishing this send (it is never
                 // resent, and Send stayed off until the timeout). If it does finish, the field
                 // clears itself; otherwise the user checks the conversation before sending again.
-                if let sentID { pending.timedOut(sentID) }
-                message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
+                // A send that left shows the unconfirmed notice until it is final (see `status`).
+                if let sentID { app.composeSendTimedOut(sentID) }
+                else { message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription }
                 refusedCount += 1
-                // An `applied` that arrived between the timeout and here changes nothing later.
-                lateApplied()
+                // An `applied` that arrived between the timeout and here is bound now.
+                finishLateSends()
             }
         }
     }
@@ -378,16 +380,14 @@ struct ComposeBar: View {
         }
     }
 
-    /// The Mac finished sends the field had given up on: each went, so each finishes as any send
-    /// does with what it carried, and a new conversation becomes its thread with the id the Mac reported.
-    private func lateApplied() {
-        let late = pending.lateConfirmations(in: app.store.commands)
-        for (flight, confirmed) in late {
-            finishSent(id: flight.id, text: flight.text, attachmentIDs: flight.attachmentIDs, quoting: flight.quoting)
-            onSent(confirmed.conversationID)
+    /// The Mac finished sends a field had given up on, possibly in a compose bar since replaced
+    /// (the app already bound each and recorded its reply link): each finishes as any send does
+    /// with what it carried, and a new conversation becomes its thread with the id the Mac reported.
+    private func finishLateSends() {
+        for late in app.takeLateSends() {
+            finishSent(id: late.send.id, text: late.send.text, attachmentIDs: late.send.attachmentIDs, quoting: late.send.quoting)
+            onSent(late.confirmation.conversationID)
         }
-        // The unconfirmed notice stays while another send is still unconfirmed.
-        if !late.isEmpty && pending.waitingIDs.isEmpty { message = nil }
     }
 
     private func upload(_ item: PhotosPickerItem) async {
