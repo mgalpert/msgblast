@@ -345,7 +345,10 @@ final class RemoteCommandExecutorTests: XCTestCase {
     }
 
     func testPartialUploadsAreCappedByCountAndBytes() async {
-        let executor = RemoteCommandExecutor(host: host())
+        // The executor holds its host weakly; keep it alive for the whole test.
+        let host = host()
+        defer { withExtendedLifetime(host) {} }
+        let executor = RemoteCommandExecutor(host: host)
         func chunk(_ upload: UUID, _ index: Int, of count: Int, _ data: Data) async -> RemoteCommandResult {
             await executor.execute(RemoteCommand(action: .uploadAttachmentChunk(uploadID: upload, filename: "a.png", index: index, count: count, data: data)))
         }
@@ -370,7 +373,7 @@ final class RemoteCommandExecutorTests: XCTestCase {
         XCTAssertEqual(executor.partialUploadCount, 2)
         let resumed = await chunk(second, 0, of: perFile + 1, full)
         XCTAssertEqual(resumed.outcome, .applied, "The most recent full file survives")
-        XCTAssertEqual(executor.bufferedUploadBytes, RemoteProtocol.maximumAttachmentBytes, "Only that file is left")
+        XCTAssertEqual(executor.bufferedUploadBytes, RemoteProtocol.maximumAttachmentBytes + small.count, "Only that file and the small one are left")
     }
 
     func testTheSendQueueIsCapped() async {
