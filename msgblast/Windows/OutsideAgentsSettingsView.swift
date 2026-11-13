@@ -104,15 +104,14 @@ private struct TailnetControls: View {
             ForEach(tailnet.readiness, id: \.self) { line in
                 Text(line).font(.caption).foregroundStyle(.secondary)
             }
-            if let command = tailnet.serveCommand {
-                LabeledContent("Tailscale Serve") {
-                    HStack {
-                        Button("Copy command") { copy(command) }
-                        Button("Check again") { tailnet.refreshStatus() }
-                    }
+            HStack {
+                if let command = tailnet.serveCommand {
+                    Button("Copy Tailscale Serve command") { copy(command) }
+                        .accessibilityIdentifier("outside-agents-serve-command")
                 }
-                    .accessibilityIdentifier("outside-agents-serve-command")
+                Button("Check again") { tailnet.refreshStatus() }
             }
+            .controlSize(.small)
             urlRow
             if localOn, tailnet.enabled { agentRows }
             if let error = tailnet.error { Text(error).font(.caption).foregroundStyle(.red) }

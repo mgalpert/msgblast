@@ -15,7 +15,7 @@ Other MCP clients on your tailnet can still use msgblast's plain `http://` addre
 
 1. In msgblast, open Settings → Outside agents and turn on "Let agents on this Mac use msgblast". The first time, when this Mac is on a tailnet, "Let agents on other devices use msgblast over Tailscale" turns on with it and makes the first key for Grok Bot. Turning the Tailscale switch on by itself also turns on outside agents, which it needs. Either switch can be turned off.
 2. Once per tailnet: in the [Tailscale admin console](https://login.tailscale.com/admin/dns), under DNS, turn on HTTPS Certificates.
-3. Once per Mac: in msgblast, click "Tailscale Serve → Copy command", paste it into Terminal and run it. The command is:
+3. Once per Mac: in msgblast, click "Copy Tailscale Serve command", paste it into Terminal and run it. The command is:
 
    ```sh
    tailscale serve --bg --https=47443 http://127.0.0.1:47480
@@ -78,7 +78,7 @@ The Tailscale card shows up to three lines; the Grok Bot line appears only while
 
 - "Tailscale isn't connected on this Mac." Open Tailscale on this Mac and sign in. "Connected as" followed by the MagicDNS name means that name was found.
 - "HTTPS certificates are off for this tailnet." Turn on HTTPS Certificates in the Tailscale admin console under DNS. Grok Bot needs `https://`.
-- "Grok Bot needs https://. Run this once in Terminal: …" Certificates are on, but Tailscale Serve doesn't point at msgblast yet. Use "Copy command" and run it.
+- "Grok Bot needs https://. Run this once in Terminal: …" Certificates are on, but Tailscale Serve doesn't point at msgblast yet. Use "Copy Tailscale Serve command" and run it. "Check again" reads Tailscale again right away.
 - "Tailscale Funnel makes msgblast's HTTPS port public …" Run `tailscale funnel --https=47443 off`. msgblast keeps the `http://` URL until Funnel is off.
 - "Tailscale Serve gives msgblast a private https:// address." The MCP server URL is ready for Grok Bot.
 - "No Grok Bot device on your tailnet yet" means the Tailscale plugin is not connected. In Grok Bot, use Connect apps → Your plugins → Tailscale → Authenticate. "A Grok Bot device is on your tailnet" means that device is visible and has not called yet. Copy the setup block and add the connector, then ask for `msgblast_status`. "Grok Bot last called …" means a request passed the key check. Approve it in msgblast if the prompt is waiting.

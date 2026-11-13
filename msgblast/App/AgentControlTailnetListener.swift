@@ -31,6 +31,7 @@ import msgblastCore
     private var lastStatusAt: Date?
     private var statusTask: Task<Void, Never>?
     private var statusQueued = false
+    private var statusFailures = 0
 
     init(directory: URL, gate: AgentControlGate, host: AppModel?) {
         let location = directory.appendingPathComponent(AgentControlTailnetStore.fileName)
@@ -348,10 +349,18 @@ import msgblastCore
                  AgentControlTailnetDNS.serve(backendPort: backendPort))
             }.value
             guard let self, !Task.isCancelled else { return }
-            self.magicName = parsed.0?.magicName
-            self.httpsEnabled = parsed.0?.httpsEnabled ?? false
-            self.grokBotPeer = parsed.0?.grokBotPeer ?? false
-            self.serve = parsed.2
+            // A failed read (Tailscale busy or updating) keeps the last answer and asks again soon,
+            // instead of reporting Tailscale as disconnected.
+            if let status = parsed.0 {
+                self.magicName = status.magicName
+                self.httpsEnabled = status.httpsEnabled
+                self.grokBotPeer = status.grokBotPeer
+                self.statusFailures = 0
+            } else if self.statusFailures < 3 {
+                self.statusFailures += 1
+                self.statusQueued = true
+            }
+            if let serve = parsed.2 { self.serve = serve }
             if includeFirewall, self.enabled { self.firewall = parsed.1 }
             self.statusTask = nil
             let queued = self.statusQueued
