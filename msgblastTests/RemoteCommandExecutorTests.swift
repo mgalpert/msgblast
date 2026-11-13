@@ -118,7 +118,7 @@ final class RemoteCommandExecutorTests: XCTestCase {
         for _ in 0..<100 where host.sends.count < 3 || executor.isSending { try? await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(host.maximumConcurrent, 1, "Mac app requests stay serial across commands")
         XCTAssertEqual(host.sends.map(\.agentIDs), [["chatgptApp"], ["claudeApp"], ["claude"]])
-        XCTAssertEqual(results[commands[2].clientCommandID], [.accepted, .applied])
+        XCTAssertEqual(results[commands[2].clientCommandID], [.accepted, .accepted, .applied], "Queued, then started, then the result")
 
         // The Mac started its own send while a remote one waited: the queued one is refused, not retried later.
         host.sends = []
