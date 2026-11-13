@@ -909,3 +909,11 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(app.connection.pairedMac, before)
     }
 }
+
+final class PairingCodeSourceTests: XCTestCase {
+    func testAScannedCodePairsImmediatelyAndPasteOrALinkDoesNot() {
+        XCTAssertTrue(PairingCodeSource.pairsImmediately(.scanner))
+        XCTAssertFalse(PairingCodeSource.pairsImmediately(.paste))
+        XCTAssertFalse(PairingCodeSource.pairsImmediately(.incomingLink))
+    }
+}
