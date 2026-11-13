@@ -56,3 +56,26 @@ Fixture app and in-memory Remote only: no listener, no phone, no live Dev app.
 The light and dark captures were separate launches of the same build. The
 inactive-window tint on controls differs between captures depending on whether
 the Demo window was key at the time.
+
+## Live captures from the final build
+
+`live-closed.png`, `live-open-off.png`, `live-open-on.png` and
+`live-open-close.mp4` were captured on 2026-11-13 on a macOS 27.2 MacBook Pro
+from the Apple Development–signed Dev build "Phone 126 AX Fix" at
+`12b1be3e27315f3e68eba209b5f183a780fb3e36`. The sidebar and Remote code is
+unchanged up to this branch's head. The app ran in the background with a real
+Remote listener and no phone paired. Every action was an accessibility press on
+the window; nothing came to the front. Each file is cropped to the sidebar
+(520×2200 px, dark appearance).
+
+| File | Shows |
+| --- | --- |
+| `live-closed.png` | Section closed: the one-line Phone row at the bottom of the sidebar, under What's New, with Remote off |
+| `live-open-off.png` | Section open with Remote off: the header, the Remote switch and "Turn on to pair your iPhone" |
+| `live-open-on.png` | Section open with Remote on: the pairing QR code and the key fingerprint line (both blurred), then the Network, Keep Mac awake and Send iMessages controls |
+| `live-open-close.mp4` | 17 s at 30 fps and real speed, recorded per window with ScreenCaptureKit: the header opens and closes the section twice with Remote off, then Remote is switched on, and it closes, opens with the QR code and closes again. The card grows up from the bottom edge and shrinks back into it, taking about 0.25 s each way |
+
+The QR code and the key fingerprint are blurred in every frame they appear in,
+including the frames where they fade in and out during the slide. No frame
+decodes as a QR code, and no frame shows a username, IP address, tailnet name,
+email address or phone number.
