@@ -23,7 +23,7 @@ Other MCP clients on your tailnet can still use msgblast's plain `http://` addre
 
    It uses its own port, 47443, so it leaves anything you already serve on 443 alone. `--bg` keeps it on after restarts. To undo it, run `tailscale serve --https=47443 off`. When the readiness line says "Tailscale Serve gives msgblast a private https:// address", the MCP server URL starts with `https://`.
 4. In Grok Bot, open Connect apps → Your plugins → Tailscale → Authenticate.
-5. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the MCP server URL and the header from Settings → Outside agents ("Copy URL" and "Copy header", or both at once with "Copy setup" on the Grok Bot (Tailscale) row). Put the key only in the connector's header field, never in a chat message.
+5. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the MCP server URL from Settings → Outside agents ("Copy URL"). Under the connector's headers, type `Authorization` as the name, and paste "Copy value" from the Grok Bot (Tailscale) row as the value (`Bearer <key>`). Put the key only in the connector's header field, never in a chat message.
 6. Ask Grok Bot to call `msgblast_status`. Approve it in msgblast. The prompt names the client "Grok Bot (Tailscale)".
 
 The copied block looks like this, with your own URL and key:

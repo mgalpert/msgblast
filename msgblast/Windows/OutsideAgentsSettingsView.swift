@@ -178,6 +178,10 @@ private struct TailnetControls: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack {
                     Button("Copy header") { copySecret(header) }
+                    if let value = tailnet.authorizationValue(for: client) {
+                        Button("Copy value") { copySecret(value) }
+                            .help("Just Bearer and the key, for forms such as Grok Bot's with separate header name and value boxes")
+                    }
                     if let path = tailnet.pathURL(for: client) {
                         Button("Copy link with key") { copySecret(path) }
                             .help("For clients that can't send headers")

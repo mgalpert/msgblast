@@ -88,6 +88,9 @@ import msgblastCore
 
     func authorizationHeader(for client: String) -> String? { keys[client].map { "Authorization: Bearer \($0)" } }
 
+    /// The header value alone, for forms with separate name and value boxes.
+    func authorizationValue(for client: String) -> String? { keys[client].map { "Bearer \($0)" } }
+
     /// Path token, only while the plaintext is still in memory.
     func pathURL(for client: String) -> String? {
         guard let serverURL, let key = keys[client] else { return nil }

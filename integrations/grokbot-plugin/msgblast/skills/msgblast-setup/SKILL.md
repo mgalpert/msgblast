@@ -33,7 +33,7 @@ Tell them to add it in Grok Bot. You cannot add it for them.
 
 1. Add a custom connector → Remote HTTPS.
 2. Server URL: the URL they pasted.
-3. Header: in msgblast click "Copy header" and paste it into the connector's header field (name `Authorization`, value `Bearer <key>`).
+3. Header: name `Authorization`. For the value, in msgblast click "Copy value" on the Grok Bot (Tailscale) row and paste it (`Bearer <key>`).
 4. They save the connector.
 
 Never suggest Tailscale Funnel. It makes the address public.
