@@ -63,6 +63,14 @@ final class AgentControlHTTPTests: XCTestCase {
     }
 
     func testParseTooLargeAndChunked() {
+        // A keep-alive buffer after `removeFirst` is a slice whose indices don't start at 0.
+        var kept = raw("POST /mcp HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}POST /mcp HTTP/1.1\r\nContent-Length: 3\r\n\r\n[1]")
+        guard case .complete(_, let first) = AgentControlHTTPRequest.parse(kept) else { return XCTFail("first request") }
+        kept.removeFirst(first)
+        XCTAssertNotEqual(kept.startIndex, 0)
+        guard case .complete(let second, let size) = AgentControlHTTPRequest.parse(kept) else { return XCTFail("second request") }
+        XCTAssertEqual(second.body, Data("[1]".utf8))
+        XCTAssertEqual(size, kept.count)
         let chunked = "POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
         XCTAssertEqual(AgentControlHTTPRequest.parse(raw(chunked)), .invalid)
         let huge = "POST /mcp HTTP/1.1\r\nContent-Length: \(AgentControlHTTPRequest.bodyLimit + 1)\r\n\r\n"
