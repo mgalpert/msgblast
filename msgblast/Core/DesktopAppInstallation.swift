@@ -31,19 +31,24 @@ struct DesktopAppInstallationClient: Sendable {
             return .resolve(for: app, registeredURL: registered,
                             runningURL: running?.bundleURL, processID: running?.processIdentifier)
         }, open: { url, activates in
-            if !activates, let bundleID = Bundle(url: url)?.bundleIdentifier,
-               let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                .first(where: { !$0.isTerminated && $0.isHidden }) {
-                running.unhide()
-                return
+            let hidden = Bundle(url: url)?.bundleIdentifier.flatMap { bundleID in
+                NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated && $0.isHidden }
             }
+            let steps = launchSteps(activates: activates, hiddenRunningCopy: hidden != nil)
+            if steps.unhide { hidden?.unhide() }
             let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = activates
+            configuration.activates = steps.activates
             _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         }, isHidden: { app in
             app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
                 .contains { !$0.isTerminated && $0.isHidden }
         })
+    }
+
+    /// A background launch unhides a hidden running copy without activating it, and still
+    /// asks the app to open so one whose main window was closed gets its reopen event.
+    static func launchSteps(activates: Bool, hiddenRunningCopy: Bool) -> (unhide: Bool, activates: Bool) {
+        (unhide: !activates && hiddenRunningCopy, activates: activates)
     }
 
     static var demo: Self {

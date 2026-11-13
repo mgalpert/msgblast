@@ -185,6 +185,14 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
+    func testBackgroundLaunchUnhidesAHiddenCopyAndStillAsksTheAppToOpen() {
+        for (activates, hidden, unhide) in [(false, true, true), (false, false, false), (true, true, false), (true, false, false)] {
+            let steps = DesktopAppInstallationClient.launchSteps(activates: activates, hiddenRunningCopy: hidden)
+            XCTAssertEqual(steps.unhide, unhide, "activates \(activates), hidden \(hidden)")
+            XCTAssertEqual(steps.activates, activates, "activates \(activates), hidden \(hidden)")
+        }
+    }
+
     func testNativePreparationUsesProviderForegroundRequirementWhenAppIsClosedOrHidden() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
