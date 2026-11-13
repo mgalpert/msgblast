@@ -185,90 +185,159 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
-    func testBackgroundLaunchPlanPreservesExistingWindowsAndRestoresAfterReopen() {
-        let cases: [(Bool, Bool, Bool, Bool, (Bool, Bool, Bool, Bool))] = [
-            // Explicit Open activates and never restores.
-            (true, false, false, false, (false, true, true, false)),
-            // Hidden app with a standard window is unhidden only.
-            (false, true, true, true, (true, false, false, false)),
-            // Hidden or visible app without a window sends a reopen event.
-            (false, true, true, false, (true, true, false, true)),
-            (false, true, false, false, (false, true, false, true)),
-            // A cold launch sends a reopen event; a visible standard window does nothing.
-            (false, false, false, false, (false, true, false, true)),
-            (false, true, false, true, (false, false, false, false))
-        ]
-        for (activates, running, hidden, window, expected) in cases {
-            let plan = DesktopAppInstallationClient.launchPlan(activates: activates, running: running, hidden: hidden, hasStandardWindow: window)
-            XCTAssertEqual(plan.unhide, expected.0)
-            XCTAssertEqual(plan.open, expected.1)
-            XCTAssertEqual(plan.activates, expected.2)
-            XCTAssertEqual(plan.restoreFront, expected.3)
+    private typealias Client = DesktopAppInstallationClient
+
+    @MainActor private final class BackgroundRecorder {
+        var calls: [String] = []
+        var reads: [Bool]
+        var readCount = 0
+        var cancelOnRead = false
+        init(reads: [Bool]) { self.reads = reads }
+        func steps(running: Bool, hidden: Bool) -> Client.BackgroundOpenSteps {
+            .init(running: running, hidden: hidden, unhide: { self.calls.append("unhide") }, readWindow: {
+                defer { self.readCount += 1 }
+                self.calls.append("read")
+                if self.cancelOnRead { withUnsafeCurrentTask { $0?.cancel() } }
+                return self.reads.isEmpty ? false : self.reads[min(self.readCount, self.reads.count - 1)]
+            }, open: { self.calls.append("open") }, afterOpen: { self.calls.append("handBack") })
         }
+        var withoutReads: [String] { calls.filter { $0 != "read" } }
     }
 
-    func testBackgroundUnhideWaitsForAnAccessibleWindowBeforeReopening() {
-        let plan = DesktopAppInstallationClient.launchPlan(activates: false, running: true, hidden: true, hasStandardWindow: true)
-        let appeared = DesktopAppInstallationClient.afterUnhide(windowAppeared: true)
-        let missing = DesktopAppInstallationClient.afterUnhide(windowAppeared: false)
-        XCTAssertTrue(plan.unhide)
-        XCTAssertFalse(appeared.open)
-        XCTAssertFalse(appeared.restoreFront)
-        XCTAssertTrue(missing.open)
-        XCTAssertTrue(missing.restoreFront)
+    func testBackgroundOpenOfHiddenAppWithAWindowOnlyUnhides() async throws {
+        let recorder = BackgroundRecorder(reads: [true])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        XCTAssertEqual(recorder.calls, ["unhide", "read"])
     }
 
-    func testExplicitOpenDoesNotInspectWindows() {
-        XCTAssertFalse(DesktopAppInstallationClient.shouldCheckWindow(activates: true, running: true))
-        XCTAssertTrue(DesktopAppInstallationClient.shouldCheckWindow(activates: false, running: true))
+    func testBackgroundOpenOfVisibleAppWithAWindowDoesNothing() async throws {
+        let recorder = BackgroundRecorder(reads: [true])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: false), clock: AdvancingClock())
+        XCTAssertEqual(recorder.calls, ["read"])
     }
 
-    func testFrontObservationStopsForAnyAppOtherThanThePreviousOrTargetApp() {
-        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: 1, previousPID: 1, targetPID: 2), .previous)
-        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: 2, previousPID: 1, targetPID: 2), .target)
-        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: 3, previousPID: 1, targetPID: 2), .other)
-        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: nil, previousPID: 1, targetPID: 2), .other)
+    func testBackgroundOpenWhoseFirstWindowCheckIsEmptyWaitsForTheWindowAfterUnhiding() async throws {
+        let recorder = BackgroundRecorder(reads: [false, false, true])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        XCTAssertEqual(recorder.withoutReads, ["unhide"])
+        XCTAssertEqual(recorder.readCount, 3)
     }
 
-    func testBackgroundRestoreReturnsFrontAfterTargetTakesOver() async throws {
-        let result = try await backgroundRestoreResult(observations: [.previous, .target], previousCanRestore: true)
-        XCTAssertEqual(result.restores, 1)
-        XCTAssertEqual(result.checks, 2)
-    }
-
-    func testBackgroundRestoreStopsWhenAnotherAppTakesOver() async throws {
-        let result = try await backgroundRestoreResult(observations: [.previous, .other, .target], previousCanRestore: true)
-        XCTAssertEqual(result.restores, 0)
-        XCTAssertEqual(result.checks, 2)
-    }
-
-    func testBackgroundRestoreEndsAtDeadlineWhenPreviousStaysFrontmost() async throws {
-        let result = try await backgroundRestoreResult(observations: [.previous], previousCanRestore: true)
-        XCTAssertEqual(result.restores, 0)
-        XCTAssertLessThan(result.checks, 101)
-    }
-
-    func testBackgroundRestoreStopsWhenPreviousCannotBeRestored() async throws {
-        let result = try await backgroundRestoreResult(observations: [.target], previousCanRestore: false)
-        XCTAssertEqual(result.restores, 0)
-        XCTAssertEqual(result.checks, 1)
-    }
-
-    func testBackgroundRestoreDoesNotRestoreTargetThatActivatesAfterDeadline() async throws {
-        let observations: [DesktopAppInstallationClient.FrontObservation] = Array(repeating: .previous, count: 101) + [.target]
-        let result = try await backgroundRestoreResult(observations: observations, previousCanRestore: true)
-        XCTAssertEqual(result.restores, 0)
-        XCTAssertLessThan(result.checks, 101)
-    }
-
-    private func backgroundRestoreResult(observations: [DesktopAppInstallationClient.FrontObservation], previousCanRestore: Bool) async throws -> (checks: Int, restores: Int) {
+    func testBackgroundOpenThatNeverFindsAWindowReopensAndHandsBack() async throws {
         let clock = AdvancingClock()
-        var checks = 0, restores = 0
-        try await DesktopAppInstallationClient.restoreFront(after: .seconds(5), clock: clock, observeFront: {
+        let recorder = BackgroundRecorder(reads: [false])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: clock)
+        XCTAssertEqual(recorder.withoutReads, ["unhide", "open", "handBack"])
+        XCTAssertEqual(clock.sleeps.reduce(.zero, +), .seconds(1))
+        XCTAssertEqual(recorder.readCount, 11)
+    }
+
+    func testBackgroundOpenOfAClosedAppOpensAndHandsBackWithoutCheckingWindows() async throws {
+        let recorder = BackgroundRecorder(reads: [true])
+        try await Client.openInBackground(recorder.steps(running: false, hidden: false), clock: AdvancingClock())
+        XCTAssertEqual(recorder.calls, ["open", "handBack"])
+    }
+
+    func testWindowPollStopsAtTheDeadlineEvenWhenReadsAreSlow() async throws {
+        let clock = AdvancingClock()
+        var reads = 0
+        let found = try await Client.windowAppeared(within: .seconds(1), clock: clock) {
+            reads += 1
+            clock.advance(by: .milliseconds(700))
+            return false
+        }
+        XCTAssertFalse(found)
+        XCTAssertEqual(reads, 2)
+    }
+
+    func testWindowPollPropagatesCancellationAfterAnAccessibilityRead() async {
+        let recorder = BackgroundRecorder(reads: [true])
+        recorder.cancelOnRead = true
+        let task = Task { @MainActor in
+            try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        }
+        do {
+            try await task.value
+            XCTFail("expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(recorder.calls, ["unhide", "read"])
+    }
+
+    func testCancelledBackgroundOpenNeitherUnhidesNorOpens() async {
+        let recorder = BackgroundRecorder(reads: [false])
+        let task = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        }
+        do {
+            try await task.value
+            XCTFail("expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(recorder.calls, [])
+    }
+
+    private func watchState(_ activations: [Int32], front: Int32? = 2, targetWasActive: Bool = false, previousRunning: Bool = true,
+                            previous: Int32? = 1, target: Int32? = 2) -> Client.FrontWatchState {
+        .init(previousPID: previous, targetWasActive: targetWasActive, activations: activations, frontmostPID: front,
+              targetPID: target, previousRunning: previousRunning)
+    }
+
+    func testHandBackDecisionFollowsEveryActivationSinceTheStart() {
+        // A → B during launch → ChatGPT: the user moved on, so leave the front alone.
+        XCTAssertEqual(Client.handBackDecision(watchState([3, 2])), .cancel)
+        // A → ChatGPT: hand back.
+        XCTAssertEqual(Client.handBackDecision(watchState([2])), .handBack)
+        // ChatGPT activated but isn't frontmost yet, or nothing happened yet.
+        XCTAssertEqual(Client.handBackDecision(watchState([2], front: 1)), .wait)
+        XCTAssertEqual(Client.handBackDecision(watchState([], front: 1)), .wait)
+        XCTAssertEqual(Client.handBackDecision(watchState([], front: 1, target: nil)), .wait)
+        // A non-target activation before the target is known still cancels.
+        XCTAssertEqual(Client.handBackDecision(watchState([3], front: 3, target: nil)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], targetWasActive: true)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], previousRunning: false)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], previous: 2)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], previous: nil)), .cancel)
+    }
+
+    func testHandBackRestoresOnceWhenOnlyTheTargetActivates() async throws {
+        let handBacks = try await handBackResult([watchState([], front: 1), watchState([2]), watchState([2])])
+        XCTAssertEqual(handBacks, [1])
+    }
+
+    func testHandBackSkipsASwitchToAnotherAppDuringLaunch() async throws {
+        let handBacks = try await handBackResult([watchState([3], front: 3), watchState([3, 2])])
+        XCTAssertEqual(handBacks, [])
+    }
+
+    func testHandBackSkipsWhenNothingActivatesBeforeTheDeadline() async throws {
+        let late = Array(repeating: watchState([], front: 1), count: 101) + [watchState([2])]
+        let handBacks = try await handBackResult(late)
+        XCTAssertEqual(handBacks, [])
+    }
+
+    func testHandBackSkipsWhenTheTargetWasAlreadyActive() async throws {
+        let handBacks = try await handBackResult([watchState([2], targetWasActive: true)])
+        XCTAssertEqual(handBacks, [])
+    }
+
+    func testHandBackSkipsWhenThePreviousAppTerminated() async throws {
+        let handBacks = try await handBackResult([watchState([2], previousRunning: false)])
+        XCTAssertEqual(handBacks, [])
+    }
+
+    private func handBackResult(_ states: [Client.FrontWatchState]) async throws -> [Int32] {
+        final class Box: @unchecked Sendable { var pids: [Int32] = [] }
+        let box = Box()
+        var checks = 0
+        try await Client.awaitHandBack(after: .seconds(5), clock: AdvancingClock(), state: {
             defer { checks += 1 }
-            return observations[min(checks, observations.count - 1)]
-        }, previousCanRestore: { previousCanRestore }, restore: { restores += 1 })
-        return (checks, restores)
+            return states[min(checks, states.count - 1)]
+        }, handBack: { pid in box.pids.append(pid) })
+        return box.pids
     }
 
     func testNativePreparationUsesProviderForegroundRequirementWhenAppIsClosedOrHidden() async {

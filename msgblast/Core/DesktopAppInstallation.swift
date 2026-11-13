@@ -24,81 +24,107 @@ struct DesktopAppInstallationClient: Sendable {
     var open: @MainActor @Sendable (URL, Bool) async throws -> Void
     var isHidden: @MainActor @Sendable (DesktopAppProvider) -> Bool = { _ in false }
 
-    static var system: Self {
+    /// Gives the front back to the app that had it before a background open. Called at most
+    /// once per open, only after the guarded watch decides the target took the front itself.
+    typealias FrontHandBack = @MainActor @Sendable (_ previousPID: Int32) async -> Void
+
+    static let activatePrevious: FrontHandBack = { pid in
+        NSRunningApplication(processIdentifier: pid)?.activate(options: [])
+    }
+
+    static var system: Self { system(handBack: activatePrevious) }
+
+    static func system(handBack: @escaping FrontHandBack) -> Self {
         .init(inspect: { app in
             let running = app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }.first { !$0.isTerminated }
             let registered = app.bundleIDs.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first { DesktopAppInstallation.validatedURL($0, for: app) != nil }
             return .resolve(for: app, registeredURL: registered,
                             runningURL: running?.bundleURL, processID: running?.processIdentifier)
         }, open: { url, activates in
-            try await openSystem(url, activates: activates)
+            try await openSystem(url, activates: activates, handBack: handBack)
         }, isHidden: { app in
             app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
                 .contains { !$0.isTerminated && $0.isHidden }
         })
     }
 
-    enum FrontObservation: Equatable, Sendable {
-        case previous, target, other
+    /// Everything the hand-back decision depends on: who was in front when the open started,
+    /// every app activation since then, and the front right now.
+    struct FrontWatchState: Equatable, Sendable {
+        var previousPID: Int32?
+        var targetWasActive: Bool
+        var activations: [Int32]
+        var frontmostPID: Int32?
+        var targetPID: Int32?
+        var previousRunning: Bool
     }
 
-    static func launchPlan(activates: Bool, running: Bool, hidden: Bool, hasStandardWindow: Bool) -> (unhide: Bool, open: Bool, activates: Bool, restoreFront: Bool) {
-        guard !activates else { return (false, true, true, false) }
-        guard running, hasStandardWindow else { return (hidden, true, false, true) }
-        return (hidden, false, false, false)
+    enum HandBackDecision: Equatable, Sendable {
+        case wait, handBack, cancel
     }
 
-    static func shouldCheckWindow(activates: Bool, running: Bool) -> Bool {
-        !activates && running
+    static func handBackDecision(_ state: FrontWatchState) -> HandBackDecision {
+        guard let previous = state.previousPID, !state.targetWasActive, state.previousRunning,
+              previous != state.targetPID else { return .cancel }
+        guard state.activations.allSatisfy({ $0 == state.targetPID }) else { return .cancel }
+        guard !state.activations.isEmpty, state.frontmostPID != nil, state.frontmostPID == state.targetPID else { return .wait }
+        return .handBack
     }
 
-    static func afterUnhide(windowAppeared: Bool) -> (open: Bool, restoreFront: Bool) {
-        (open: !windowAppeared, restoreFront: !windowAppeared)
+    /// The effects of a background open, injected so the order of steps can be tested.
+    struct BackgroundOpenSteps {
+        var running: Bool
+        var hidden: Bool
+        var unhide: @MainActor () -> Void
+        var readWindow: @MainActor () async -> Bool
+        var open: @MainActor () async throws -> Void
+        var afterOpen: @MainActor () async -> Void
     }
 
-    static func frontObservation(frontmostPID: Int32?, previousPID: Int32, targetPID: Int32?) -> FrontObservation {
-        guard let frontmostPID else { return .other }
-        if let targetPID, frontmostPID == targetPID { return .target }
-        return frontmostPID == previousPID ? .previous : .other
+    /// A running copy is unhidden and given a second to show a standard window; only if none
+    /// shows up, or the app isn't running, is it opened in the background, followed by the
+    /// guarded hand-back.
+    @MainActor static func openInBackground<C: Clock>(_ steps: BackgroundOpenSteps, windowWait: Duration = .seconds(1),
+                                                      clock: C = ContinuousClock()) async throws where C.Duration == Duration {
+        if steps.running {
+            try Task.checkCancellation()
+            if steps.hidden { steps.unhide() }
+            if try await windowAppeared(within: windowWait, clock: clock, read: steps.readWindow) { return }
+        }
+        try Task.checkCancellation()
+        try await steps.open()
+        await steps.afterOpen()
     }
 
-    @MainActor private static func openSystem(_ url: URL, activates: Bool) async throws {
+    @MainActor static func windowAppeared<C: Clock>(within timeout: Duration, interval: Duration = .milliseconds(100), clock: C,
+                                                    read: @MainActor () async -> Bool) async throws -> Bool where C.Duration == Duration {
+        let deadline = clock.now.advanced(by: timeout)
+        while true {
+            let found = await read()
+            try Task.checkCancellation()
+            if found { return true }
+            guard clock.now < deadline else { return false }
+            try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
+        }
+    }
+
+    @MainActor private static func openSystem(_ url: URL, activates: Bool, handBack: @escaping FrontHandBack) async throws {
         if activates {
             try await openApplication(url, activates: true)
             return
         }
         let target = runningApplication(for: url)
-        var hasStandardWindow = false
-        if shouldCheckWindow(activates: activates, running: target != nil) {
-            hasStandardWindow = await standardWindow(processID: target?.processIdentifier)
-        }
-        let plan = launchPlan(activates: activates, running: target != nil, hidden: target?.isHidden == true,
-                              hasStandardWindow: hasStandardWindow)
-        if plan.open {
-            try await openBackground(url, target: target, plan: plan)
-            return
-        }
-        if plan.unhide { target?.unhide() }
-        let postUnhide = afterUnhide(windowAppeared: await standardWindowAppeared(processID: target?.processIdentifier))
-        guard postUnhide.open else { return }
-        try await openBackground(url, target: target, plan: (false, postUnhide.open, false, postUnhide.restoreFront))
-    }
-
-    @MainActor private static func openBackground(_ url: URL, target: NSRunningApplication?, plan: (unhide: Bool, open: Bool, activates: Bool, restoreFront: Bool)) async throws {
-        let previous = NSWorkspace.shared.frontmostApplication
-        let wasActive = target?.isActive == true
-        if plan.unhide { target?.unhide() }
-        try await openApplication(url, activates: plan.activates)
-        guard plan.restoreFront else { return }
-        guard let previous else { return }
-        try? await restoreFront(after: .seconds(5), observeFront: {
-            let targetPID = runningApplication(for: url)?.processIdentifier
-            return frontObservation(frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
-                                    previousPID: previous.processIdentifier, targetPID: targetPID)
-        }, previousCanRestore: {
-            guard !wasActive, !previous.isTerminated else { return false }
-            return previous.processIdentifier != runningApplication(for: url)?.processIdentifier
-        }, restore: { previous.activate(options: []) })
+        let watch = ActivationWatch(target: target)
+        defer { watch.stop() }
+        let processID = target?.processIdentifier
+        try await openInBackground(.init(running: target != nil, hidden: target?.isHidden == true,
+                                         unhide: { target?.unhide() },
+                                         readWindow: { await standardWindow(processID: processID) },
+                                         open: { try await openApplication(url, activates: false) },
+                                         afterOpen: {
+            try? await awaitHandBack(after: .seconds(5), state: { watch.state(targetPID: runningApplication(for: url)?.processIdentifier) },
+                                     handBack: handBack)
+        }))
     }
 
     @MainActor private static func openApplication(_ url: URL, activates: Bool) async throws {
@@ -126,40 +152,63 @@ struct DesktopAppInstallationClient: Sendable {
               let windows = value as? [AXUIElement] else { return false }
         return windows.contains { window in
             var subrole: CFTypeRef?
+            AXUIElementSetMessagingTimeout(window, 0.5)
             return AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole) == .success && subrole as? String == kAXStandardWindowSubrole
         }
     }
 
-    @MainActor private static func standardWindowAppeared(processID: Int32?) async -> Bool {
-        guard let processID else { return false }
-        let clock = ContinuousClock(), deadline = clock.now.advanced(by: .seconds(1))
-        while clock.now < deadline {
-            if await standardWindow(processID: processID) { return true }
-            try? await clock.sleep(for: .milliseconds(100))
-        }
-        return false
-    }
-
     /// ChatGPT brings itself forward on launch and on a reopen event even when asked not to,
-    /// so a background open hands the front back to the app that had it. Known limits: ChatGPT
-    /// still shows as a brief flash; a launch whose window appears more than five seconds after
-    /// the open is not handed back; a deliberate switch to ChatGPT within those five
-    /// seconds is undone, while a switch to another app cancels the hand-back. A window on
-    /// another Space is reopened, so it also flashes.
-    @MainActor static func restoreFront<C: Clock>(after timeout: Duration, interval: Duration = .milliseconds(50), clock: C = ContinuousClock(),
-                                                  observeFront: @MainActor @Sendable () -> FrontObservation, previousCanRestore: @MainActor @Sendable () -> Bool,
-                                                  restore: @MainActor @Sendable () -> Void) async throws where C.Duration == Duration {
+    /// so a background open hands the front back to the app that had it. Activations are
+    /// tracked from before the open starts. Known limits: ChatGPT still shows as a brief flash;
+    /// a window that appears more than five seconds after the open is not handed back; a
+    /// deliberate switch to ChatGPT within those five seconds is undone, while a switch to any
+    /// other app cancels the hand-back for good. A window on another Space is missing from the
+    /// accessibility window list, so it is reopened and flashes too.
+    @MainActor static func awaitHandBack<C: Clock>(after timeout: Duration, interval: Duration = .milliseconds(50), clock: C = ContinuousClock(),
+                                                   state: @MainActor () -> FrontWatchState,
+                                                   handBack: FrontHandBack) async throws where C.Duration == Duration {
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {
-            switch observeFront() {
-            case .previous: try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
-            case .target: if previousCanRestore() { restore() }; return
-            case .other: return
+            let current = state()
+            switch handBackDecision(current) {
+            case .wait: try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
+            case .handBack: if let previous = current.previousPID { await handBack(previous) }; return
+            case .cancel: return
             }
         }
     }
 
     static var demo: Self {
         .init(inspect: { app in .init(url: URL(fileURLWithPath: "/Demo/\(app.name).app"), processID: 1) }, open: { _, _ in })
+    }
+}
+
+/// Records every app activation from the start of a background open until `stop()`.
+@MainActor final class ActivationWatch {
+    let previousPID: Int32?
+    let targetWasActive: Bool
+    private(set) var activations: [Int32] = []
+    private var observer: NSObjectProtocol?
+
+    init(target: NSRunningApplication?) {
+        previousPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        targetWasActive = target?.isActive == true
+        observer = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            let pid = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+            MainActor.assumeIsolated { if let pid { self?.activations.append(pid) } }
+        }
+    }
+
+    func stop() {
+        if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        observer = nil
+    }
+
+    func state(targetPID: Int32?) -> DesktopAppInstallationClient.FrontWatchState {
+        let previousRunning = previousPID.flatMap { NSRunningApplication(processIdentifier: $0) }.map { !$0.isTerminated } ?? false
+        return .init(previousPID: previousPID, targetWasActive: targetWasActive, activations: activations,
+                     frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                     targetPID: targetPID, previousRunning: previousRunning)
     }
 }
