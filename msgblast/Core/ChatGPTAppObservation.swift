@@ -332,25 +332,14 @@ struct ChatGPTAppObservation: Sendable {
     func sameContent(as other: Self) -> Bool { title == other.title && dotSetup == other.dotSetup && codexBootstrap == other.codexBootstrap && kind == other.kind && draft == other.draft && messages == other.messages }
 }
 enum ChatGPTAppProfile {
-    private final class WebContentRequests: @unchecked Sendable {
-        let lock = NSLock()
-        var pids: Set<Int> = []
-    }
-    private static let webContentRequests = WebContentRequests()
-
     /// Chromium hides web content until an assistive client sets this. The call returns an error and still works.
     static func exposeWebContent(_ pid: Int) {
-        webContentRequests.lock.withLock {
-            guard webContentRequests.pids.insert(pid).inserted else { return }
-            _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid_t(pid)), "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
-        }
+        _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid_t(pid)), "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     }
     static func captureNavigation(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppNavigation {
-        exposeWebContent(target.pid)
-        return try ChatGPTAppNavigation(root: convert(DesktopAccessibility.capture(target, app: .chatgpt, readComposer: false)))
+        try ChatGPTAppNavigation(root: convert(DesktopAccessibility.capture(target, app: .chatgpt, readComposer: false)))
     }
     static func capture(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppObservation {
-        exposeWebContent(target.pid)
         do { return try parse(DesktopAccessibility.capture(target, app: .chatgpt)) }
         catch DesktopAccessibilityError.incomplete { throw ChatGPTObservationError.transient }
     }

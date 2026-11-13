@@ -387,32 +387,40 @@ final class ChatGPTAppDriverTests: XCTestCase {
         let (directory, executable) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
         let native = try observation()
-        let reads = LockedCount()
         let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(1), stableDuration: .zero, callTimeout: 3)
+        let readyAsks = LockedCount()
+        let ready = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in native }, exposeWebContent: { _ in _ = readyAsks.next() })
+        try await ready.checkAvailable(kind: .chatgpt)
+        XCTAssertEqual(readyAsks.value, 0)
+        let reads = LockedCount()
+        let asks = LockedCount()
         let adapter = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in
             if reads.next() <= 2 { throw ChatGPTObservationError.webContentUnavailable }
             return native
-        })
+        }, exposeWebContent: { _ in _ = asks.next() })
         try await adapter.checkAvailable(kind: .chatgpt)
         XCTAssertEqual(reads.value, 3)
+        XCTAssertEqual(asks.value, 2)
     }
 
     func testMissingWebContentFailsAfterBoundedReads() async throws {
         let (directory, executable) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
         let reads = LockedCount()
+        let asks = LockedCount()
         let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(1), stableDuration: .zero, callTimeout: 3)
         let adapter = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in
             _ = reads.next()
             throw ChatGPTObservationError.webContentUnavailable
-        })
+        }, exposeWebContent: { _ in _ = asks.next() })
         do {
             try await adapter.checkAvailable(kind: .chatgpt)
             XCTFail("Missing web content must stay unsupported")
         } catch {
             XCTAssertEqual(error.localizedDescription, "This ChatGPT application version is not supported yet.")
         }
-        XCTAssertEqual(reads.value, 8)
+        XCTAssertEqual(reads.value, 41)
+        XCTAssertEqual(asks.value, 40)
     }
 }
 
