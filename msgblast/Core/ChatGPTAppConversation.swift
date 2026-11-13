@@ -16,11 +16,14 @@ actor ChatGPTAppConversation {
     }
     private func read(_ target: DesktopAppConversation.Target) async throws -> ChatGPTAppObservation {
         let reader = readNative
-        for attempt in 0..<3 {
+        for attempt in 0..<8 {
             try Task.checkCancellation()
             do { return try await Task.detached { try reader(target) }.value }
             catch {
                 switch error {
+                case ChatGPTObservationError.webContentUnavailable:
+                    guard attempt < 7 else { throw error }
+                    try await Task.sleep(for: min(timing.pollInterval, .milliseconds(250)))
                 case ChatGPTObservationError.transient, DesktopAccessibilityError.incomplete, DesktopAccessibilityError.invalidElement:
                     guard attempt < 2 else { throw error }
                     try await Task.sleep(for: timing.pollInterval)

@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import CryptoKit
 
@@ -105,11 +106,12 @@ struct ChatGPTReplyReceipt: Codable, Equatable, Sendable {
     }
 }
 enum ChatGPTObservationError: LocalizedError, Sendable {
-    case transient, composerUnavailable
+    case transient, composerUnavailable, webContentUnavailable
     var errorDescription: String? {
         switch self {
         case .transient: "ChatGPT’s native window is temporarily unavailable."
         case .composerUnavailable: "ChatGPT’s message field is unavailable. Your draft was preserved."
+        case .webContentUnavailable: "This ChatGPT application version is not supported yet."
         }
     }
 }
@@ -163,7 +165,7 @@ struct ChatGPTAppObservation: Sendable {
         guard root.role == "AXWindow" else { throw DesktopAppError.unavailable("Open ChatGPT’s main window.") }
         let windowTitle = root.label
         let all = root.descendants
-        guard let web = all.first(where: { $0.role == "AXWebArea" && $0.url == "app://-/index.html" }) else { throw DesktopAppError.unavailable("This ChatGPT application version is not supported yet.") }
+        guard let web = all.first(where: { $0.role == "AXWebArea" && $0.url == "app://-/index.html" }) else { throw ChatGPTObservationError.webContentUnavailable }
         let conversationTitle = web.label.isEmpty ? windowTitle : web.label
         title = conversationTitle
         nodes = Self.safeNodes(web)
@@ -325,10 +327,25 @@ struct ChatGPTAppObservation: Sendable {
     func sameContent(as other: Self) -> Bool { title == other.title && dotSetup == other.dotSetup && codexBootstrap == other.codexBootstrap && kind == other.kind && draft == other.draft && messages == other.messages }
 }
 enum ChatGPTAppProfile {
+    private final class WebContentRequests: @unchecked Sendable {
+        let lock = NSLock()
+        var pids: Set<Int> = []
+    }
+    private static let webContentRequests = WebContentRequests()
+
+    /// Chromium hides web content until an assistive client sets this. The call returns an error and still works.
+    static func exposeWebContent(_ pid: Int) {
+        webContentRequests.lock.withLock {
+            guard webContentRequests.pids.insert(pid).inserted else { return }
+            _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid_t(pid)), "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        }
+    }
     static func captureNavigation(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppNavigation {
-        try ChatGPTAppNavigation(root: convert(DesktopAccessibility.capture(target, app: .chatgpt, readComposer: false)))
+        exposeWebContent(target.pid)
+        return try ChatGPTAppNavigation(root: convert(DesktopAccessibility.capture(target, app: .chatgpt, readComposer: false)))
     }
     static func capture(_ target: DesktopAppConversation.Target) throws -> ChatGPTAppObservation {
+        exposeWebContent(target.pid)
         do { return try parse(DesktopAccessibility.capture(target, app: .chatgpt)) }
         catch DesktopAccessibilityError.incomplete { throw ChatGPTObservationError.transient }
     }

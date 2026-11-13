@@ -382,6 +382,45 @@ final class ChatGPTAppDriverTests: XCTestCase {
         }
         XCTAssertTrue(try calls(directory).allSatisfy { ["list_apps", "list_windows"].contains($0) })
     }
+
+    func testWebContentUnavailableRetriesThenSucceeds() async throws {
+        let (directory, executable) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let native = try observation()
+        let reads = LockedCount()
+        let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(1), stableDuration: .zero, callTimeout: 3)
+        let adapter = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in
+            if reads.next() <= 2 { throw ChatGPTObservationError.webContentUnavailable }
+            return native
+        })
+        try await adapter.checkAvailable(kind: .chatgpt)
+        XCTAssertEqual(reads.value, 3)
+    }
+
+    func testMissingWebContentFailsAfterBoundedReads() async throws {
+        let (directory, executable) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let reads = LockedCount()
+        let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(1), stableDuration: .zero, callTimeout: 3)
+        let adapter = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in
+            _ = reads.next()
+            throw ChatGPTObservationError.webContentUnavailable
+        })
+        do {
+            try await adapter.checkAvailable(kind: .chatgpt)
+            XCTFail("Missing web content must stay unsupported")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "This ChatGPT application version is not supported yet.")
+        }
+        XCTAssertEqual(reads.value, 8)
+    }
+}
+
+private final class LockedCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func next() -> Int { lock.withLock { count += 1; return count } }
+    var value: Int { lock.withLock { count } }
 }
 
 private actor ChatGPTRecordedBindings {

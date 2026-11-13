@@ -60,6 +60,7 @@ enum DesktopAppWorkflow {
     }
 
     static func transient(_ error: Error) -> Bool {
+        if case ChatGPTObservationError.webContentUnavailable = error { return false }
         if error is MuseObservationError || error is DesktopAccessibilityError || error is ClaudeObservationError || error is ChatGPTObservationError || error is GeminiObservationError || error is WabiObservationError { return true }
         if case DesktopAppError.incompleteSnapshot = error { return true }
         return false
