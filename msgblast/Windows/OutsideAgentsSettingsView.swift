@@ -296,9 +296,9 @@ private struct GrokBotSetupSheet: View {
             } header: {
                 Text("2. Add a custom connector")
                 HStack(spacing: 4) {
-                    Text("In Grok Bot click")
+                    Text("In Grok Bot, click")
                     ConnectAppsIcon()
-                    Text("in the sidebar (⌘⇧M), scroll to the bottom, then Add a custom connector.")
+                    Text("then scroll down to Add a custom connector.")
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 Text("Already added msgblast? Click Manage on its card and replace the Value instead.")
@@ -310,7 +310,7 @@ private struct GrokBotSetupSheet: View {
     }
 }
 
-/// Grok Bot's Connect apps button: three rounded squares and a plus, so people can spot it in Grok Bot's sidebar.
+/// Grok Bot's Connect apps button: three rounded squares and a plus, so people can spot it in Grok Bot.
 private struct ConnectAppsIcon: View {
     var body: some View {
         Grid(horizontalSpacing: 1.5, verticalSpacing: 1.5) {

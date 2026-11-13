@@ -31,7 +31,7 @@ Use the URL they pasted. Do not invent a host or a port.
 
 Tell them to add it in Grok Bot. You cannot add it for them.
 
-1. Click Connect apps in the left sidebar (three squares and a plus, or ⌘⇧M), scroll to the bottom of that page, and click Add a custom connector (or search "custom"). Type: Remote HTTPS. If a msgblast connector already exists, click Manage on it and edit that one instead of adding another.
+1. Click Connect apps (three squares and a plus), scroll to the bottom of that page, and click Add a custom connector (or search "custom"). Type: Remote HTTPS. If a msgblast connector already exists, click Manage on it and edit that one instead of adding another.
 2. Server URL: the URL they pasted.
 3. Header: name `Authorization`. For the value, in msgblast click Set Up… on the Grok Bot (Tailscale) row, copy Value and paste it (`Bearer <key>`).
 4. They save the connector.
