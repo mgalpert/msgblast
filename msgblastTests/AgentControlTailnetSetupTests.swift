@@ -12,6 +12,41 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertFalse(text.hasSuffix("\n"))
     }
 
+    func testSetupTextNamesOtherAgents() {
+        let text = AgentControlTailnetSetup.text(url: "http://mac.example.ts.net:47480/mcp", key: "k", client: "Laptop Claude Code (Tailscale)")
+        XCTAssertEqual(text.split(separator: "\n").first, "msgblast MCP server for Laptop Claude Code")
+    }
+
+    func testRemoteClientNames() {
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Grok Bot"), AgentControlTailnet.grokBotClient)
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("  Laptop Claude Code  "), "Laptop Claude Code (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Cursor (Tailscale)"), "Cursor (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Cursor (tailscale) (Tailscale)"), "Cursor (Tailscale)")
+        XCTAssertNil(AgentControlTailnet.remoteClientName("   "))
+        XCTAssertNil(AgentControlTailnet.remoteClientName("(Tailscale)"))
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("bad\nname"), "bad name (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Grok\u{200B}Bot"), AgentControlTailnet.grokBotClient)
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Foo  Bar"), "Foo Bar (Tailscale)")
+        XCTAssertEqual(AgentControlTailnet.remoteClientName("Evil\u{202E}Name"), "Evil Name (Tailscale)")
+        for typed in ["Foo  Bar", "Grok\u{200B}Bot", "Evil\u{202E}Name", "  Laptop  "] {
+            let saved = AgentControlTailnet.remoteClientName(typed)!
+            XCTAssertEqual(AgentControlGate.clientName(saved), saved, "the key's name must equal its approval name")
+        }
+        XCTAssertNil(AgentControlTailnet.remoteClientName(String(repeating: "a", count: AgentControlTailnet.maximumClientName + 1)))
+    }
+
+    func testStoreKeepsOneKeyPerClient() {
+        var store = AgentControlTailnetStore(enabled: true)
+        let grok = store.issue(AgentControlTailnet.grokBotClient)
+        let laptop = store.issue("Laptop (Tailscale)")
+        XCTAssertNotEqual(grok, laptop)
+        XCTAssertEqual(store.client(matching: grok), AgentControlTailnet.grokBotClient)
+        XCTAssertEqual(store.client(matching: laptop), "Laptop (Tailscale)")
+        store.revoke("Laptop (Tailscale)")
+        XCTAssertNil(store.client(matching: laptop))
+        XCTAssertEqual(store.client(matching: grok), AgentControlTailnet.grokBotClient)
+    }
+
     func testStatusParsing() {
         let named = #"{"Self":{"DNSName":"mac.example.ts.net."},"CertDomains":["mac.example.ts.net"],"Peer":{"n1":{"HostName":"laptop","DNSName":"laptop.example.ts.net."},"n2":{"HostName":"GrokBot","DNSName":"other.example.ts.net."}}}"#
         let parsed = AgentControlTailnetStatus.parse(Data(named.utf8))
@@ -73,9 +108,9 @@ final class AgentControlTailnetSetupTests: XCTestCase {
 
         XCTAssertNil(AgentControlFirewall.line(.off))
         XCTAssertEqual(AgentControlFirewall.line(.onAllowed), "\u{2713} The macOS firewall allows msgblast incoming connections.")
-        XCTAssertEqual(AgentControlFirewall.line(.onBlocked), "\u{26A0}\u{FE0E} The macOS firewall blocks msgblast, so Grok Bot can't reach it. Allow msgblast in System Settings → Network → Firewall → Options.")
-        XCTAssertEqual(AgentControlFirewall.line(.onUnknown), "\u{26A0}\u{FE0E} The macOS firewall is on. If Grok Bot can't connect, allow msgblast in System Settings → Network → Firewall → Options.")
-        XCTAssertEqual(AgentControlFirewall.line(.blockAll), "\u{26A0}\u{FE0E} The macOS firewall blocks all incoming connections, so Grok Bot can't reach msgblast. Turn off \"Block all incoming connections\" in System Settings → Network → Firewall → Options.")
+        XCTAssertEqual(AgentControlFirewall.line(.onBlocked), "\u{26A0}\u{FE0E} The macOS firewall blocks msgblast, so agents on other devices can't reach it. Allow msgblast in System Settings → Network → Firewall → Options.")
+        XCTAssertEqual(AgentControlFirewall.line(.onUnknown), "\u{26A0}\u{FE0E} The macOS firewall is on. If agents on other devices can't connect, allow msgblast in System Settings → Network → Firewall → Options.")
+        XCTAssertEqual(AgentControlFirewall.line(.blockAll), "\u{26A0}\u{FE0E} The macOS firewall blocks all incoming connections, so agents on other devices can't reach msgblast. Turn off \"Block all incoming connections\" in System Settings → Network → Firewall → Options.")
     }
 
     func testAuthorizedRequestRecordsLastCalled() async throws {
@@ -93,6 +128,8 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertEqual(accepted.status, 200)
         let stamp = await endpoint.lastAuthorized
         XCTAssertNotNil(stamp)
+        let byClient = await endpoint.lastAuthorizedByClient
+        XCTAssertEqual(byClient, [AgentControlTailnet.grokBotClient: stamp!])
         let wrongAgain = await endpoint.handle(try request("POST", "/mcp/nope", #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#), peer: "100.64.0.1")
         XCTAssertEqual(wrongAgain.status, 401)
         let afterWrong = await endpoint.lastAuthorized

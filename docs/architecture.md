@@ -35,6 +35,22 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 
 Outside agents can open comparisons as an MCP App. The UI resource is `ui://msgblast/comparison` (`text/html;profile=mcp-app`). `msgblast_comparisons_list`, `msgblast_comparison_read`, and `msgblast_blast_wait` each carry it in `_meta.ui.resourceUri`. `msgblast_comparisons_list` is the global entry point, so Claude Desktop, Codex, and ChatGPT can open the side-by-side view from their own navigation. Codex and ChatGPT can also @-mention a comparison: `msgblast_mentions` returns `msgblast://comparison/<id>` links, and reading that URI runs `msgblast_comparison_read`. The view only reads; it cannot send. See [Outside agents](outside-agents.md).
 
+## Settings organization
+
+Settings uses a native sidebar with General, Outside agents, Remote, Permissions, Sharing,
+and Updates, plus a Connections group containing Mac apps, Websites, CLI tools, and Webhooks.
+Outside agents holds the agent control switch, setup commands, the MCP command for this Mac, and the MCP server URL and per-agent keys for the Tailscale endpoint
+(Grok Bot or any other MCP client), and each approved agent's Read only or Full access level.
+Webhooks currently contains Grok Bot routines; the Grok Bot Mac app remains under Mac apps.
+Mac app setup links directly to Permissions. Website profiles and CLI accounts
+keep their separate sign-in and execution boundaries.
+
+Most controls apply immediately. Sharing choices apply only with **Save choices**;
+unsaved choices remain while switching pages. Leaving General cancels shortcut
+recording. Each category scrolls independently within the resizable settings window.
+Share Feedback and Build A New Feature remain pinned below the sidebar list and open
+the existing feedback and feature-building windows without submitting anything.
+
 ## Runtime boundaries
 
 The app creates its model only after installation checks allow startup. The model
@@ -45,7 +61,7 @@ Follow nearby panels and lifecycle code when adding a window or menu command.
 
 The menu bar's **New Blast** opens the Agents workspace with the current saved
 recipient selections and preserves unsent drafts. It does not submit a message.
-**Settings → Quick Access → Record Shortcut** assigns and enables a system-wide
+**Settings → General → Quick Access → Record Shortcut** assigns and enables a system-wide
 shortcut for the same action; it works while msgblast is running, including when
 its workspace is hidden or minimized. Escape cancels recording, and the enable
 toggle releases the shortcut without forgetting it. macOS shortcut conflicts are

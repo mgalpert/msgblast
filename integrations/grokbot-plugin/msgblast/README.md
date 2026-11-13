@@ -16,7 +16,7 @@ The `msgblast-setup` skill walks through the steps. It cannot add the connector 
 
 1. In msgblast, turn on Outside agents and the Tailscale toggle.
 2. In Grok Bot, Connect apps → Your plugins → Tailscale → Authenticate.
-3. Ask the person for the Server URL only, from msgblast's "Copy URL" button. Never ask for the key, the header, or the "Copy Grok Bot setup" block in chat.
+3. Ask the person for the Server URL only, from msgblast's "Copy URL" button. Never ask for the key, the header, or the "Copy setup" block in chat.
 4. Guide them to Add a custom connector → Remote HTTPS, with that Server URL, and to paste the header from msgblast's "Copy header" button straight into the connector. The key never goes into chat.
 5. Call `msgblast_status`. The person approves it in msgblast.
 

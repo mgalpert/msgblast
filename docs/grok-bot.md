@@ -13,9 +13,9 @@ msgblast speaks `http://` only. It does not serve `https://` yet. Settings check
 
 ## Setup
 
-1. In msgblast, turn on Settings → Outside agents, then turn on "Let Grok Bot use msgblast over Tailscale".
+1. In msgblast, turn on Settings → Outside agents, then turn on "Let agents on other devices use msgblast over Tailscale". The first key is made for Grok Bot.
 2. In Grok Bot, open Connect apps → Your plugins → Tailscale → Authenticate.
-3. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the Server URL and the header from msgblast ("Copy URL" and "Copy header", or both at once with "Copy Grok Bot setup"). Put the key only in the connector's header field, never in a chat message.
+3. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the MCP server URL and the header from Settings → Outside agents ("Copy URL" and "Copy header", or both at once with "Copy setup" on the Grok Bot (Tailscale) row). Put the key only in the connector's header field, never in a chat message.
 4. Ask Grok Bot to call `msgblast_status`. Approve it in msgblast. The prompt names the client "Grok Bot (Tailscale)".
 
 The copied block looks like this, with your own URL and key:
@@ -28,6 +28,16 @@ Header: Authorization: Bearer <key>
 
 The default port is 47480. The URL uses this Mac's MagicDNS name. If that name is missing, msgblast uses the Mac's 100.x address and says so. The key is shown once. After a relaunch, choose New key to see another one.
 
+## Other MCP clients over Tailscale
+
+Any MCP client that can reach this Mac over your tailnet and send an HTTP header can use the same endpoint, for example Claude Code or Codex on another computer. In Settings → Outside agents, type a name under the Tailscale section and choose **Add agent**. msgblast saves it as "<name> (Tailscale)" with its own key, so each agent has its own approval, access level, New key and Remove. Add the MCP server URL as a remote HTTP server in that client with that agent's header, for example:
+
+```sh
+claude mcp add --transport http msgblast http://<MagicDNS name>:47480/mcp --header "Authorization: Bearer <key>"
+```
+
+On its first call msgblast asks you to approve it, as for Grok Bot.
+
 ## Security
 
 msgblast binds only to Tailscale addresses (IPv4 `100.64.0.0/10` and IPv6 `fd7a:115c:a1e0::/48` on `utun`). It does not bind a wildcard, loopback, or Funnel.
@@ -36,7 +46,7 @@ The key is stored as a SHA-256 hash in `outside-agents-tailnet.json` (mode 0600)
 
 msgblast shows the approval prompt only after a valid key. Choose what that client may do. Remove in Settings deletes the approval and the key's hash.
 
-Any device on the tailnet that has the key can call msgblast as Grok Bot, so treat the key like a password. New key stops the old key at once but keeps Grok Bot's approval level; Remove clears both. Copies that contain the key are marked concealed, so clipboard history apps skip them, and are cleared after 2 minutes.
+Any device on the tailnet that has a key can call msgblast as that key's agent, so treat each key like a password. New key stops the old key at once but keeps the agent's approval level; Remove clears both. Copies that contain the key are marked concealed, so clipboard history apps skip them, and are cleared after 2 minutes.
 
 Limits: a request over 1 MB gets 413, a request must arrive whole within 10 seconds (408), a connection idle for 60 seconds closes, and at most 16 connections are open at once.
 
@@ -56,7 +66,7 @@ On a personal tailnet, Grok Bot's device has the person's own tailnet access. A 
 
 ## Readiness
 
-The Tailscale card shows three lines. When the macOS firewall is on, a fourth line appears right after the Tailscale line and says whether msgblast may accept incoming connections. msgblast only reads that state.
+The Tailscale card shows up to three lines; the Grok Bot line appears only while Grok Bot has a key. When the macOS firewall is on, one more line appears right after the Tailscale line and says whether msgblast may accept incoming connections. msgblast only reads that state.
 
 - "Tailscale isn't connected on this Mac." Open Tailscale on this Mac and sign in. "Connected as" followed by the MagicDNS name means that name was found.
 - "HTTPS certificates are off for this tailnet." This line is information only. msgblast uses `http://`, and Tailscale encrypts the connection, so nothing needs changing. Turning certificates on does not make msgblast serve `https://`. "HTTPS certificates are on for this tailnet" means that array is set.

@@ -3,8 +3,9 @@ import Foundation
 /// The block Settings copies into Grok Bot, and the three readiness lines on that card.
 public enum AgentControlTailnetSetup {
     /// One block: title, server URL, and bearer header. No trailing newline.
-    public static func text(url: String, key: String) -> String {
-        ["msgblast MCP server for Grok Bot", "Server URL: \(url)", "Header: Authorization: Bearer \(key)"].joined(separator: "\n")
+    public static func text(url: String, key: String, client: String = AgentControlTailnet.grokBotClient) -> String {
+        let name = client.hasSuffix(" (Tailscale)") ? String(client.dropLast(" (Tailscale)".count)) : client
+        return ["msgblast MCP server for \(name)", "Server URL: \(url)", "Header: Authorization: Bearer \(key)"].joined(separator: "\n")
     }
 
     /// Tailscale, HTTPS certificates, then whether Grok Bot has called. Each line starts with ✓ or ⚠︎,
@@ -97,11 +98,11 @@ public enum AgentControlFirewall {
         case .onAllowed:
             return "\u{2713} The macOS firewall allows msgblast incoming connections."
         case .onBlocked:
-            return "\u{26A0}\u{FE0E} The macOS firewall blocks msgblast, so Grok Bot can't reach it. Allow msgblast in System Settings → Network → Firewall → Options."
+            return "\u{26A0}\u{FE0E} The macOS firewall blocks msgblast, so agents on other devices can't reach it. Allow msgblast in System Settings → Network → Firewall → Options."
         case .onUnknown:
-            return "\u{26A0}\u{FE0E} The macOS firewall is on. If Grok Bot can't connect, allow msgblast in System Settings → Network → Firewall → Options."
+            return "\u{26A0}\u{FE0E} The macOS firewall is on. If agents on other devices can't connect, allow msgblast in System Settings → Network → Firewall → Options."
         case .blockAll:
-            return "\u{26A0}\u{FE0E} The macOS firewall blocks all incoming connections, so Grok Bot can't reach msgblast. Turn off \"Block all incoming connections\" in System Settings → Network → Firewall → Options."
+            return "\u{26A0}\u{FE0E} The macOS firewall blocks all incoming connections, so agents on other devices can't reach msgblast. Turn off \"Block all incoming connections\" in System Settings → Network → Firewall → Options."
         }
     }
 }
