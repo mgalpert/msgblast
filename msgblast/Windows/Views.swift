@@ -878,6 +878,7 @@ struct AppSettingsView: View {
 
             }
             .toolbar { ToolbarItemGroup(placement: .navigation) { historyButtons } }
+            .navigationTitle(page.rawValue)
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 700)

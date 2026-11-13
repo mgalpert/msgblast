@@ -71,6 +71,8 @@ struct msgblastApp: App {
             if let model { AppSettingsView(model: model, updater: updater, shortcut: startup.shortcut) }
             else { InstallationView() }
         }
+        // One title bar row: traffic lights, back/forward, then the page name.
+        .windowToolbarStyle(.unified(showsTitle: true))
         MenuBarExtra {
             if let model {
                 QuickAccessMenu(model: model, newBlast: startNewBlast, showWorkspace: showWorkspace)
