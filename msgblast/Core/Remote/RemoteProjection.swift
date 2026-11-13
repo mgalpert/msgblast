@@ -17,6 +17,8 @@ public struct RemoteProjectionInput: Sendable {
     public var webAttempts: [UUID: [WebAgentID: [WebSendAttempt]]]
     public var canEnd: [UUID: Bool]
     public var reports: [UUID: RemoteReport]
+    /// Alexa product image URL → file already on disk. Missing entries are still downloading.
+    public var webImages: [String: MessageAttachment] = [:]
     public init(macStatus: MacStatus, gridAgentIDs: [String], agents: [AgentAvailability], comparisons: [Comparison], messagesTranscripts: [UUID: [UUID: [Message]]] = [:],
                 webHistories: [UUID: [WebAgentID: [WebPageMessage]]] = [:], webAttempts: [UUID: [WebAgentID: [WebSendAttempt]]] = [:], canEnd: [UUID: Bool] = [:], reports: [UUID: RemoteReport] = [:]) {
         self.macStatus = macStatus; self.gridAgentIDs = gridAgentIDs; self.agents = agents; self.comparisons = comparisons
@@ -24,7 +26,7 @@ public struct RemoteProjectionInput: Sendable {
     }
 
     /// Reads website/app/CLI/bot histories and attempts without loading pages or sending.
-    @MainActor public mutating func gatherWebState(from sessions: [WebAgentSession]) {
+    @MainActor public mutating func gatherWebState(from sessions: [WebAgentSession], imageCache: WebImageCache? = nil) {
         for comparison in comparisons {
             var histories: [WebAgentID: [WebPageMessage]] = [:], attempts: [WebAgentID: [WebSendAttempt]] = [:]
             var endable = true
@@ -39,6 +41,19 @@ public struct RemoteProjectionInput: Sendable {
             webAttempts[comparison.id] = attempts
             canEnd[comparison.id] = comparison.endedAt == nil && endable
         }
+        let urls = alexaProductImageURLs()
+        imageCache?.prefetch(urls)
+        webImages = imageCache?.attachments(for: urls) ?? [:]
+    }
+
+    /// Product photo URLs from Alexa cards only. Other agents never contribute images.
+    func alexaProductImageURLs() -> [String] {
+        webHistories.values.flatMap { agents in
+            agents.flatMap { agent, messages -> [String] in
+                guard agent.provider == .alexaShopping else { return [] }
+                return messages.flatMap { $0.images ?? [] }
+            }
+        }.filter { WebImageURL.allowed($0) != nil }
     }
 }
 
@@ -85,6 +100,7 @@ public enum RemoteProjectionBuilder {
                 let attached = followUp.payloads?.values.first?.parts.compactMap(\.attachment) ?? []
                 if !attached.isEmpty { files["f:\(followUp.id.uuidString)"] = attached }
             }
+            recordWebImages(input, comparison: cid, into: &files)
         }
         return files
     }
@@ -162,13 +178,30 @@ public enum RemoteProjectionBuilder {
             // website turn is keyed by its position; a re-render or a growing reply is an update.
             for (ordinal, message) in (input.webHistories[cid]?[agent] ?? []).enumerated() {
                 let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
+                let images = downloadedImages(message, input: input)
                 turns.append(RemoteTurn(id: "w:\(agent.id):\(cid.uuidString):\(key)", conversationID: cid, agentID: agent.id, role: role(message.role), origin: .agentTranscript,
-                                        text: message.text, created: nil, ordinal: ordinal, contentHash: hash(message.text)))
+                                        text: message.text, created: nil, ordinal: ordinal, attachments: refs(images), contentHash: hash(message.text)))
             }
             for attempt in input.webAttempts[cid]?[agent] ?? [] {
                 conversationAttempts.append(RemoteAttempt(id: "wa:\(attempt.id.uuidString)", conversationID: cid, agentID: agent.id, text: attempt.text,
                                                           status: status(attempt.status), detail: attempt.detail, created: attempt.created))
                 activity = max(activity, attempt.created)
+            }
+        }
+    }
+
+    private static func downloadedImages(_ message: WebPageMessage, input: RemoteProjectionInput) -> [MessageAttachment] {
+        (message.images ?? []).compactMap { input.webImages[$0] }
+    }
+
+    /// Same turn ids as `appendWebAgents`, and only files that have finished downloading.
+    private static func recordWebImages(_ input: RemoteProjectionInput, comparison: UUID, into files: inout [String: [MessageAttachment]]) {
+        for (agent, messages) in input.webHistories[comparison] ?? [:] {
+            for (ordinal, message) in messages.enumerated() {
+                let attached = downloadedImages(message, input: input)
+                if attached.isEmpty { continue }
+                let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
+                files["w:\(agent.id):\(comparison.uuidString):\(key)"] = attached
             }
         }
     }

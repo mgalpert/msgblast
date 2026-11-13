@@ -84,6 +84,7 @@ struct WebPageScript {
         const pathAllowed = () => location.protocol==='https:' && location.hostname===config.host &&
             (config.provider==='alexaShopping' ? (['/','/ref=nav_logo','/ref=nav_signin'].includes(location.pathname) && !location.hash && [...new URLSearchParams(location.search).keys()].every(k=>['ref','ref_'].includes(k))) : config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
         // Alexa shows each product as its own section with no links; read it as one line the phone can show.
+        const alexaImage = raw => { try { const u=new URL(raw); const h=u.hostname; return u.protocol==='https:' && (h==='m.media-amazon.com' || h==='images-na.ssl-images-amazon.com' || h.endsWith('.media-amazon.com')) ? u.href : ''; } catch { return ''; } };
         const alexaProduct = e => {
             const label=n=>n?.getAttribute('aria-label')?.trim()||'';
             const copy=e.cloneNode(true); copy.querySelectorAll('div,span').forEach(n=>n.append(document.createTextNode(' ')));
@@ -117,7 +118,8 @@ struct WebPageScript {
             const product=config.provider==='alexaShopping' && (e.getAttribute('data-csa-c-content-id')||'').startsWith('rufus-dsk-section-container-') ? alexaProduct(e) : null;
             copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
             if (!observation.ids.has(e)) observation.ids.set(e,`node-${++observation.nextID}`);
-            return {id:id||(config.provider==='alexaShopping'?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:product??normalized(copy.textContent||'')};
+            const image=product ? alexaImage(e.querySelector('img')?.currentSrc||e.querySelector('img')?.src||'') : '';
+            return {id:id||(config.provider==='alexaShopping'?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:product??normalized(copy.textContent||''),...(image?{images:[image]}:{})};
         });
         const conversationLocation = () => {
             const url=new URL(location.href),params=[...url.searchParams];

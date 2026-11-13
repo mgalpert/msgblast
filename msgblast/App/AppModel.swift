@@ -121,6 +121,9 @@ final class AppModel: ObservableObject {
     let controlEvents = AgentControlEvents()
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
+    lazy var webImageCache: WebImageCache = WebImageCache(directory: local.url.deletingLastPathComponent().appendingPathComponent("web-images", isDirectory: true), onChange: { [weak self] in
+        self?.objectWillChange.send()
+    })
     var database: MessagesDatabase?
     /// Created on first use. The app starts it at launch; fixtures never touch it.
     lazy var remote = RemoteService(model: self)
