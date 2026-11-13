@@ -265,10 +265,7 @@ private struct TailnetControls: View {
     }
 }
 
-/// The Grok Bot desktop app, when it is installed in a usual place.
+/// The Grok Bot desktop app, when it is installed. It has no link to its connector screen, so this only opens it.
 private enum GrokBotApp {
-    static var url: URL? {
-        let paths = ["/Applications/Grok Bot.app", NSString(string: "~/Applications/Grok Bot.app").expandingTildeInPath]
-        return paths.map { URL(fileURLWithPath: $0) }.first { FileManager.default.fileExists(atPath: $0.path) }
-    }
+    static var url: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anysphere.sand") }
 }
