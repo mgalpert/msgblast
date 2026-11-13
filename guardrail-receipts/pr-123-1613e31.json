@@ -1,0 +1,12 @@
+{
+  "pr": 123,
+  "reviewed_head": "1613e310a9751e1425dbc9abec61925df71b203e",
+  "base": "72c66044544b7f0e5d617e0fd1f54690165eb13f",
+  "reviewer": "independent model (OpenAI Codex CLI, gpt-6.1-sol, fresh session, read-only sandbox)",
+  "authorship": "Most commits by Claude Opus 5.5; fix commits af9954d, 36c1b6f, 0d56b1b, 2cd3ec0 and 0729daf implemented by OpenAI Codex gpt-5.6-terra under Claude's review; c06aa62, 414b8e7, e30b68d and 1613e31 by a Claude Opus 5.5 subagent; 5abf699 by Claude Fable 5.2 (coordinator); 4b6a168 and 1713d0f by Claude Opus 5.5. The reviewer gpt-6.1-sol is a different model from all authors but the same vendor as one of them.",
+  "scope": "Whole PR #123 diff against origin/main 72c6604, plus verification of sixteen earlier findings, E1-E5, the author's await audit, and the exact-head live results",
+  "verdict": "approve with notes",
+  "findings": [],
+  "notes": "Reviewed the complete requested diff and relevant surrounding code directly from `1613e310a9751e1425dbc9abec61925df71b203e`; no files changed or builds/tests run.\n\nThe supplied launch paragraph describes older behavior and should reflect the final hand-back implementation. Cancellation during hand-back can still reach guarded native restoration; cancellation is not part of `stillValid`. I found no additional await boundary missing from the supplied launch/hand-back audit. A dispatched driver action remains subject to the acknowledged execution window.",
+  "tests": "Static review only. Author-side at this head: 1039 unit tests, 0 failures, 1 skipped; CI-exact swift-complexity 0 new/worsened; live A1/A2/A3 passed in the test VM at this head (flashes 0.08 s + 0.29 s / none / 0.07 s)."
+}
