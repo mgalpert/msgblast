@@ -745,12 +745,13 @@ struct AppSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updater: AppUpdater
     @ObservedObject var shortcut: NewBlastShortcut
-    @State private var page = SettingsPage.general
+    @State private var history = PageHistory(SettingsPage.general)
+    private var page: SettingsPage { history.current }
 
     var body: some View {
         // Settings keeps its sidebar open: no collapse toggle, no hidden state.
         NavigationSplitView(columnVisibility: .constant(.all)) {
-            List(selection: Binding<SettingsPage?>(get: { page }, set: { if let value = $0 { page = value } })) {
+            List(selection: Binding<SettingsPage?>(get: { page }, set: { if let value = $0 { history.go(to: value) } })) {
                 sidebarRow(.general)
                 Section("Connections") {
                     sidebarRow(.apps)
@@ -805,7 +806,7 @@ struct AppSettingsView: View {
                     HStack {
                         Text("Mac apps use the account selected in that app.").font(.callout).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Manage permissions") { page = .permissions }
+                        Button("Manage permissions") { history.go(to: .permissions) }
                     }
                     .frame(maxWidth: 700)
                     .padding(.horizontal, 20).frame(maxWidth: .infinity)
@@ -813,6 +814,7 @@ struct AppSettingsView: View {
                 // Retain each page's local drafts, disclosure state and scroll position.
                 ZStack {
                     settingsPage(.general) {
+                        Section { AppearancePicker() }
                         Section("Quick Access") { NewBlastShortcutSettings(shortcut: shortcut) }
                         Section("Conversations") {
                             Picker("Open conversations in", selection: Binding(get: { model.state.effectiveWindowStyle }, set: { model.setWindowStyle($0) })) {
@@ -855,11 +857,25 @@ struct AppSettingsView: View {
                 }
 
             }
+            .toolbar { ToolbarItemGroup(placement: .navigation) { historyButtons } }
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 700)
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: page) { _, _ in shortcut.cancelRecording() }
+    }
+
+    @ViewBuilder private var historyButtons: some View {
+        Button { history.goBack() } label: { Label("Back", systemImage: "chevron.left") }
+            .disabled(!history.canGoBack)
+            .keyboardShortcut("[", modifiers: .command)
+            .help("Back")
+            .accessibilityIdentifier("settings-back")
+        Button { history.goForward() } label: { Label("Forward", systemImage: "chevron.right") }
+            .disabled(!history.canGoForward)
+            .keyboardShortcut("]", modifiers: .command)
+            .help("Forward")
+            .accessibilityIdentifier("settings-forward")
     }
 
     private func sidebarRow(_ item: SettingsPage) -> some View {

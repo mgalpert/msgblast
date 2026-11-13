@@ -175,6 +175,9 @@ final class AppLifecycle: NSObject, NSApplicationDelegate, SPUUpdaterDelegate {
         #endif
         return true
     }
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = AppAppearance.saved().nsAppearance
+    }
     func applicationWillTerminate(_ notification: Notification) {
         guard model?.onboardingRestartRequested == true else { return }
         // Launch only after safe termination has actually been approved. Pass
