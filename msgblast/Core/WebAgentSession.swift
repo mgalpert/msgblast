@@ -65,8 +65,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         var previous = -1
         for attempt in sent {
             if let id = attempt.messageID, let index = indexByID[id] { previous = index; continue }
-            let text = normalized(attempt.text)
-            guard let index = userIndexes.first(where: { $0 > previous && owner[$0] == nil && texts[$0] == text }) else { continue }
+            // Messages already on the page when it was submitted are never its own.
+            let text = normalized(attempt.text), earliest = max(previous + 1, attempt.receiptContext?.baseline.count ?? 0)
+            guard let index = userIndexes.first(where: { $0 >= earliest && owner[$0] == nil && texts[$0] == text }) else { continue }
             owner[index] = attempt.comparisonID
             previous = index
         }

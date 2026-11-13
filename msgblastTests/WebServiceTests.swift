@@ -199,6 +199,14 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(turns(second), ["u2", "a2", "u4", "a4"])
     }
 
+    func testUnlandedRequestCannotClaimAnOlderIdenticalMessage() {
+        let page = [WebPageMessage(id: "u0", role: "user", text: "hi"), WebPageMessage(id: "a0", role: "assistant", text: "Earlier answer")]
+        var attempt = WebSendAttempt(text: "hi", status: .uncertain)
+        attempt.comparisonID = UUID()
+        attempt.receiptContext = WebReceiptContext(originalURL: WebProvider.alexaShopping.homeURL, baseline: page, existingPaths: [])
+        XCTAssertNil(WebAgentSession.comparisonTurns(page, attempts: [attempt])[attempt.comparisonID!])
+    }
+
     func testAlexaShoppingIdleLoaderIsNotAPendingReply() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
