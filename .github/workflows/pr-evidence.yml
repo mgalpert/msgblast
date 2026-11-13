@@ -3,16 +3,21 @@ name: Check pull request evidence
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  # See the job's if: the queue reuses the result from the pull request.
+  merge_group:
 
 permissions:
   contents: read
 
 concurrency:
-  group: msgblast-pr-evidence-${{ github.event.pull_request.number }}
+  group: msgblast-pr-evidence-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   evidence:
+    # A pull request enters the merge queue only after this passed on its head.
+    # On the queued commit the job is skipped, which GitHub counts as passing.
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

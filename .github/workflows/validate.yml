@@ -2,6 +2,9 @@ name: Validate msgblast
 
 on:
   pull_request:
+  # The merge queue tests each pull request on top of the ones ahead of it.
+  # linux and native must report on that queued commit too, or nothing merges.
+  merge_group:
   push:
     branches: [main]
   workflow_dispatch:

@@ -19,7 +19,7 @@ off the Studio:
 1. **The job-started hook (the real guard).** The runner runs
    `scripts/ci/studio-job-started.sh` from a copy installed outside the
    repository before every job. It allows only pushes to `main`, manual runs,
-   and pull requests whose branch is in this repository, and fails anything
+   merge queue runs for `main`, and pull requests whose branch is in this repository, and fails anything
    else before a single step runs. A pull request cannot change the installed copy.
 2. **Approval for outside contributors.** GitHub will not start any workflow
    from an outside contributor's fork until you approve it. Before approving,
@@ -51,7 +51,7 @@ cache, so give write access only to people you trust with that machine.
    asks for:
 
    ```
-   ./config.sh --url https://github.com/mgalpert/msgblast --token <token from that page> \
+   ./config.sh --url https://github.com/contains-studio/msgblast --token <token from that page> \
      --name studio-1 --labels msgblast-studio --unattended
    ./svc.sh install
    ./svc.sh start

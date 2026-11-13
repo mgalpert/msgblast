@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / "scripts/ci/studio-job-started.sh"
-REPO = "mgalpert/msgblast"
+REPO = "contains-studio/msgblast"
 
 
 def run(event_name, ref="refs/heads/feature", head_repo=REPO, repository=REPO):
@@ -29,6 +29,7 @@ class StudioJobHookTests(unittest.TestCase):
         self.assertEqual(run("push", ref="refs/heads/main"), 0)
         self.assertEqual(run("workflow_dispatch"), 0)
         self.assertEqual(run("pull_request"), 0)
+        self.assertEqual(run("merge_group", ref="refs/heads/gh-readonly-queue/main/pr-7-abc"), 0)
 
     def test_refuses_forks_other_events_and_other_repositories(self):
         self.assertEqual(run("pull_request", head_repo="someone/msgblast"), 1)
@@ -38,6 +39,9 @@ class StudioJobHookTests(unittest.TestCase):
         self.assertEqual(run("push", ref="refs/tags/v1"), 1)
         self.assertEqual(run("issue_comment"), 1)
         self.assertEqual(run("workflow_dispatch", repository="someone/msgblast"), 1)
+        self.assertEqual(run("workflow_dispatch", repository="mgalpert/msgblast"), 1)
+        self.assertEqual(run("merge_group", ref="refs/heads/gh-readonly-queue/other/pr-7-abc"), 1)
+        self.assertEqual(run("merge_group", ref="refs/heads/main"), 1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,23 @@
+name: Merge queue review
+
+# "Independent model review" is a commit status the owner posts by hand on a
+# pull request's exact head after a different model reviews it. A pull request
+# can enter the merge queue only once that status passed, but the queue then
+# asks for every required check again on its own temporary commit, where nobody
+# can post it by hand. This job reports the same name on queued commits only.
+# It never runs for a pull request, so the hand-posted status stays required
+# there. Delete this file if the check is dropped from the ruleset.
+on:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    name: Independent model review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Carry the pull request's review into the queue
+        run: echo "Reviewed on the pull request head before it entered the queue."
