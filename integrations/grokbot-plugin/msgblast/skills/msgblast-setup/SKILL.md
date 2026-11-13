@@ -19,9 +19,9 @@ Do not install Tailscale on the bot computer.
 
 ## Ask for the Server URL only
 
-Ask the person to open msgblast → Settings → Outside agents, turn on Outside agents and "Let Grok Bot use msgblast over Tailscale", then click "Copy URL" and paste only the URL here. It looks like `http://<MagicDNS name>:<port>/mcp`.
+Ask the person to open msgblast → Settings → Outside agents, turn on Outside agents and "Let agents on other devices use msgblast over Tailscale", then click "Copy URL" and paste only the URL here. It looks like `http://<MagicDNS name>:<port>/mcp`.
 
-Never ask for the key, and tell the person not to paste the `Authorization` header or the "Copy Grok Bot setup" block into this chat. The key goes only into the connector's header field. If they paste a key anyway, tell them to click "New key" in msgblast and use the new one in the connector.
+Never ask for the key, and tell the person not to paste the `Authorization` header or the "Copy setup" block from the Grok Bot (Tailscale) row into this chat. The key goes only into the connector's header field. If they paste a key anyway, tell them to click "New key" in msgblast and use the new one in the connector.
 
 Use the URL they pasted. Do not invent a host or a port.
 
