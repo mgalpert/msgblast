@@ -43,25 +43,39 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
     public func messagesForComparison(_ id: UUID) -> [WebPageMessage] {
         // One account-wide page holds every comparison's turns; each comparison sees only its own.
+        // Desktop apps share a conversation too, but their history is native and kept per comparison.
         if (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation {
-            return Self.comparisonSlice(snapshot.messages, attempts: state.attempts, comparison: id)
+            return Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
         }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
     }
-    /// From a comparison's first request on the shared page up to the next comparison's first request.
-    /// A comparison that has sent nothing has no turns there.
-    static func comparisonSlice(_ messages: [WebPageMessage], attempts: [WebSendAttempt], comparison: UUID) -> [WebPageMessage] {
-        func start(_ id: UUID) -> Int? {
-            attempts.filter { $0.comparisonID == id }.compactMap { attempt in
-                messages.firstIndex { $0.role == "user" && $0.id == attempt.messageID }
-                    ?? messages.firstIndex { $0.role == "user" && normalized($0.text) == normalized(attempt.text) }
-            }.min()
+    /// Splits a shared page by request: each request a comparison sent owns its user message and the
+    /// replies up to the next user message. Turns from before any request, or from requests sent
+    /// elsewhere, belong to no comparison; a comparison that has sent nothing has no turns.
+    static func comparisonTurns(_ messages: [WebPageMessage], attempts: [WebSendAttempt]) -> [UUID: [WebPageMessage]] {
+        let userIndexes = messages.indices.filter { messages[$0].role == "user" }
+        let indexByID = Dictionary(userIndexes.map { (messages[$0].id, $0) }, uniquingKeysWith: { first, _ in first })
+        let texts = messages.map { normalized($0.text) }
+        var owner: [Int: UUID] = [:]
+        // Requests that never reached the page cannot own a turn.
+        let sent = attempts.filter { $0.comparisonID != nil && ![.preparing, .notSent].contains($0.status) }.sorted { $0.created < $1.created }
+        for attempt in sent { if let id = attempt.messageID, let index = indexByID[id] { owner[index] = attempt.comparisonID } }
+        // An unattributed request takes the nearest unowned matching message after the previous request.
+        var previous = -1
+        for attempt in sent {
+            if let id = attempt.messageID, let index = indexByID[id] { previous = index; continue }
+            let text = normalized(attempt.text)
+            guard let index = userIndexes.first(where: { $0 > previous && owner[$0] == nil && texts[$0] == text }) else { continue }
+            owner[index] = attempt.comparisonID
+            previous = index
         }
-        guard let first = start(comparison) else { return [] }
-        let others = Set(attempts.compactMap(\.comparisonID)).subtracting([comparison])
-        let end = others.compactMap(start).filter { $0 > first }.min() ?? messages.count
-        return Array(messages[first..<end])
+        var turns: [UUID: [WebPageMessage]] = [:], current: UUID?
+        for index in messages.indices {
+            if messages[index].role == "user" { current = owner[index] }
+            if let current { turns[current, default: []].append(messages[index]) }
+        }
+        return turns
     }
     public func canArchiveComparison(_ id: UUID) -> Bool {
         let submitted = state.attempts.contains { $0.comparisonID == id && $0.status.confirmsSubmission }

@@ -121,24 +121,41 @@ final class WebServiceTests: XCTestCase {
 
     func testSharedConversationPageGivesEachComparisonOnlyItsOwnTurns() {
         let first = UUID(), second = UUID(), unsent = UUID()
-        let page = [
-            WebPageMessage(id: "u0", role: "user", text: "Older request from the website"),
-            WebPageMessage(id: "a0", role: "assistant", text: "Older answer"),
-            WebPageMessage(id: "u1", role: "user", text: "Suggest a cable"),
-            WebPageMessage(id: "a1", role: "assistant", text: "Example Cable"),
-            WebPageMessage(id: "u2", role: "user", text: "Suggest a bottle"),
-            WebPageMessage(id: "a2", role: "assistant", text: "Example Bottle"),
+        var clock = Date(timeIntervalSince1970: 0)
+        func attempt(_ text: String, _ comparison: UUID, _ status: WebSendStatus, id: String? = nil) -> WebSendAttempt {
+            var attempt = WebSendAttempt(text: text, status: status)
+            attempt.comparisonID = comparison; attempt.messageID = id
+            clock += 1; attempt.created = clock
+            return attempt
+        }
+        func message(_ id: String, _ role: String, _ text: String) -> WebPageMessage { WebPageMessage(id: id, role: role, text: text) }
+        var page = [
+            message("u0", "user", "hi"), message("a0", "assistant", "From the website, before any request"),
+            message("u1", "user", "hi"), message("a1", "assistant", "First answer"),
+            message("u2", "user", "hi"), message("a2", "assistant", "Second answer"),
+            message("u3", "user", "and a bottle?"), message("a3", "assistant", "First follow-up answer"),
         ]
-        var observed = WebSendAttempt(text: "Suggest a cable", status: .observed)
-        observed.comparisonID = first; observed.messageID = "u1"
-        // A request that was not yet attributed still starts its comparison by its text.
-        var pending = WebSendAttempt(text: "Suggest  a bottle", status: .uncertain)
-        pending.comparisonID = second
-        let attempts = [observed, pending]
-        func slice(_ id: UUID) -> [String] { WebAgentSession.comparisonSlice(page, attempts: attempts, comparison: id).map(\.id) }
-        XCTAssertEqual(slice(first), ["u1", "a1"], "An earlier comparison keeps its turns after the page moves on")
-        XCTAssertEqual(slice(second), ["u2", "a2"])
-        XCTAssertEqual(slice(unsent), [], "A new comparison shows nothing from the shared page before it sends")
+        // The same prompt in two comparisons: an observed request keeps its message, and the
+        // unattributed one takes the next unowned match. A, B, A interleave on one page.
+        var attempts = [
+            attempt("hi", first, .observed, id: "u1"),
+            attempt("hi", second, .uncertain),
+            attempt("and  a bottle?", first, .observed, id: "u3"),
+            attempt("never reached the page", unsent, .notSent),
+        ]
+        func turns(_ id: UUID) -> [String] { WebAgentSession.comparisonTurns(page, attempts: attempts)[id]?.map(\.id) ?? [] }
+        XCTAssertEqual(turns(first), ["u1", "a1", "u3", "a3"])
+        XCTAssertEqual(turns(second), ["u2", "a2"])
+        XCTAssertEqual(turns(unsent), [], "An unsent or new comparison shows nothing from the shared page")
+        // A request with no matching message on the page resolves nothing and steals nothing.
+        attempts.append(attempt("not on the page", second, .uncertain))
+        XCTAssertEqual(turns(second), ["u2", "a2"])
+        // An ended comparison's turns stay the same as the shared page keeps growing.
+        let ended = turns(first)
+        page += [message("u4", "user", "later"), message("a4", "assistant", "Later answer")]
+        attempts.append(attempt("later", second, .observed, id: "u4"))
+        XCTAssertEqual(turns(first), ended)
+        XCTAssertEqual(turns(second), ["u2", "a2", "u4", "a4"])
     }
 
     func testAlexaShoppingIdleLoaderIsNotAPendingReply() async throws {
