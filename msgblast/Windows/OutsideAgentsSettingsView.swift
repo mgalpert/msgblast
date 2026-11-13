@@ -295,7 +295,7 @@ private struct GrokBotSetupSheet: View {
                 FormField(label: "Client ID", value: "Leave empty", copyable: false)
             } header: {
                 Text("2. Add a custom connector")
-                Text("Connect apps (sidebar) → Add a custom connector, at the bottom of the list. Already have one? Its Manage button edits it.")
+                Text("In Grok Bot press ⌘⇧M (Connect apps), scroll down, then Add a custom connector. Already have one? Its Manage button edits it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("3. Click Add plugin, then approve msgblast here") {}
