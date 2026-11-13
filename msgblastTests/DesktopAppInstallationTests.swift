@@ -194,7 +194,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         var cancelOnRead = false
         init(reads: [Bool]) { self.reads = reads }
         func steps(running: Bool, hidden: Bool) -> Client.BackgroundOpenSteps {
-            .init(running: running, hidden: hidden, unhide: { self.calls.append("unhide") }, readWindow: {
+            .init(running: running, hidden: hidden, unhide: { self.calls.append("unhide") }, readWindow: { _ in
                 defer { self.readCount += 1 }
                 self.calls.append("read")
                 if self.cancelOnRead { withUnsafeCurrentTask { $0?.cancel() } }
@@ -241,7 +241,7 @@ final class DesktopAppInstallationTests: XCTestCase {
     func testWindowPollStopsAtTheDeadlineEvenWhenReadsAreSlow() async throws {
         let clock = AdvancingClock()
         var reads = 0
-        let found = try await Client.windowAppeared(within: .seconds(1), clock: clock) {
+        let found = try await Client.windowAppeared(within: .seconds(1), clock: clock) { _ in
             reads += 1
             clock.advance(by: .milliseconds(700))
             return false
@@ -378,7 +378,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         try await Client.awaitHandBack(after: .seconds(5), clock: clock, state: {
             defer { checks += 1 }
             return checks == 0 ? self.watchState([2]) : self.watchState([2, 1], front: 1)
-        }, handBack: { _ in })
+        }, handBack: { _, _ in })
         XCTAssertEqual(clock.sleeps.reduce(.zero, +), .milliseconds(1500))
     }
 
@@ -402,9 +402,9 @@ final class DesktopAppInstallationTests: XCTestCase {
         let calls = DriverCalls()
         final class Fallbacks: @unchecked Sendable { var pids: [Int32] = [] }
         let fallbacks = Fallbacks()
-        let host = DesktopHandBackHost(ownPID: 42, fallback: { fallbacks.pids.append($0) })
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { pid, _ in fallbacks.pids.append(pid) })
         host.driver = handBackDriver(calls)
-        try await host.whileOpening { await host.handBack(previousPID: 42) }
+        try await host.whileOpening { await host.handBack(previousPID: 42) { true } }
         XCTAssertEqual(calls.all.map(\.tool), ["bring_to_front", "end_session"])
         XCTAssertEqual(calls.all.first?.payload["window_id"] as? Int, 101)
         XCTAssertEqual(calls.all.first?.payload["pid"] as? Int, 42)
@@ -416,15 +416,15 @@ final class DesktopAppInstallationTests: XCTestCase {
         let calls = DriverCalls()
         final class Fallbacks: @unchecked Sendable { var pids: [Int32] = [] }
         let fallbacks = Fallbacks()
-        let host = DesktopHandBackHost(ownPID: 42, fallback: { fallbacks.pids.append($0) })
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { pid, _ in fallbacks.pids.append(pid) })
         host.driver = handBackDriver(calls)
-        try await host.whileOpening { await host.handBack(previousPID: 7) }
+        try await host.whileOpening { await host.handBack(previousPID: 7) { true } }
         XCTAssertTrue(calls.all.isEmpty)
         XCTAssertEqual(fallbacks.pids, [7])
     }
 
     func testHandBackHostIsClearedAfterTheOpenReturnsOrThrows() async throws {
-        let host = DesktopHandBackHost(ownPID: 42, fallback: { _ in })
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { _, _ in })
         host.driver = handBackDriver(DriverCalls())
         var seen: DesktopAppConversation.Target?
         try await host.whileOpening { seen = host.target }
@@ -435,6 +435,124 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertNil(host.target)
     }
 
+    func testWindowScanStopsAtItsDeadlineWhenEachElementReadIsSlow() {
+        let clock = AdvancingClock()
+        let start = clock.now, budget = Duration.seconds(1), perRead = Duration.milliseconds(500)
+        var reads = 0
+        let found = Client.scanWindows(Array(repeating: 0, count: 10), until: start.advanced(by: budget), clock: clock) { _ in
+            reads += 1
+            clock.advance(by: perRead)
+            return false
+        }
+        XCTAssertFalse(found)
+        XCTAssertLessThanOrEqual(start.duration(to: clock.now), budget + perRead)
+        XCTAssertEqual(reads, 2)
+        XCTAssertFalse(Client.scanWindows([1], until: clock.now, clock: clock) { _ in true }, "No read once the deadline has passed")
+        XCTAssertTrue(Client.scanWindows([0, 1], until: clock.now.advanced(by: budget), clock: clock) { $0 == 1 })
+    }
+
+    func testWindowPollPassesItsRemainingBudgetToEachRead() async throws {
+        let clock = AdvancingClock()
+        var budgets: [Duration] = []
+        _ = try await Client.windowAppeared(within: .seconds(1), clock: clock) { budget in
+            budgets.append(budget)
+            clock.advance(by: .milliseconds(450))
+            return false
+        }
+        XCTAssertEqual(budgets, [.seconds(1), .milliseconds(450)])
+    }
+
+    func testHandBackValidityNeedsTheTargetInFrontAndNoThirdApp() {
+        XCTAssertTrue(Client.handBackStillValid(watchState([2])))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2, 3], front: 3)))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2, 3])))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2, 1], front: 1)))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2], previousRunning: false)))
+    }
+
+    /// The world the suspended hand-back sees: activations and the front app, changed by the test.
+    private final class FrontWorld: @unchecked Sendable {
+        private let lock = NSLock()
+        private var activations: [Int32] = [2], front: Int32 = 2
+        var fallbacks: [Int32] { lock.withLock { recordedFallbacks } }
+        private var recordedFallbacks: [Int32] = []
+        func activate(_ pid: Int32) { lock.withLock { activations.append(pid); front = pid } }
+        func fellBack(_ pid: Int32) { lock.withLock { recordedFallbacks.append(pid) } }
+        var state: Client.FrontWatchState {
+            lock.withLock { .init(previousPID: 1, targetWasActive: false, activations: activations, frontmostPID: front, targetPID: 2, previousRunning: true) }
+        }
+    }
+
+    /// Holds the driver's bring_to_front call until the test releases it.
+    private actor DriverGate {
+        private var entered = false, released: Bool?
+        private var enteredWaiter: CheckedContinuation<Void, Never>?
+        private var releaseWaiter: CheckedContinuation<Bool, Never>?
+        func enter() async -> Bool {
+            entered = true
+            enteredWaiter?.resume(); enteredWaiter = nil
+            if let released { return released }
+            return await withCheckedContinuation { releaseWaiter = $0 }
+        }
+        func waitUntilEntered() async {
+            if entered { return }
+            await withCheckedContinuation { enteredWaiter = $0 }
+        }
+        func release(succeeding: Bool) {
+            released = succeeding
+            releaseWaiter?.resume(returning: succeeding); releaseWaiter = nil
+        }
+    }
+
+    private func suspendedHandBack(_ during: @escaping @Sendable (FrontWorld, AdvancingClock) -> Void, succeeding: Bool) async throws -> (calls: [String], world: FrontWorld) {
+        let world = FrontWorld(), clock = AdvancingClock(), gate = DriverGate(), calls = DriverCalls()
+        let driver = DesktopAppConversation(executable: URL(fileURLWithPath: "/fixture/cua-driver"), runProcess: { _, arguments, _, _, _ in
+            calls.record(arguments[1], [:])
+            guard arguments[1] == "bring_to_front" else { return .init(status: 0, stdout: "{}") }
+            guard await gate.enter() else { return .init(status: 1, stdout: "") }
+            world.activate(1)
+            return .init(status: 0, stdout: #"{"activated":true,"pid":42,"window_id":101,"exact_window_effect":{"verified":true}}"#)
+        }, captureHostWindow: { .init(pid: 42, window: 101) })
+        let host = DesktopHandBackHost(ownPID: 1, fallback: { pid, _ in world.fellBack(pid) })
+        host.driver = driver
+        let watch = Task { @MainActor in
+            try await host.whileOpening {
+                try await Client.awaitHandBack(after: .seconds(5), clock: clock, state: { world.state }, handBack: { pid, stillValid in
+                    await host.handBack(previousPID: pid, stillValid: stillValid)
+                })
+            }
+        }
+        await gate.waitUntilEntered()
+        during(world, clock)
+        await gate.release(succeeding: succeeding)
+        try await watch.value
+        return (calls.all.map(\.tool), world)
+    }
+
+    func testSwitchToAnotherAppDuringAFailedDriverHandBackSkipsTheFallback() async throws {
+        let result = try await suspendedHandBack({ world, _ in world.activate(3) }, succeeding: false)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testDeadlinePassingDuringAFailedDriverHandBackSkipsTheFallback() async throws {
+        let result = try await suspendedHandBack({ _, clock in clock.advance(by: .seconds(6)) }, succeeding: false)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testSuspendedDriverHandBackThatSucceedsHandsBackOnce() async throws {
+        let result = try await suspendedHandBack({ _, _ in }, succeeding: true)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testFailedDriverHandBackFallsBackWhileTheWatchIsStillValid() async throws {
+        let result = try await suspendedHandBack({ _, _ in }, succeeding: false)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [1])
+    }
+
     private func handBackResult(_ states: [Client.FrontWatchState]) async throws -> [Int32] {
         final class Box: @unchecked Sendable { var pids: [Int32] = [] }
         let box = Box()
@@ -442,7 +560,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         try await Client.awaitHandBack(after: .seconds(5), clock: AdvancingClock(), state: {
             defer { checks += 1 }
             return states[min(checks, states.count - 1)]
-        }, handBack: { pid in box.pids.append(pid) })
+        }, handBack: { pid, _ in box.pids.append(pid) })
         return box.pids
     }
 

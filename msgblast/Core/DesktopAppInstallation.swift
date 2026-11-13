@@ -26,10 +26,14 @@ struct DesktopAppInstallationClient: Sendable {
 
     /// Gives the front back to the app that had it before a background open. Called up to
     /// `maxHandBacks` times per open, each time the guarded watch sees the target take the front.
-    typealias FrontHandBack = @MainActor @Sendable (_ previousPID: Int32) async -> Void
+    /// The hand-back may suspend, so it must call `stillValid` right before each action and do
+    /// nothing once it returns false: by then another app came forward, the target is no
+    /// longer in front, or the watch deadline has passed.
+    typealias FrontHandBack = @MainActor @Sendable (_ previousPID: Int32, _ stillValid: @MainActor () -> Bool) async -> Void
 
     /// Best effort only: macOS may ignore an activation requested from the background.
-    static let activatePrevious: FrontHandBack = { pid in
+    static let activatePrevious: FrontHandBack = { pid, stillValid in
+        guard stillValid() else { return }
         NSRunningApplication(processIdentifier: pid)?.activate(options: [])
     }
 
@@ -71,9 +75,7 @@ struct DesktopAppInstallationClient: Sendable {
     /// takes the front again it is handed back again, up to `maxHandBacks` times. Any
     /// activation by an app other than ChatGPT or the previous app cancels for good.
     static func handBackDecision(_ state: FrontWatchState) -> HandBackDecision {
-        guard let previous = state.previousPID, !state.targetWasActive, state.previousRunning,
-              previous != state.targetPID else { return .cancel }
-        guard state.activations.allSatisfy({ $0 == state.targetPID || $0 == previous }) else { return .cancel }
+        guard let previous = state.previousPID, watchIntact(state) else { return .cancel }
         guard state.handBacks < maxHandBacks else { return .done }
         let targetActivations = state.activations.filter { $0 == state.targetPID }.count
         if state.frontmostPID != nil, state.frontmostPID == state.targetPID, targetActivations > state.handBacks { return .handBack }
@@ -81,12 +83,25 @@ struct DesktopAppInstallationClient: Sendable {
         return .wait
     }
 
+    /// True while only the target and the previous app have come forward since the start and
+    /// the previous app can still take the front back.
+    static func watchIntact(_ state: FrontWatchState) -> Bool {
+        guard let previous = state.previousPID, !state.targetWasActive, state.previousRunning,
+              previous != state.targetPID else { return false }
+        return state.activations.allSatisfy { $0 == state.targetPID || $0 == previous }
+    }
+
+    /// Re-checked by an approved hand-back right before it acts.
+    static func handBackStillValid(_ state: FrontWatchState) -> Bool {
+        watchIntact(state) && state.frontmostPID != nil && state.frontmostPID == state.targetPID
+    }
+
     /// The effects of a background open, injected so the order of steps can be tested.
     struct BackgroundOpenSteps {
         var running: Bool
         var hidden: Bool
         var unhide: @MainActor () -> Void
-        var readWindow: @MainActor () async -> Bool
+        var readWindow: @MainActor (_ budget: Duration) async -> Bool
         var open: @MainActor () async throws -> Void
         var afterOpen: @MainActor () async -> Void
     }
@@ -107,10 +122,10 @@ struct DesktopAppInstallationClient: Sendable {
     }
 
     @MainActor static func windowAppeared<C: Clock>(within timeout: Duration, interval: Duration = .milliseconds(100), clock: C,
-                                                    read: @MainActor () async -> Bool) async throws -> Bool where C.Duration == Duration {
+                                                    read: @MainActor (_ budget: Duration) async -> Bool) async throws -> Bool where C.Duration == Duration {
         let deadline = clock.now.advanced(by: timeout)
         while true {
-            let found = await read()
+            let found = await read(clock.now.duration(to: deadline))
             try Task.checkCancellation()
             if found { return true }
             guard clock.now < deadline else { return false }
@@ -129,7 +144,7 @@ struct DesktopAppInstallationClient: Sendable {
         let processID = target?.processIdentifier
         try await openInBackground(.init(running: target != nil, hidden: target?.isHidden == true,
                                          unhide: { target?.unhide() },
-                                         readWindow: { await standardWindow(processID: processID) },
+                                         readWindow: { await standardWindow(processID: processID, budget: $0) },
                                          open: { try await openApplication(url, activates: false) },
                                          afterOpen: {
             try? await awaitHandBack(after: .seconds(5), state: { watch.state(targetPID: runningApplication(for: url)?.processIdentifier) },
@@ -149,22 +164,35 @@ struct DesktopAppInstallationClient: Sendable {
         }
     }
 
-    @MainActor private static func standardWindow(processID: Int32?) async -> Bool {
+    @MainActor private static func standardWindow(processID: Int32?, budget: Duration) async -> Bool {
         guard let processID else { return false }
-        return await Task.detached { Self.standardWindowSync(processID: processID) }.value
+        let deadline = ContinuousClock.now.advanced(by: budget)
+        return await Task.detached { Self.standardWindowSync(processID: processID, deadline: deadline) }.value
     }
 
-    private nonisolated static func standardWindowSync(processID: Int32) -> Bool {
+    private nonisolated static func standardWindowSync(processID: Int32, deadline: ContinuousClock.Instant) -> Bool {
+        guard ContinuousClock.now < deadline else { return false }
         var value: CFTypeRef?
         let application = AXUIElementCreateApplication(processID)
         AXUIElementSetMessagingTimeout(application, 0.5)
         guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return false }
-        return windows.contains { window in
+        return scanWindows(windows, until: deadline, clock: ContinuousClock()) { window in
             var subrole: CFTypeRef?
             AXUIElementSetMessagingTimeout(window, 0.5)
             return AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole) == .success && subrole as? String == kAXStandardWindowSubrole
         }
+    }
+
+    /// Reads windows one at a time and gives up once the deadline has passed, so a slow app
+    /// costs at most one element read beyond the budget.
+    nonisolated static func scanWindows<Element, C: Clock>(_ windows: [Element], until deadline: C.Instant, clock: C,
+                                                           isStandard: (Element) -> Bool) -> Bool {
+        for window in windows {
+            guard clock.now < deadline else { return false }
+            if isStandard(window) { return true }
+        }
+        return false
     }
 
     /// ChatGPT brings itself forward on launch and on a reopen event even when asked not to,
@@ -177,9 +205,10 @@ struct DesktopAppInstallationClient: Sendable {
     /// seconds after the open is not handed back; a deliberate switch to ChatGPT within those
     /// five seconds is undone, while a switch to any other app cancels the hand-back for good.
     /// A window on another Space is missing from the accessibility window list, so it is
-    /// reopened and flashes too.
+    /// reopened and flashes too. An approved hand-back re-checks the watch before each action,
+    /// so nothing acts after a switch to another app or after the five seconds have passed.
     @MainActor static func awaitHandBack<C: Clock>(after timeout: Duration, interval: Duration = .milliseconds(50), clock: C = ContinuousClock(),
-                                                   state: @MainActor () -> FrontWatchState,
+                                                   state: @escaping @MainActor () -> FrontWatchState,
                                                    handBack: FrontHandBack) async throws where C.Duration == Duration {
         let deadline = clock.now.advanced(by: timeout)
         var handBacks = 0, lastHandBack: C.Instant?
@@ -190,7 +219,7 @@ struct DesktopAppInstallationClient: Sendable {
             switch handBackDecision(current) {
             case .wait: break
             case .handBack:
-                if let previous = current.previousPID { await handBack(previous) }
+                if let previous = current.previousPID { await handBack(previous) { clock.now < deadline && handBackStillValid(state()) } }
                 handBacks += 1
                 lastHandBack = clock.now
             case .cancel, .done: return
@@ -252,7 +281,7 @@ struct DesktopAppInstallationClient: Sendable {
 
     func systemClient(driver: DesktopAppConversation) -> DesktopAppInstallationClient {
         self.driver = driver
-        return .system(handBack: { [self] pid in await handBack(previousPID: pid) })
+        return .system(handBack: { [self] pid, stillValid in await handBack(previousPID: pid, stillValid: stillValid) })
     }
 
     func whileOpening(_ open: () async throws -> Void) async throws {
@@ -261,13 +290,18 @@ struct DesktopAppInstallationClient: Sendable {
         try await open()
     }
 
-    func handBack(previousPID: Int32) async {
+    /// Acts only while `stillValid()` holds: it is checked right before the driver call and
+    /// again before the native fallback, so a switch to another app or the watch deadline
+    /// during the driver call stops the hand-back.
+    func handBack(previousPID: Int32, stillValid: @MainActor () -> Bool) async {
         if previousPID == ownPID, let target, let driver {
+            guard stillValid() else { return }
             let session = "msgblast-handback-\(UUID().uuidString)"
             let activated = (try? await driver.activate(target, session: session)) != nil
             await driver.endSession(session)
             if activated { return }
         }
-        await fallback(previousPID)
+        guard stillValid() else { return }
+        await fallback(previousPID, stillValid)
     }
 }
