@@ -748,7 +748,8 @@ struct AppSettingsView: View {
     @State private var page = SettingsPage.general
 
     var body: some View {
-        NavigationSplitView {
+        // Settings keeps its sidebar open: no collapse toggle, no hidden state.
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: Binding<SettingsPage?>(get: { page }, set: { if let value = $0 { page = value } })) {
                 sidebarRow(.general)
                 Section("Connections") {
@@ -791,6 +792,7 @@ struct AppSettingsView: View {
                 .padding(.horizontal, 16).padding(.bottom, 12)
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 5) {
