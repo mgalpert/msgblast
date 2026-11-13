@@ -90,5 +90,7 @@ final class BusinessChoiceTests: XCTestCase {
         let phone = Chat(id: "any;-;+15555550123", handle: "+15555550123", lastActivity: 0)
         XCTAssertEqual(phone.messagesURL?.absoluteString, "imessage:+15555550123")
         XCTAssertNil(Chat(id: "any;-;group", handle: "", lastActivity: 0).messagesURL)
+        let business = Chat(id: "any;-;" + address, handle: address, lastActivity: 0, businessConversation: true)
+        XCTAssertEqual(business.messagesURL?.absoluteString, "imessage://?chat=any;-;" + address)
     }
 }

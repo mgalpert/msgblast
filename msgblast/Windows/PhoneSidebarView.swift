@@ -108,7 +108,7 @@ struct PhoneSidebarCard: View {
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-        .onReceive(tick) { now = $0; refreshOffer() }
+        .onReceive(tick) { now = $0; replaceExpiredOffer() }
         .onAppear { refreshOffer() }
         .onChange(of: wantsOffer) { _, wants in
             if wants { refreshOffer() } else if pairing.offer != nil { pairing.closeOffer() }
@@ -149,6 +149,10 @@ struct PhoneSidebarCard: View {
                     Text("Key \(fingerprint)").font(.caption.monospaced()).textSelection(.enabled)
                         .accessibilityLabel("Mac key fingerprint \(fingerprint). The phone shows the same before pairing.")
                 }
+            } else if pairing.offer == nil {
+                // Closed elsewhere (Settings › Cancel, Forget): wait to be asked again.
+                Button("Show pairing code") { refreshOffer() }.controlSize(.small)
+                    .accessibilityIdentifier("sidebar-show-pairing-code")
             } else {
                 Color.clear.aspectRatio(1, contentMode: .fit).frame(maxWidth: 168).padding(6)
                     .overlay { ProgressView().controlSize(.small) }
@@ -173,10 +177,17 @@ struct PhoneSidebarCard: View {
         }
     }
 
-    /// Opens a code when one is wanted and none is valid; an expired code is replaced on the next tick.
+    /// Opens a code when one is wanted and none is valid.
     private func refreshOffer() {
         guard wantsOffer, !pairing.isOfferValid else { return }
         _ = try? service.showPairingCode()
+    }
+
+    /// Replaces an expired code, but only while msgblast is the active app, so a hidden or
+    /// background window does not keep minting codes. A code closed on purpose stays closed.
+    private func replaceExpiredOffer() {
+        guard pairing.offer != nil, NSApplication.shared.isActive else { return }
+        refreshOffer()
     }
 }
 

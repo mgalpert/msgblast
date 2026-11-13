@@ -26,6 +26,11 @@ public struct Chat: Codable, Identifiable, Hashable, Sendable {
     /// Opens this chat in Messages by its address. macOS 27 no longer resolves
     /// `imessage://?chat=<guid>` for `any;-;` guids and shows an empty New Message window.
     public var messagesURL: URL? {
+        // Business chats keep the guid link they always used; the address form is unproven for them.
+        if businessConversation == true {
+            let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+#?="))
+            return id.addingPercentEncoding(withAllowedCharacters: allowed).flatMap { URL(string: "imessage://?chat=\($0)") }
+        }
         guard !handle.isEmpty else { return nil }
         var parts = URLComponents()
         parts.scheme = "imessage"

@@ -7,8 +7,7 @@ this folder does not change Swift source.
 
 ## How it was captured
 
-Captured November 4, 2026 on Pal's Mac Studio (macOS 27.0.1), never on the
-owner's main Mac. The preview packager built the committed revision with full
+Captured November 4, 2026 on a separate test Mac (macOS 27.0.1). The preview packager built the committed revision with full
 Xcode 27 into the blue fixture app `msgblast Demo phone-sidebar.app`
 (`com.msgblast.demo`, `msgblastDemo` true, updates and telemetry disabled,
 ad-hoc signed; ZIP `msgblast-demo-18362609b4ac-phone-sidebar.zip`, SHA-256

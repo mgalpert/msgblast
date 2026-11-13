@@ -36,9 +36,11 @@ and that choice is remembered.
 4. The Mac stores only the phone's public key, name, and created/last-seen dates.
 
 The sidebar's Phone section shows the same code by itself while it is expanded,
-Remote is on and no phone is paired, replacing an expired code automatically. It
-opens pairing codes only while expanded and closes them when collapsed, so
-Settings → Remote keeps its own **Pair a phone…** flow.
+Remote is on and no phone is paired. It replaces an expired code only while
+msgblast is the active app, and a code closed on purpose (Settings → Cancel,
+Forget) stays closed until you click **Show pairing code**. It opens pairing codes
+only while expanded and closes them when collapsed, so Settings → Remote keeps its
+own **Pair a phone…** flow.
 
 One phone per Mac. **Pair a different phone…** asks for confirmation; the new
 phone replaces the old record only after it pairs. **Forget** disconnects and

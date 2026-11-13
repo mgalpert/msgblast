@@ -140,6 +140,7 @@ struct RemoteOptionControls: View {
                 Toggle("Send iMessages from the phone", isOn: Binding(get: { service.settings.allowMessagesSends }, set: { service.setAllowMessagesSends($0) }))
                     .toggleStyle(.switch).accessibilityIdentifier("sidebar-remote-allow-messages")
                     .help(Self.messagesCaption)
+                    .accessibilityHint(Self.messagesCaption)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Send iMessages from the phone", isOn: Binding(get: { service.settings.allowMessagesSends }, set: { service.setAllowMessagesSends($0) }))
