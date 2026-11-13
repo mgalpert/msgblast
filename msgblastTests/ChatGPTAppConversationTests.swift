@@ -1453,7 +1453,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
             workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
             try JSONEncoder().encode(workspace).write(to: storage)
-            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in })
+            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in })
             // A foreground-capable driver: any lease would capture the msgblast window first.
             let driver = DesktopAppConversation(executable: f.executable, delivery: .foreground, captureHostWindow: {
                 XCTFail("\(kind) sends must not take the foreground"); throw CancellationError()
@@ -1511,7 +1511,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             workspace.attempts = [attempt]
             workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: text)]
             try JSONEncoder().encode(workspace).write(to: storage)
-            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not open an app") })
+            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not open an app") })
             let session = WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
             session.connect(automaticallyRefresh: false)
             XCTAssertTrue(session.isAutomaticallyWaitingForNativeReply)
@@ -1585,7 +1585,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         ]
         try JSONEncoder().encode(workspace).write(to: storage)
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) },
-                                                   open: { _ in XCTFail("Recovery must not open an app") })
+                                                   open: { _, _ in XCTFail("Recovery must not open an app") })
         let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
                                       desktopApps: client, chatgptApp: adapter)
         defer { session.beginShutdown() }
@@ -1677,7 +1677,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let first = try XCTUnwrap(f.binding.firstPrompt)
         let receipt = try ChatGPTReplyReceipt(comparisonID: f.binding.comparisonID, initialTitle: f.binding.dedicatedTitle,
                                               firstPrompt: first, prompt: "Follow-up", baseline: [.init(role: .user, text: first)])
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not open an app") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not open an app") })
         for scenario in ["unconfirmed", "cancelled", "wrong binding", "multiple requests", "missing outgoing", "additional message", "duplicate reply", "wrong comparison", "unsupported version"] {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
@@ -1715,7 +1715,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let receipt = try DotsReplyReceipt(comparisonID: f.binding.comparisonID, title: "Example Dot", prompt: "Follow-up",
                                        baseline: [.init(role: .user, text: "previous")], initialUnreadCount: nil)
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) },
-                                                   open: { _ in XCTFail("Recovery must not open an app") })
+                                                   open: { _, _ in XCTFail("Recovery must not open an app") })
         for scenario in ["unconfirmed", "cancelled", "wrong binding", "multiple requests", "missing outgoing", "additional message", "duplicate reply", "wrong comparison", "unsupported version"] {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
@@ -1781,7 +1781,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
         let storage = f.directory.appendingPathComponent("chatgpt-in-flight.json")
         try JSONEncoder().encode(workspace).write(to: storage)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not launch ChatGPT") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not launch ChatGPT") })
         let session = WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
         session.connect(automaticallyRefresh: false)
         let recovery = Task { await session.reconcileChatGPTReplyOnce() }
@@ -1825,7 +1825,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
         let storage = f.directory.appendingPathComponent("in-flight.json")
         try JSONEncoder().encode(workspace).write(to: storage)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not launch ChatGPT") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not launch ChatGPT") })
         let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
         session.connect(automaticallyRefresh: false)
         let recovery = Task { await session.reconcileDotsReplyOnce() }
@@ -1958,7 +1958,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
         workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
         try JSONEncoder().encode(workspace).write(to: storage)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in })
         let driver = DesktopAppConversation(executable: f.executable, delivery: .foreground, captureHostWindow: {
             XCTFail("ChatGPT must not take the foreground"); throw CancellationError()
         })

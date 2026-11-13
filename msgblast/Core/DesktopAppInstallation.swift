@@ -21,7 +21,7 @@ public struct DesktopAppInstallation: Equatable, Sendable {
 
 struct DesktopAppInstallationClient: Sendable {
     var inspect: @MainActor @Sendable (DesktopAppProvider) -> DesktopAppInstallation
-    var open: @MainActor @Sendable (URL) async throws -> Void
+    var open: @MainActor @Sendable (URL, Bool) async throws -> Void
     var isHidden: @MainActor @Sendable (DesktopAppProvider) -> Bool = { _ in false }
 
     static var system: Self {
@@ -30,9 +30,15 @@ struct DesktopAppInstallationClient: Sendable {
             let registered = app.bundleIDs.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first { DesktopAppInstallation.validatedURL($0, for: app) != nil }
             return .resolve(for: app, registeredURL: registered,
                             runningURL: running?.bundleURL, processID: running?.processIdentifier)
-        }, open: { url in
+        }, open: { url, activates in
+            if !activates, let bundleID = Bundle(url: url)?.bundleIdentifier,
+               let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                .first(where: { !$0.isTerminated && $0.isHidden }) {
+                running.unhide()
+                return
+            }
             let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
+            configuration.activates = activates
             _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         }, isHidden: { app in
             app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
@@ -41,6 +47,6 @@ struct DesktopAppInstallationClient: Sendable {
     }
 
     static var demo: Self {
-        .init(inspect: { app in .init(url: URL(fileURLWithPath: "/Demo/\(app.name).app"), processID: 1) }, open: { _ in })
+        .init(inspect: { app in .init(url: URL(fileURLWithPath: "/Demo/\(app.name).app"), processID: 1) }, open: { _, _ in })
     }
 }

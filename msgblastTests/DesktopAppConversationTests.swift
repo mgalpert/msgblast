@@ -877,7 +877,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let fixture = try driver([apps(), windows(), snapshot(grok(reply: "Late answer"), repeating: true)])
         defer { fixture.remove() }
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) },
-                                                   open: { _ in XCTFail("Recovery must not open Grok Bot") })
+                                                   open: { _, _ in XCTFail("Recovery must not open Grok Bot") })
         var workspace = WebWorkspaceState()
         workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep my next draft"
         workspace.desktopConversation = .init(name: "Fixture Bot")
@@ -910,7 +910,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let comparison = UUID()
         let anchor = DesktopAppSnapshot.GrokHistoryAnchor(history: ["You", "Earlier question", "Fixture Bot", "Earlier answer"], bot: "Fixture Bot")
         let receipt = GrokReplyReceipt(comparisonID: comparison, bot: "Fixture Bot", prompt: prompt, anchor: anchor)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not open Grok Bot") })
         for scenario in ["unconfirmed", "cancelled", "wrong bot", "multiple requests", "missing outgoing", "interleaved", "wrong comparison", "unsupported version"] {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.comparisonID = comparison
@@ -1028,7 +1028,7 @@ final class DesktopAppDriverTests: XCTestCase {
         workspace.localConversations[comparison.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: prompt)]
         let storage = fixture.directory.appendingPathComponent("stop-waiting.json")
         try JSONEncoder().encode(workspace).write(to: storage)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not open Grok Bot") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Grok Bot.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not open Grok Bot") })
         let session = WebAgentSession(provider: .grokBotApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture))
         session.connect(automaticallyRefresh: false)
         XCTAssertTrue(session.isAutomaticallyWaitingForNativeReply)
@@ -1108,7 +1108,7 @@ final class DesktopAppDriverTests: XCTestCase {
                 .init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
         }
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) },
-                                                   open: { _ in XCTFail("Recovery must not open Wabi") })
+                                                   open: { _, _ in XCTFail("Recovery must not open Wabi") })
         var workspace = WebWorkspaceState()
         workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep my next draft"
         try workspace.recordWabiConversation(url, for: comparison)
@@ -1135,7 +1135,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let comparison = UUID(), url = wabiURL
         let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
         let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         for scenario in ["unchanged", "edited", "retyped", "legacy", "other comparison"] {
             let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
             defer { fixture.remove() }
@@ -1179,7 +1179,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let earlier: [WabiAppMessage] = [.init(role: .user, text: "Earlier question"), .init(role: .assistant, text: "Earlier reply")]
         let baseline = [WabiAppMessage(role: .assistant, text: "What can I do for you?")] + earlier
         let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         for exact in [true, false] {
             let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
             defer { fixture.remove() }
@@ -1231,7 +1231,7 @@ final class DesktopAppDriverTests: XCTestCase {
             .init(url: url, draft: "", links: [], messages: visible)
         }
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) },
-                                                   open: { _ in XCTFail("Recovery must not launch Wabi") })
+                                                   open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         var state = WebWorkspaceState()
         state.enabled = true; state.comparisonID = comparison
         try state.recordWabiConversation(url, for: comparison)
@@ -1256,7 +1256,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let comparison = UUID(), url = wabiURL
         let baseline: [WabiAppMessage] = [.init(role: .assistant, text: "Welcome")]
         let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: baseline)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         for laterStatus in [WebSendStatus.preparing, .notSent, .observed, .dismissed] {
             let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
             defer { fixture.remove() }
@@ -1300,7 +1300,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let adapter = WabiAppConversation(executable: fixture.executable, timing: .init(stableDuration: .zero)) { _, _ in
             .init(url: url, draft: "", links: [], messages: Array(baseline.prefix(2)) + Array(baseline.dropFirst(3)) + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Answer")])
         }
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         var workspace = WebWorkspaceState()
         workspace.enabled = true; workspace.comparisonID = comparison; workspace.draft = "Keep next draft"
         try workspace.recordWabiConversation(url, for: comparison)
@@ -1332,7 +1332,7 @@ final class DesktopAppDriverTests: XCTestCase {
         json.removeValue(forKey: "messageDigests")
         for key in ["canonicalBaselineDigest", "canonicalReversedBaselineDigest", "canonicalOverlapDigests", "canonicalMessageDigests"] { json.removeValue(forKey: key) }
         let legacy = try JSONDecoder().decode(WabiReplyReceipt.self, from: JSONSerialization.data(withJSONObject: json))
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         for historyMatches in [true, false] {
             let fixture = try driver([apps(.wabi), windows(), snapshot(wabi(), repeating: true)])
             defer { fixture.remove() }
@@ -1367,7 +1367,7 @@ final class DesktopAppDriverTests: XCTestCase {
         defer { fixture.remove() }
         let comparison = UUID(), url = wabiURL
         let receipt = try WabiReplyReceipt(comparisonID: comparison, url: url, prompt: "Question", baseline: [.init(role: .assistant, text: "Welcome")])
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         for scenario in ["cancelled", "wrong binding", "multiple requests", "missing outgoing", "interleaved", "wrong comparison", "unsupported version"] {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.comparisonID = comparison
@@ -1430,7 +1430,7 @@ final class DesktopAppDriverTests: XCTestCase {
             }
             return .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Late answer")])
         }
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         var workspace = WebWorkspaceState()
         workspace.enabled = true; workspace.comparisonID = comparison
         try workspace.recordWabiConversation(url, for: comparison)
@@ -1471,7 +1471,7 @@ final class DesktopAppDriverTests: XCTestCase {
             }
             return .init(url: url, draft: "", links: [], messages: baseline + [.init(role: .user, text: "Question"), .init(role: .assistant, text: "Answer")])
         }
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Wabi") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Wabi") })
         var workspace = WebWorkspaceState()
         workspace.enabled = true; workspace.comparisonID = comparison
         try workspace.recordWabiConversation(url, for: comparison)
@@ -2251,7 +2251,7 @@ final class DesktopAppDriverTests: XCTestCase {
             return try await DesktopAppConversation.execute(executable, arguments, environment, timeout, cancellation)
         }
         let installed = InstalledApp()
-        let client = DesktopAppInstallationClient(inspect: { _ in installed.value }, open: { _ in XCTFail("Discovery must not relaunch an app") })
+        let client = DesktopAppInstallationClient(inspect: { _ in installed.value }, open: { _, _ in XCTFail("Discovery must not relaunch an app") })
         let session = WebAgentSession(provider: .grokBotApp, storageURL: fixture.directory.appendingPathComponent("state.json"), fixture: false,
                                       museApp: .shared, desktopApps: client, desktopDriver: adapter(fixture, runProcess: run))
         defer { session.beginShutdown() }
@@ -3658,7 +3658,7 @@ final class DesktopAppDriverTests: XCTestCase {
             let fixture = try driver([apps(.muse), window])
             defer { fixture.remove() }
             let installed = InstalledApp()
-            let client = DesktopAppInstallationClient(inspect: { _ in installed.installation }, open: { _ in XCTFail("A check must not launch the app") })
+            let client = DesktopAppInstallationClient(inspect: { _ in installed.installation }, open: { _, _ in XCTFail("A check must not launch the app") })
             let session = WebAgentSession(provider: .museApp, storageURL: fixture.directory.appendingPathComponent("state.json"),
                                           fixture: false, museApp: museAdapter(fixture), desktopApps: client, desktopDriver: try readinessDriver(fixture, app: .muse))
             session.setEnabled(true)
@@ -3924,7 +3924,7 @@ final class DesktopAppDriverTests: XCTestCase {
         let fixture = try driver([])
         defer { fixture.remove() }
         let owner = UUID(), thread = UUID(), other = UUID()
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Muse") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Muse") })
         for scenario in ["unconfirmed", "cancelled", "wrong thread", "wrong comparison", "wrong request", "missing outgoing", "interleaved", "multiple requests", "unsupported version"] {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.comparisonID = owner
@@ -3997,7 +3997,7 @@ final class DesktopAppDriverTests: XCTestCase {
         workspace.localConversations[owner.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
         let storage = fixture.directory.appendingPathComponent("muse-in-flight.json")
         try JSONEncoder().encode(workspace).write(to: storage)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _ in XCTFail("Recovery must not launch Muse") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Muse.app"), processID: 4242) }, open: { _, _ in XCTFail("Recovery must not launch Muse") })
         let session = WebAgentSession(provider: .museApp, storageURL: storage, fixture: false, museApp: adapter, desktopApps: client)
         session.connect(automaticallyRefresh: false)
         let recovery = Task { await session.reconcileMuseReplyOnce() }

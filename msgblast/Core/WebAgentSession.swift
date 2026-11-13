@@ -1369,7 +1369,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let url = desktopInstallation.url else { return }
         loading = true
         defer { loading = false }
-        do { try await desktopApps.open(url); refreshDesktopInstallation() }
+        do { try await desktopApps.open(url, true); refreshDesktopInstallation() }
         catch { desktopCheckFailed(error); self.error = error.localizedDescription }
     }
 
@@ -1414,7 +1414,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 } catch is CancellationError { throw CancellationError() }
                 catch { try checkCurrent() }
             }
-            try await desktopApps.open(url)
+            try await desktopApps.open(url, app.requiresForegroundSubmission)
             try checkCurrent()
             let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             repeat {

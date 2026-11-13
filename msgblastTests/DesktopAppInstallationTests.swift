@@ -6,12 +6,14 @@ final class DesktopAppInstallationTests: XCTestCase {
     @MainActor private final class Apps {
         var installation = DesktopAppInstallation(url: nil, processID: nil)
         var opened: [URL] = []
+        var activations: [Bool] = []
         var hidden = false
-        var openAction: (@MainActor (URL) async throws -> Void)?
+        var openAction: (@MainActor (URL, Bool) async throws -> Void)?
         var client: DesktopAppInstallationClient {
-            .init(inspect: { _ in self.installation }, open: {
-                self.opened.append($0)
-                try await self.openAction?($0)
+            .init(inspect: { _ in self.installation }, open: { url, activates in
+                self.opened.append(url)
+                self.activations.append(activates)
+                try await self.openAction?(url, activates)
             }, isHidden: { _ in self.hidden })
         }
     }
@@ -162,7 +164,7 @@ final class DesktopAppInstallationTests: XCTestCase {
             for provider in WebProvider.desktopProviders {
                 let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + provider.rawValue + ".app")
                 apps.installation = .init(url: url, processID: running ? 42 : nil)
-                apps.openAction = { _ in apps.installation = .init(url: url, processID: 42) }
+                apps.openAction = { _, _ in apps.installation = .init(url: url, processID: 42) }
                 let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(UUID().uuidString), fixture: true, museApp: .shared, desktopApps: apps.client)
                 defer { session.beginShutdown() }
                 session.setEnabled(true)
@@ -183,13 +185,33 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
+    func testNativePreparationUsesProviderForegroundRequirementWhenAppIsClosedOrHidden() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for hidden in [false, true] {
+            for provider in [WebProvider.chatgptApp, .dotsApp, .claudeApp] {
+                let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/\(provider.rawValue).app")
+                apps.installation = .init(url: url, processID: hidden ? 42 : nil)
+                apps.hidden = hidden
+                apps.openAction = { _, _ in apps.installation = .init(url: url, processID: 42) }
+                let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(UUID().uuidString),
+                                              fixture: true, museApp: .shared, desktopApps: apps.client)
+                defer { session.beginShutdown() }
+                session.setEnabled(true)
+                let ready = await session.prepareDesktopConnection()
+                XCTAssertTrue(ready, provider.name)
+                XCTAssertEqual(apps.activations, [provider == .claudeApp], provider.name)
+            }
+        }
+    }
+
     func testEveryNativeProviderLaunchesOnceFromAnExplicitConversationStart() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         for provider in WebProvider.desktopProviders {
             let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + provider.rawValue + ".app")
             apps.installation = .init(url: url, processID: nil)
-            apps.openAction = { _ in apps.installation = .init(url: url, processID: 42) }
+            apps.openAction = { _, _ in apps.installation = .init(url: url, processID: 42) }
             let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: apps.client)
             session.setEnabled(true)
             session.updateState { $0.desktopConversation = .init(name: provider == .grokBotApp ? "Demo Bot" : provider.name) }
@@ -214,7 +236,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: appURL, processID: nil)
-        apps.openAction = { _ in apps.installation = .init(url: appURL, processID: 123) }
+        apps.openAction = { _, _ in apps.installation = .init(url: appURL, processID: 123) }
         let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"), fixture: true,
                                       museApp: .shared, desktopApps: apps.client)
         defer { session.beginShutdown() }
@@ -259,7 +281,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: appURL, processID: 42)
-        apps.openAction = { _ in try Data().write(to: directory.appendingPathComponent("opened")) }
+        apps.openAction = { _, _ in try Data().write(to: directory.appendingPathComponent("opened")) }
         let driver = DesktopAppConversation(executable: executable)
         let muse = MuseAppConversation(executable: executable, readNative: { _ in
             throw DesktopAppError.unavailable("Fixture sign-in required")
@@ -287,7 +309,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: url, processID: 42)
         apps.hidden = true
-        apps.openAction = { _ in apps.hidden = false }
+        apps.openAction = { _, _ in apps.hidden = false }
         let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"),
                                       fixture: false, museApp: .shared, desktopApps: apps.client,
                                       desktopDriver: DesktopAppConversation(executable: executable))
@@ -332,7 +354,7 @@ final class DesktopAppInstallationTests: XCTestCase {
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
             let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + app.name + ".app")
             apps.installation = .init(url: url, processID: 42)
-            apps.openAction = { _ in try Data().write(to: directory.appendingPathComponent("opened")) }
+            apps.openAction = { _, _ in try Data().write(to: directory.appendingPathComponent("opened")) }
             let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent("state.json"),
                                           fixture: false, museApp: .shared, desktopApps: apps.client,
                                           desktopDriver: DesktopAppConversation(executable: executable))
@@ -357,7 +379,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: appURL, processID: nil)
-        apps.openAction = { _ in throw DesktopAppError.unavailable("Fixture launch refused") }
+        apps.openAction = { _, _ in throw DesktopAppError.unavailable("Fixture launch refused") }
         let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"), fixture: true,
                                       museApp: .shared, desktopApps: apps.client)
         defer { session.beginShutdown() }
@@ -370,7 +392,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertEqual(session.state.draft, "Keep this prompt")
         XCTAssertTrue(session.state.attempts.isEmpty)
         XCTAssertTrue(session.error?.contains("Fixture launch refused") == true)
-        apps.openAction = { _ in apps.installation = .init(url: appURL, processID: 123) }
+        apps.openAction = { _, _ in apps.installation = .init(url: appURL, processID: 123) }
         let sent = await session.send("Keep this prompt", comparisonID: comparison)
         XCTAssertEqual(sent?.status, .observed)
         XCTAssertEqual(apps.opened, [appURL, appURL])
@@ -384,7 +406,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: appURL, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let launched = expectation(description: "Launch started")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             await withCheckedContinuation { release = $0; launched.fulfill() }
             apps.installation = .init(url: appURL, processID: 123)
         }
@@ -421,7 +443,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: url, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let started = expectation(description: "First app launch held")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             if apps.opened.count == 1 { await withCheckedContinuation { release = $0; started.fulfill() } }
             apps.installation = .init(url: url, processID: 42)
         }
@@ -458,7 +480,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: url, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let started = expectation(description: "App launch held before comparison changed")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             await withCheckedContinuation { release = $0; started.fulfill() }
             apps.installation = .init(url: url, processID: 42)
         }
@@ -490,7 +512,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: url, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let started = expectation(description: "Direct send app launch held")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             await withCheckedContinuation { release = $0; started.fulfill() }
             apps.installation = .init(url: url, processID: 42)
         }
