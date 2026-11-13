@@ -36,9 +36,10 @@ struct OutsideAgentsSettingsView: View {
             }
             Text("Any other MCP app on this Mac can start msgblast with this command, so it needs no URL. Agents on other devices use the MCP server URL below.")
                 .font(.caption).foregroundStyle(.secondary)
-            TailnetControls(tailnet: listener.tailnet)
             AgentSendsSettings(activity: activity)
         }
+        // Always shown: turning Tailscale on also turns on outside agents, which it needs.
+        TailnetControls(tailnet: listener.tailnet, localOn: listener.enabled) { listener.enabled = true }
         ForEach(gate.approvals.keys.sorted(), id: \.self) { client in
             HStack {
                 Picker(client, selection: Binding(get: { gate.approvals[client] ?? .readOnly }, set: { gate.change($0, for: client) })) {
@@ -81,16 +82,22 @@ struct OutsideAgentsSettingsView: View {
 /// Any MCP client on the tailnet can connect; each agent gets its own key and its own approval.
 private struct TailnetControls: View {
     @ObservedObject var tailnet: AgentControlTailnetListener
+    /// Whether "Let agents on this Mac use msgblast" is on. Tailscale only listens while it is.
+    let localOn: Bool
+    let turnOnLocal: () -> Void
     @State private var confirmingNewKey: String?
     @State private var newName = ""
     @State private var addError: String?
 
     var body: some View {
         Group {
-            Toggle("Let agents on other devices use msgblast over Tailscale", isOn: Binding(get: { tailnet.enabled }, set: { tailnet.enabled = $0 }))
+            Toggle("Let agents on other devices use msgblast over Tailscale", isOn: Binding(get: { localOn && tailnet.enabled }, set: { on in
+                if on, !localOn { turnOnLocal() }
+                tailnet.enabled = on
+            }))
                 .disabled(tailnet.loadFailed)
                 .accessibilityIdentifier("outside-agents-tailnet-enabled")
-            if !tailnet.enabled {
+            if !(localOn && tailnet.enabled) {
                 Text("Turn this on to get an MCP server URL that agents on other devices, such as Grok Bot or Claude Code on another computer, can reach over your tailnet.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -107,7 +114,7 @@ private struct TailnetControls: View {
                     .accessibilityIdentifier("outside-agents-serve-command")
             }
             urlRow
-            if tailnet.enabled { agentRows }
+            if localOn, tailnet.enabled { agentRows }
             if let error = tailnet.error { Text(error).font(.caption).foregroundStyle(.red) }
         }
         .onAppear { tailnet.refreshStatus() }
@@ -123,7 +130,7 @@ private struct TailnetControls: View {
     }
 
     @ViewBuilder private var urlRow: some View {
-        if tailnet.enabled, let url = tailnet.serverURL {
+        if localOn, tailnet.enabled, let url = tailnet.serverURL {
             LabeledContent("MCP server URL") {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(url)
