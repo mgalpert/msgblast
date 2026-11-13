@@ -128,6 +128,7 @@ final class RemoteService: ObservableObject {
                                       macName: { [weak self] in self?.macName ?? "Mac" }, isLocked: { power.locked }, refreshJournal: { projection.refreshNow() })
             projection.onEvents = { [weak server] in server?.broadcast($0) }
             server.onClientChange = { [weak self] connected in self?.clientChanged(connected) }
+            server.onPaired = { [weak self] in self?.setAllowMessagesSends(true) }
             server.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
             self.host = host; self.projection = projection; self.server = server
             running = true
