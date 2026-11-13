@@ -149,8 +149,26 @@ actor MuseAppConversation {
         let target = try await driver.target(.muse)
         // Let the driver initialize the exact window's accessibility surface
         // before the independent native identity and draft read.
-        _ = try await snapshot(target, session: session)
-        try empty(await observe(target))
+        let state = try await snapshot(target, session: session)
+        // A side chat can stop exposing its composer (seen after Muse's window moved
+        // between displays). Return to Main chat once, in the background; nothing is typed.
+        let read = readNative
+        if (try? await Task.detached { try read(target) }.value) == nil, let back = Self.mainChatControl(state) {
+            _ = try await driver.call("click", ["element_token": back, "session": session, "delivery_mode": "background"],
+                                      numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
+        }
+        do { try empty(await observe(target)) }
+        catch let error as DesktopAppError { throw error }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw DesktopAppError.unavailable("Muse's message box could not be read. Open a chat in Muse so its message box shows, then click Connect again.") }
+    }
+
+    static func mainChatControl(_ state: DesktopAppSnapshot) -> String? {
+        for label in ["Back to main chat", "Main chat"] {
+            let matches = state.body.filter { $0.role == "AXButton" && $0.label == label && $0.enabled != false && $0.element_token != nil }
+            if matches.count == 1 { return matches[0].element_token }
+        }
+        return nil
     }
 
     static func firstPrompt(_ prompt: String, requestID: UUID) -> String {

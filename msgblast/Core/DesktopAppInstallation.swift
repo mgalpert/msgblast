@@ -31,9 +31,12 @@ struct DesktopAppInstallationClient: Sendable {
             return .resolve(for: app, registeredURL: registered,
                             runningURL: running?.bundleURL, processID: running?.processIdentifier)
         }, open: { url in
+            // App agents work in the background: launch or reopen without taking focus,
+            // and show a hidden app's windows without activating it.
             let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+            configuration.activates = false
+            let app = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+            if app.isHidden { app.unhide() }
         }, isHidden: { app in
             app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
                 .contains { !$0.isTerminated && $0.isHidden }

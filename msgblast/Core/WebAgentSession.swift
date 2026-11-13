@@ -1378,7 +1378,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do {
             try await launchDesktopAppForConversation()
             return true
-        } catch is CancellationError { return false }
+        } catch is CancellationError {
+            // Only removal or shutdown ends a Connect quietly; any other interruption says so.
+            if isEnabled, !shuttingDown, let app = provider.desktopApp {
+                desktopReady = false
+                desktopCheckFailed(WebSessionFailure.notReady("The \(app.name) check was interrupted. Click Connect to try again."))
+                updateNativeSnapshot()
+            }
+            return false
+        }
         catch {
             desktopReady = false
             desktopCheckFailed(error)
@@ -1505,7 +1513,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         do {
             try await waitForDesktopRefresh()
             guard isEnabled else { throw CancellationError() }
-            let binding = try await DesktopAppWorkflow.connection(app, driver: fixture ? nil : desktopDriver) { () async throws -> DesktopConversationBinding in
+            // Muse's check and recovery run in the background, so a failed read is never
+            // retried by bringing Muse to the front.
+            let binding = try await DesktopAppWorkflow.connection(app, driver: fixture || app == .muse ? nil : desktopDriver) { () async throws -> DesktopConversationBinding in
                 if app == .muse {
                     if !fixture { try await museApp.checkAvailable() }
                     return DesktopConversationBinding(name: "Muse")
