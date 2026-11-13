@@ -5,12 +5,18 @@ import msgblastRemoteProtocol
 
 @MainActor
 final class ConnectionTests: XCTestCase {
+    /// Generous wall-clock bound for conditions the fake Mac reaches in milliseconds.
+    /// A count of short sleeps stretches with runner load; a deadline only slows a loaded run.
+    private static let waitLimit: Duration = .seconds(10)
+    /// Returns once `until` holds or the deadline passes; the caller's assertions decide.
     private func settle(_ until: () -> Bool) async {
-        for _ in 0..<200 { if until() { return }; try? await Task.sleep(for: .milliseconds(5)) }
+        let deadline = ContinuousClock.now + Self.waitLimit
+        while !until(), !Task.isCancelled, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(5)) }
     }
-    /// Sleeps in 5 ms steps (at most 200) while `condition` holds; cancellation throws.
+    /// Sleeps in 5 ms steps while `condition` holds, up to the deadline; cancellation throws.
     private func pollWhile(_ condition: () -> Bool) async throws {
-        for _ in 0..<200 where condition() { try await Task.sleep(for: .milliseconds(5)) }
+        let deadline = ContinuousClock.now + Self.waitLimit
+        while condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     }
     private func make(_ mac: FakeMac, paired: PairedMac? = nil) -> (MacConnection, () -> [RemoteClientDriver.Event], () -> PairedMac?) {
         var saved: PairedMac? = paired
@@ -87,7 +93,10 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(mac.sessions.dropFirst(before).contains { $0.sinceSeq == 10 }, "Resume from the stored seq")
         await settle { mac.commands.contains { $0.action == .queryCommand(clientCommandID: pending) } }
         XCTAssertTrue(mac.commands.contains { $0.action == .queryCommand(clientCommandID: pending) }, "Unconfirmed commands are queried, never resent")
-        XCTAssertTrue(events().contains { if case .events = $0 { true } else { false } })
+        // The Mac records the query before its `.events` reply to the resume reaches the phone
+        // (one more async delivery), so wait for the reply rather than asserting at once.
+        await settle { events().contains { if case .events = $0 { true } else { false } } }
+        XCTAssertTrue(events().contains { if case .events = $0 { true } else { false } }, "The resume from seq 10 is answered with events, not a snapshot")
     }
 
     func testLockedMacAndForgottenPhone() async throws {
