@@ -97,6 +97,15 @@ private struct TailnetControls: View {
             ForEach(tailnet.readiness, id: \.self) { line in
                 Text(line).font(.caption).foregroundStyle(.secondary)
             }
+            if let command = tailnet.serveCommand {
+                LabeledContent("Tailscale Serve") {
+                    HStack {
+                        Button("Copy command") { copy(command) }
+                        Button("Check again") { tailnet.refreshStatus() }
+                    }
+                }
+                    .accessibilityIdentifier("outside-agents-serve-command")
+            }
             urlRow
             if tailnet.enabled { agentRows }
             if let error = tailnet.error { Text(error).font(.caption).foregroundStyle(.red) }

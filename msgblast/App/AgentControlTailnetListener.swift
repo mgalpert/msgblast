@@ -11,6 +11,7 @@ import msgblastCore
     @Published private var addresses: [String] = []
     @Published private var magicName: String?
     @Published private var httpsEnabled = false
+    @Published private var serve: AgentControlTailnetServe.State?
     @Published private var grokBotPeer = false
     @Published private var firewall: AgentControlFirewall.State?
     @Published private(set) var lastCalled: Date?
@@ -62,16 +63,25 @@ import msgblastCore
         }
     }
 
-    /// `http://<MagicDNS>:<port>/mcp`. The first 100.x address when the name is missing.
+    /// Tailscale Serve's private `https://<MagicDNS>:47443/mcp` once it points at msgblast. Otherwise
+    /// `http://<MagicDNS>:<port>/mcp`, or the first 100.x address when the name is missing.
     var serverURL: String? {
         guard store.enabled, !addresses.isEmpty else { return nil }
+        if httpsEnabled, case .ready(let url)? = serve { return url }
         if let name = magicName, !name.isEmpty { return hostURL(name) }
         guard let address = addresses.first(where: { !$0.contains(":") }) else { return nil }
         return hostURL(address)
     }
 
     /// True when the URL had to use a 100.x address because MagicDNS had no name.
-    var showsAddressFallback: Bool { serverURL != nil && (magicName ?? "").isEmpty }
+    var showsAddressFallback: Bool { serverURL?.hasPrefix("http://") == true && (magicName ?? "").isEmpty }
+
+    /// The Tailscale Serve command, while certificates are on and Serve doesn't point at msgblast yet.
+    var serveCommand: String? {
+        guard enabled, httpsEnabled, serve != .funnel else { return nil }
+        if case .ready? = serve { return nil }
+        return AgentControlTailnetServe.command(backendPort: store.port)
+    }
 
     /// Every agent with a Tailscale key, by name.
     var clients: [String] { store.hashes.keys.sorted() }
@@ -92,7 +102,8 @@ import msgblastCore
 
     /// Tailscale, the firewall when it is on, and certificates; the Grok Bot line only while Grok Bot has a key.
     var readiness: [String] {
-        var lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
+        var lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, serve: serve, backendPort: store.port,
+                                                   grokBotPeer: grokBotPeer, lastCalled: lastCalled)
         if store.hashes[AgentControlTailnet.grokBotClient] == nil { lines = Array(lines.prefix(2)) }
         if enabled, let firewall, let line = AgentControlFirewall.line(firewall) {
             lines.insert(line, at: 1)
@@ -191,7 +202,7 @@ import msgblastCore
             bound = []
             return
         }
-        if found == bound, listeners.count == found.count, error == nil { return }
+        if found == bound, listeners.count == found.count + 1, error == nil { return }
         cancelListeners()
         // A connection on an address this Mac no longer has would never be closed otherwise.
         if found != bound { closeLinks() }
@@ -199,16 +210,18 @@ import msgblastCore
             error = "Could not listen on port \(store.port)."
             return
         }
-        let failure = bind(found, port: port)
+        // Loopback is only for Tailscale Serve, which forwards private https:// requests from the tailnet.
+        let targets = found + [AgentControlTailnetServe.loopback]
+        let failure = bind(targets, port: port)
         bound = found
-        if listeners.count == found.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
+        if listeners.count == targets.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
     }
 
-    /// Starts a listener on each Tailscale address. Returns the last error, if any.
+    /// Starts a listener on each Tailscale address and on loopback. Returns the last error, if any.
     private func bind(_ found: [String], port: NWEndpoint.Port) -> String? {
         var failure: String?
         for address in found {
-            guard AgentControlTailnet.isTailnetPeer(address) else { continue }
+            guard AgentControlTailnet.isTailnetPeer(address) || address == AgentControlTailnetServe.loopback else { continue }
             do {
                 let parameters = NWParameters.tcp
                 parameters.allowLocalEndpointReuse = true
@@ -258,7 +271,8 @@ import msgblastCore
 
     private func accept(_ connection: NWConnection) {
         let peer = AgentControlTailnetConnection.peer(connection)
-        guard links.count < Self.maximumLinks, AgentControlTailnet.isTailnetPeer(peer) else { connection.cancel(); return }
+        let allowed = AgentControlTailnet.isTailnetPeer(peer) || peer == AgentControlTailnetServe.loopback
+        guard links.count < Self.maximumLinks, allowed else { connection.cancel(); return }
         let link = AgentControlTailnetLink(connection: connection, peer: peer, owner: self)
         links.append(link)
         link.start()
@@ -268,7 +282,9 @@ import msgblastCore
 
     func respond(_ request: AgentControlHTTPRequest, peer: String) async -> AgentControlHTTPResponse {
         guard let endpoint else { return AgentControlHTTPResponse(status: 503, headers: [], body: Data()) }
-        let response = await endpoint.handle(request, peer: peer)
+        // Through Serve the socket peer is loopback; the caller is the tailnet address Serve forwarded for.
+        let caller = peer == AgentControlTailnetServe.loopback ? AgentControlTailnetServe.forwardedPeer(request.headers) ?? "" : peer
+        let response = await endpoint.handle(request, peer: caller)
         // The readiness line is about Grok Bot, so only its key counts.
         if let when = await endpoint.lastAuthorizedByClient[AgentControlTailnet.grokBotClient], when != lastCalled { lastCalled = when }
         return response
@@ -311,14 +327,17 @@ import msgblastCore
         lastStatusAt = now
         let includeFirewall = enabled
         let appPath = Bundle.main.bundlePath
+        let backendPort = store.port
         statusTask = Task { @MainActor [weak self] in
             let parsed = await Task.detached(priority: .utility) {
-                (AgentControlTailnetDNS.fetch(), includeFirewall ? AgentControlTailnetDNS.firewall(appPath: appPath) : nil)
+                (AgentControlTailnetDNS.fetch(), includeFirewall ? AgentControlTailnetDNS.firewall(appPath: appPath) : nil,
+                 AgentControlTailnetDNS.serve(backendPort: backendPort))
             }.value
             guard let self, !Task.isCancelled else { return }
             self.magicName = parsed.0?.magicName
             self.httpsEnabled = parsed.0?.httpsEnabled ?? false
             self.grokBotPeer = parsed.0?.grokBotPeer ?? false
+            self.serve = parsed.2
             if includeFirewall, self.enabled { self.firewall = parsed.1 }
             self.statusTask = nil
             let queued = self.statusQueued

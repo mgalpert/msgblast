@@ -81,17 +81,58 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         let missing = AgentControlTailnetSetup.lines(magicName: nil, httpsEnabled: false, grokBotPeer: false, lastCalled: nil, now: now)
         XCTAssertEqual(missing, [
             "\u{26A0}\u{FE0E} Tailscale isn't connected on this Mac.",
-            "\u{2139}\u{FE0E} HTTPS certificates are off for this tailnet. Nothing to change: msgblast uses http://, and Tailscale encrypts the connection.",
+            "\u{26A0}\u{FE0E} HTTPS certificates are off for this tailnet. Grok Bot needs https://: turn on HTTPS Certificates in the Tailscale admin console under DNS.",
             "\u{26A0}\u{FE0E} Grok Bot hasn't called msgblast yet. No Grok Bot device on your tailnet yet — connect it in Grok Bot: Connect apps → Your plugins → Tailscale → Authenticate.",
         ])
         let device = AgentControlTailnetSetup.lines(magicName: "mac.example.ts.net", httpsEnabled: true, grokBotPeer: true, lastCalled: nil, now: now)
         XCTAssertEqual(device[0], "\u{2713} Connected as mac.example.ts.net")
-        XCTAssertEqual(device[1], "\u{2713} HTTPS certificates are on for this tailnet.")
+        XCTAssertEqual(device[1], "\u{26A0}\u{FE0E} Grok Bot needs https://. Run this once in Terminal: tailscale serve --bg --https=47443 http://127.0.0.1:47480")
         XCTAssertEqual(device[2], "\u{26A0}\u{FE0E} Grok Bot hasn't called msgblast yet. A Grok Bot device is on your tailnet.")
         let called = AgentControlTailnetSetup.lines(magicName: "mac.example.ts.net", httpsEnabled: true, grokBotPeer: false, lastCalled: now.addingTimeInterval(-120), now: now)
         XCTAssertEqual(called[2], "\u{2713} Grok Bot last called 2 minutes ago.")
         let recent = AgentControlTailnetSetup.lines(magicName: "mac.example.ts.net", httpsEnabled: true, grokBotPeer: false, lastCalled: now, now: now)
         XCTAssertEqual(recent[2], "\u{2713} Grok Bot last called just now.")
+    }
+
+    func testServeLines() {
+        func line(_ https: Bool, _ serve: AgentControlTailnetServe.State?) -> String {
+            AgentControlTailnetSetup.lines(magicName: "mac.example.ts.net", httpsEnabled: https, serve: serve, backendPort: 5000, grokBotPeer: false, lastCalled: nil)[1]
+        }
+        XCTAssertEqual(line(true, .ready(url: "https://mac.example.ts.net:47443/mcp")), "\u{2713} Tailscale Serve gives msgblast a private https:// address.")
+        XCTAssertEqual(line(true, .missing), "\u{26A0}\u{FE0E} Grok Bot needs https://. Run this once in Terminal: tailscale serve --bg --https=47443 http://127.0.0.1:5000")
+        XCTAssertEqual(line(true, .funnel), "\u{26A0}\u{FE0E} Tailscale Funnel makes msgblast's HTTPS port public, so msgblast won't use it. Run: tailscale funnel --https=47443 off")
+        XCTAssertTrue(line(false, .ready(url: "https://x")).hasPrefix("\u{26A0}\u{FE0E} HTTPS certificates are off"))
+    }
+
+    func testServeStatusParsing() {
+        func parse(_ json: String, port: Int = 47480) -> AgentControlTailnetServe.State {
+            AgentControlTailnetServe.parse(Data(json.utf8), backendPort: port)
+        }
+        let ours = #"{"TCP":{"47443":{"HTTPS":true}},"Web":{"mac.example.ts.net:47443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47480"}}}}}"#
+        XCTAssertEqual(parse(ours), .ready(url: "https://mac.example.ts.net:47443/mcp"))
+        XCTAssertEqual(parse(ours, port: 5000), .missing, "another backend port is not msgblast")
+        let on443 = #"{"Web":{"mac.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://localhost:47480/"}}}}}"#
+        XCTAssertEqual(parse(on443), .ready(url: "https://mac.example.ts.net/mcp"))
+        let subPath = #"{"Web":{"mac.example.ts.net:443":{"Handlers":{"/mcp":{"Proxy":"http://127.0.0.1:47480"}}}}}"#
+        XCTAssertEqual(parse(subPath), .missing, "only a root mount keeps /mcp as msgblast's path")
+        let other = #"{"Web":{"mac.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#
+        XCTAssertEqual(parse(other), .missing)
+        let funnel = #"{"Web":{"mac.example.ts.net:47443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47480"}}}},"AllowFunnel":{"mac.example.ts.net:47443":true}}"#
+        XCTAssertEqual(parse(funnel), .funnel)
+        let oneFunneled = #"{"Web":{"mac.example.ts.net:47443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47480"}}},"mac.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47480"}}}},"AllowFunnel":{"mac.example.ts.net:443":true}}"#
+        XCTAssertEqual(parse(oneFunneled), .funnel, "any public path to the backend wins")
+        XCTAssertEqual(parse("{}"), .missing)
+        XCTAssertEqual(parse("not-json"), .missing)
+        XCTAssertEqual(parse(#"{"Web":{"nocolon":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47480"}}}}}"#), .missing)
+        XCTAssertEqual(AgentControlTailnetServe.command(backendPort: 47480), "tailscale serve --bg --https=47443 http://127.0.0.1:47480")
+    }
+
+    func testForwardedPeerTakesServesTailnetAddress() {
+        XCTAssertEqual(AgentControlTailnetServe.forwardedPeer(["x-forwarded-for": "100.101.102.103"]), "100.101.102.103")
+        XCTAssertEqual(AgentControlTailnetServe.forwardedPeer(["x-forwarded-for": "1.2.3.4, fd7a:115c:a1e0::1"]), "fd7a:115c:a1e0::1")
+        XCTAssertNil(AgentControlTailnetServe.forwardedPeer(["x-forwarded-for": "100.101.102.103, 192.168.1.5"]))
+        XCTAssertNil(AgentControlTailnetServe.forwardedPeer(["x-forwarded-for": "127.0.0.1"]))
+        XCTAssertNil(AgentControlTailnetServe.forwardedPeer([:]))
     }
 
     func testFirewallParseAndLines() {

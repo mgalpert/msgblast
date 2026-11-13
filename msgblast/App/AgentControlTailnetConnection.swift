@@ -2,14 +2,23 @@ import Foundation
 import Network
 import msgblastCore
 
-/// One `tailscale status --json` run. Failures return nil and are ignored.
+/// Read-only `tailscale` runs. Failures return nil and are ignored.
 enum AgentControlTailnetDNS {
     nonisolated static func fetch() -> (magicName: String?, httpsEnabled: Bool, grokBotPeer: Bool)? {
+        tailscale(["status", "--json"]).flatMap(AgentControlTailnetStatus.parse)
+    }
+
+    /// Read-only `tailscale serve status --json`. Nil when Tailscale couldn't be asked.
+    nonisolated static func serve(backendPort: Int) -> AgentControlTailnetServe.State? {
+        tailscale(["serve", "status", "--json"]).map { AgentControlTailnetServe.parse($0, backendPort: backendPort) }
+    }
+
+    private nonisolated static func tailscale(_ arguments: [String]) -> Data? {
         let candidates = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
         guard let binary = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = ["status", "--json"]
+        process.arguments = arguments
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -19,7 +28,7 @@ enum AgentControlTailnetDNS {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0, data.count <= 8_388_608 else { return nil }
-        return AgentControlTailnetStatus.parse(data)
+        return data
     }
 
     /// Read-only `socketfilterfw` queries. No sudo and no setting flags. A failed global query is unknown.

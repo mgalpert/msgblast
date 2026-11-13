@@ -5,7 +5,7 @@ description: Help a person connect Grok Bot to msgblast on their Mac over Tailsc
 
 # msgblast setup for Grok Bot
 
-msgblast runs on the person's Mac and listens for HTTP MCP on that Mac's Tailscale addresses. You cannot add the connector yourself. Guide the person, and ask them to paste only the Server URL.
+msgblast runs on the person's Mac and serves MCP privately on their tailnet. Grok Bot needs its `https://` address, which Tailscale Serve provides. You cannot add the connector yourself. Guide the person, and ask them to paste only the Server URL.
 
 ## Check Tailscale
 
@@ -19,7 +19,9 @@ Do not install Tailscale on the bot computer.
 
 ## Ask for the Server URL only
 
-Ask the person to open msgblast → Settings → Outside agents, turn on Outside agents and "Let agents on other devices use msgblast over Tailscale", then click "Copy URL" and paste only the URL here. It looks like `http://<MagicDNS name>:<port>/mcp`.
+Ask the person to open msgblast → Settings → Outside agents, turn on Outside agents and "Let agents on other devices use msgblast over Tailscale", then click "Copy URL" and paste only the URL here. It should look like `https://<MagicDNS name>:47443/mcp`.
+
+If it starts with `http://`, HTTPS isn't set up yet. Ask them to follow the warning line on the msgblast Tailscale card. That means turning on HTTPS Certificates in the Tailscale admin console under DNS, and then running the command from "Tailscale Serve → Copy command" in Terminal once. Then they copy the URL again.
 
 Never ask for the key, and tell the person not to paste the `Authorization` header or the "Copy setup" block from the Grok Bot (Tailscale) row into this chat. The key goes only into the connector's header field. If they paste a key anyway, tell them to click "New key" in msgblast and use the new one in the connector.
 
@@ -34,7 +36,7 @@ Tell them to add it in Grok Bot. You cannot add it for them.
 3. Header: in msgblast click "Copy header" and paste it into the connector's header field (name `Authorization`, value `Bearer <key>`).
 4. They save the connector.
 
-msgblast serves `http://` only. If the form asks for an `https://` address, say that msgblast does not serve HTTPS yet. Turning on tailnet certificates in the Tailscale admin console does not change that.
+Never suggest Tailscale Funnel. It makes the address public.
 
 ## Prove it
 

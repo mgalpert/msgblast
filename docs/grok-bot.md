@@ -1,8 +1,8 @@
 # Grok Bot over Tailscale
 
-Grok Bot can call msgblast over your Tailscale network. msgblast listens for HTTP MCP on this Mac's Tailscale addresses. Grok Bot uses a remote connector. Nothing is shared with the public internet, and Tailscale Funnel is not used.
+Grok Bot can call msgblast over your Tailscale network. Grok Bot's Tailscale connection only works with an `https://` URL that has a real certificate, so msgblast uses Tailscale Serve for that: Serve holds this Mac's `ts.net` certificate and forwards to msgblast on `127.0.0.1`. Nothing is shared with the public internet, and Tailscale Funnel is not used.
 
-msgblast speaks `http://` only. It does not serve `https://` yet. Settings checks whether this tailnet has HTTPS certificates so you can see that before Grok Bot asks for an `https://` address.
+Other MCP clients on your tailnet can still use msgblast's plain `http://` address on this Mac's Tailscale addresses.
 
 ## Requirements
 
@@ -14,19 +14,27 @@ msgblast speaks `http://` only. It does not serve `https://` yet. Settings check
 ## Setup
 
 1. In msgblast, turn on Settings → Outside agents, then turn on "Let agents on other devices use msgblast over Tailscale". The first key is made for Grok Bot.
-2. In Grok Bot, open Connect apps → Your plugins → Tailscale → Authenticate.
-3. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the MCP server URL and the header from Settings → Outside agents ("Copy URL" and "Copy header", or both at once with "Copy setup" on the Grok Bot (Tailscale) row). Put the key only in the connector's header field, never in a chat message.
-4. Ask Grok Bot to call `msgblast_status`. Approve it in msgblast. The prompt names the client "Grok Bot (Tailscale)".
+2. Once per tailnet: in the [Tailscale admin console](https://login.tailscale.com/admin/dns), under DNS, turn on HTTPS Certificates.
+3. Once per Mac: in msgblast, click "Tailscale Serve → Copy command", paste it into Terminal and run it. The command is:
+
+   ```sh
+   tailscale serve --bg --https=47443 http://127.0.0.1:47480
+   ```
+
+   It uses its own port, 47443, so it leaves anything you already serve on 443 alone. `--bg` keeps it on after restarts. To undo it, run `tailscale serve --https=47443 off`. When the readiness line says "Tailscale Serve gives msgblast a private https:// address", the MCP server URL starts with `https://`.
+4. In Grok Bot, open Connect apps → Your plugins → Tailscale → Authenticate.
+5. In Grok Bot, choose Add a custom connector → Remote HTTPS. Paste the MCP server URL and the header from Settings → Outside agents ("Copy URL" and "Copy header", or both at once with "Copy setup" on the Grok Bot (Tailscale) row). Put the key only in the connector's header field, never in a chat message.
+6. Ask Grok Bot to call `msgblast_status`. Approve it in msgblast. The prompt names the client "Grok Bot (Tailscale)".
 
 The copied block looks like this, with your own URL and key:
 
 ```
 msgblast MCP server for Grok Bot
-Server URL: http://<MagicDNS name>:<port>/mcp
+Server URL: https://<MagicDNS name>:47443/mcp
 Header: Authorization: Bearer <key>
 ```
 
-The default port is 47480. The URL uses this Mac's MagicDNS name. If that name is missing, msgblast uses the Mac's 100.x address and says so. The key is shown once. After a relaunch, choose New key to see another one.
+Until Serve is set up, the URL is `http://<MagicDNS name>:47480/mcp`. Grok Bot needs the `https://` one, but other MCP clients can use either. The URL uses this Mac's MagicDNS name. If that name is missing, msgblast uses the Mac's 100.x address and says so. The key is shown once. After a relaunch, choose New key to see another one.
 
 ## Other MCP clients over Tailscale
 
@@ -40,7 +48,7 @@ On its first call msgblast asks you to approve it, as for Grok Bot.
 
 ## Security
 
-msgblast binds only to Tailscale addresses (IPv4 `100.64.0.0/10` and IPv6 `fd7a:115c:a1e0::/48` on `utun`). It does not bind a wildcard, loopback, or Funnel.
+msgblast binds only to Tailscale addresses (IPv4 `100.64.0.0/10` and IPv6 `fd7a:115c:a1e0::/48` on `utun`) and to `127.0.0.1` for Tailscale Serve. It never binds a wildcard. On `127.0.0.1` it takes a request only when Serve's `X-Forwarded-For` names a tailnet address. Serve replaces any `X-Forwarded-For` that the caller sent. Every request still needs a key and your approval, wherever it came from. msgblast only reads `tailscale serve status`, and it never changes Tailscale settings. If Funnel is on for the Serve site, msgblast won't use the `https://` address and tells you to turn Funnel off.
 
 The key is stored as a SHA-256 hash in `outside-agents-tailnet.json` (mode 0600), next to the other outside-agent file. The plaintext key stays in memory only until msgblast quits.
 
@@ -58,7 +66,7 @@ On a personal tailnet, Grok Bot's device has the person's own tailnet access. A 
     {
       "src": ["<grok-bot-device>"],
       "dst": ["<your-mac>"],
-      "ip": ["tcp:47480"],
+      "ip": ["tcp:47443", "tcp:47480"],
     },
   ],
 }
@@ -69,12 +77,16 @@ On a personal tailnet, Grok Bot's device has the person's own tailnet access. A 
 The Tailscale card shows up to three lines; the Grok Bot line appears only while Grok Bot has a key. When the macOS firewall is on, one more line appears right after the Tailscale line and says whether msgblast may accept incoming connections. msgblast only reads that state.
 
 - "Tailscale isn't connected on this Mac." Open Tailscale on this Mac and sign in. "Connected as" followed by the MagicDNS name means that name was found.
-- "HTTPS certificates are off for this tailnet." This line is information only. msgblast uses `http://`, and Tailscale encrypts the connection, so nothing needs changing. Turning certificates on does not make msgblast serve `https://`. "HTTPS certificates are on for this tailnet" means that array is set.
+- "HTTPS certificates are off for this tailnet." Turn on HTTPS Certificates in the Tailscale admin console under DNS. Grok Bot needs `https://`.
+- "Grok Bot needs https://. Run this once in Terminal: …" Certificates are on, but Tailscale Serve doesn't point at msgblast yet. Use "Copy command" and run it.
+- "Tailscale Funnel makes msgblast's HTTPS port public …" Run `tailscale funnel --https=47443 off`. msgblast keeps the `http://` URL until Funnel is off.
+- "Tailscale Serve gives msgblast a private https:// address." The MCP server URL is ready for Grok Bot.
 - "No Grok Bot device on your tailnet yet" means the Tailscale plugin is not connected. In Grok Bot, use Connect apps → Your plugins → Tailscale → Authenticate. "A Grok Bot device is on your tailnet" means that device is visible and has not called yet. Copy the setup block and add the connector, then ask for `msgblast_status`. "Grok Bot last called …" means a request passed the key check. Approve it in msgblast if the prompt is waiting.
 
 ## Troubleshooting
 
-- Grok Bot cannot reach the URL. Use the MagicDNS name from the card, not a public DNS name that points at a 100.x address.
+- Grok Bot cannot reach the URL. Use the MagicDNS name from the card, not a public DNS name that points at a 100.x address. The URL must start with `https://`. If it starts with `http://`, follow the readiness line about HTTPS.
+- Grok Bot gets a certificate error on its first call. A new `ts.net` certificate can take a minute to issue. Try again.
 - Grok Bot can't connect, and the macOS firewall is on: open System Settings → Network → Firewall → Options and allow msgblast to accept incoming connections (or answer Allow when macOS asks). msgblast only reads the firewall state; it never changes it.
 - The key was copied before a relaunch. Make a new key and copy the setup block again.
 - Remove was clicked. Turn the Tailscale toggle on again if it is off, make a new key, and approve the next call.
