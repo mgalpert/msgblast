@@ -237,7 +237,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         var installation: DesktopAppInstallation
         var opened: [URL] = []
         init(_ installation: DesktopAppInstallation) { self.installation = installation }
-        var client: DesktopAppInstallationClient { .init(inspect: { _ in self.installation }, open: { self.opened.append($0) }) }
+        var client: DesktopAppInstallationClient { .init(inspect: { _ in self.installation }, open: { url, _ in self.opened.append(url) }) }
     }
 
     func testModelReadsFixtureSessionsWithoutConnectingOrLaunching() async throws {
