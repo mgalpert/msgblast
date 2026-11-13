@@ -10,17 +10,18 @@ public enum AgentControlSend {
     public static let names: Set<String> = ["msgblast_blast_start", "msgblast_blast_follow_up", "msgblast_agent_message", "msgblast_comparison_end"]
     public static let maximumTextLength = 50_000
 
+    static let afterSummary = "Pass the result's after to msgblast_blast_wait so it also returns replies that arrived before the wait began."
     static let requestIDSummary = "requestId: your own id for this call, such as a UUID. While msgblast keeps running, calling again with the same requestId returns the first result instead of sending again (it remembers its last 1,000 sends). After a timeout or a restart, ask msgblast_request_status and check the comparison before repeating."
 
     public static let tools: [AgentControlTool] = [
         AgentControlTool(name: "msgblast_blast_start", title: "Start a blast",
-                         summary: "Sends one message to several agents at once and starts a comparison. agents are ids from msgblast_agents_list. Returns the comparison id and each agent's send status; replies arrive later through msgblast_blast_wait. \(requestIDSummary)",
+                         summary: "Sends one message to several agents at once and starts a comparison. agents are ids from msgblast_agents_list. Returns the comparison id and each agent's send status; replies arrive later through msgblast_blast_wait. \(afterSummary) \(requestIDSummary)",
                          access: .full, inputSchema: #"{"type":"object","properties":{"text":{"type":"string","minLength":1},"agents":{"type":"array","items":{"type":"string"},"minItems":1},"requestId":{"type":"string","maxLength":200}},"required":["text","agents"]}"#),
         AgentControlTool(name: "msgblast_blast_follow_up", title: "Follow up",
-                         summary: "Sends a follow-up in a comparison to the listed agents, or to every agent in it that takes shared messages when agents is left out. \(requestIDSummary)",
+                         summary: "Sends a follow-up in a comparison to the listed agents, or to every agent in it that takes shared messages when agents is left out. \(afterSummary) \(requestIDSummary)",
                          access: .full, inputSchema: #"{"type":"object","properties":{"comparisonId":{"type":"string"},"text":{"type":"string","minLength":1},"agents":{"type":"array","items":{"type":"string"}},"requestId":{"type":"string","maxLength":200}},"required":["comparisonId","text"]}"#),
         AgentControlTool(name: "msgblast_agent_message", title: "Message one agent",
-                         summary: "Sends a private message to one agent, inside a comparison when comparisonId is given or as a new one-agent comparison. \(requestIDSummary)",
+                         summary: "Sends a private message to one agent, inside a comparison when comparisonId is given or as a new one-agent comparison. \(afterSummary) \(requestIDSummary)",
                          access: .full, inputSchema: #"{"type":"object","properties":{"agent":{"type":"string"},"text":{"type":"string","minLength":1},"comparisonId":{"type":"string"},"requestId":{"type":"string","maxLength":200}},"required":["agent","text"]}"#),
         AgentControlTool(name: "msgblast_comparison_end", title: "End a comparison",
                          summary: "Ends a comparison so nothing more is sent in it. \(requestIDSummary)",
@@ -152,6 +153,9 @@ public struct AgentControlSendResult: Codable, Equatable, Sendable {
     /// running: still going. refused: nothing was sent. unknown: msgblast has no record of it.
     public var outcome: String, requestId: String, replayed: Bool, comparisonId: UUID?
     public var code: String?, message: String?, agents: [Agent]
+    /// The msgblast_blast_wait cursor from just before this call ran, so a wait started after a
+    /// quick reply still returns it. Only send tools set it; msgblast_request_status leaves it out.
+    public var after: Int?
 }
 
 /// How often one agent name may call the send tools: 6 a minute and 60 an hour. A repeat of

@@ -100,6 +100,26 @@ import msgblastRemoteProtocol
         XCTAssertEqual(Set(host.commands.map(\.clientCommandID)).count, 3, "calls without a requestId get their own")
     }
 
+    func testASendResultCarriesTheWaitCursorFromBeforeTheSend() async throws {
+        let host = Host()
+        let comparison = UUID()
+        host.controlEvents.publish(.agentReady, agent: "ChatGPT")
+        host.controlEvents.publish(.agentBusy, agent: "ChatGPT")
+        // The reply lands while the send is still running, before the agent can start a wait.
+        host.answer = { [unowned host] command in
+            host.controlEvents.publish(.replyArrived, comparisonID: comparison, agent: "ChatGPT")
+            return .init(clientCommandID: command.clientCommandID, outcome: .applied, conversationID: comparison)
+        }
+        let reply = try await call("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"],"requestId":"quick"}"#, host: host)
+        XCTAssertEqual(reply["after"] as? Int, 2)
+        let wait = try await call("msgblast_blast_wait", #"{"after":2,"comparisonId":"\#(comparison.uuidString)","timeoutSeconds":0}"#,
+                                  host: host, access: .readOnly)
+        let events = try XCTUnwrap(wait["events"] as? [[String: Any]])
+        XCTAssertEqual(events.map { $0["kind"] as? String }, ["replyArrived"])
+        let status = try await call("msgblast_request_status", #"{"requestId":"quick"}"#, host: host, access: .readOnly)
+        XCTAssertNil(status["after"], "a stored result has no cursor of its own")
+    }
+
     func testBadArgumentsAreRefusedBeforeAnythingRuns() async {
         let host = Host()
         let cases: [(String, String, String)] = [
