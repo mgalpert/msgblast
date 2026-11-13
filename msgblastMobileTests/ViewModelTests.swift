@@ -315,23 +315,24 @@ final class PresenterTests: XCTestCase {
         XCTAssertNil(ProjectionPresenter(state: state).pinnedPrompt(for: sunday, selection: []), "An older Messages chat has no prompt to pin")
     }
 
-    func testNewConversationStartsWithEveryAgentThatCanTakeASend() {
+    func testNewConversationStartsWithTheMacsSelectedAgentsThatCanTakeASend() {
         var state = ProjectionState()
         func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, selected: Bool = false) {
             state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: true, selectedForSharedSend: selected,
                 capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: form == .messages, namedCopies: false, endConversation: true, sharesOneConversation: false),
                 readiness: readiness, reasons: [], observedAt: fixedNow, source: .live)
         }
-        agent("claude", .website, .ready)
-        agent("muse", .macApp, .readyWillLaunch)
-        agent("codex", .cli, .busy(detail: "Working"))
-        agent("dots", .macApp, .blocked)
-        agent("gemini", .macApp, .unavailable)
+        agent("claude", .website, .ready, selected: true)
+        agent("muse", .macApp, .readyWillLaunch, selected: true)
+        agent("codex", .cli, .busy(detail: "Working"), selected: true)
+        agent("dots", .macApp, .blocked, selected: true)
+        agent("gemini", .macApp, .unavailable, selected: true)
+        agent("os3", .website, .ready)
         agent("messages:ana", .messages, .ready, selected: true)
         agent("messages:bo", .messages, .ready)
-        state.grid = ["claude", "muse", "codex", "dots", "gemini", "messages:ana", "messages:bo"]
+        state.grid = ["claude", "muse", "codex", "dots", "gemini", "os3", "messages:ana", "messages:bo"]
         let chosen = ProjectionPresenter(state: state).defaultNewSelection
-        XCTAssertEqual(Set(chosen), ["claude", "muse", "codex", "messages:ana"], "Ready and busy in; blocked and unavailable out; a contact only when the Mac selected it")
+        XCTAssertEqual(Set(chosen), ["claude", "muse", "codex", "messages:ana"], "Mac-selected ready and busy in; blocked, unavailable and anything the Mac left unselected out")
         XCTAssertEqual(ProjectionPresenter.togglingNew("claude", chosen: chosen).contains("claude"), false, "A tap still removes")
     }
 

@@ -121,7 +121,9 @@ struct WebPageScript {
             const modal=all('[role="dialog"],[aria-modal="true"]').some(e=>{const r=e.getBoundingClientRect();
                 const offScreen=r.width>0 && r.height>0 && (r.right<=0 || r.bottom<=0 || r.left>=innerWidth || r.top>=innerHeight);
                 return e.getAttribute('aria-hidden')!=='true' && !offScreen;});
-            const rufusPending=config.provider==='alexaShopping'&&all('#rufus-loader-avatar:not(.rufus-visibility-hidden)').length>0&&(()=>{const m=messages();return m.length>0&&m[m.length-1].role==='user';})();const generating=all('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"]').length>0||rufusPending;
+            const rufusPending=config.provider==='alexaShopping'&&all('#rufus-loader-avatar:not(.rufus-visibility-hidden)').length>0&&(()=>{const m=messages();return m.length>0&&m[m.length-1].role==='user';})();const stops='button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"]';
+            // Amazon's storefront has its own controls; only the Alexa panel can be replying.
+            const generating=all(config.provider==='alexaShopping'?stops.split(',').map(s=>'#nav-flyout-rufus '+s).join(','):stops).length>0||rufusPending;
             if (!pathAllowed()) reason=`Open a ${config.name} chat to send from MsgBlast.`;
             else if (login) reason=`Sign in to ${config.name} to send this request.`;
             // Responsive sidebars hide their account control without ending the session.

@@ -105,6 +105,15 @@ final class WebServiceTests: XCTestCase {
         XCTAssertFalse(session.snapshot.reason.hasPrefix("Wait for"))
         let idle = AvailabilityCalculator.availability(AgentSessionSignals(session), inputs: MacAvailabilityInputs(), otherDesktopSending: false, now: Date())
         XCTAssertNotEqual(idle.readiness.state, "busy", idle.readiness.state)
+        // A storefront control outside the Alexa panel, such as a carousel's Stop button, is not a reply.
+        _ = try await session.webView.callAsyncJavaScript("""
+            const stop=document.createElement('button');
+            stop.setAttribute('aria-label','Stop');
+            stop.textContent='Stop';
+            document.body.prepend(stop);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
         _ = try await session.webView.callAsyncJavaScript("""
             const user=document.createElement('article');
             user.className='rufus-customer-text-wrap';
