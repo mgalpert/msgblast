@@ -81,6 +81,7 @@ struct ClaudeAppObservation: Sendable, Equatable {
         guard !nodes.contains(where: { ["AXSheet", "AXDialog"].contains($0.role) || $0.subrole == "AXDialog" }) else {
             throw DesktopAppError.unavailable("Dismiss Claude's dialog before continuing.")
         }
+        try DesktopInterstitial.check(.claude, controls: nodes.map { ($0.role, $0.label) })
         let areas = nodes.filter { $0.role == "AXWebArea" && $0.url.map { ClaudeChatURL.isChat($0) || ClaudeChatURL.isNew($0) } == true }
         guard !areas.isEmpty else { throw ClaudeObservationError.transient("Claude is still opening its native chat.") }
         guard areas.count == 1, let url = areas[0].url else { throw DesktopAppError.unavailable("Claude's native chat address is unavailable or ambiguous.") }

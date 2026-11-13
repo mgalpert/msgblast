@@ -6,12 +6,14 @@ final class DesktopAppInstallationTests: XCTestCase {
     @MainActor private final class Apps {
         var installation = DesktopAppInstallation(url: nil, processID: nil)
         var opened: [URL] = []
+        var activations: [Bool] = []
         var hidden = false
-        var openAction: (@MainActor (URL) async throws -> Void)?
+        var openAction: (@MainActor (URL, Bool) async throws -> Void)?
         var client: DesktopAppInstallationClient {
-            .init(inspect: { _ in self.installation }, open: {
-                self.opened.append($0)
-                try await self.openAction?($0)
+            .init(inspect: { _ in self.installation }, open: { url, activates in
+                self.opened.append(url)
+                self.activations.append(activates)
+                try await self.openAction?(url, activates)
             }, isHidden: { _ in self.hidden })
         }
     }
@@ -162,7 +164,7 @@ final class DesktopAppInstallationTests: XCTestCase {
             for provider in WebProvider.desktopProviders {
                 let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + provider.rawValue + ".app")
                 apps.installation = .init(url: url, processID: running ? 42 : nil)
-                apps.openAction = { _ in apps.installation = .init(url: url, processID: 42) }
+                apps.openAction = { _, _ in apps.installation = .init(url: url, processID: 42) }
                 let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(UUID().uuidString), fixture: true, museApp: .shared, desktopApps: apps.client)
                 defer { session.beginShutdown() }
                 session.setEnabled(true)
@@ -183,13 +185,443 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
+    private typealias Client = DesktopAppInstallationClient
+
+    @MainActor private final class BackgroundRecorder {
+        var calls: [String] = []
+        var reads: [Bool]
+        var readCount = 0
+        var cancelOnRead = false
+        init(reads: [Bool]) { self.reads = reads }
+        func steps(running: Bool, hidden: Bool) -> Client.BackgroundOpenSteps {
+            .init(running: running, hidden: hidden, unhide: { self.calls.append("unhide") }, readWindow: { _ in
+                defer { self.readCount += 1 }
+                self.calls.append("read")
+                if self.cancelOnRead { withUnsafeCurrentTask { $0?.cancel() } }
+                return self.reads.isEmpty ? false : self.reads[min(self.readCount, self.reads.count - 1)]
+            }, open: { self.calls.append("open") }, afterOpen: { self.calls.append("handBack") })
+        }
+        var withoutReads: [String] { calls.filter { $0 != "read" } }
+    }
+
+    func testBackgroundOpenOfHiddenAppWithAWindowOnlyUnhides() async throws {
+        let recorder = BackgroundRecorder(reads: [true])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        XCTAssertEqual(recorder.calls, ["unhide", "read"])
+    }
+
+    func testBackgroundOpenOfVisibleAppWithAWindowDoesNothing() async throws {
+        let recorder = BackgroundRecorder(reads: [true])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: false), clock: AdvancingClock())
+        XCTAssertEqual(recorder.calls, ["read"])
+    }
+
+    func testBackgroundOpenWhoseFirstWindowCheckIsEmptyWaitsForTheWindowAfterUnhiding() async throws {
+        let recorder = BackgroundRecorder(reads: [false, false, true])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        XCTAssertEqual(recorder.withoutReads, ["unhide"])
+        XCTAssertEqual(recorder.readCount, 3)
+    }
+
+    func testBackgroundOpenThatNeverFindsAWindowReopensAndHandsBack() async throws {
+        let clock = AdvancingClock()
+        let recorder = BackgroundRecorder(reads: [false])
+        try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: clock)
+        XCTAssertEqual(recorder.withoutReads, ["unhide", "open", "handBack"])
+        XCTAssertEqual(clock.sleeps.reduce(.zero, +), .seconds(1))
+        XCTAssertEqual(recorder.readCount, 11)
+    }
+
+    func testBackgroundOpenOfAClosedAppOpensAndHandsBackWithoutCheckingWindows() async throws {
+        let recorder = BackgroundRecorder(reads: [true])
+        try await Client.openInBackground(recorder.steps(running: false, hidden: false), clock: AdvancingClock())
+        XCTAssertEqual(recorder.calls, ["open", "handBack"])
+    }
+
+    func testWindowPollStopsAtTheDeadlineEvenWhenReadsAreSlow() async throws {
+        let clock = AdvancingClock()
+        var reads = 0
+        let found = try await Client.windowAppeared(within: .seconds(1), clock: clock) { _ in
+            reads += 1
+            clock.advance(by: .milliseconds(700))
+            return false
+        }
+        XCTAssertFalse(found)
+        XCTAssertEqual(reads, 2)
+    }
+
+    func testWindowPollPropagatesCancellationAfterAnAccessibilityRead() async {
+        let recorder = BackgroundRecorder(reads: [true])
+        recorder.cancelOnRead = true
+        let task = Task { @MainActor in
+            try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        }
+        do {
+            try await task.value
+            XCTFail("expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(recorder.calls, ["unhide", "read"])
+    }
+
+    func testCancelledBackgroundOpenNeitherUnhidesNorOpens() async {
+        let recorder = BackgroundRecorder(reads: [false])
+        let task = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await Client.openInBackground(recorder.steps(running: true, hidden: true), clock: AdvancingClock())
+        }
+        do {
+            try await task.value
+            XCTFail("expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(recorder.calls, [])
+    }
+
+    private func watchState(_ activations: [Int32], front: Int32? = 2, targetWasActive: Bool = false, previousRunning: Bool = true,
+                            previous: Int32? = 1, target: Int32? = 2) -> Client.FrontWatchState {
+        .init(previousPID: previous, targetWasActive: targetWasActive, activations: activations, frontmostPID: front,
+              targetPID: target, previousRunning: previousRunning)
+    }
+
+    func testHandBackDecisionFollowsEveryActivationSinceTheStart() {
+        // A → B during launch → ChatGPT: the user moved on, so leave the front alone.
+        XCTAssertEqual(Client.handBackDecision(watchState([3, 2])), .cancel)
+        // A → ChatGPT: hand back.
+        XCTAssertEqual(Client.handBackDecision(watchState([2])), .handBack)
+        // ChatGPT activated but isn't frontmost yet, or nothing happened yet.
+        XCTAssertEqual(Client.handBackDecision(watchState([2], front: 1)), .wait)
+        XCTAssertEqual(Client.handBackDecision(watchState([], front: 1)), .wait)
+        XCTAssertEqual(Client.handBackDecision(watchState([], front: 1, target: nil)), .wait)
+        // A non-target activation before the target is known still cancels.
+        XCTAssertEqual(Client.handBackDecision(watchState([3], front: 3, target: nil)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], targetWasActive: true)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], previousRunning: false)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], previous: 2)), .cancel)
+        XCTAssertEqual(Client.handBackDecision(watchState([2], previous: nil)), .cancel)
+    }
+
+    func testHandBackRestoresOnceWhenOnlyTheTargetActivates() async throws {
+        let handBacks = try await handBackResult([watchState([], front: 1), watchState([2]), watchState([2])])
+        XCTAssertEqual(handBacks, [1])
+    }
+
+    func testHandBackSkipsASwitchToAnotherAppDuringLaunch() async throws {
+        let handBacks = try await handBackResult([watchState([3], front: 3), watchState([3, 2])])
+        XCTAssertEqual(handBacks, [])
+    }
+
+    func testHandBackSkipsWhenNothingActivatesBeforeTheDeadline() async throws {
+        let late = Array(repeating: watchState([], front: 1), count: 101) + [watchState([2])]
+        let handBacks = try await handBackResult(late)
+        XCTAssertEqual(handBacks, [])
+    }
+
+    func testHandBackSkipsWhenTheTargetWasAlreadyActive() async throws {
+        let handBacks = try await handBackResult([watchState([2], targetWasActive: true)])
+        XCTAssertEqual(handBacks, [])
+    }
+
+    func testHandBackSkipsWhenThePreviousAppTerminated() async throws {
+        let handBacks = try await handBackResult([watchState([2], previousRunning: false)])
+        XCTAssertEqual(handBacks, [])
+    }
+
+    func testHandBackDecisionAllowsTheBurstButNotAThirdApp() {
+        var retake = watchState([2, 1, 2])
+        retake.handBacks = 1
+        XCTAssertEqual(Client.handBackDecision(retake), .handBack)
+        var quiet = watchState([2, 1], front: 1)
+        quiet.handBacks = 1
+        quiet.sinceLastHandBack = .seconds(1)
+        XCTAssertEqual(Client.handBackDecision(quiet), .wait)
+        quiet.sinceLastHandBack = .milliseconds(1500)
+        XCTAssertEqual(Client.handBackDecision(quiet), .done)
+        var third = watchState([2, 1, 3], front: 3)
+        third.handBacks = 1
+        XCTAssertEqual(Client.handBackDecision(third), .cancel)
+        var capped = watchState([2, 1, 2, 1, 2, 1, 2])
+        capped.handBacks = 3
+        XCTAssertEqual(Client.handBackDecision(capped), .done)
+    }
+
+    func testHandBackRepeatsWhenTheTargetRetakesTheFrontDuringALaunch() async throws {
+        // A → ChatGPT → A → ChatGPT, then A stays in front.
+        let handBacks = try await handBackResult([watchState([], front: 1), watchState([2]), watchState([2, 1], front: 1),
+                                                  watchState([2, 1, 2]), watchState([2, 1, 2, 1], front: 1)])
+        XCTAssertEqual(handBacks, [1, 1])
+    }
+
+    func testHandBackStopsForGoodWhenAThirdAppActivatesAfterAHandBack() async throws {
+        // A → ChatGPT → A → B.
+        let handBacks = try await handBackResult([watchState([2]), watchState([2, 1], front: 1), watchState([2, 1, 3], front: 3),
+                                                  watchState([2, 1, 3, 2])])
+        XCTAssertEqual(handBacks, [1])
+    }
+
+    func testHandBackIsCappedAtThreePerOpen() async throws {
+        var states: [Client.FrontWatchState] = []
+        var events: [Int32] = []
+        for _ in 0..<6 {
+            events.append(2); states.append(watchState(events))
+            events.append(1); states.append(watchState(events, front: 1))
+        }
+        let handBacks = try await handBackResult(states)
+        XCTAssertEqual(handBacks, [1, 1, 1])
+    }
+
+    func testHandBackEndsAfterTheQuietGapWithThePreviousAppInFront() async throws {
+        let clock = AdvancingClock(), checks = Counter()
+        try await Client.awaitHandBack(after: .seconds(5), clock: clock, state: {
+            checks.next() == 0 ? self.watchState([2]) : self.watchState([2, 1], front: 1)
+        }, handBack: { _, _ in })
+        XCTAssertEqual(clock.sleeps.reduce(.zero, +), .milliseconds(1500))
+    }
+
+    private final class DriverCalls: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: [(tool: String, payload: [String: Any])] = []
+        var all: [(tool: String, payload: [String: Any])] { lock.withLock { recorded } }
+        func record(_ tool: String, _ payload: [String: Any]) { lock.withLock { recorded.append((tool, payload)) } }
+    }
+
+    private func handBackDriver(_ calls: DriverCalls) -> DesktopAppConversation {
+        DesktopAppConversation(executable: URL(fileURLWithPath: "/fixture/cua-driver"), runProcess: { _, arguments, _, _, _ in
+            let payload = try JSONSerialization.jsonObject(with: Data(arguments[2].utf8)) as? [String: Any] ?? [:]
+            calls.record(arguments[1], payload)
+            guard arguments[1] == "bring_to_front" else { return .init(status: 0, stdout: "{}") }
+            return .init(status: 0, stdout: #"{"activated":true,"pid":42,"window_id":101,"exact_window_effect":{"verified":true}}"#)
+        }, captureHostWindow: { .init(pid: 42, window: 101) })
+    }
+
+    func testHandBackToMsgblastBringsItsCapturedWindowToTheFront() async throws {
+        let calls = DriverCalls()
+        final class Fallbacks: @unchecked Sendable { var pids: [Int32] = [] }
+        let fallbacks = Fallbacks()
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { pid, _ in fallbacks.pids.append(pid) })
+        host.driver = handBackDriver(calls)
+        try await host.whileOpening { await host.handBack(previousPID: 42) { true } }
+        XCTAssertEqual(calls.all.map(\.tool), ["bring_to_front", "end_session"])
+        XCTAssertEqual(calls.all.first?.payload["window_id"] as? Int, 101)
+        XCTAssertEqual(calls.all.first?.payload["pid"] as? Int, 42)
+        XCTAssertEqual(calls.all.first?.payload["session"] as? String, calls.all.last?.payload["session"] as? String)
+        XCTAssertEqual(fallbacks.pids, [])
+    }
+
+    func testHandBackToAnotherAppDoesNotUseTheDriver() async throws {
+        let calls = DriverCalls()
+        final class Fallbacks: @unchecked Sendable { var pids: [Int32] = [] }
+        let fallbacks = Fallbacks()
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { pid, _ in fallbacks.pids.append(pid) })
+        host.driver = handBackDriver(calls)
+        try await host.whileOpening { await host.handBack(previousPID: 7) { true } }
+        XCTAssertTrue(calls.all.isEmpty)
+        XCTAssertEqual(fallbacks.pids, [7])
+    }
+
+    func testHandBackHostIsClearedAfterTheOpenReturnsOrThrows() async throws {
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { _, _ in })
+        host.driver = handBackDriver(DriverCalls())
+        var seen: DesktopAppConversation.Target?
+        try await host.whileOpening { seen = host.target }
+        XCTAssertEqual(seen, .init(pid: 42, window: 101))
+        XCTAssertNil(host.target)
+        struct OpenFailed: Error {}
+        do { try await host.whileOpening { throw OpenFailed() } } catch {}
+        XCTAssertNil(host.target)
+    }
+
+    func testWindowScanStopsAtItsDeadlineWhenEachElementReadIsSlow() {
+        let clock = AdvancingClock()
+        let start = clock.now, budget = Duration.seconds(1), perRead = Duration.milliseconds(500)
+        var reads = 0
+        let found = Client.scanWindows(Array(repeating: 0, count: 10), until: start.advanced(by: budget), clock: clock) { _ in
+            reads += 1
+            clock.advance(by: perRead)
+            return false
+        }
+        XCTAssertFalse(found)
+        XCTAssertLessThanOrEqual(start.duration(to: clock.now), budget + perRead)
+        XCTAssertEqual(reads, 2)
+        XCTAssertFalse(Client.scanWindows([1], until: clock.now, clock: clock) { _ in true }, "No read once the deadline has passed")
+        XCTAssertTrue(Client.scanWindows([0, 1], until: clock.now.advanced(by: budget), clock: clock) { $0 == 1 })
+    }
+
+    func testWindowPollPassesItsRemainingBudgetToEachRead() async throws {
+        let clock = AdvancingClock()
+        var budgets: [Duration] = []
+        _ = try await Client.windowAppeared(within: .seconds(1), clock: clock) { budget in
+            budgets.append(budget)
+            clock.advance(by: .milliseconds(450))
+            return false
+        }
+        XCTAssertEqual(budgets, [.seconds(1), .milliseconds(450)])
+    }
+
+    func testHandBackValidityNeedsTheTargetInFrontAndNoThirdApp() {
+        XCTAssertTrue(Client.handBackStillValid(watchState([2])))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2, 3], front: 3)))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2, 3])))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2, 1], front: 1)))
+        XCTAssertFalse(Client.handBackStillValid(watchState([2], previousRunning: false)))
+    }
+
+    /// Returns 0, 1, 2, ... on successive calls.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        func next() -> Int { lock.withLock { defer { value += 1 }; return value } }
+    }
+
+    /// The world the suspended hand-back sees: activations and the front app, changed by the test.
+    private final class FrontWorld: @unchecked Sendable {
+        private let lock = NSLock()
+        private var activations: [Int32] = [2], front: Int32 = 2
+        var fallbacks: [Int32] { lock.withLock { recordedFallbacks } }
+        private var recordedFallbacks: [Int32] = []
+        func activate(_ pid: Int32) { lock.withLock { activations.append(pid); front = pid } }
+        func fellBack(_ pid: Int32) { lock.withLock { recordedFallbacks.append(pid) } }
+        var state: Client.FrontWatchState {
+            lock.withLock { .init(previousPID: 1, targetWasActive: false, activations: activations, frontmostPID: front, targetPID: 2, previousRunning: true) }
+        }
+    }
+
+    /// Holds the driver's bring_to_front call until the test releases it.
+    private actor DriverGate {
+        private var entered = false, released: Bool?
+        private var enteredWaiter: CheckedContinuation<Void, Never>?
+        private var releaseWaiter: CheckedContinuation<Bool, Never>?
+        func enter() async -> Bool {
+            entered = true
+            enteredWaiter?.resume(); enteredWaiter = nil
+            if let released { return released }
+            return await withCheckedContinuation { releaseWaiter = $0 }
+        }
+        func waitUntilEntered() async {
+            if entered { return }
+            await withCheckedContinuation { enteredWaiter = $0 }
+        }
+        func release(succeeding: Bool) {
+            released = succeeding
+            releaseWaiter?.resume(returning: succeeding); releaseWaiter = nil
+        }
+    }
+
+    /// Where the fake driver holds the hand-back: in the bring_to_front process, or in the
+    /// connection the driver awaits before dispatching it.
+    private enum DriverDelay { case dispatch, connection }
+
+    private func suspendedHandBack(_ during: @escaping @Sendable (FrontWorld, AdvancingClock) -> Void, succeeding: Bool,
+                                   delay: DriverDelay = .dispatch) async throws -> (calls: [String], world: FrontWorld) {
+        let world = FrontWorld(), clock = AdvancingClock(), gate = DriverGate(), calls = DriverCalls(), connects = Counter()
+        let driver = DesktopAppConversation(executable: URL(fileURLWithPath: "/fixture/cua-driver"), runProcess: { _, arguments, _, _, _ in
+            calls.record(arguments[1], [:])
+            guard arguments[1] == "bring_to_front" else { return .init(status: 0, stdout: "{}") }
+            if delay == .dispatch { guard await gate.enter() else { return .init(status: 1, stdout: "") } }
+            world.activate(1)
+            return .init(status: 0, stdout: #"{"activated":true,"pid":42,"window_id":101,"exact_window_effect":{"verified":true}}"#)
+        }, connect: {
+            // The first connection is the warm-up before the open; the second is the hand-back's.
+            if delay == .connection, connects.next() == 1 { _ = await gate.enter() }
+            return nil
+        }, captureHostWindow: { .init(pid: 42, window: 101) })
+        let host = DesktopHandBackHost(ownPID: 1, fallback: { pid, _ in world.fellBack(pid) })
+        host.driver = driver
+        let watch = Task { @MainActor in
+            try await host.whileOpening {
+                try await Client.awaitHandBack(after: .seconds(5), clock: clock, state: { world.state }, handBack: { pid, stillValid in
+                    await host.handBack(previousPID: pid, stillValid: stillValid)
+                })
+            }
+        }
+        await gate.waitUntilEntered()
+        during(world, clock)
+        await gate.release(succeeding: succeeding)
+        try await watch.value
+        return (calls.all.map(\.tool), world)
+    }
+
+    func testSwitchToAnotherAppDuringAFailedDriverHandBackSkipsTheFallback() async throws {
+        let result = try await suspendedHandBack({ world, _ in world.activate(3) }, succeeding: false)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testDeadlinePassingDuringAFailedDriverHandBackSkipsTheFallback() async throws {
+        let result = try await suspendedHandBack({ _, clock in clock.advance(by: .seconds(6)) }, succeeding: false)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testSuspendedDriverHandBackThatSucceedsHandsBackOnce() async throws {
+        let result = try await suspendedHandBack({ _, _ in }, succeeding: true)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testFailedDriverHandBackFallsBackWhileTheWatchIsStillValid() async throws {
+        let result = try await suspendedHandBack({ _, _ in }, succeeding: false)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [1])
+    }
+
+    func testSwitchToAnotherAppWhileTheDriverConnectsDispatchesNothing() async throws {
+        let result = try await suspendedHandBack({ world, _ in world.activate(3) }, succeeding: true, delay: .connection)
+        XCTAssertEqual(result.calls, ["end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testDeadlinePassingWhileTheDriverConnectsDispatchesNothing() async throws {
+        let result = try await suspendedHandBack({ _, clock in clock.advance(by: .seconds(6)) }, succeeding: true, delay: .connection)
+        XCTAssertEqual(result.calls, ["end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testDelayedDriverConnectionThatSucceedsDispatchesOnce() async throws {
+        let result = try await suspendedHandBack({ _, _ in }, succeeding: true, delay: .connection)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    private func handBackResult(_ states: [Client.FrontWatchState]) async throws -> [Int32] {
+        final class Box: @unchecked Sendable { var pids: [Int32] = [] }
+        let box = Box()
+        let checks = Counter()
+        try await Client.awaitHandBack(after: .seconds(5), clock: AdvancingClock(), state: {
+            states[min(checks.next(), states.count - 1)]
+        }, handBack: { pid, _ in box.pids.append(pid) })
+        return box.pids
+    }
+
+    func testNativePreparationUsesProviderForegroundRequirementWhenAppIsClosedOrHidden() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for hidden in [false, true] {
+            for provider in [WebProvider.chatgptApp, .dotsApp, .claudeApp] {
+                let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/\(provider.rawValue).app")
+                apps.installation = .init(url: url, processID: hidden ? 42 : nil)
+                apps.hidden = hidden
+                apps.openAction = { _, _ in apps.installation = .init(url: url, processID: 42) }
+                let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(UUID().uuidString),
+                                              fixture: true, museApp: .shared, desktopApps: apps.client)
+                defer { session.beginShutdown() }
+                session.setEnabled(true)
+                let ready = await session.prepareDesktopConnection()
+                XCTAssertTrue(ready, provider.name)
+                XCTAssertEqual(apps.activations, [provider == .claudeApp], provider.name)
+            }
+        }
+    }
+
     func testEveryNativeProviderLaunchesOnceFromAnExplicitConversationStart() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         for provider in WebProvider.desktopProviders {
             let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + provider.rawValue + ".app")
             apps.installation = .init(url: url, processID: nil)
-            apps.openAction = { _ in apps.installation = .init(url: url, processID: 42) }
+            apps.openAction = { _, _ in apps.installation = .init(url: url, processID: 42) }
             let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: apps.client)
             session.setEnabled(true)
             session.updateState { $0.desktopConversation = .init(name: provider == .grokBotApp ? "Demo Bot" : provider.name) }
@@ -214,7 +646,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: appURL, processID: nil)
-        apps.openAction = { _ in apps.installation = .init(url: appURL, processID: 123) }
+        apps.openAction = { _, _ in apps.installation = .init(url: appURL, processID: 123) }
         let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"), fixture: true,
                                       museApp: .shared, desktopApps: apps.client)
         defer { session.beginShutdown() }
@@ -259,7 +691,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: appURL, processID: 42)
-        apps.openAction = { _ in try Data().write(to: directory.appendingPathComponent("opened")) }
+        apps.openAction = { _, _ in try Data().write(to: directory.appendingPathComponent("opened")) }
         let driver = DesktopAppConversation(executable: executable)
         let muse = MuseAppConversation(executable: executable, readNative: { _ in
             throw DesktopAppError.unavailable("Fixture sign-in required")
@@ -287,7 +719,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: url, processID: 42)
         apps.hidden = true
-        apps.openAction = { _ in apps.hidden = false }
+        apps.openAction = { _, _ in apps.hidden = false }
         let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"),
                                       fixture: false, museApp: .shared, desktopApps: apps.client,
                                       desktopDriver: DesktopAppConversation(executable: executable))
@@ -332,7 +764,7 @@ final class DesktopAppInstallationTests: XCTestCase {
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
             let apps = Apps(), url = URL(fileURLWithPath: "/Fixture/" + app.name + ".app")
             apps.installation = .init(url: url, processID: 42)
-            apps.openAction = { _ in try Data().write(to: directory.appendingPathComponent("opened")) }
+            apps.openAction = { _, _ in try Data().write(to: directory.appendingPathComponent("opened")) }
             let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent("state.json"),
                                           fixture: false, museApp: .shared, desktopApps: apps.client,
                                           desktopDriver: DesktopAppConversation(executable: executable))
@@ -357,7 +789,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let apps = Apps(), appURL = URL(fileURLWithPath: "/Fixture/Muse.app")
         apps.installation = .init(url: appURL, processID: nil)
-        apps.openAction = { _ in throw DesktopAppError.unavailable("Fixture launch refused") }
+        apps.openAction = { _, _ in throw DesktopAppError.unavailable("Fixture launch refused") }
         let session = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent("state.json"), fixture: true,
                                       museApp: .shared, desktopApps: apps.client)
         defer { session.beginShutdown() }
@@ -370,7 +802,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertEqual(session.state.draft, "Keep this prompt")
         XCTAssertTrue(session.state.attempts.isEmpty)
         XCTAssertTrue(session.error?.contains("Fixture launch refused") == true)
-        apps.openAction = { _ in apps.installation = .init(url: appURL, processID: 123) }
+        apps.openAction = { _, _ in apps.installation = .init(url: appURL, processID: 123) }
         let sent = await session.send("Keep this prompt", comparisonID: comparison)
         XCTAssertEqual(sent?.status, .observed)
         XCTAssertEqual(apps.opened, [appURL, appURL])
@@ -384,7 +816,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: appURL, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let launched = expectation(description: "Launch started")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             await withCheckedContinuation { release = $0; launched.fulfill() }
             apps.installation = .init(url: appURL, processID: 123)
         }
@@ -421,7 +853,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: url, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let started = expectation(description: "First app launch held")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             if apps.opened.count == 1 { await withCheckedContinuation { release = $0; started.fulfill() } }
             apps.installation = .init(url: url, processID: 42)
         }
@@ -458,7 +890,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: url, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let started = expectation(description: "App launch held before comparison changed")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             await withCheckedContinuation { release = $0; started.fulfill() }
             apps.installation = .init(url: url, processID: 42)
         }
@@ -490,7 +922,7 @@ final class DesktopAppInstallationTests: XCTestCase {
         apps.installation = .init(url: url, processID: nil)
         var release: CheckedContinuation<Void, Never>?
         let started = expectation(description: "Direct send app launch held")
-        apps.openAction = { _ in
+        apps.openAction = { _, _ in
             await withCheckedContinuation { release = $0; started.fulfill() }
             apps.installation = .init(url: url, processID: 42)
         }
