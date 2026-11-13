@@ -21,7 +21,10 @@ struct OutsideAgentsSettingsView: View {
             if let error = listener.error ?? gate.saveError { ErrorRow(text: error) }
         }
         TailnetSection(tailnet: listener.tailnet, localOn: listener.enabled) { listener.enabled = true }
-        AgentsSection(gate: gate, tailnet: listener.tailnet, tailnetOn: listener.enabled && listener.tailnet.enabled)
+        AgentsSection(gate: gate, tailnet: listener.tailnet, tailnetOn: listener.enabled && listener.tailnet.enabled) {
+            if !listener.enabled { listener.enabled = true }
+            if !listener.tailnet.enabled { listener.tailnet.enabled = true }
+        }
     }
 
     private var setupMenu: some View {
@@ -103,30 +106,39 @@ private struct AgentsSection: View {
     @ObservedObject var gate: AgentControlGate
     @ObservedObject var tailnet: AgentControlTailnetListener
     let tailnetOn: Bool
+    /// Turns on outside agents and Tailscale, which Grok Bot needs.
+    let turnOnTailnet: () -> Void
     @State private var sheet: SheetClient?
     @State private var adding = false
     @State private var newName = ""
     @State private var addError: String?
 
     private var names: [String] {
-        let all = Set(gate.approvals.keys).union(gate.refused).union(tailnet.clients)
+        let all = Set(gate.approvals.keys).union(gate.refused).union(tailnet.clients).union([AgentControlTailnet.grokBotClient])
         return all.sorted { ($0 == AgentControlTailnet.grokBotClient ? 0 : 1, $0) < ($1 == AgentControlTailnet.grokBotClient ? 0 : 1, $1) }
     }
 
     var body: some View {
-        if !names.isEmpty || tailnetOn {
-            Section("Agents") {
-                ForEach(names, id: \.self) { row($0) }
-                if tailnetOn { addRow }
-            }
-            .sheet(item: $sheet) { item in
-                if item.id == AgentControlTailnet.grokBotClient {
-                    GrokBotSetupSheet(tailnet: tailnet)
-                } else {
-                    KeySheet(tailnet: tailnet, client: item.id)
-                }
+        Section("Agents") {
+            ForEach(names, id: \.self) { row($0) }
+            if tailnetOn { addRow }
+        }
+        .sheet(item: $sheet) { item in
+            if item.id == AgentControlTailnet.grokBotClient {
+                GrokBotSetupSheet(tailnet: tailnet)
+            } else {
+                KeySheet(tailnet: tailnet, client: item.id)
             }
         }
+    }
+
+    /// Opening Grok Bot's setup means the person wants Grok Bot: turn on what it needs, and make a key
+    /// to copy unless Grok Bot is already approved, since a new key would break a working connector.
+    private func setUpGrokBot() {
+        let client = AgentControlTailnet.grokBotClient
+        if !tailnetOn { turnOnTailnet() }
+        if gate.approvals[client] == nil, tailnet.authorizationValue(for: client) == nil { tailnet.rotateToken(client) }
+        sheet = SheetClient(id: client)
     }
 
     private func row(_ client: String) -> some View {
@@ -141,14 +153,19 @@ private struct AgentsSection: View {
                     .labelsHidden().fixedSize()
                     .help("Read only can see agents, comparisons and replies. Full access can also send.")
                 } else if client == AgentControlTailnet.grokBotClient {
-                    Button("Set Up…") { sheet = SheetClient(id: client) }.buttonStyle(.borderedProminent)
+                    Button("Set Up…", action: setUpGrokBot).buttonStyle(.borderedProminent)
                 }
-                if tailnet.clients.contains(client), gate.approvals[client] != nil || client != AgentControlTailnet.grokBotClient {
+                if client == AgentControlTailnet.grokBotClient, gate.approvals[client] != nil {
+                    Button(action: setUpGrokBot) { Image(systemName: "info.circle") }
+                        .buttonStyle(.borderless).help("Setup and key").accessibilityLabel("Details")
+                } else if client != AgentControlTailnet.grokBotClient, tailnet.clients.contains(client) {
                     Button { sheet = SheetClient(id: client) } label: { Image(systemName: "info.circle") }
                         .buttonStyle(.borderless).help("Setup and key").accessibilityLabel("Details")
                 }
-                Button { gate.change(nil, for: client); tailnet.revoke(client) } label: { Image(systemName: "minus.circle") }
-                    .buttonStyle(.borderless).help("Remove \(client)").accessibilityLabel("Remove")
+                if tailnet.clients.contains(client) || gate.approvals[client] != nil || gate.refused.contains(client) {
+                    Button { gate.change(nil, for: client); tailnet.revoke(client) } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless).help("Remove \(client)").accessibilityLabel("Remove")
+                }
             }
         } label: {
             Text(client)
