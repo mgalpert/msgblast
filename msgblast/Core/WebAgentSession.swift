@@ -42,8 +42,26 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return page
     }
     public func messagesForComparison(_ id: UUID) -> [WebPageMessage] {
+        // One account-wide page holds every comparison's turns; each comparison sees only its own.
+        if (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation {
+            return Self.comparisonSlice(snapshot.messages, attempts: state.attempts, comparison: id)
+        }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
+    }
+    /// From a comparison's first request on the shared page up to the next comparison's first request.
+    /// A comparison that has sent nothing has no turns there.
+    static func comparisonSlice(_ messages: [WebPageMessage], attempts: [WebSendAttempt], comparison: UUID) -> [WebPageMessage] {
+        func start(_ id: UUID) -> Int? {
+            attempts.filter { $0.comparisonID == id }.compactMap { attempt in
+                messages.firstIndex { $0.role == "user" && $0.id == attempt.messageID }
+                    ?? messages.firstIndex { $0.role == "user" && normalized($0.text) == normalized(attempt.text) }
+            }.min()
+        }
+        guard let first = start(comparison) else { return [] }
+        let others = Set(attempts.compactMap(\.comparisonID)).subtracting([comparison])
+        let end = others.compactMap(start).filter { $0 > first }.min() ?? messages.count
+        return Array(messages[first..<end])
     }
     public func canArchiveComparison(_ id: UUID) -> Bool {
         let submitted = state.attempts.contains { $0.comparisonID == id && $0.status.confirmsSubmission }
