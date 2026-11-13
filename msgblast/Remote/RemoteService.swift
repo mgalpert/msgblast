@@ -123,7 +123,7 @@ final class RemoteService: ObservableObject {
                                       macName: { [weak self] in self?.macName ?? "Mac" }, isLocked: { power.locked }, refreshJournal: { projection.refreshNow() })
             projection.onEvents = { [weak server] in server?.broadcast($0) }
             server.onClientChange = { [weak self] connected in self?.clientChanged(connected) }
-            server.onPaired = { [weak self] in self?.setAllowMessagesSends(true) }
+            server.onPaired = { [weak self] in self?.setAllowMessagesSends(true); self?.model.recordPhonePaired() }
             server.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
             self.host = host; self.projection = projection; self.server = server
             running = true
@@ -169,6 +169,7 @@ final class RemoteService: ObservableObject {
     private func clientChanged(_ connected: Bool) {
         keepAwake.setClient(connected: connected)
         if connected {
+            model.recordPhoneConnected()
             projection?.start()
             availability.start()
         } else {

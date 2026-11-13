@@ -14,9 +14,12 @@ final class AppRemoteHost: RemoteCommandHost {
     private let settings: () -> RemoteSettings
     private var staged: [String: MessageAttachment] = [:]
     private let avatars: RemoteAvatars
+    /// Labels this host's sends in anonymous stats: the iPhone, or an outside agent.
+    private let source: TelemetryProperties.Source
 
-    init(model: AppModel, availability: AvailabilityModel, avatars: RemoteAvatars, keepAwake: RemoteKeepAwake, power: MacPowerState, settings: @escaping () -> RemoteSettings) {
-        self.model = model; availabilityModel = availability; self.avatars = avatars; self.keepAwake = keepAwake; self.power = power; self.settings = settings
+    init(model: AppModel, availability: AvailabilityModel, avatars: RemoteAvatars, keepAwake: RemoteKeepAwake, power: MacPowerState,
+         source: TelemetryProperties.Source = .phone, settings: @escaping () -> RemoteSettings) {
+        self.model = model; availabilityModel = availability; self.avatars = avatars; self.keepAwake = keepAwake; self.power = power; self.source = source; self.settings = settings
     }
 
     func avatar(_ ref: String) -> Data? { avatars.data(for: ref) }
@@ -49,7 +52,7 @@ final class AppRemoteHost: RemoteCommandHost {
         keepAwake.beginSend()
         defer { keepAwake.endSend() }
         let files = plan.attachmentIDs.compactMap { staged[$0] }
-        let result = await captured { await send(plan, files: files) }
+        let result = await TelemetrySendSource.$current.withValue(source) { await captured { await send(plan, files: files) } }
         if result.applied { for id in plan.attachmentIDs { staged[id] = nil } }
         return result
     }

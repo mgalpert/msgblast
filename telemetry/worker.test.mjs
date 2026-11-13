@@ -50,6 +50,11 @@ test('rejects private fields, invalid schemas, miscategorized events and malform
     batch(event({ name: 'agent_inventory', category: 'agentUsage', properties: { counts: { 'Personal Contact': 1 } } })),
     batch(event({ name: 'message_submitted', category: 'messageCounts', properties: { kind: 'shared', recipientCount: 0 } })),
     batch(event({ name: 'operation_timing', category: 'performance', properties: { operation: 'send', duration: '1ms' } })),
+    batch(event({ name: 'message_submitted', category: 'messageCounts', properties: { kind: 'shared', recipientCount: 1, source: 'My iPhone' } })),
+    batch(event({ name: 'operation_result', category: 'reliability', properties: { operation: 'send', result: 'uncertain' } })),
+    batch(event({ name: 'agent_send_result', category: 'reliability', properties: { provider: 'Personal Contact', result: 'success' } })),
+    batch(event({ name: 'agent_send_result', category: 'reliability', properties: { provider: 'chatgptApp', result: 'success', detail: 'private' } })),
+    batch(event({ name: 'phone_paired', properties: { source: 'phone' } })), batch(event({ name: 'phone_paired', category: 'reliability' })),
     { schema: 2, events: [event()] }, { schema: 1, events: [] }, { schema: 1, events: Array(21).fill(event()) },
     { schema: 1, events: [event(), event()] }, { schema: 1, events: [event()], extra: true },
   ];
@@ -89,6 +94,10 @@ test('accepts every explicitly contracted event and permits fixtures only on con
     event({ name: 'message_submitted', category: 'messageCounts', properties: { kind: 'private', recipientCount: 1 } }),
     event({ name: 'operation_result', category: 'reliability', properties: { operation: 'storage', result: 'failure' } }),
     event({ name: 'operation_timing', category: 'performance', properties: { operation: 'setup', duration: 'over_30s', fixture: true } }),
+    event({ name: 'message_submitted', category: 'messageCounts', properties: { kind: 'shared', recipientCount: 2, source: 'outsideAgent' } }),
+    event({ name: 'operation_result', category: 'reliability', properties: { operation: 'send', result: 'failure', source: 'phone' } }),
+    event({ name: 'phone_paired' }), event({ name: 'phone_connected' }),
+    event({ name: 'agent_send_result', category: 'reliability', properties: { provider: 'chatgptApp', result: 'uncertain', source: 'mac' } }),
   ];
   for (const e of events) assert.equal((await handleTelemetry(request(batch(e)), env({ TELEMETRY_ALLOW_FIXTURES: 'true' }), async () => new Response(null, { status: 200 }))).status, 204);
 });

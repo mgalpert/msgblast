@@ -15,6 +15,16 @@ const CONTRACT = {
   app_engaged: ['activity', []],
   operation_result: ['reliability', ['operation', 'result']],
   operation_timing: ['performance', ['operation', 'duration']],
+  phone_paired: ['activity', []],
+  phone_connected: ['activity', []],
+  agent_send_result: ['reliability', ['provider', 'result']],
+};
+// Optional properties beyond the common ones, per event.
+const OPTIONAL = {
+  onboarding_screen_viewed: ['previousScreen', 'provider'],
+  message_submitted: ['source'],
+  operation_result: ['source'],
+  agent_send_result: ['source'],
 };
 const COMMON = ['appVersion', 'buildChannel', 'osMajor', 'cohortDay', 'cohortStartedAt', 'fixture'];
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -29,7 +39,7 @@ export function validEvent(event, allowFixtures = false) {
   if (typeof event.timestamp !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(event.timestamp) || !Number.isFinite(Date.parse(event.timestamp))) return false;
   if (has(event, 'distinctID') && (typeof event.distinctID !== 'string' || !UUID.test(event.distinctID))) return false;
   const p = event.properties;
-  if (!object(p) || !keysAllowed(p, [...COMMON, ...contract[1], ...(event.name === 'onboarding_screen_viewed' ? ['previousScreen', 'provider'] : [])]) || !contract[1].every(key => has(p, key))) return false;
+  if (!object(p) || !keysAllowed(p, [...COMMON, ...contract[1], ...(OPTIONAL[event.name] || [])]) || !contract[1].every(key => has(p, key))) return false;
   if (has(p, 'appVersion') && (typeof p.appVersion !== 'string' || !/^[0-9][0-9A-Za-z._-]{0,31}$/.test(p.appVersion))) return false;
   if (has(p, 'buildChannel') && !['development', 'production'].includes(p.buildChannel)) return false;
   if (has(p, 'screen') && !SCREENS.includes(p.screen)) return false;
@@ -44,7 +54,8 @@ export function validEvent(event, allowFixtures = false) {
   if (has(p, 'kind') && !['shared', 'private'].includes(p.kind)) return false;
   if (has(p, 'recipientCount') && !integer(p.recipientCount, 1, 100)) return false;
   if (has(p, 'operation') && !['send', 'setup', 'storage'].includes(p.operation)) return false;
-  if (has(p, 'result') && !['success', 'failure'].includes(p.result)) return false;
+  if (has(p, 'result') && !['success', 'failure', ...(event.name === 'agent_send_result' ? ['uncertain'] : [])].includes(p.result)) return false;
+  if (has(p, 'source') && !['mac', 'phone', 'outsideAgent'].includes(p.source)) return false;
   if (has(p, 'duration') && !['under_1s', '1_to_5s', '5_to_30s', 'over_30s'].includes(p.duration)) return false;
   return true;
 }

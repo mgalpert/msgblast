@@ -117,6 +117,7 @@ final class AppModel: ObservableObject {
     lazy var telemetry = TelemetryCollector(endpoint: TelemetryCollector.endpoint(demo: demo), queueURL: local.url.deletingLastPathComponent().appendingPathComponent("telemetry-queue.json"))
     var lastTelemetryInventory: [String: Int]?
     var lastTelemetryActivityDay: Int?
+    var lastTelemetryPhoneDay: Int?
     var telemetryTimer: Timer?
     let controlEvents = AgentControlEvents()
     let agentSendActivity = AgentControlActivity()

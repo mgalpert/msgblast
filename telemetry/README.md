@@ -36,17 +36,33 @@ PostHog's required distinct ID.
 | `onboarding_completed` | `activity` | None |
 | `agent_added` | `agentUsage` | `provider`: catalog key; `count`: additions |
 | `agent_inventory` | `agentUsage` | `counts`: provider to integer count (0–100) |
-| `message_submitted` | `messageCounts` | `kind`: shared/private; `recipientCount`: 1–100 |
+| `message_submitted` | `messageCounts` | `kind`: shared/private; `recipientCount`: 1–100; optional `source` |
 | `app_active` | `activity` | None |
 | `app_engaged` | `activity` | None |
-| `operation_result` | `reliability` | `operation`: send/setup/storage; `result`: success/failure |
+| `operation_result` | `reliability` | `operation`: send/setup/storage; `result`: success/failure; optional `source` for sends |
+| `agent_send_result` | `reliability` | `provider`: catalog key; `result`: success/failure/uncertain; optional `source` |
+| `phone_paired` | `activity` | None |
+| `phone_connected` | `activity` | None |
 | `operation_timing` | `performance` | `operation`: send/setup/storage; `duration`: under_1s/1_to_5s/5_to_30s/over_30s |
+
+`source` is `mac` (the Mac's own window), `phone` (the paired iPhone) or
+`outsideAgent` (an outside agent over MCP). `agent_send_result` is one event per
+website, app, CLI or bot agent in a send; Messages contacts are not included.
+`phone_connected` is sent at most once per elapsed cohort day while the phone connects.
+
+An event outside this contract is dropped and the rest of its batch is forwarded;
+a batch with no valid event is rejected. Deploy the Worker before shipping a build
+that sends a new event, property value or provider key, or that build's new events
+are dropped.
 
 Provider keys: `chatgpt`, `claude`, `grok`, `muse`, `dots`, `os3`, `hark`,
 `grokbot`, `codexCLI`, `claudeCode`, `openclaw`, `hermes`, `instinct`, `fo`, `szn`,
 `poke`, `otherMessages`, and for approved outside agents `outsideClaudeCode`,
 `outsideCodex`, `outsideCursor`, `outsideGeminiCLI`, `outsideChatGPT`,
-`outsideClaudeDesktop`, `outsideGrokBot`, `outsideOther`. Custom names and contact
+`outsideClaudeDesktop`, `outsideGrokBot`, `outsideOther`, and for app agents and
+Alexa Shopping `chatgptApp`, `claudeApp`, `dotsApp`, `museApp`, `grokBotApp`, `wabi`,
+`geminiApp`, `alexaShopping`. `telemetry/worker.test.mjs` fails when the Mac app has
+an agent key this list lacks. Custom names and contact
 identities are never accepted; an outside agent counts only by kind.
 
 Optional common properties: `buildChannel` (`development` or `production`), `appVersion` (32-character safe version token),

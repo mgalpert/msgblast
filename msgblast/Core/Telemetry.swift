@@ -48,7 +48,10 @@ public enum TelemetryCategory: String, Codable, Sendable {
 public struct TelemetryProperties: Codable, Sendable {
     public enum Kind: String, Codable, Sendable { case shared, `private` }
     public enum Operation: String, Codable, Sendable { case send, setup, storage }
-    public enum Result: String, Codable, Sendable { case success, failure }
+    /// `uncertain` is used only by `agent_send_result`, for a send the agent's page could not confirm.
+    public enum Result: String, Codable, Sendable { case success, failure, uncertain }
+    /// Where a send started: the Mac's own window, the paired iPhone, or an outside agent over MCP.
+    public enum Source: String, Codable, Sendable { case mac, phone, outsideAgent }
     public enum Duration: String, Codable, Sendable {
         case under1s = "under_1s", oneTo5s = "1_to_5s", fiveTo30s = "5_to_30s", over30s = "over_30s"
         public init(seconds: TimeInterval) {
@@ -68,6 +71,7 @@ public struct TelemetryProperties: Codable, Sendable {
     public var operation: Operation?
     public var result: Result?
     public var duration: Duration?
+    public var source: Source?
     public var appVersion: String?
     public var osMajor: Int?
     public var cohortDay: Int?
@@ -81,12 +85,13 @@ public struct TelemetryEvent: Codable, Sendable {
         case agentAdded = "agent_added", onboardingScreenViewed = "onboarding_screen_viewed"
         case messageSubmitted = "message_submitted", appActive = "app_active", appEngaged = "app_engaged"
         case operationResult = "operation_result", operationTiming = "operation_timing"
+        case phonePaired = "phone_paired", phoneConnected = "phone_connected", agentSendResult = "agent_send_result"
         public var category: TelemetryCategory {
             switch self {
-            case .onboardingCompleted, .appActive, .appEngaged: .activity
+            case .onboardingCompleted, .appActive, .appEngaged, .phonePaired, .phoneConnected: .activity
             case .agentInventory, .agentAdded, .onboardingScreenViewed: .agentUsage
             case .messageSubmitted: .messageCounts
-            case .operationResult: .reliability
+            case .operationResult, .agentSendResult: .reliability
             case .operationTiming: .performance
             }
         }

@@ -175,4 +175,20 @@ private final class TelemetryTransport: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+
+    func testReleaseEventsUseClosedValuesAndConsentCategories() throws {
+        XCTAssertEqual(TelemetryEvent.Name.phonePaired.category, .activity)
+        XCTAssertEqual(TelemetryEvent.Name.phoneConnected.category, .activity)
+        XCTAssertEqual(TelemetryEvent.Name.agentSendResult.category, .reliability)
+        var properties = TelemetryProperties()
+        properties.provider = WebProvider.chatgptApp.rawValue; properties.result = .uncertain; properties.source = .outsideAgent
+        let event = TelemetryEvent(name: .agentSendResult, properties: properties, consent: SharingConsent(preferences: SharingPreferences()))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(event)) as? [String: Any])
+        XCTAssertEqual(json["name"] as? String, "agent_send_result")
+        let encoded = try XCTUnwrap(json["properties"] as? [String: Any])
+        XCTAssertEqual(encoded["provider"] as? String, "chatgptApp")
+        XCTAssertEqual(encoded["result"] as? String, "uncertain")
+        XCTAssertEqual(encoded["source"] as? String, "outsideAgent")
+        XCTAssertEqual(Set(encoded.keys), ["provider", "result", "source", "cohortDay", "cohortStartedAt"])
+    }
 }

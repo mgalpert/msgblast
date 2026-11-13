@@ -238,6 +238,7 @@ extension AppModel {
     }
 
     private func recordSharedSendTelemetry(_ result: AgentBroadcastResult, comparisonID: UUID, existingID: UUID?, recipients: Set<UUID>, followUpID: UUID, started telemetryStarted: Date) {
+        recordAgentSendResults(result.web.map { ($0.key.provider, $0.value) })
         let webSubmitted = result.web.values.filter { $0.status.confirmsSubmission }.count
         let messagesSubmitted = comparison(comparisonID).map { comparison in
             existingID == nil ? comparison.members.filter { recipients.contains($0.id) && $0.submission == .submitted }.count :
@@ -286,6 +287,7 @@ extension AppModel {
         prepared()
         let telemetryStarted = Date()
         let attempt = await session.send(text, comparisonID: id)
+        recordAgentSendResults([(session.provider, attempt)])
         if let attempt, attempt.status.confirmsSubmission {
             recordMessageSubmission(kind: .private, recipientCount: 1, started: telemetryStarted, logicalID: attempt.id)
         } else { recordOperation(.send, success: false, started: telemetryStarted) }
