@@ -118,7 +118,7 @@ public actor AgentControlHTTPEndpoint {
         if request.headers["origin"] != nil { return empty(403) }
         switch credential(request) {
         case .elsewhere: return empty(404)
-        case .rejected: return AgentControlHTTPResponse(status: 401, headers: [("WWW-Authenticate", "Bearer")], body: Data())
+        case .rejected: return AgentControlHTTPResponse(status: 401, headers: [("WWW-Authenticate", Self.challenge)], body: Data())
         case .accepted(let client):
             lastAuthorized = Date()
             lastAuthorizedByClient[client] = lastAuthorized
@@ -133,6 +133,9 @@ public actor AgentControlHTTPEndpoint {
     }
 
     private enum Credential { case accepted(String), rejected, elsewhere }
+
+    /// Names the problem, so a client that falls back to OAuth after a 401 can still say the key is missing or wrong.
+    public static let challenge = #"Bearer error="invalid_token", error_description="msgblast key missing or wrong. Copy it again from msgblast Settings, Outside agents.""#
 
     /// Bearer wins when the header is present. Otherwise `/mcp/<token>` is the token. The query string is ignored.
     private func credential(_ request: AgentControlHTTPRequest) -> Credential {
