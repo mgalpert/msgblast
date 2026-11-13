@@ -338,15 +338,16 @@ public struct ProjectionPresenter: Sendable {
         return next.isEmpty || next == Set(members) ? [] : next
     }
 
-    /// What New Conversation starts with checked: every agent that can take a send now or by
-    /// queueing (ready, opens its app, or busy), never a blocked or unavailable one; a Messages
-    /// contact only when the Mac has it selected. In the strip's order.
+    /// What New Conversation starts with checked: agents the Mac selected for a shared send
+    /// whose readiness accepts a send now or by queueing (ready, opens its app, or busy),
+    /// never a blocked or unavailable one. Both lists, in the strip's order.
     public var defaultNewSelection: [String] {
         let list = newConversationAgents
-        let agents = list.agents.filter {
-            switch $0.readiness { case .ready, .readyWillLaunch, .busy: true; case .blocked, .unavailable: false }
+        func chosen(_ agent: AgentAvailability) -> Bool {
+            guard agent.selectedForSharedSend else { return false }
+            switch agent.readiness { case .ready, .readyWillLaunch, .busy: return true; case .blocked, .unavailable: return false }
         }
-        return agents.map(\.agentID) + list.messages.filter(\.selectedForSharedSend).map(\.agentID)
+        return list.agents.filter(chosen).map(\.agentID) + list.messages.filter(chosen).map(\.agentID)
     }
 
     /// New Conversation's check: an empty choice is no one (never everyone). A tap adds the
