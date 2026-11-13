@@ -170,7 +170,8 @@ public final class RemoteCommandExecutor {
     private var ledger: [UUID: RemoteCommandResult] = [:]
     private var ledgerOrder: [UUID] = []
     private var inProgress: Set<UUID> = []
-    private var sendQueue: [(RemoteCommand, (RemoteCommandResult) -> Void)] = []
+    /// Serial commands waiting their turn; `waited` is set once one was told it is queued.
+    private var sendQueue: [(command: RemoteCommand, reply: (RemoteCommandResult) -> Void, waited: Bool)] = []
     private var sending = false
     private var uploads: [UUID: Upload] = [:]
     private struct Upload { var filename: String; var count: Int; var chunks: [Int: Data] = [:]; var bytes = 0 }
@@ -194,9 +195,7 @@ public final class RemoteCommandExecutor {
         if command.action.isSerial {
             if let rejection = command.action.isSend ? checkSend(command) : checkPrepare(command) { finish(rejection, reply); return }
             inProgress.insert(id)
-            if sending { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Waiting for the previous request")) }
-            sendQueue.append((command, reply))
-            drain()
+            enqueue(command, reply)
             return
         }
         inProgress.insert(id)
@@ -224,10 +223,30 @@ public final class RemoteCommandExecutor {
         reply(result)
     }
 
+    /// Queues a serial command. A newer prepare replaces older ones still waiting (the phone asks
+    /// again whenever its recipients change, and only the newest answer matters to it), so a
+    /// prepare never waits behind preparations nobody needs any more.
+    private func enqueue(_ command: RemoteCommand, _ reply: @escaping (RemoteCommandResult) -> Void) {
+        let isPrepare: (RemoteCommand) -> Bool = { if case .prepareConversation = $0.action { true } else { false } }
+        if isPrepare(command) {
+            let replaced = sendQueue.filter { isPrepare($0.command) }
+            sendQueue.removeAll { isPrepare($0.command) }
+            for entry in replaced {
+                finish(RemoteCommandResult(clientCommandID: entry.command.clientCommandID, outcome: .applied, message: "Replaced by a newer request"), entry.reply)
+            }
+        }
+        if sending { reply(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .accepted, message: "Waiting for the previous request")) }
+        sendQueue.append((command, reply, sending))
+        drain()
+    }
+
     private func drain() {
         guard !sending, !sendQueue.isEmpty else { return }
         sending = true
-        let (command, reply) = sendQueue.removeFirst()
+        let (command, reply, waited) = sendQueue.removeFirst()
+        // A command that was told it waits hears when its turn comes, so the phone measures its
+        // own deadline from here rather than from when it asked.
+        if waited { reply(RemoteCommandResult(clientCommandID: command.clientCommandID, outcome: .accepted, message: "Started on your Mac")) }
         Task { @MainActor in
             // Re-check at the head of the queue: the Mac may have locked or started its own send.
             let result: RemoteCommandResult

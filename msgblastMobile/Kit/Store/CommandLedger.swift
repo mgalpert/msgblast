@@ -90,3 +90,38 @@ public enum ComposeSend {
         return LateConfirmation(conversationID: record.result?.conversationID ?? record.conversationID)
     }
 }
+
+/// The compose bar's wait for a prepare's answer. The phone's own deadline only catches a Mac
+/// that stopped answering, so it starts again whenever the Mac reports progress: a prepare
+/// queued behind another (each bounded at 20 s on the Mac) is not given up on while it waits
+/// its turn. Without progress it ends at `timeout` after the request (or the last report).
+public enum PrepareWait {
+    public enum Answer: Sendable { case result(RemoteCommandResult), lost, timedOut }
+    private enum Signal: Sendable { case answer(Answer), progress }
+
+    /// `perform` runs the request and calls the closure it gets for each progress report.
+    @MainActor
+    public static func run(timeout: Duration,
+                           perform: @escaping @Sendable @MainActor (_ progress: @escaping @Sendable @MainActor () -> Void) async throws -> RemoteCommandResult) async -> Answer {
+        let (signals, race) = AsyncStream<Signal>.makeStream()
+        Task { @MainActor in
+            do { race.yield(.answer(.result(try await perform { race.yield(.progress) }))) } catch { race.yield(.answer(.lost)) }
+        }
+        func deadline() -> Task<Void, Never> {
+            Task {
+                // A cancelled timer (progress arrived) must not end the wait.
+                guard (try? await Task.sleep(for: timeout)) != nil else { return }
+                race.yield(.answer(.timedOut))
+            }
+        }
+        var timer = deadline()
+        defer { timer.cancel(); race.finish() }
+        for await signal in signals {
+            switch signal {
+            case .progress: timer.cancel(); timer = deadline()
+            case .answer(let answer): return answer
+            }
+        }
+        return .lost
+    }
+}

@@ -25,8 +25,10 @@ struct ComposeBar: View {
     @State private var prepareReasons: [String: String] = [:]
     /// Each prepare's number; a newer one (the recipients changed) makes older answers stale.
     @State private var prepareGeneration = 0
-    /// How long the phone waits for the Mac's readiness answer (the Mac bounds it at 20 s).
-    static let prepareTimeout: Duration = .seconds(25)
+    /// How long the phone waits for the Mac's readiness answer, counted again from each progress
+    /// report (queued, started). The Mac bounds a running prepare at 20 s; the rest covers the
+    /// trip and a Mac busy right after connecting.
+    static let prepareTimeout: Duration = .seconds(30)
     @State private var sending = false
     /// The send waiting on the Mac: what it carried, so a late `applied` (after the field already
     /// said unconfirmed) finishes it as a prompt answer would.
@@ -283,8 +285,6 @@ struct ComposeBar: View {
     /// Tells the Mac which agents are coming so their pages are ready before Send.
     private func prepare() { Task { await runPrepare() } }
 
-    private enum PrepareAnswer: Sendable { case result(RemoteCommandResult), lost, timedOut }
-
     /// Returns false when the Mac refused or did not answer; the reason stays on screen with
     /// Try Again until the next try. Only website agents need preparing (Messages contacts,
     /// Mac apps and CLIs do not). A newer prepare makes this one's answer irrelevant.
@@ -301,19 +301,12 @@ struct ComposeBar: View {
         guard !needs.isEmpty else { preparing = false; return true }
         preparing = true
         let action = RemoteAction.prepareConversation(conversationID: conversationID, agentIDs: needs)
-        // Whichever comes first: the Mac's answer or the phone's own deadline.
-        let (answers, race) = AsyncStream<PrepareAnswer>.makeStream()
+        // Whichever comes first: the Mac's answer or the phone's own deadline, which a report
+        // that the prepare is queued or has started puts back.
         let app = app
-        Task { @MainActor in
-            do { race.yield(.result(try await app.perform(action))) } catch { race.yield(.lost) }
+        let answer = await PrepareWait.run(timeout: Self.prepareTimeout) { progress in
+            try await app.perform(action, onProgress: { _ in progress() })
         }
-        Task {
-            try? await Task.sleep(for: Self.prepareTimeout)
-            race.yield(.timedOut)
-        }
-        var first = answers.makeAsyncIterator()
-        let answer = await first.next() ?? .lost
-        race.finish()
         guard generation == prepareGeneration else { return false }
         preparing = false
         switch answer {

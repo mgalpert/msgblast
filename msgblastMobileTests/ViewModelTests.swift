@@ -612,6 +612,37 @@ final class MobileAppTests: XCTestCase {
         return (try XCTUnwrap(sent.value).clientCommandID, result)
     }
 
+    /// A prepare queued behind another on the Mac takes longer in all than the phone's deadline;
+    /// each report (queued, started) restarts that deadline, so its answer still arrives.
+    func testAPrepareThatReportsProgressIsNotGivenUpAtTheDeadline() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        _ = try await app.pair(link: mac.offer().url.absoluteString, deviceName: "Phone")
+        await settle { app.store.projection.seq != nil }
+        mac.answerCommands = false
+        let prepare = RemoteAction.prepareConversation(conversationID: nil, agentIDs: ["claude"])
+        let sent = Slot<RemoteCommand>()
+        let wait = Task {
+            await PrepareWait.run(timeout: .milliseconds(400)) { progress in
+                try await app.perform(prepare, onSent: { sent.value = $0 }, onProgress: { _ in progress() })
+            }
+        }
+        await settle { sent.value != nil }
+        let id = try XCTUnwrap(sent.value).clientCommandID
+        for message in ["Waiting for the previous request", "Started on your Mac"] {
+            try await Task.sleep(for: .milliseconds(250))
+            mac.sessions.last!.send(.commandResult(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: message)))
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        mac.sessions.last!.send(.commandResult(RemoteCommandResult(clientCommandID: id, outcome: .applied)))
+        guard case .result(let result) = await wait.value else { return XCTFail("Each report restarts the phone's deadline") }
+        XCTAssertEqual(result.outcome, .applied)
+
+        // A Mac that reports nothing is still given up on at the deadline.
+        let silent = await PrepareWait.run(timeout: .milliseconds(200)) { _ in try await app.perform(prepare) }
+        guard case .timedOut = silent else { return XCTFail("No answer and no report must time out") }
+    }
+
     func testPairSendAndUnconfirmedWhenTheConnectionDrops() async throws {
         let mac = FakeMac()
         let app = try makeApp(mac)
