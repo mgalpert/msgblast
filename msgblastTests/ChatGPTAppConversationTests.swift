@@ -1877,6 +1877,67 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 2)
     }
 
+    @MainActor
+    func testWabiSubmitsWhileChatGPTReplyIsStillPending() async throws {
+        let f = try fixture(followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let visible = f.directory.appendingPathComponent("reply-visible")
+        let chatgpt = try chatgptSession(f, holdingReplyUntil: visible)
+        let wabi = WebAgentSession(provider: .wabi, storageURL: f.directory.appendingPathComponent("wabi.json"), fixture: true)
+        defer { chatgpt.beginShutdown(); wabi.beginShutdown() }
+        wabi.setEnabled(true)
+        wabi.updateState { $0.comparisonID = UUID() }
+        let broadcast = Task { await WebAgents.send("Follow-up", to: [chatgpt, wabi]) }
+        let overlapped = await nextSendStartedWhileWaiting(chatgpt, wabi)
+        try Data().write(to: visible)
+        let results = await broadcast.value
+        XCTAssertTrue(overlapped, "chatgpt=\(String(describing: chatgpt.state.attempts.first?.status)) \(chatgpt.error ?? "") wabi=\(wabi.isSending) \(String(describing: wabi.state.attempts.first?.status)) \(wabi.error ?? "")")
+        XCTAssertEqual(results[chatgpt.id]?.status, .observed, chatgpt.error ?? "")
+        XCTAssertEqual(results[wabi.id]?.status, .observed, wabi.error ?? "")
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "bring_to_front" })
+    }
+
+    @MainActor
+    private func chatgptSession(_ f: Fixture, holdingReplyUntil visible: URL) throws -> WebAgentSession {
+        let submitted = f.directory.appendingPathComponent("submitted-draft")
+        let adapter = f.adapter(timing: .init(pollInterval: .milliseconds(20), stableDuration: .zero, replyTimeout: .seconds(15), callTimeout: 3)) { root in
+            guard FileManager.default.fileExists(atPath: submitted.path), !FileManager.default.fileExists(atPath: visible.path) else { return root }
+            return Self.hidingAssistantAnswer(root)
+        }
+        let storage = f.directory.appendingPathComponent("chatgpt.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true
+        workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in })
+        let driver = DesktopAppConversation(executable: f.executable, delivery: .foreground, captureHostWindow: {
+            XCTFail("ChatGPT must not take the foreground"); throw CancellationError()
+        })
+        return WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: driver, chatgptApp: adapter)
+    }
+
+    private static func hidingAssistantAnswer(_ root: ChatGPTAXNode) -> ChatGPTAXNode {
+        var root = root
+        func hide(_ node: inout ChatGPTAXNode) {
+            if node.classes.contains(where: { $0.hasPrefix("_transcriptContent_") }) { node.children.removeLast() }
+            else { for index in node.children.indices { hide(&node.children[index]) } }
+        }
+        hide(&root)
+        return root
+    }
+
+    @MainActor
+    private func nextSendStartedWhileWaiting(_ chatgpt: WebAgentSession, _ next: WebAgentSession) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(12))
+        while ContinuousClock.now < deadline {
+            if chatgpt.state.attempts.first?.status == .waiting, next.isSending || !next.state.attempts.isEmpty { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return false
+    }
+
 }
 
 /// ChatGPT 26.1103.60933 trees, pruned from the native app's accessibility tree. Real nesting, roles and classes; text and names are synthetic.

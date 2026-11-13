@@ -1750,6 +1750,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
     }
 
+    /// Without a foreground lease, confirmed submission is what frees the next app in a blast.
+    @MainActor private static func handOffAfterSubmission(leased: Bool, _ handoff: @MainActor @Sendable () -> Void) {
+        if !leased { handoff() }
+    }
     private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void, plannedAttemptID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
@@ -1843,7 +1847,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let outgoingID = attempt.id
             let submitted: @Sendable () async throws -> Void = { [weak self] in
                 guard let self else { throw CancellationError() }
-                try await self.recordDesktopSubmission(attemptID: outgoingID)
+                try await self.recordDesktopSubmission(attemptID: outgoingID); await Self.handOffAfterSubmission(leased: sendFocus != nil, onSubmissionFinished)
                 await onConfirmedSubmission()
             }
             let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
