@@ -344,6 +344,99 @@ final class RemoteCommandExecutorTests: XCTestCase {
         XCTAssertTrue(replay.replayed); XCTAssertEqual(host.renamed.count, 2, "Idempotent by command id")
     }
 
+    func testPartialUploadsAreCappedByCountAndBytes() async {
+        // The executor holds its host weakly; keep it alive for the whole test.
+        let host = host()
+        defer { withExtendedLifetime(host) {} }
+        let executor = RemoteCommandExecutor(host: host)
+        func chunk(_ upload: UUID, _ index: Int, of count: Int, _ data: Data) async -> RemoteCommandResult {
+            await executor.execute(RemoteCommand(action: .uploadAttachmentChunk(uploadID: upload, filename: "a.png", index: index, count: count, data: data)))
+        }
+        let small = Data([1, 2, 3])
+        let uploads = (0...RemoteCommandExecutor.maximumConcurrentUploads).map { _ in UUID() }
+        for upload in uploads { let result = await chunk(upload, 0, of: 2, small); XCTAssertEqual(result.outcome, .applied) }
+        XCTAssertEqual(executor.partialUploadCount, RemoteCommandExecutor.maximumConcurrentUploads, "Starting one more drops the oldest")
+        _ = await chunk(uploads[0], 1, of: 2, small)
+        let dropped = await executor.execute(RemoteCommand(action: .attachStaged(uploadID: uploads[0], sha256: Data(SHA256.hash(data: small + small)))))
+        XCTAssertEqual(dropped.code, .attachmentRejected, "A dropped upload fails at attach and is added again")
+
+        // Two full files fill the byte cap; a third chunk drops the least recently used file.
+        executor.discardUploads()
+        let full = Data(repeating: 7, count: RemoteProtocol.maximumAttachmentChunkBytes)
+        let perFile = RemoteProtocol.maximumAttachmentBytes / full.count
+        let (first, second) = (UUID(), UUID())
+        for upload in [first, second] { for index in 0..<perFile { _ = await chunk(upload, index, of: perFile + 1, full) } }
+        XCTAssertEqual(executor.bufferedUploadBytes, RemoteCommandExecutor.maximumBufferedUploadBytes)
+        let third = await chunk(UUID(), 0, of: 1, small)
+        XCTAssertEqual(third.outcome, .applied)
+        XCTAssertLessThanOrEqual(executor.bufferedUploadBytes, RemoteCommandExecutor.maximumBufferedUploadBytes)
+        XCTAssertEqual(executor.partialUploadCount, 2)
+        let resumed = await chunk(second, 0, of: perFile + 1, full)
+        XCTAssertEqual(resumed.outcome, .applied, "The most recent full file survives")
+        XCTAssertEqual(executor.bufferedUploadBytes, RemoteProtocol.maximumAttachmentBytes + small.count, "Only that file and the small one are left")
+    }
+
+    func testTheSendQueueIsCapped() async {
+        let host = host()
+        host.sendDelay = .milliseconds(100)
+        let executor = RemoteCommandExecutor(host: host)
+        var finals: [RemoteCommandResult] = []
+        let commands = (0...(RemoteCommandExecutor.maximumQueuedSends + 1)).map { RemoteCommand(action: .createConversation(text: "\($0)", agentIDs: ["claude"], attachmentIDs: [])) }
+        for command in commands { executor.submit(command) { if $0.outcome != .accepted { finals.append($0) } } }
+        XCTAssertEqual(executor.queuedSendCount, RemoteCommandExecutor.maximumQueuedSends)
+        XCTAssertEqual(finals.map(\.code), [.macBusy], "One running, a full queue, and the next is refused at once")
+        XCTAssertEqual(finals.first?.clientCommandID, commands.last?.clientCommandID)
+        for _ in 0..<300 where executor.isSending || executor.queuedSendCount > 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(host.sends.count, RemoteCommandExecutor.maximumQueuedSends + 1)
+    }
+
+    func testUploadChunksStayOutOfTheReplayLedger() async {
+        let host = host()
+        let executor = RemoteCommandExecutor(host: host)
+        let send = RemoteCommand(action: .createConversation(text: "Keep me", agentIDs: ["claude"], attachmentIDs: []))
+        _ = await executor.execute(send)
+        for _ in 0..<(RemoteCommandExecutor.ledgerCapacity + 50) {
+            _ = await executor.execute(RemoteCommand(action: .uploadAttachmentChunk(uploadID: UUID(), filename: "a.png", index: 0, count: 2, data: Data([1]))))
+        }
+        let replay = await executor.execute(send)
+        XCTAssertTrue(replay.replayed, "Chunks never push a send out of the ledger")
+        XCTAssertEqual(host.sends.count, 1)
+
+        // A repeated chunk is applied again rather than replayed, which is harmless.
+        let upload = UUID(), data = Data("hello".utf8)
+        let chunk = RemoteCommand(action: .uploadAttachmentChunk(uploadID: upload, filename: "a.txt", index: 0, count: 1, data: data))
+        _ = await executor.execute(chunk)
+        let again = await executor.execute(chunk)
+        XCTAssertEqual(again.outcome, .applied); XCTAssertFalse(again.replayed)
+        let staged = await executor.execute(RemoteCommand(action: .attachStaged(uploadID: upload, sha256: Data(SHA256.hash(data: data)))))
+        XCTAssertEqual(staged.outcome, .applied)
+    }
+
+    func testTheLedgerSurvivesARestartAndQueuedSendsDoNot() async {
+        let first = host()
+        first.sendDelay = .milliseconds(100)
+        let executor = RemoteCommandExecutor(host: first)
+        let done = RemoteCommand(action: .createConversation(text: "Before", agentIDs: ["claude"], attachmentIDs: []))
+        _ = await executor.execute(done)
+        let running = RemoteCommand(action: .createConversation(text: "Running", agentIDs: ["claude"], attachmentIDs: []))
+        let queued = RemoteCommand(action: .createConversation(text: "Queued", agentIDs: ["claude"], attachmentIDs: []))
+        var runningResult: RemoteCommandResult?
+        executor.submit(running) { if $0.outcome != .accepted { runningResult = $0 } }
+        var queuedResult: RemoteCommandResult?
+        executor.submit(queued) { if $0.outcome != .accepted { queuedResult = $0 } }
+
+        let second = host()
+        executor.attach(second)
+        XCTAssertEqual(queuedResult?.code, .failed, "A send queued before the restart never runs on the new host")
+        let replay = await executor.execute(done)
+        XCTAssertTrue(replay.replayed)
+        let queuedReplay = await executor.execute(queued)
+        XCTAssertTrue(queuedReplay.replayed); XCTAssertEqual(queuedReplay.code, .failed)
+        for _ in 0..<100 where runningResult == nil { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(runningResult?.code, .failed, "A send taken from the queue but not started never runs on the new host")
+        XCTAssertTrue(second.sends.isEmpty)
+    }
+
     func testNonSendCommandsReachTheHost() async {
         let host = host()
         let executor = RemoteCommandExecutor(host: host)
