@@ -35,9 +35,11 @@ struct GrokReplyReceipt: Codable, Equatable, Sendable {
 
 enum DesktopAppError: LocalizedError {
     case unavailable(String)
+    case interstitial(app: String, prompt: String)
     case incompleteSnapshot
     var errorDescription: String? { switch self {
         case .unavailable(let reason): reason
+        case .interstitial(let app, let prompt): "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app)."
         case .incompleteSnapshot: "The app's accessibility snapshot is incomplete. Nothing will be sent automatically."
     } }
 }
@@ -53,7 +55,7 @@ enum DesktopInterstitial {
         default: nil
         }
         if let prompt {
-            throw DesktopAppError.unavailable("\(app.name) needs you: it is showing \(prompt). Finish or dismiss it in \(app.name), then send again. Nothing was sent.")
+            throw DesktopAppError.interstitial(app: app.name, prompt: prompt)
         }
     }
 }

@@ -1998,9 +1998,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
             }
             attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
-            let detail = error is CancellationError
-                ? started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
-                : error.localizedDescription
+            let submitted = (state.attempts.first { $0.id == attempt.id }?.status).map { $0 != .attempting } ?? false
+            let detail = Self.failureDetail(for: error, started: started, submitted: submitted, provider: provider)
             attempt.detail = detail
             self.error = detail
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
@@ -2009,6 +2008,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         catch { self.error = error.localizedDescription }
         updateNativeSnapshot()
         return attempt
+    }
+
+    private static func failureDetail(for error: Error, started: Bool, submitted: Bool, provider: WebProvider) -> String {
+        if error is CancellationError {
+            return started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
+        }
+        guard case let .interstitial(app, prompt) = error as? DesktopAppError, !submitted else { return error.localizedDescription }
+        return "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app), then send again. Nothing was sent."
     }
 
     private func recordDesktopSubmission(attemptID: UUID) throws {
