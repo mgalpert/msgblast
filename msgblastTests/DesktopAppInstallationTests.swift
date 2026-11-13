@@ -373,11 +373,9 @@ final class DesktopAppInstallationTests: XCTestCase {
     }
 
     func testHandBackEndsAfterTheQuietGapWithThePreviousAppInFront() async throws {
-        let clock = AdvancingClock()
-        var checks = 0
+        let clock = AdvancingClock(), checks = Counter()
         try await Client.awaitHandBack(after: .seconds(5), clock: clock, state: {
-            defer { checks += 1 }
-            return checks == 0 ? self.watchState([2]) : self.watchState([2, 1], front: 1)
+            checks.next() == 0 ? self.watchState([2]) : self.watchState([2, 1], front: 1)
         }, handBack: { _, _ in })
         XCTAssertEqual(clock.sleeps.reduce(.zero, +), .milliseconds(1500))
     }
@@ -470,6 +468,13 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertFalse(Client.handBackStillValid(watchState([2], previousRunning: false)))
     }
 
+    /// Returns 0, 1, 2, ... on successive calls.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        func next() -> Int { lock.withLock { defer { value += 1 }; return value } }
+    }
+
     /// The world the suspended hand-back sees: activations and the front app, changed by the test.
     private final class FrontWorld: @unchecked Sendable {
         private let lock = NSLock()
@@ -504,14 +509,23 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
-    private func suspendedHandBack(_ during: @escaping @Sendable (FrontWorld, AdvancingClock) -> Void, succeeding: Bool) async throws -> (calls: [String], world: FrontWorld) {
-        let world = FrontWorld(), clock = AdvancingClock(), gate = DriverGate(), calls = DriverCalls()
+    /// Where the fake driver holds the hand-back: in the bring_to_front process, or in the
+    /// connection the driver awaits before dispatching it.
+    private enum DriverDelay { case dispatch, connection }
+
+    private func suspendedHandBack(_ during: @escaping @Sendable (FrontWorld, AdvancingClock) -> Void, succeeding: Bool,
+                                   delay: DriverDelay = .dispatch) async throws -> (calls: [String], world: FrontWorld) {
+        let world = FrontWorld(), clock = AdvancingClock(), gate = DriverGate(), calls = DriverCalls(), connects = Counter()
         let driver = DesktopAppConversation(executable: URL(fileURLWithPath: "/fixture/cua-driver"), runProcess: { _, arguments, _, _, _ in
             calls.record(arguments[1], [:])
             guard arguments[1] == "bring_to_front" else { return .init(status: 0, stdout: "{}") }
-            guard await gate.enter() else { return .init(status: 1, stdout: "") }
+            if delay == .dispatch { guard await gate.enter() else { return .init(status: 1, stdout: "") } }
             world.activate(1)
             return .init(status: 0, stdout: #"{"activated":true,"pid":42,"window_id":101,"exact_window_effect":{"verified":true}}"#)
+        }, connect: {
+            // The first connection is the warm-up before the open; the second is the hand-back's.
+            if delay == .connection, connects.next() == 1 { _ = await gate.enter() }
+            return nil
         }, captureHostWindow: { .init(pid: 42, window: 101) })
         let host = DesktopHandBackHost(ownPID: 1, fallback: { pid, _ in world.fellBack(pid) })
         host.driver = driver
@@ -553,13 +567,30 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertEqual(result.world.fallbacks, [1])
     }
 
+    func testSwitchToAnotherAppWhileTheDriverConnectsDispatchesNothing() async throws {
+        let result = try await suspendedHandBack({ world, _ in world.activate(3) }, succeeding: true, delay: .connection)
+        XCTAssertEqual(result.calls, ["end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testDeadlinePassingWhileTheDriverConnectsDispatchesNothing() async throws {
+        let result = try await suspendedHandBack({ _, clock in clock.advance(by: .seconds(6)) }, succeeding: true, delay: .connection)
+        XCTAssertEqual(result.calls, ["end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
+    func testDelayedDriverConnectionThatSucceedsDispatchesOnce() async throws {
+        let result = try await suspendedHandBack({ _, _ in }, succeeding: true, delay: .connection)
+        XCTAssertEqual(result.calls, ["bring_to_front", "end_session"])
+        XCTAssertEqual(result.world.fallbacks, [])
+    }
+
     private func handBackResult(_ states: [Client.FrontWatchState]) async throws -> [Int32] {
         final class Box: @unchecked Sendable { var pids: [Int32] = [] }
         let box = Box()
-        var checks = 0
+        let checks = Counter()
         try await Client.awaitHandBack(after: .seconds(5), clock: AdvancingClock(), state: {
-            defer { checks += 1 }
-            return states[min(checks, states.count - 1)]
+            states[min(checks.next(), states.count - 1)]
         }, handBack: { pid, _ in box.pids.append(pid) })
         return box.pids
     }

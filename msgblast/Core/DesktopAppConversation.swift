@@ -372,8 +372,12 @@ actor DesktopAppConversation {
     private let runProcess: ProcessRunner
     private let confirmHostFocus: @Sendable (Target) async -> Bool
     private let captureHostWindow: @Sendable () async throws -> Target
+    typealias Connect = @Sendable () async throws -> EmbeddedCuaDriver.Connection?
+    private static let embeddedConnect: Connect = { try await EmbeddedCuaDriver.shared.connection() }
+    private static let noConnect: Connect = { nil }
+    private let connect: Connect
     init(executable: URL? = nil, timing: Timing = Timing(), delivery: Delivery = .background,
-         runProcess: @escaping ProcessRunner = DesktopAppConversation.execute,
+         runProcess: @escaping ProcessRunner = DesktopAppConversation.execute, connect: Connect? = nil,
          confirmHostFocus: @escaping @Sendable (Target) async -> Bool = { await DesktopAppConversation.hostHasFocus($0) },
          captureHostWindow: @escaping @Sendable () async throws -> Target = { try await DesktopAppConversation.hostWindow() },
          readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
@@ -385,6 +389,7 @@ actor DesktopAppConversation {
         self.runProcess = runProcess
         self.confirmHostFocus = confirmHostFocus
         self.captureHostWindow = captureHostWindow
+        self.connect = connect ?? (executable == nil ? Self.embeddedConnect : Self.noConnect)
     }
     nonisolated static func execute(_ executable: URL, _ arguments: [String], _ environment: [String: String], _ timeout: TimeInterval, _ cancellation: AgentCancellation) async throws -> AgentProcess.Result {
         try await Task.detached {
@@ -400,14 +405,24 @@ actor DesktopAppConversation {
         struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; var space_ids: [UInt64]?; var layer: Int?; let bounds: Bounds }
         let windows: [Window]
     }
-    func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
-        guard let executable else { throw DesktopAppError.unavailable("App control is missing from this copy of msgblast. Reinstall msgblast.") }
+    /// Thrown by `call` when its `beforeDispatch` check declines, before any process is spawned.
+    struct DispatchSkipped: Error {}
+    private static func callObject(_ arguments: [String: String], numbers: [String: Int], booleans: [String: Bool], arrays: [String: [String]]) -> [String: Any] {
         var object: [String: Any] = arguments
         for (key, value) in numbers { object[key] = value }
         for (key, value) in booleans { object[key] = value }
         for (key, value) in arrays { object[key] = value }
-        let connection = embedded ? try await EmbeddedCuaDriver.shared.connection() : nil
+        return object
+    }
+    /// `beforeDispatch` runs after the driver connection is ready and immediately before the
+    /// driver process is spawned; returning false throws `DispatchSkipped` and nothing is sent.
+    func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:],
+                                              beforeDispatch: (@Sendable () async -> Bool)? = nil, as type: Response.Type) async throws -> Response {
+        guard let executable else { throw DesktopAppError.unavailable("App control is missing from this copy of msgblast. Reinstall msgblast.") }
+        var object = Self.callObject(arguments, numbers: numbers, booleans: booleans, arrays: arrays)
+        let connection = try await connect()
         try Task.checkCancellation()
+        if let beforeDispatch, !(await beforeDispatch()) { throw DispatchSkipped() }
         if embedded && tool == "get_window_state" { object["tree_format"] = "elements" }
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
         let callArguments = connection?.arguments(tool: tool, payload: payload) ?? ["call", tool, payload]
@@ -438,10 +453,28 @@ actor DesktopAppConversation {
     func activate(_ target: Target, session: String) async throws {
         let result = try await call("bring_to_front", ["session": session],
                                     numbers: ["pid": target.pid, "window_id": target.window], as: FocusResult.self)
+        try Self.checkFocus(result, target)
+    }
+    /// Like `activate`, but `onlyIf` is evaluated after the driver connection is ready and
+    /// immediately before bring_to_front is dispatched. Returns false when it declined.
+    func activate(_ target: Target, session: String, onlyIf: @escaping @Sendable () async -> Bool) async throws -> Bool {
+        do {
+            let result = try await call("bring_to_front", ["session": session], numbers: ["pid": target.pid, "window_id": target.window],
+                                        beforeDispatch: onlyIf, as: FocusResult.self)
+            try Self.checkFocus(result, target)
+            return true
+        } catch is DispatchSkipped { return false }
+    }
+    private static func checkFocus(_ result: FocusResult, _ target: Target) throws {
         guard result.activated, result.pid == target.pid, result.window_id == target.window,
               result.exact_window_effect.verified else {
             throw DesktopAppError.unavailable("The requested app window could not be focused. Nothing will be retried automatically.")
         }
+    }
+    /// Starts the embedded driver ahead of a call that must be dispatched quickly; errors are
+    /// left for that call to report.
+    func prepareConnection() async {
+        _ = try? await connect()
     }
     @MainActor private static func hostWindow() throws -> Target {
         let app = NSApplication.shared

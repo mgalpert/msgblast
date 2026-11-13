@@ -1391,9 +1391,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     /// A background open captures msgblast's window first, so ChatGPT's self-activation can be handed back to it.
-    private func openDesktopApp(_ url: URL, activates: Bool) async throws {
+    /// `check` runs again after that capture, so a comparison change or shutdown during it opens nothing.
+    private func openDesktopApp(_ url: URL, activates: Bool, check: @escaping () throws -> Void) async throws {
         guard !activates else { return try await desktopApps.open(url, true) }
-        try await handBackHost.whileOpening { try await desktopApps.open(url, false) }
+        try await handBackHost.whileOpening {
+            try check()
+            try await desktopApps.open(url, false)
+        }
     }
 
     private func launchDesktopAppForConversation() async throws {
@@ -1422,7 +1426,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 } catch is CancellationError { throw CancellationError() }
                 catch { try checkCurrent() }
             }
-            try await openDesktopApp(url, activates: app.requiresForegroundSubmission)
+            try await openDesktopApp(url, activates: app.requiresForegroundSubmission, check: checkCurrent)
             try checkCurrent()
             let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             repeat {

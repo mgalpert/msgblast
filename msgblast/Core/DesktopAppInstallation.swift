@@ -29,7 +29,8 @@ struct DesktopAppInstallationClient: Sendable {
     /// The hand-back may suspend, so it must call `stillValid` right before each action and do
     /// nothing once it returns false: by then another app came forward, the target is no
     /// longer in front, or the watch deadline has passed.
-    typealias FrontHandBack = @MainActor @Sendable (_ previousPID: Int32, _ stillValid: @MainActor () -> Bool) async -> Void
+    typealias FrontHandBack = @MainActor @Sendable (_ previousPID: Int32, _ stillValid: @escaping StillValid) async -> Void
+    typealias StillValid = @MainActor @Sendable () -> Bool
 
     /// Best effort only: macOS may ignore an activation requested from the background.
     static let activatePrevious: FrontHandBack = { pid, stillValid in
@@ -206,9 +207,12 @@ struct DesktopAppInstallationClient: Sendable {
     /// five seconds is undone, while a switch to any other app cancels the hand-back for good.
     /// A window on another Space is missing from the accessibility window list, so it is
     /// reopened and flashes too. An approved hand-back re-checks the watch before each action,
-    /// so nothing acts after a switch to another app or after the five seconds have passed.
+    /// including right before the driver dispatches bring_to_front, so nothing starts after a
+    /// switch to another app or after the five seconds have passed. Once dispatched, a
+    /// bring_to_front can't be recalled: the remaining window is the spawn and execution of
+    /// that one driver call.
     @MainActor static func awaitHandBack<C: Clock>(after timeout: Duration, interval: Duration = .milliseconds(50), clock: C = ContinuousClock(),
-                                                   state: @escaping @MainActor () -> FrontWatchState,
+                                                   state: @escaping @MainActor @Sendable () -> FrontWatchState,
                                                    handBack: FrontHandBack) async throws where C.Duration == Duration {
         let deadline = clock.now.advanced(by: timeout)
         var handBacks = 0, lastHandBack: C.Instant?
@@ -284,20 +288,24 @@ struct DesktopAppInstallationClient: Sendable {
         return .system(handBack: { [self] pid, stillValid in await handBack(previousPID: pid, stillValid: stillValid) })
     }
 
+    /// Captures msgblast's window and warms the driver connection before the open, so a
+    /// hand-back during the open only has to spawn its one driver call.
     func whileOpening(_ open: () async throws -> Void) async throws {
         target = try? await driver?.currentHostWindow()
         defer { target = nil }
+        if target != nil { await driver?.prepareConnection() }
         try await open()
     }
 
-    /// Acts only while `stillValid()` holds: it is checked right before the driver call and
-    /// again before the native fallback, so a switch to another app or the watch deadline
-    /// during the driver call stops the hand-back.
-    func handBack(previousPID: Int32, stillValid: @MainActor () -> Bool) async {
+    /// Acts only while `stillValid()` holds: it is checked right before the driver call, again
+    /// inside the driver right before bring_to_front is dispatched, and again before the native
+    /// fallback, so a switch to another app or the watch deadline during any of those awaits
+    /// stops the hand-back. A dispatched bring_to_front can't be recalled.
+    func handBack(previousPID: Int32, stillValid: @escaping DesktopAppInstallationClient.StillValid) async {
         if previousPID == ownPID, let target, let driver {
             guard stillValid() else { return }
             let session = "msgblast-handback-\(UUID().uuidString)"
-            let activated = (try? await driver.activate(target, session: session)) != nil
+            let activated = (try? await driver.activate(target, session: session, onlyIf: { await stillValid() })) == true
             await driver.endSession(session)
             if activated { return }
         }
