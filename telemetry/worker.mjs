@@ -1,7 +1,9 @@
 // Explicit telemetry contract: never accept arbitrary client properties.
 const MAX_BYTES = 32 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PROVIDERS = new Set(['chatgpt', 'claude', 'grok', 'muse', 'dots', 'os3', 'hark', 'grokbot', 'codexCLI', 'claudeCode', 'openclaw', 'hermes', 'instinct', 'fo', 'szn', 'poke', 'otherMessages', 'outsideClaudeCode', 'outsideCodex', 'outsideCursor', 'outsideGeminiCLI', 'outsideChatGPT', 'outsideClaudeDesktop', 'outsideGrokBot', 'outsideOther']);
+export const PROVIDERS = new Set(['chatgpt', 'claude', 'grok', 'muse', 'dots', 'os3', 'hark', 'grokbot', 'codexCLI', 'claudeCode', 'openclaw', 'hermes', 'instinct', 'fo', 'szn', 'poke', 'otherMessages', 'outsideClaudeCode', 'outsideCodex', 'outsideCursor', 'outsideGeminiCLI', 'outsideChatGPT', 'outsideClaudeDesktop', 'outsideGrokBot', 'outsideOther',
+  // App agents and Alexa Shopping. A key missing here used to cost the whole batch; see handleTelemetry.
+  'chatgptApp', 'claudeApp', 'dotsApp', 'museApp', 'grokBotApp', 'wabi', 'geminiApp', 'alexaShopping']);
 const SCREENS = ['connectors', 'permissions', 'messages', 'agents', 'browserImport', 'providerConnection', 'runtimeSetup', 'feedback'];
 const CONTRACT = {
   onboarding_completed: ['activity', []],
@@ -96,8 +98,12 @@ export async function handleTelemetry(request, env, fetchBackend = fetch) {
   let body;
   try { body = await readBoundedJSON(request); }
   catch (error) { return reply(error.message === 'oversized' ? 413 : 400, 'invalid_batch'); }
-  if (!object(body) || !keysAllowed(body, ['schema', 'events']) || body.schema !== 1 || !Array.isArray(body.events) || !integer(body.events.length, 1, 20) || !body.events.every(event => validEvent(event, env.TELEMETRY_ALLOW_FIXTURES === 'true')) || new Set(body.events.map(event => event.id.toLowerCase())).size !== body.events.length) return reply(400, 'invalid_batch');
-  const batch = body.events.map(event => ({
+  if (!object(body) || !keysAllowed(body, ['schema', 'events']) || body.schema !== 1 || !Array.isArray(body.events) || !integer(body.events.length, 1, 20)) return reply(400, 'invalid_batch');
+  // Drop only the events outside the contract, so one value this Worker does not know yet (such as a new
+  // agent key from a newer app) does not cost the other events in the batch. Nothing invalid is forwarded.
+  const accepted = body.events.filter(event => validEvent(event, env.TELEMETRY_ALLOW_FIXTURES === 'true'));
+  if (accepted.length === 0 || new Set(accepted.map(event => event.id.toLowerCase())).size !== accepted.length) return reply(400, 'invalid_batch');
+  const batch = accepted.map(event => ({
     uuid: event.id.toLowerCase(), event: event.name, timestamp: event.timestamp,
     distinct_id: (event.distinctID || event.id).toLowerCase(),
     properties: { ...event.properties, category: event.category, $process_person_profile: false, $geoip_disable: true },
