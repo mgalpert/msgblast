@@ -186,11 +186,13 @@ extension SideChatModelCheck {
         precondition(service.keepAwake.held == false, "Keep-awake waits for the phone's request")
         connection.send(try driver.frame(.command(RemoteCommand(action: .setKeepAwake(enabled: true)))))
         try await waitUntil { service.keepAwake.held }
+        precondition(service.settings.allowMessagesSends, "A new pairing turns iMessage sends on")
+        service.setAllowMessagesSends(false)
         let before = events.count
         connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
         try await waitUntil { events.dropFirst(before).contains { if case .commandResult(let r) = $0 { r.outcome == .rejected } else { false } } }
         let refused = events.dropFirst(before).compactMap { if case .commandResult(let r) = $0 { r } else { nil } }.last!
-        precondition(refused.code == .messagesSendsOff, "The saved setting keeps iMessage sends off: \(refused)")
+        precondition(refused.code == .messagesSendsOff, "Turned off on the Mac, iMessage sends stay off: \(refused)")
         service.setAllowMessagesSends(true)
         connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
         try await waitUntil { events.contains { if case .events(let list, _) = $0 { list.contains { if case .turnUpsert(let t) = $0.change { t.text == "From the in-memory phone" } else { false } } } else { false } } }
