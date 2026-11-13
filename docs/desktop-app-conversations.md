@@ -286,8 +286,9 @@ com.openai.chat bundle is detected as installed, but its different native UI
 is not yet supported by this adapter. Connection checks refuse unsupported layouts.
 When ChatGPT’s window does not expose its content after a relaunch, msgblast
 asks it to (by setting the macOS accessibility attribute assistive apps use)
-and retries for about ten seconds. It usually reconnects by itself; if it still
-reports the version as unsupported, pressing Reconnect once is enough.
+and retries for about ten seconds. It may reconnect by itself; if it still
+reports the version as unsupported, press Reconnect. The attribute stays set on
+that ChatGPT process until it quits.
 
 Starting or explicitly reopening a conversation opens a closed installed app
 once and waits for its main window. Shared Send displays a getting-ready state
