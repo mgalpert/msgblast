@@ -116,6 +116,9 @@ import msgblastRemoteProtocol
                                   host: host, access: .readOnly)
         let events = try XCTUnwrap(wait["events"] as? [[String: Any]])
         XCTAssertEqual(events.map { $0["kind"] as? String }, ["replyArrived"])
+        let again = try await call("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"],"requestId":"quick"}"#, host: host)
+        XCTAssertEqual(again["replayed"] as? Bool, true)
+        XCTAssertNil(again["after"], "a replay's replies may be older than a cursor taken now")
         let status = try await call("msgblast_request_status", #"{"requestId":"quick"}"#, host: host, access: .readOnly)
         XCTAssertNil(status["after"], "a stored result has no cursor of its own")
     }

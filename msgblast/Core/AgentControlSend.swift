@@ -10,7 +10,7 @@ public enum AgentControlSend {
     public static let names: Set<String> = ["msgblast_blast_start", "msgblast_blast_follow_up", "msgblast_agent_message", "msgblast_comparison_end"]
     public static let maximumTextLength = 50_000
 
-    static let afterSummary = "Pass the result's after to msgblast_blast_wait so it also returns replies that arrived before the wait began."
+    static let afterSummary = "Pass the result's after to msgblast_blast_wait so it also returns replies that arrived before the wait began. A repeat of a known requestId leaves after out: wait with after 0 and the comparisonId instead."
     static let requestIDSummary = "requestId: your own id for this call, such as a UUID. While msgblast keeps running, calling again with the same requestId returns the first result instead of sending again (it remembers its last 1,000 sends). After a timeout or a restart, ask msgblast_request_status and check the comparison before repeating."
 
     public static let tools: [AgentControlTool] = [
@@ -154,7 +154,8 @@ public struct AgentControlSendResult: Codable, Equatable, Sendable {
     public var outcome: String, requestId: String, replayed: Bool, comparisonId: UUID?
     public var code: String?, message: String?, agents: [Agent]
     /// The msgblast_blast_wait cursor from just before this call ran, so a wait started after a
-    /// quick reply still returns it. Only send tools set it; msgblast_request_status leaves it out.
+    /// quick reply still returns it. Only a send that ran now sets it; replays and
+    /// msgblast_request_status leave it out, since their replies may be older than the cursor.
     public var after: Int?
 }
 

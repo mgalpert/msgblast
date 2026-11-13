@@ -172,7 +172,8 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         let result = await host.controlSend(command, client: client)
         var reply = try AgentControlSend.result(result, requestID: request, agents: host.controlAgents(), refusalThrows: true,
                                                 named: input.requestId != nil)
-        reply.after = after
+        // A replay's replies may predate this call, so it gets no cursor rather than a late one.
+        if !result.replayed { reply.after = after }
         return reply
     }
 

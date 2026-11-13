@@ -88,9 +88,11 @@ the Mac or the phone applies:
 - Each agent name may call the send tools 6 times a minute and 60 times an hour.
   A repeat of a known `requestId` does not count.
 - A result of `done` means msgblast submitted the message to each agent. Replies
-  arrive later as `replyArrived` events from `msgblast_blast_wait`. Each send
+  arrive later as `replyArrived` events from `msgblast_blast_wait`. A send tool's
   result has an `after` cursor taken just before the send; pass it to
   `msgblast_blast_wait` so a reply that came before the wait started isn't missed.
+  A repeat of a known `requestId` leaves `after` out, because its replies may be
+  older; wait with `after` 0 and the `comparisonId` to get what msgblast still holds.
 
 The phone's "Send iMessages from the phone" setting does not apply to outside
 agents; Full access is what allows Messages contacts.
