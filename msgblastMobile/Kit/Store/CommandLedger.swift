@@ -100,8 +100,10 @@ public enum PrepareWait {
     private enum Signal: Sendable { case answer(Answer), progress }
 
     /// `perform` runs the request and calls the closure it gets for each progress report.
+    /// `sleep` is the deadline's clock; tests pass their own.
     @MainActor
     public static func run(timeout: Duration,
+                           sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                            perform: @escaping @Sendable @MainActor (_ progress: @escaping @Sendable @MainActor () -> Void) async throws -> RemoteCommandResult) async -> Answer {
         let (signals, race) = AsyncStream<Signal>.makeStream()
         Task { @MainActor in
@@ -110,7 +112,7 @@ public enum PrepareWait {
         func deadline() -> Task<Void, Never> {
             Task {
                 // A cancelled timer (progress arrived) must not end the wait.
-                guard (try? await Task.sleep(for: timeout)) != nil else { return }
+                guard (try? await sleep(timeout)) != nil, !Task.isCancelled else { return }
                 race.yield(.answer(.timedOut))
             }
         }
