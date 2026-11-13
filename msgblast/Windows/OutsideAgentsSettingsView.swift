@@ -155,11 +155,58 @@ private struct TailnetControls: View {
         if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
         Text("Copies with a key are cleared from the clipboard after 2 minutes. A key is shown once; choose New key to see another.")
             .font(.caption).foregroundStyle(.secondary)
-        Text("Any MCP client on your tailnet: use the MCP server URL above and that agent's header, then approve it here on its first call.\nGrok Bot: Connect apps → Your plugins → Tailscale → Authenticate, then Add a custom connector → Remote HTTPS with the URL and header.")
+        Text("Any other MCP client on your tailnet: use the MCP server URL above and that agent's header, then approve it here on its first call.")
             .font(.caption).foregroundStyle(.secondary)
     }
 
     @ViewBuilder private func clientRow(_ client: String) -> some View {
+        if client == AgentControlTailnet.grokBotClient { grokBotCard } else { keyRow(client) }
+    }
+
+    /// Mirrors Grok Bot's "Add a custom connector" form, one field per row, so each can be copied across.
+    @ViewBuilder private var grokBotCard: some View {
+        let client = AgentControlTailnet.grokBotClient
+        let url = tailnet.serverURL.flatMap { $0.hasPrefix("https://") ? $0 : nil }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Grok Bot").font(.callout.weight(.medium))
+                Spacer()
+                if let app = GrokBotApp.url { Button("Open Grok Bot") { NSWorkspace.shared.open(app) } }
+                Button("New key") { if tailnet.authorizationValue(for: client) == nil { tailnet.rotateToken(client) } else { confirmingNewKey = client } }
+                Button("Remove") { tailnet.remove(client) }
+            }
+            Text("1. In Grok Bot, open Connect apps → Your plugins → Tailscale and click Authenticate.")
+                .font(.caption)
+            Text(tailnet.grokBotOnTailnet ? "\u{2713} Grok Bot is on your tailnet." : "Waiting for Grok Bot to join your tailnet.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("2. In Grok Bot, choose Add a custom connector and fill it in like this:").font(.caption)
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+                formRow("Name", "msgblast") { copy("msgblast") }
+                formRow("Type", "Remote HTTPS", copy: nil)
+                if let url { formRow("Server URL", url) { copy(url) } } else { formRow("Server URL", "Set up HTTPS above first", copy: nil) }
+                formRow("HTTP headers", "Authorization") { copy("Authorization") }
+                if let value = tailnet.authorizationValue(for: client) {
+                    formRow("", "Bearer ••••••••") { copySecret(value) }
+                } else {
+                    formRow("", "Choose New key to see the value", copy: nil)
+                }
+                formRow("Client ID", "Leave empty", copy: nil)
+            }
+            Text("3. Click Add plugin. Then ask Grok Bot to call msgblast_status, and approve it here.").font(.caption)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("outside-agents-grok-bot")
+    }
+
+    @ViewBuilder private func formRow(_ label: String, _ value: String, copy: (() -> Void)?) -> some View {
+        GridRow {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.system(.caption, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+            if let copy { Button("Copy", action: copy).controlSize(.small) } else { Color.clear.frame(width: 1, height: 1) }
+        }
+    }
+
+    @ViewBuilder private func keyRow(_ client: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(client).font(.callout.weight(.medium))
@@ -178,10 +225,6 @@ private struct TailnetControls: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack {
                     Button("Copy header") { copySecret(header) }
-                    if let value = tailnet.authorizationValue(for: client) {
-                        Button("Copy value") { copySecret(value) }
-                            .help("Just Bearer and the key, for forms such as Grok Bot's with separate header name and value boxes")
-                    }
                     if let path = tailnet.pathURL(for: client) {
                         Button("Copy link with key") { copySecret(path) }
                             .help("For clients that can't send headers")
@@ -219,5 +262,13 @@ private struct TailnetControls: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
             if NSPasteboard.general.changeCount == copied { NSPasteboard.general.clearContents() }
         }
+    }
+}
+
+/// The Grok Bot desktop app, when it is installed in a usual place.
+private enum GrokBotApp {
+    static var url: URL? {
+        let paths = ["/Applications/Grok Bot.app", NSString(string: "~/Applications/Grok Bot.app").expandingTildeInPath]
+        return paths.map { URL(fileURLWithPath: $0) }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 }

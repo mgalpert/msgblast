@@ -88,6 +88,9 @@ import msgblastCore
 
     func authorizationHeader(for client: String) -> String? { keys[client].map { "Authorization: Bearer \($0)" } }
 
+    /// True once a Grok Bot device shows up on this tailnet.
+    var grokBotOnTailnet: Bool { grokBotPeer }
+
     /// The header value alone, for forms with separate name and value boxes.
     func authorizationValue(for client: String) -> String? { keys[client].map { "Bearer \($0)" } }
 
