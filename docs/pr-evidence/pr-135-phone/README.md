@@ -18,3 +18,16 @@ Not shown: Alexa returned text-only answers in this run ("every product search f
 Amazon's side), so no product cards or photos appeared to tap. Product photos on the phone
 were confirmed earlier by msg on the c5b1e29 build, and the Mac downloaded 8 product photos
 at b300ed6. Older threads whose replies predate the saved-turns fix stay empty.
+
+## Product photos on the phone (second run, 12:30 local)
+
+Prompt "Show me water bottles" sent from the phone in a new Alexa thread.
+
+5. `4-product-lines-with-photos.png`: product lines with a photo under each (end of the reply).
+6. `5-photo-opened.png`: tapping a photo opens it full size.
+7. `6-reopened-photos-kept.png`: after leaving and reopening the thread, each product keeps its photo.
+8. `mirror-product-photos.mp4`: the same steps, Mirroring window only.
+
+The Mac saved this reply as 10 product lines, each with its photo; the 8 Amazon products carry
+an amazon.com/dp/ link. Not shown: opening a link. Scrolling through iPhone Mirroring did not
+work, so only the two non-Amazon web results at the end of the reply were on screen.
