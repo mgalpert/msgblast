@@ -315,24 +315,33 @@ final class PresenterTests: XCTestCase {
         XCTAssertNil(ProjectionPresenter(state: state).pinnedPrompt(for: sunday, selection: []), "An older Messages chat has no prompt to pin")
     }
 
-    func testNewConversationStartsWithEveryAgentThatCanTakeASend() {
+    func testNewConversationStartsWithTheMacsSelectedAgentsThatCanTakeASend() {
         var state = ProjectionState()
-        func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, selected: Bool = false) {
-            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: true, selectedForSharedSend: selected,
+        func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, selected: Bool, inGrid: Bool = true) {
+            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: inGrid, selectedForSharedSend: selected,
                 capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: form == .messages, namedCopies: false, endConversation: true, sharesOneConversation: false),
                 readiness: readiness, reasons: [], observedAt: fixedNow, source: .live)
+            if inGrid { state.grid.append(id) }
+            state.agentOrder.append(id)
         }
-        agent("claude", .website, .ready)
-        agent("muse", .macApp, .readyWillLaunch)
-        agent("codex", .cli, .busy(detail: "Working"))
-        agent("dots", .macApp, .blocked)
-        agent("gemini", .macApp, .unavailable)
+        agent("instinct", .macApp, .ready, selected: true)
+        agent("alexa", .website, .readyWillLaunch, selected: true)
+        agent("tiny", .cli, .busy(detail: "Working"), selected: true)
+        agent("blocked", .macApp, .blocked, selected: true)
+        agent("gone", .macApp, .unavailable, selected: true)
+        // Enabled, ready, never connected, and absent from the Mac's grid: still in the strip.
+        agent("rabbit", .website, .ready, selected: false, inGrid: false)
         agent("messages:ana", .messages, .ready, selected: true)
-        agent("messages:bo", .messages, .ready)
-        state.grid = ["claude", "muse", "codex", "dots", "gemini", "messages:ana", "messages:bo"]
-        let chosen = ProjectionPresenter(state: state).defaultNewSelection
-        XCTAssertEqual(Set(chosen), ["claude", "muse", "codex", "messages:ana"], "Ready and busy in; blocked and unavailable out; a contact only when the Mac selected it")
-        XCTAssertEqual(ProjectionPresenter.togglingNew("claude", chosen: chosen).contains("claude"), false, "A tap still removes")
+        agent("messages:bo", .messages, .ready, selected: false)
+        let presenter = ProjectionPresenter(state: state)
+        XCTAssertTrue(presenter.newConversationAgents.agents.contains { $0.agentID == "rabbit" })
+        let chosen = presenter.defaultNewSelection
+        XCTAssertEqual(chosen, ["instinct", "alexa", "tiny", "messages:ana"], "Selected and ready, launching, or busy, in strip order; a contact only when the Mac selected it")
+        XCTAssertFalse(chosen.contains("rabbit"), "A ready website the Mac did not select stays unchecked")
+        XCTAssertFalse(chosen.contains("blocked"), "A selected blocked agent is not checked")
+        XCTAssertFalse(chosen.contains("gone"), "A selected unavailable agent is not checked")
+        XCTAssertFalse(chosen.contains("messages:bo"))
+        XCTAssertEqual(ProjectionPresenter.togglingNew("instinct", chosen: chosen).contains("instinct"), false, "A tap still removes")
     }
 
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
