@@ -64,7 +64,7 @@ enum DesktopAccessibilityDiagnostics {
 
 enum DesktopAccessibilityTree {
     struct Limits {
-        var maximumNodes = 6_000
+        var maximumNodes = 20_000
         var maximumDepth = 60
         var timeout: TimeInterval = 3
     }
