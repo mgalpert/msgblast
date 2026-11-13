@@ -1745,6 +1745,41 @@ final class DesktopAppDriverTests: XCTestCase {
             }
         }
     }
+    func testConnectionForegroundRecoverySkipsChatGPTAndDots() async throws {
+        for app in [DesktopAppProvider.chatgpt, .dots] {
+            let fixture = try driver(focusSteps(app) + [activation(fixtureHost)])
+            defer { fixture.remove() }
+            let host = fixtureHost
+            let control = DesktopAppConversation(executable: fixture.executable, delivery: .foreground, captureHostWindow: { host })
+            var checks = 0
+            do {
+                _ = try await DesktopAppWorkflow.connection(app, driver: control) {
+                    checks += 1
+                    throw DesktopAccessibilityError.incomplete
+                } as Bool
+                XCTFail("Expected transient error")
+            } catch { XCTAssertTrue(error is DesktopAccessibilityError) }
+            XCTAssertEqual(checks, 1)
+            XCTAssertFalse(try fixture.calls().contains { $0.tool == "bring_to_front" })
+        }
+    }
+    func testConnectionForegroundRecoveryStillRetriesForegroundApps() async throws {
+        for app in [DesktopAppProvider.claude, .wabi, .muse, .grokBot] {
+            let fixture = try driver(focusSteps(app) + [activation(fixtureHost)])
+            defer { fixture.remove() }
+            let host = fixtureHost
+            let control = DesktopAppConversation(executable: fixture.executable, delivery: .foreground, captureHostWindow: { host })
+            var checks = 0
+            let result = try await DesktopAppWorkflow.connection(app, driver: control) {
+                checks += 1
+                if checks == 1 { throw DesktopAccessibilityError.incomplete }
+                return "ready"
+            }
+            XCTAssertEqual(result, "ready")
+            XCTAssertEqual(checks, 2)
+            XCTAssertEqual(try fixture.calls().filter { $0.tool == "bring_to_front" }.count, 2)
+        }
+    }
     func testReplyRefreshRestoresTheExactHostOnceWithoutInput() async throws {
         let fixture = try driver([activation(), activation(fixtureHost)])
         defer { fixture.remove() }

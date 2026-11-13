@@ -71,7 +71,7 @@ enum DesktopAppWorkflow {
                                            check: () async throws -> Value) async throws -> Value {
         do { return try await check() }
         catch {
-            guard transient(error), let driver,
+            guard transient(error), app.requiresForegroundSubmission, let driver,
                   let focus = try await driver.beginForeground(app, session: "msgblast-connect-\(UUID())") else { throw error }
             let result: Value
             do { result = try await check() }

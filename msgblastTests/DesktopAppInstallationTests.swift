@@ -185,12 +185,60 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
-    func testBackgroundLaunchUnhidesAHiddenCopyAndStillAsksTheAppToOpen() {
-        for (activates, hidden, unhide) in [(false, true, true), (false, false, false), (true, true, false), (true, false, false)] {
-            let steps = DesktopAppInstallationClient.launchSteps(activates: activates, hiddenRunningCopy: hidden)
-            XCTAssertEqual(steps.unhide, unhide, "activates \(activates), hidden \(hidden)")
-            XCTAssertEqual(steps.activates, activates, "activates \(activates), hidden \(hidden)")
+    func testBackgroundLaunchPlanPreservesExistingWindowsAndRestoresAfterReopen() {
+        let cases: [(Bool, Bool, Bool, Bool, (Bool, Bool, Bool, Bool))] = [
+            // Explicit Open activates and never restores.
+            (true, false, false, false, (false, true, true, false)),
+            // Hidden app with a standard window is unhidden only.
+            (false, true, true, true, (true, false, false, false)),
+            // Hidden or visible app without a window sends a reopen event.
+            (false, true, true, false, (true, true, false, true)),
+            (false, true, false, false, (false, true, false, true)),
+            // A cold launch sends a reopen event; a visible standard window does nothing.
+            (false, false, false, false, (false, true, false, true)),
+            (false, true, false, true, (false, false, false, false))
+        ]
+        for (activates, running, hidden, window, expected) in cases {
+            let plan = DesktopAppInstallationClient.launchPlan(activates: activates, running: running, hidden: hidden, hasStandardWindow: window)
+            XCTAssertEqual(plan.unhide, expected.0)
+            XCTAssertEqual(plan.open, expected.1)
+            XCTAssertEqual(plan.activates, expected.2)
+            XCTAssertEqual(plan.restoreFront, expected.3)
         }
+    }
+
+    func testBackgroundRestoreReturnsFrontOnceTargetActivates() async throws {
+        let result = try await backgroundRestoreResult(activeAt: 3, previousCanRestore: true)
+        XCTAssertEqual(result.restores, 1)
+        XCTAssertEqual(result.checks, 3)
+    }
+
+    func testBackgroundRestoreEndsAtDeadlineWhenTargetNeverActivates() async throws {
+        let result = try await backgroundRestoreResult(activeAt: 0, previousCanRestore: true)
+        XCTAssertEqual(result.restores, 0)
+        XCTAssertLessThan(result.checks, 101)
+    }
+
+    func testBackgroundRestoreStopsWhenPreviousCannotBeRestored() async throws {
+        let result = try await backgroundRestoreResult(activeAt: 3, previousCanRestore: false)
+        XCTAssertEqual(result.restores, 0)
+        XCTAssertEqual(result.checks, 3)
+    }
+
+    func testBackgroundRestoreDoesNotRestoreTargetThatActivatesAfterDeadline() async throws {
+        let result = try await backgroundRestoreResult(activeAt: 102, previousCanRestore: true)
+        XCTAssertEqual(result.restores, 0)
+        XCTAssertLessThan(result.checks, 101)
+    }
+
+    private func backgroundRestoreResult(activeAt: Int, previousCanRestore: Bool) async throws -> (checks: Int, restores: Int) {
+        let clock = AdvancingClock()
+        var checks = 0, restores = 0
+        try await DesktopAppInstallationClient.restoreFront(after: .seconds(5), clock: clock, targetIsFrontmostActive: {
+            defer { checks += 1 }
+            return activeAt > 0 && checks + 1 >= activeAt
+        }, previousCanRestore: { previousCanRestore }, restore: { restores += 1 })
+        return (checks, restores)
     }
 
     func testNativePreparationUsesProviderForegroundRequirementWhenAppIsClosedOrHidden() async {

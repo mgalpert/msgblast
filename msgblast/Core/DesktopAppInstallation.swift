@@ -31,24 +31,70 @@ struct DesktopAppInstallationClient: Sendable {
             return .resolve(for: app, registeredURL: registered,
                             runningURL: running?.bundleURL, processID: running?.processIdentifier)
         }, open: { url, activates in
-            let hidden = Bundle(url: url)?.bundleIdentifier.flatMap { bundleID in
-                NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated && $0.isHidden }
-            }
-            let steps = launchSteps(activates: activates, hiddenRunningCopy: hidden != nil)
-            if steps.unhide { hidden?.unhide() }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = steps.activates
-            _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+            try await openSystem(url, activates: activates)
         }, isHidden: { app in
             app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
                 .contains { !$0.isTerminated && $0.isHidden }
         })
     }
 
-    /// A background launch unhides a hidden running copy without activating it, and still
-    /// asks the app to open so one whose main window was closed gets its reopen event.
-    static func launchSteps(activates: Bool, hiddenRunningCopy: Bool) -> (unhide: Bool, activates: Bool) {
-        (unhide: !activates && hiddenRunningCopy, activates: activates)
+    static func launchPlan(activates: Bool, running: Bool, hidden: Bool, hasStandardWindow: Bool) -> (unhide: Bool, open: Bool, activates: Bool, restoreFront: Bool) {
+        guard !activates else { return (false, true, true, false) }
+        guard running, hasStandardWindow else { return (hidden, true, false, true) }
+        return (hidden, false, false, false)
+    }
+
+    @MainActor private static func openSystem(_ url: URL, activates: Bool) async throws {
+        let target = runningApplication(for: url)
+        let plan = launchPlan(activates: activates, running: target != nil, hidden: target?.isHidden == true,
+                              hasStandardWindow: target.map(hasStandardWindow) == true)
+        guard plan.open else { if plan.unhide { target?.unhide() }; return }
+        let previous = NSWorkspace.shared.frontmostApplication
+        let wasActive = target?.isActive == true
+        if plan.unhide { target?.unhide() }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = plan.activates
+        _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        guard plan.restoreFront else { return }
+        let targetPID = target?.processIdentifier
+        try? await restoreFront(after: .seconds(5), targetIsFrontmostActive: {
+            guard let app = runningApplication(for: url), app.isActive else { return false }
+            return NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
+        }, previousCanRestore: {
+            guard let previous, !wasActive, !previous.isTerminated else { return false }
+            return previous.processIdentifier != targetPID && previous.bundleIdentifier != Bundle(url: url)?.bundleIdentifier
+        }, restore: { previous?.activate(options: []) })
+    }
+
+    @MainActor private static func runningApplication(for url: URL) -> NSRunningApplication? {
+        Bundle(url: url)?.bundleIdentifier.flatMap { bundleID in
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
+        }
+    }
+
+    @MainActor private static func hasStandardWindow(_ application: NSRunningApplication) -> Bool {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(application.processIdentifier), kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return false }
+        return windows.contains { window in
+            var subrole: CFTypeRef?
+            return AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole) == .success && subrole as? String == kAXStandardWindowSubrole
+        }
+    }
+
+    /// ChatGPT brings itself forward on launch and on a reopen event even when asked not to,
+    /// so a background open hands the front back to the app that had it. Known limits: ChatGPT
+    /// still shows as a brief flash; a launch whose window appears more than five seconds after
+    /// the open returns is not handed back; a deliberate switch to ChatGPT within those five
+    /// seconds is undone.
+    @MainActor static func restoreFront<C: Clock>(after timeout: Duration, interval: Duration = .milliseconds(50), clock: C = ContinuousClock(),
+                                                  targetIsFrontmostActive: @MainActor @Sendable () -> Bool, previousCanRestore: @MainActor @Sendable () -> Bool,
+                                                  restore: @MainActor @Sendable () -> Void) async throws where C.Duration == Duration {
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if targetIsFrontmostActive() { if previousCanRestore() { restore() }; return }
+            try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
+        }
     }
 
     static var demo: Self {
