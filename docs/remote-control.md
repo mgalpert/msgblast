@@ -13,8 +13,9 @@ Settings → Remote → **Allow a paired phone to use msgblast on this Mac**. It
 off by default, and an upgraded Mac opens no port until the user turns it on.
 Turning it off disconnects the phone and closes every listener. The main window's
 sidebar shows the same Remote switch and the pairing QR code in a **Phone** section
-above What's New; tapping the phone icon collapses it to the bottom of the sidebar,
-and that choice is remembered.
+at the bottom, below What's New. Its header row stays put: tapping it slides the
+section up open, and tapping again slides it back down to the header alone. That
+choice is remembered.
 
 | Setting | Default | Effect |
 | --- | --- | --- |

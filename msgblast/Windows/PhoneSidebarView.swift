@@ -2,19 +2,18 @@ import SwiftUI
 import msgblastCore
 import msgblastRemoteProtocol
 
-/// Sidebar footer: update card, the Phone section (expanded above What's New, or its icon docked
-/// below it), What's New.
+/// Sidebar footer: update card, What's New, then the Phone section at the bottom. The Phone
+/// section is one panel that stays in place: its header row is the closed state, and opening it
+/// slides the rest up out of that row; closing slides it back down.
 struct SidebarFooter: View {
     @ObservedObject var service: RemoteService
     @ObservedObject private var pairing: RemotePairing
-    @ObservedObject private var power: MacPowerState
     let updater: AppUpdater
     @AppStorage(PhoneSidebarState.preferenceKey) private var preference = PhoneSidebarPreference.automatic.rawValue
 
     init(service: RemoteService, updater: AppUpdater) {
         self.service = service
         pairing = service.pairing
-        power = service.power
         self.updater = updater
     }
 
@@ -27,23 +26,84 @@ struct SidebarFooter: View {
     var body: some View {
         VStack(spacing: 8) {
             UpdateSidebar(updater: updater)
-            if !collapsed {
-                PhoneSidebarCard(service: service) { setCollapsed(true) }
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
             WhatsNewSidebar()
-            if collapsed {
-                PhoneSidebarDock(service: service) { setCollapsed(false) }
-                    .transition(.opacity)
+            PhoneSidebarSection(service: service, collapsed: collapsed) {
+                preference = (collapsed ? PhoneSidebarPreference.expanded : .collapsed).rawValue
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: collapsed)
+        .animation(PhoneSidebarSection.motion, value: collapsed)
+    }
+}
+
+/// The Phone panel: one header row that is always shown, and the pairing content under it while open.
+struct PhoneSidebarSection: View {
+    /// One curve for opening and closing, so both directions move the same way.
+    static let motion = Animation.easeInOut(duration: 0.25)
+
+    @ObservedObject var service: RemoteService
+    @ObservedObject private var pairing: RemotePairing
+    @ObservedObject private var power: MacPowerState
+    let collapsed: Bool
+    let toggle: () -> Void
+
+    init(service: RemoteService, collapsed: Bool, toggle: @escaping () -> Void) {
+        self.service = service
+        pairing = service.pairing
+        power = service.power
+        self.collapsed = collapsed
+        self.toggle = toggle
     }
 
-    private func setCollapsed(_ collapsed: Bool) {
-        withAnimation(.easeInOut(duration: 0.25)) {
-            preference = (collapsed ? PhoneSidebarPreference.collapsed : .expanded).rawValue
+    private var statusLine: String { phoneStatusLine(service, offerShowing: !collapsed && pairing.isOfferValid) }
+    private var dot: Color {
+        switch PhoneSidebarState.status(enabled: service.settings.enabled,
+                                        connected: pairing.device.map { service.connectedDeviceID == $0.id } ?? false) {
+        case .connected: .green
+        case .on: .orange
+        case .off: Color.secondary.opacity(0.5)
         }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            if !collapsed {
+                PhoneSidebarPanel(service: service)
+                    .padding(.top, 10)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var header: some View {
+        Button { withAnimation(Self.motion) { toggle() } } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "iphone").font(.title3)
+                    .foregroundStyle(service.settings.enabled ? Color.accentColor : .secondary)
+                    .overlay(alignment: .bottomTrailing) {
+                        Circle().fill(dot).frame(width: 7, height: 7).accessibilityHidden(true)
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Phone").font(.headline)
+                    Text(statusLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up").font(.caption).foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(collapsed ? 0 : 180))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Phone")
+        .accessibilityLabel("Phone")
+        .accessibilityValue(statusLine)
+        .accessibilityHint(collapsed ? "Shows pairing and phone settings" : "Closes the phone section")
+        .accessibilityIdentifier("sidebar-phone-toggle")
     }
 }
 
@@ -59,21 +119,19 @@ struct SidebarFooter: View {
     return service.running ? "Ready to pair" : "Starting…"
 }
 
-/// The expanded Phone section: Remote switch, live pairing QR code or the paired phone, and options.
-struct PhoneSidebarCard: View {
+/// The open Phone panel's content: Remote switch, live pairing QR code or the paired phone, and options.
+struct PhoneSidebarPanel: View {
     @ObservedObject var service: RemoteService
     @ObservedObject private var pairing: RemotePairing
     @ObservedObject private var power: MacPowerState
-    let collapse: () -> Void
     @State private var now = Date()
     @State private var confirmingForget = false
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    init(service: RemoteService, collapse: @escaping () -> Void) {
+    init(service: RemoteService) {
         self.service = service
         pairing = service.pairing
         power = service.power
-        self.collapse = collapse
     }
 
     private var enabled: Bool { service.settings.enabled }
@@ -82,11 +140,9 @@ struct PhoneSidebarCard: View {
         PhoneSidebarState.wantsOffer(collapsed: false, enabled: enabled, running: service.running, paired: pairing.device != nil,
                                      locked: power.locked, loadError: pairing.loadError != nil)
     }
-    private var statusLine: String { phoneStatusLine(service, offerShowing: offer != nil) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            header
             Toggle("Remote", isOn: Binding(get: { service.settings.enabled }, set: { service.setEnabled($0) }))
                 .toggleStyle(.switch).controlSize(.small)
                 .accessibilityIdentifier("sidebar-remote-enabled")
@@ -106,35 +162,13 @@ struct PhoneSidebarCard: View {
                 RemoteOptionControls(service: service, compact: true)
             }
         }
-        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onReceive(tick) { now = $0; replaceExpiredOffer() }
         .onAppear { refreshOffer() }
         .onChange(of: wantsOffer) { _, wants in
             if wants { refreshOffer() } else if pairing.offer != nil { pairing.closeOffer() }
         }
         .onDisappear { if wantsOffer, pairing.offer != nil { pairing.closeOffer() } }
-    }
-
-    private var header: some View {
-        Button(action: collapse) {
-            HStack(spacing: 10) {
-                Image(systemName: "iphone").font(.title3).foregroundStyle(enabled ? Color.accentColor : .secondary)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Phone").font(.headline)
-                    Text(statusLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.down").font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Phone")
-        .accessibilityValue(statusLine)
-        .accessibilityHint("Collapses to the bottom of the sidebar")
-        .accessibilityIdentifier("sidebar-phone-toggle")
     }
 
     @ViewBuilder private var qrBlock: some View {
@@ -188,52 +222,5 @@ struct PhoneSidebarCard: View {
     private func replaceExpiredOffer() {
         guard pairing.offer != nil, NSApplication.shared.isActive else { return }
         refreshOffer()
-    }
-}
-
-/// The collapsed Phone section: the icon with a status dot, docked below What's New.
-struct PhoneSidebarDock: View {
-    @ObservedObject var service: RemoteService
-    @ObservedObject private var pairing: RemotePairing
-    @ObservedObject private var power: MacPowerState
-    let expand: () -> Void
-
-    init(service: RemoteService, expand: @escaping () -> Void) {
-        self.service = service
-        pairing = service.pairing
-        power = service.power
-        self.expand = expand
-    }
-
-    private var status: PhoneSidebarStatus {
-        PhoneSidebarState.status(enabled: service.settings.enabled, connected: pairing.device.map { service.connectedDeviceID == $0.id } ?? false)
-    }
-    private var dot: Color {
-        switch status {
-        case .connected: .green
-        case .on: .orange
-        case .off: Color.secondary.opacity(0.5)
-        }
-    }
-    private var statusLine: String { phoneStatusLine(service, offerShowing: false) }
-
-    var body: some View {
-        Button(action: expand) {
-            HStack(spacing: 10) {
-                Image(systemName: "iphone").font(.title3).foregroundStyle(.secondary)
-                    .overlay(alignment: .bottomTrailing) { Circle().fill(dot).frame(width: 7, height: 7).accessibilityHidden(true) }
-                Text("Phone").font(.caption).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.up").font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Phone")
-        .accessibilityLabel("Phone")
-        .accessibilityValue(statusLine)
-        .accessibilityHint("Shows pairing and phone settings")
-        .accessibilityIdentifier("sidebar-phone-dock")
     }
 }
