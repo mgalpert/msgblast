@@ -64,7 +64,7 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: [messages.agentID], conversation: nil), "Mac locked")
 
         let list = presenter.newConversationAgents
-        XCTAssertFalse(list.agents.isEmpty)
+        XCTAssertEqual(list.agents.map(\.agentID), [], "Only rabbit OS3 is ready, and it is not on the Mac's grid")
         XCTAssertTrue(list.agents.allSatisfy { $0.form != .messages }); XCTAssertTrue(list.messages.allSatisfy { $0.form == .messages })
         XCTAssertFalse(list.messages.isEmpty, "Messages contacts have their own section")
         let gridOrder = state.grid.filter { id in list.agents.contains { $0.agentID == id } }
@@ -329,12 +329,10 @@ final class PresenterTests: XCTestCase {
         agent("tiny", .cli, .busy(detail: "Working"), selected: true)
         agent("blocked", .macApp, .blocked, selected: true)
         agent("gone", .macApp, .unavailable, selected: true)
-        // Enabled, ready, never connected, and absent from the Mac's grid: still in the strip.
-        agent("rabbit", .website, .ready, selected: false, inGrid: false)
+        agent("rabbit", .website, .ready, selected: false)
         agent("messages:ana", .messages, .ready, selected: true)
         agent("messages:bo", .messages, .ready, selected: false)
         let presenter = ProjectionPresenter(state: state)
-        XCTAssertTrue(presenter.newConversationAgents.agents.contains { $0.agentID == "rabbit" })
         let chosen = presenter.defaultNewSelection
         XCTAssertEqual(chosen, ["instinct", "alexa", "tiny", "messages:ana"], "Selected and ready, launching, or busy, in strip order; a contact only when the Mac selected it")
         XCTAssertFalse(chosen.contains("rabbit"), "A ready website the Mac did not select stays unchecked")
@@ -342,6 +340,34 @@ final class PresenterTests: XCTestCase {
         XCTAssertFalse(chosen.contains("gone"), "A selected unavailable agent is not checked")
         XCTAssertFalse(chosen.contains("messages:bo"))
         XCTAssertEqual(ProjectionPresenter.togglingNew("instinct", chosen: chosen).contains("instinct"), false, "A tap still removes")
+    }
+
+    func testNewConversationListsOnlyConnectedAgents() {
+        var state = ProjectionState()
+        func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, _ code: AvailabilityReasonCode? = nil, inGrid: Bool = true) {
+            let reasons = code.map { [AvailabilityReason(code: $0, userText: "", fixOn: .mac)] } ?? []
+            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: inGrid, selectedForSharedSend: false,
+                capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                readiness: readiness, reasons: reasons, observedAt: fixedNow, source: .live)
+            if inGrid { state.grid.append(id) }
+            state.agentOrder.append(id)
+        }
+        agent("claudeApp", .macApp, .ready)
+        agent("chatgptApp", .macApp, .ready, .preparesOnSend)
+        agent("dotsApp", .macApp, .blocked, .incompleteRequestBlocking)
+        agent("codexCLI", .cli, .busy(detail: "Working"), .sendInFlight)
+        agent("museApp", .macApp, .blocked, .notConnected)
+        agent("claude", .website, .blocked, .signedOut)
+        agent("claudeCode", .cli, .blocked, .cliSignedOut)
+        agent("grokbot", .webhookBot, .blocked, .webhookNotConfigured)
+        agent("wabi", .macApp, .unavailable, .notInstalled)
+        agent("os3", .website, .ready, .signInUnknown, inGrid: false)
+        agent("messages:ana", .messages, .ready)
+        agent("messages:bo", .messages, .blocked, .conversationUnroutable)
+        let list = ProjectionPresenter(state: state).newConversationAgents
+        XCTAssertEqual(list.agents.map(\.agentID), ["claudeApp", "chatgptApp", "dotsApp", "codexCLI"],
+                       "Set up on the Mac, including busy and briefly blocked; not unconnected, signed out, uninstalled or off the grid")
+        XCTAssertEqual(list.messages.map(\.agentID), ["messages:ana"], "A contact with no Messages chat is not listed")
     }
 
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {

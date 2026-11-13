@@ -470,13 +470,20 @@ public struct ProjectionPresenter: Sendable {
         return date.formatted(style)
     }
 
-    /// The new-conversation list: one flat list in the Mac's grid order, with Messages
-    /// contacts apart. Agents outside the grid follow, unless they are unavailable.
+    /// The new-conversation list: only connected agents, those on the Mac's agent grid and set
+    /// up there, in the grid's order, with Messages contacts apart.
     public var newConversationAgents: (agents: [AgentAvailability], messages: [AgentAvailability]) {
-        let visible = state.grid.compactMap { state.agents[$0] }
-        let rest = state.orderedAgents.filter { !state.grid.contains($0.agentID) && $0.readiness != .unavailable }
-        let all = visible + rest
+        let all = state.grid.compactMap { state.agents[$0] }.filter(Self.isConnected)
         return (all.filter { $0.form != .messages }, all.filter { $0.form == .messages })
+    }
+
+    /// Reasons that mean an agent was never set up on the Mac, as opposed to a passing state.
+    private static let setupReasons: Set<AvailabilityReasonCode> = [.notConnected, .signedOut, .cliSignedOut, .webhookNotConfigured, .conversationUnroutable]
+
+    /// Turned on and set up on the Mac. One that is busy or briefly blocked (a permission,
+    /// an unfinished request) still counts, and shows its reason.
+    static func isConnected(_ agent: AgentAvailability) -> Bool {
+        agent.readiness != .unavailable && !agent.reasons.contains { setupReasons.contains($0.code) }
     }
 
     public static func formLabel(_ form: AgentForm) -> String {

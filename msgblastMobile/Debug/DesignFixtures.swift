@@ -146,7 +146,7 @@ enum DesignFixtures {
             state.agents[agent.agentID] = agent; state.agentOrder.append(agent.agentID)
         }
         state.grid = ["claude", "chatgptApp", "museApp", "codexCLI", "dotsApp", "grok", "geminiApp", cedar]
-        // Ready website the Mac left unselected, and outside the grid. New Conversation leaves it unchecked.
+        // Ready website the Mac left unselected, and outside the grid. New Conversation does not list it.
         var rabbit = agent("os3", .os3, .website, "rabbit OS3 Web", .ready, [])
         rabbit.visibleInGrid = false
         rabbit.selectedForSharedSend = false

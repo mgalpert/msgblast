@@ -37,6 +37,10 @@ struct NewConversationView: View {
                 VStack(spacing: 0) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Space.inset) {
+                            if list.agents.isEmpty && list.messages.isEmpty {
+                                Text("Connect an agent on your Mac to message it here.").font(.footnote).foregroundStyle(.secondary)
+                                    .frame(height: Space.avatarRow)
+                            }
                             ForEach(list.agents, id: \.self) { id in icon(id) }
                             if !list.messages.isEmpty {
                                 Divider().frame(height: Space.avatarRow)
