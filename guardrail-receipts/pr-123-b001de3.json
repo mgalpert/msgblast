@@ -1,0 +1,12 @@
+{
+  "pr": 123,
+  "reviewed_head": "b001de372bcbc9e5da3f41efb6abac75c820c34b",
+  "base": "fc517be836ebd44e9d152b0b8a13f54313f909a6",
+  "reviewer": "independent model (OpenAI Codex CLI, gpt-6.1-sol, fresh session, read-only sandbox)",
+  "authorship": "Most commits by Claude Opus 5.5; fix commits af9954d, 36c1b6f, 0d56b1b, 2cd3ec0 and 0729daf implemented by OpenAI Codex gpt-5.6-terra under Claude's review; c06aa62, 414b8e7, e30b68d and 1613e31 by a Claude Opus 5.5 subagent; 5abf699 by Claude Fable 5.2 (coordinator); 4b6a168 and 1713d0f by Claude Opus 5.5. The reviewer gpt-6.1-sol is a different model from all authors but the same vendor as one of them. b001de3 is a merge of main fc517be (PR #132, msgblastMobileTests/ConnectionTests.swift only) made with GitHub's Update branch.",
+  "scope": "Whole PR #123 diff against origin/main fc517be at the merge head, including confirmation that the merge adds only the #132 test file, plus verification of sixteen earlier findings and the author's await audit",
+  "verdict": "approve with notes",
+  "findings": [],
+  "notes": "Reviewed the complete 19-file diff and relevant surrounding code without modifying files. `git diff --check` passes. Live Dots sending and native UI/device behavior remain validation gaps. The reconnect\u2019s roughly ten-second wait excludes AX operation costs. An intentional switch to ChatGPT itself can also be handed back during the active watch, as the source comment documents.",
+  "tests": "Static review only. Author-side at 1613e31 (the merged-in change is a phone test file only): 1039 unit tests, 0 failures, 1 skipped; CI-exact swift-complexity 0 new/worsened; live A1/A2/A3 and one background send passed in the test VM at 1613e31."
+}
