@@ -23,6 +23,15 @@ public struct Chat: Codable, Identifiable, Hashable, Sendable {
         guard id == scriptingID || id == "iMessage;-;" + handle else { return nil }
         return scriptingID
     }
+    /// Opens this chat in Messages by its address. macOS 27 no longer resolves
+    /// `imessage://?chat=<guid>` for `any;-;` guids and shows an empty New Message window.
+    public var messagesURL: URL? {
+        guard !handle.isEmpty else { return nil }
+        var parts = URLComponents()
+        parts.scheme = "imessage"
+        parts.path = handle
+        return parts.url
+    }
     public var messagesScriptingID: String? {
         if businessConversation == true { return businessScriptingID }
         return eligible ? id : nil

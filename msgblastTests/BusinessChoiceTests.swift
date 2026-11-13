@@ -83,4 +83,12 @@ final class BusinessChoiceTests: XCTestCase {
         let legacy = try JSONDecoder().decode(AppState.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertNil(legacy.businessChoiceAttempts)
     }
+
+    func testMessagesURLUsesTheChatAddressNotItsGuid() {
+        let email = Chat(id: "any;-;someone@example.com", handle: "someone@example.com", lastActivity: 0)
+        XCTAssertEqual(email.messagesURL?.absoluteString, "imessage:someone@example.com")
+        let phone = Chat(id: "any;-;+15555550123", handle: "+15555550123", lastActivity: 0)
+        XCTAssertEqual(phone.messagesURL?.absoluteString, "imessage:+15555550123")
+        XCTAssertNil(Chat(id: "any;-;group", handle: "", lastActivity: 0).messagesURL)
+    }
 }
