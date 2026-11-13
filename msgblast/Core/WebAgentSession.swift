@@ -206,6 +206,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
+    private var desktopSendPressedAttempts: Set<UUID> = []
     private let museApp: MuseAppConversation
     private let claudeApp: ClaudeAppConversation
     private let chatgptApp: ChatGPTAppConversation
@@ -216,6 +217,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private let wabiApp: WabiAppConversation
     private let desktopApps: DesktopAppInstallationClient
     private let desktopDriver: DesktopAppConversation
+    private let handBackHost = DesktopHandBackHost()
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
     private var grokBotReceiver: GrokBotCallbackReceiver?
@@ -277,7 +279,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         self.chatgptApp = chatgptApp
         self.geminiApp = geminiApp
         self.wabiApp = wabiApp
-        self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
+        self.desktopApps = desktopApps ?? (fixture ? .demo : handBackHost.systemClient(driver: desktopDriver))
         self.desktopDriver = desktopDriver
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
@@ -1465,7 +1467,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let url = desktopInstallation.url else { return }
         loading = true
         defer { loading = false }
-        do { try await desktopApps.open(url); refreshDesktopInstallation() }
+        do { try await desktopApps.open(url, true); refreshDesktopInstallation() }
         catch { desktopCheckFailed(error); self.error = error.localizedDescription }
     }
 
@@ -1481,6 +1483,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             self.error = error.localizedDescription
             updateNativeSnapshot()
             return false
+        }
+    }
+
+    /// A background open captures msgblast's window first, so ChatGPT's self-activation can be handed back to it.
+    /// `check` runs again after that capture, so a comparison change or shutdown during it opens nothing.
+    private func openDesktopApp(_ url: URL, activates: Bool, check: @escaping () throws -> Void) async throws {
+        guard !activates else { return try await desktopApps.open(url, true) }
+        try await handBackHost.whileOpening {
+            try check()
+            try await desktopApps.open(url, false)
         }
     }
 
@@ -1510,7 +1522,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 } catch is CancellationError { throw CancellationError() }
                 catch { try checkCurrent() }
             }
-            try await desktopApps.open(url)
+            try await openDesktopApp(url, activates: app.requiresForegroundSubmission, check: checkCurrent)
             try checkCurrent()
             let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             repeat {
@@ -1851,6 +1863,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
     }
 
+    /// Without a foreground lease, confirmed submission is what frees the next app in a blast.
+    @MainActor private static func handOffAfterSubmission(leased: Bool, _ handoff: @MainActor @Sendable () -> Void) {
+        if !leased { handoff() }
+    }
     private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void, plannedAttemptID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
@@ -1940,11 +1956,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 geminiBinding = try state.geminiBinding(for: id) ?? GeminiConversationBinding(comparisonID: id, mode: geminiPreferences.mode)
             }
             let sendFocus = foreground
-            let submitAction: @Sendable () async -> Void = { await sendFocus?.restoreAfterSubmission() }
             let outgoingID = attempt.id
+            let submitAction: @Sendable () async -> Void = { [weak self] in await self?.recordDesktopSendPressed(outgoingID); await sendFocus?.restoreAfterSubmission() }
             let submitted: @Sendable () async throws -> Void = { [weak self] in
                 guard let self else { throw CancellationError() }
-                try await self.recordDesktopSubmission(attemptID: outgoingID)
+                try await self.recordDesktopSubmission(attemptID: outgoingID); await Self.handOffAfterSubmission(leased: sendFocus != nil, onSubmissionFinished)
                 await onConfirmedSubmission()
             }
             let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
@@ -2094,18 +2110,30 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider == .geminiApp, let problem = error as? GeminiSelectionError {
                 geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
             }
+            let submitted = desktopSendPressedAttempts.contains(attempt.id) || [.waiting, .observed].contains(state.attempts.first { $0.id == attempt.id }?.status)
             attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
-            let detail = error is CancellationError
-                ? started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
-                : error.localizedDescription
+            let detail = Self.failureDetail(for: error, started: started, submitted: submitted, provider: provider)
             attempt.detail = detail
             self.error = detail
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
         }
         do { try await foreground?.restore() }
         catch { self.error = error.localizedDescription }
-        updateNativeSnapshot()
+        desktopSendPressedAttempts.remove(attempt.id); updateNativeSnapshot()
         return attempt
+    }
+
+    private static func failureDetail(for error: Error, started: Bool, submitted: Bool, provider: WebProvider) -> String {
+        if error is CancellationError {
+            return started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
+        }
+        // After Send was pressed the message may have gone out, so never say nothing was sent.
+        guard case let .interstitial(app, prompt) = error as? DesktopAppError, submitted else { return error.localizedDescription }
+        return "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app)."
+    }
+
+    private func recordDesktopSendPressed(_ attemptID: UUID) {
+        desktopSendPressedAttempts.insert(attemptID)
     }
 
     private func recordDesktopSubmission(attemptID: UUID) throws {

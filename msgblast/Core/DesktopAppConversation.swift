@@ -15,7 +15,7 @@ public enum DesktopAppProvider: String, Codable, Sendable {
         case .claude: ["com.anthropic.claudefordesktop"]
     } }
     var bundleID: String { bundleIDs[0] }
-    public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi, .chatgpt, .dots, .claude].contains(self) }
+    public var requiresForegroundSubmission: Bool { [.muse, .grokBot, .wabi, .claude].contains(self) }
 }
 
 public struct DesktopConversationBinding: Codable, Equatable, Sendable {
@@ -35,11 +35,29 @@ struct GrokReplyReceipt: Codable, Equatable, Sendable {
 
 enum DesktopAppError: LocalizedError {
     case unavailable(String)
+    case interstitial(app: String, prompt: String)
     case incompleteSnapshot
     var errorDescription: String? { switch self {
         case .unavailable(let reason): reason
+        case .interstitial(let app, let prompt): "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app), then send again. Nothing was sent."
         case .incompleteSnapshot: "The app's accessibility snapshot is incomplete. Nothing will be sent automatically."
     } }
+}
+
+/// Prompts that cover an app's composer. msgblast stops instead of clicking through them.
+enum DesktopInterstitial {
+    static func check(_ app: DesktopAppProvider, controls: [(role: String, label: String)]) throws {
+        func has(_ role: String, _ matches: (String) -> Bool) -> Bool { controls.contains { $0.role == role && matches($0.label) } }
+        let prompt: String? = switch app {
+        case .claude where has("AXButton", { $0 == "Later" }) && has("AXButton", { $0.hasPrefix("Try ") }): "a model promotion"
+        case .dots where has("AXHeading", { $0 == "Contact your dot anywhere" }): "its contact setup"
+        case .grokBot where has("AXButton", { $0 == "Restart to update" }): "an update that needs a restart"
+        default: nil
+        }
+        if let prompt {
+            throw DesktopAppError.interstitial(app: app.name, prompt: prompt)
+        }
+    }
 }
 
 struct DesktopAppSnapshot: Decodable, Sendable {
@@ -115,6 +133,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     }
     func conversation(app: DesktopAppProvider) throws -> String {
         try checkReadable()
+        try DesktopInterstitial.check(app, controls: body.map { ($0.role, $0.label ?? "") })
         let headings = body.filter { $0.role == "AXHeading" }.compactMap(\.label).filter { !$0.isEmpty }
         switch app {
         case .wabi:
@@ -138,6 +157,7 @@ struct DesktopAppSnapshot: Decodable, Sendable {
     }
     func grokBots() throws -> [(name: String, element: Element)] {
         try checkReadable()
+        try DesktopInterstitial.check(.grokBot, controls: body.map { ($0.role, $0.label ?? "") })
         guard let end = body.firstIndex(where: { $0.role == "AXSplitter" && $0.label == "Resize sidebar" }) else {
             guard body.contains(where: { $0.role == "AXWebArea" }) else { throw DesktopAppError.incompleteSnapshot }
             throw DesktopAppError.unavailable("Grok Bot's bot list is unavailable. Open its sidebar and refresh the bots.")
@@ -352,8 +372,12 @@ actor DesktopAppConversation {
     private let runProcess: ProcessRunner
     private let confirmHostFocus: @Sendable (Target) async -> Bool
     private let captureHostWindow: @Sendable () async throws -> Target
+    typealias Connect = @Sendable () async throws -> EmbeddedCuaDriver.Connection?
+    private static let embeddedConnect: Connect = { try await EmbeddedCuaDriver.shared.connection() }
+    private static let noConnect: Connect = { nil }
+    private let connect: Connect
     init(executable: URL? = nil, timing: Timing = Timing(), delivery: Delivery = .background,
-         runProcess: @escaping ProcessRunner = DesktopAppConversation.execute,
+         runProcess: @escaping ProcessRunner = DesktopAppConversation.execute, connect: Connect? = nil,
          confirmHostFocus: @escaping @Sendable (Target) async -> Bool = { await DesktopAppConversation.hostHasFocus($0) },
          captureHostWindow: @escaping @Sendable () async throws -> Target = { try await DesktopAppConversation.hostWindow() },
          readGrok: @escaping @Sendable (Target) throws -> GrokBotNativeState = GrokBotAppProfile.capture) {
@@ -365,6 +389,7 @@ actor DesktopAppConversation {
         self.runProcess = runProcess
         self.confirmHostFocus = confirmHostFocus
         self.captureHostWindow = captureHostWindow
+        self.connect = connect ?? (executable == nil ? Self.embeddedConnect : Self.noConnect)
     }
     nonisolated static func execute(_ executable: URL, _ arguments: [String], _ environment: [String: String], _ timeout: TimeInterval, _ cancellation: AgentCancellation) async throws -> AgentProcess.Result {
         try await Task.detached {
@@ -380,14 +405,24 @@ actor DesktopAppConversation {
         struct Window: Decodable, Sendable { struct Bounds: Decodable, Sendable { let width: Double; let height: Double }; let window_id: Int; let title: String?; var is_on_screen: Bool?; var space_ids: [UInt64]?; var layer: Int?; let bounds: Bounds }
         let windows: [Window]
     }
-    func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:], as type: Response.Type) async throws -> Response {
-        guard let executable else { throw DesktopAppError.unavailable("App control is missing from this copy of msgblast. Reinstall msgblast.") }
+    /// Thrown by `call` when its `beforeDispatch` check declines, before any process is spawned.
+    struct DispatchSkipped: Error {}
+    private static func callObject(_ arguments: [String: String], numbers: [String: Int], booleans: [String: Bool], arrays: [String: [String]]) -> [String: Any] {
         var object: [String: Any] = arguments
         for (key, value) in numbers { object[key] = value }
         for (key, value) in booleans { object[key] = value }
         for (key, value) in arrays { object[key] = value }
-        let connection = embedded ? try await EmbeddedCuaDriver.shared.connection() : nil
+        return object
+    }
+    /// `beforeDispatch` runs after the driver connection is ready and immediately before the
+    /// driver process is spawned; returning false throws `DispatchSkipped` and nothing is sent.
+    func call<Response: Decodable & Sendable>(_ tool: String, _ arguments: [String: String], numbers: [String: Int] = [:], booleans: [String: Bool] = [:], arrays: [String: [String]] = [:],
+                                              beforeDispatch: (@Sendable () async -> Bool)? = nil, as type: Response.Type) async throws -> Response {
+        guard let executable else { throw DesktopAppError.unavailable("App control is missing from this copy of msgblast. Reinstall msgblast.") }
+        var object = Self.callObject(arguments, numbers: numbers, booleans: booleans, arrays: arrays)
+        let connection = try await connect()
         try Task.checkCancellation()
+        if let beforeDispatch, !(await beforeDispatch()) { throw DispatchSkipped() }
         if embedded && tool == "get_window_state" { object["tree_format"] = "elements" }
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
         let callArguments = connection?.arguments(tool: tool, payload: payload) ?? ["call", tool, payload]
@@ -418,10 +453,28 @@ actor DesktopAppConversation {
     func activate(_ target: Target, session: String) async throws {
         let result = try await call("bring_to_front", ["session": session],
                                     numbers: ["pid": target.pid, "window_id": target.window], as: FocusResult.self)
+        try Self.checkFocus(result, target)
+    }
+    /// Like `activate`, but `onlyIf` is evaluated after the driver connection is ready and
+    /// immediately before bring_to_front is dispatched. Returns false when it declined.
+    func activate(_ target: Target, session: String, onlyIf: @escaping @Sendable () async -> Bool) async throws -> Bool {
+        do {
+            let result = try await call("bring_to_front", ["session": session], numbers: ["pid": target.pid, "window_id": target.window],
+                                        beforeDispatch: onlyIf, as: FocusResult.self)
+            try Self.checkFocus(result, target)
+            return true
+        } catch is DispatchSkipped { return false }
+    }
+    private static func checkFocus(_ result: FocusResult, _ target: Target) throws {
         guard result.activated, result.pid == target.pid, result.window_id == target.window,
               result.exact_window_effect.verified else {
             throw DesktopAppError.unavailable("The requested app window could not be focused. Nothing will be retried automatically.")
         }
+    }
+    /// Starts the embedded driver ahead of a call that must be dispatched quickly; errors are
+    /// left for that call to report.
+    func prepareConnection() async {
+        _ = try? await connect()
     }
     @MainActor private static func hostWindow() throws -> Target {
         let app = NSApplication.shared
@@ -607,8 +660,9 @@ actor DesktopAppConversation {
         var arguments = ["session": session]
         if let screenshotURL { arguments["screenshot_out_file"] = screenshotURL.path }
         // The driver's one-second default can stop in a virtualized sidebar,
-        // before it reaches the composer. Keep the complete read bounded.
-        return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 5000, "max_depth": 40, "timeout_ms": 10_000], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
+        // before it reaches the composer. A long Dots DM walks about 6,500
+        // nodes at depth 42. Keep the complete read bounded.
+        return try await call("get_window_state", arguments, numbers: ["pid": target.pid, "window_id": target.window, "max_elements": 20_000, "max_depth": 60, "timeout_ms": 10_000], booleans: ["include_screenshot": screenshotURL != nil], as: DesktopAppSnapshot.self)
     }
     private func grokDraftAgrees(_ composer: (element: DesktopAppSnapshot.Element, draft: String), with draft: String) -> Bool {
         let value = composer.element.value ?? ""
@@ -790,6 +844,10 @@ actor DesktopAppConversation {
         return nil
     }
 
+    /// msgblast's own window, as the foreground lease captures it before handing the front away.
+    func currentHostWindow() async throws -> Target {
+        try await captureHostWindow()
+    }
     func endSession(_ session: String) async {
         _ = try? await call("end_session", ["session": session], as: Action.self)
     }
