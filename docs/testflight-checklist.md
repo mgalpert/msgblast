@@ -159,9 +159,10 @@ editing (`git archive HEAD | tar -x -C build/export`), as the local previews do.
 - Put the phone and Mac on the same Wi-Fi or the same Tailscale tailnet. If
   pairing hangs, restart Tailscale on the phone first; a stale MagicSock state
   has blocked pairing before.
-- Scan the QR code from the Mac's Remote pane. Check the key fingerprint
-  matches. One phone can be paired at a time; pairing a second forgets the
-  first.
+- Scan the QR code from the Mac's Remote pane. A scan pairs immediately; the key
+  fingerprint stays on screen while pairing, and the QR's identity key is pinned
+  so it cannot pair with a different Mac. A pasted or opened link still waits for
+  Pair. One phone can be paired at a time; pairing a second forgets the first.
 - Grant Local Network when asked, and Microphone and Speech only if you want
   dictation.
 

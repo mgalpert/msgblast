@@ -191,6 +191,7 @@ final class RemoteServerSession {
     private func completePairing(_ response: RemotePairResponse, challenge: Data) {
         switch server.pairing.complete(response, challenge: challenge, transcript: channel!.transcript) {
         case .success(let device):
+            server.onPaired?()
             send(.pairComplete(RemotePairComplete(deviceID: device.id, macName: server.macName())))
             authenticated(device.id)
         case .failure(let failure):
@@ -260,6 +261,8 @@ public final class RemoteServer: ObservableObject {
     private let refreshJournal: () -> Void
     private var sessions: [RemoteServerSession] = []
     public var onClientChange: ((Bool) -> Void)?
+    /// A new phone was stored (the first one, or a replacement). Reconnects do not call this.
+    public var onPaired: (() -> Void)?
 
     public init(identity: RemoteIdentity, pairing: RemotePairing, executor: RemoteCommandExecutor, journal: RemoteChangeJournal, variant: MacVariant,
                 macName: @escaping () -> String, isLocked: @escaping () -> Bool, refreshJournal: @escaping () -> Void) {

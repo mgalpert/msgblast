@@ -17,7 +17,7 @@ Turning it off disconnects the phone and closes every listener.
 | --- | --- | --- |
 | Network | Tailscale if available, otherwise local network | Which addresses the listener binds (below) |
 | Keep this Mac awake | On | Holds an idle-sleep assertion while a phone that asked for it is connected, and during every remote send. Off disables both. |
-| Send iMessages from the phone | **Off** | Messages agents refuse remote sends with `messagesSendsOff`. An iMessage cannot be unsent and the phone already has Messages. |
+| Send iMessages from the phone | **Off** | A new pairing turns it on. Messages agents refuse remote sends with `messagesSendsOff` while it is off. An iMessage cannot be unsent and the phone already has Messages. |
 | Listen on the network (Demo) | Off, not saved | Demo only; see [Demo behavior](#demo-behavior) |
 
 ## Pairing
@@ -253,9 +253,11 @@ SwiftUI app over `msgblastMobileKit`, a framework without UIKit that holds the
 connection, the local cache and the screen presenters, so its tests run on macOS too.
 
 - **Pairing:** scan the QR code (VisionKit), paste the link, or open it (the app
-  registers `msgblast://`). The phone shows the Mac's name and key fingerprint
-  before pairing. Its P-256 key stays in the Keychain, in the Secure Enclave on a
-  device that has one.
+  registers `msgblast://`). A camera scan pairs immediately; the Mac's name and key
+  fingerprint stay on screen while pairing. The QR carries `identityKeySHA256` and
+  the handshake pins it, so a scanned code cannot pair with a different Mac. Paste
+  and an opened link still wait for Pair. Its P-256 key stays in the Keychain, in
+  the Secure Enclave on a device that has one.
 - **Connection:** every QR address and any `_msgblast._tcp` Bonjour result on the
   LAN are tried at once over TLS 1.3 with the Mac's key pinned. After connecting the
   phone resumes from its stored `seq`, requests keep-awake (Settings toggle), asks
