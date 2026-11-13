@@ -338,14 +338,13 @@ public struct ProjectionPresenter: Sendable {
         return next.isEmpty || next == Set(members) ? [] : next
     }
 
-    /// What New Conversation starts with checked: the agents the Mac has selected for shared
-    /// sends that can take a send now or by queueing (ready, opens its app, or busy), never a
-    /// blocked or unavailable one, and never one the Mac left unselected. In the strip's order.
+    /// What New Conversation starts with checked: every agent that can take a send now or by
+    /// queueing (ready, opens its app, or busy), never a blocked or unavailable one; a Messages
+    /// contact only when the Mac has it selected. In the strip's order.
     public var defaultNewSelection: [String] {
         let list = newConversationAgents
         let agents = list.agents.filter {
-            guard $0.selectedForSharedSend else { return false }
-            switch $0.readiness { case .ready, .readyWillLaunch, .busy: return true; case .blocked, .unavailable: return false }
+            switch $0.readiness { case .ready, .readyWillLaunch, .busy: true; case .blocked, .unavailable: false }
         }
         return agents.map(\.agentID) + list.messages.filter(\.selectedForSharedSend).map(\.agentID)
     }
