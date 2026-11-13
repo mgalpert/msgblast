@@ -84,6 +84,7 @@ import msgblastRemoteProtocol
         XCTAssertEqual(status["outcome"] as? String, "done")
         let unknown = try await call("msgblast_request_status", #"{"requestId":"never"}"#, host: host, access: .readOnly)
         XCTAssertEqual(unknown["outcome"] as? String, "unknown")
+        XCTAssertEqual(unknown["message"] as? String, AgentControlSend.unknownMessage, "not the phone's wording")
     }
 
     func testFollowUpPrivateMessageAndEndBuildTheirCommands() async throws {
