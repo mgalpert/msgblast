@@ -109,7 +109,7 @@ private struct AgentsSection: View {
     @State private var addError: String?
 
     private var names: [String] {
-        let all = Set(gate.approvals.keys).union(gate.refused).union(tailnetOn ? tailnet.clients : [])
+        let all = Set(gate.approvals.keys).union(gate.refused).union(tailnet.clients)
         return all.sorted { ($0 == AgentControlTailnet.grokBotClient ? 0 : 1, $0) < ($1 == AgentControlTailnet.grokBotClient ? 0 : 1, $1) }
     }
 
@@ -143,7 +143,7 @@ private struct AgentsSection: View {
                 } else if client == AgentControlTailnet.grokBotClient {
                     Button("Set Up…") { sheet = SheetClient(id: client) }.buttonStyle(.borderedProminent)
                 }
-                if tailnetOn, tailnet.clients.contains(client), gate.approvals[client] != nil || client != AgentControlTailnet.grokBotClient {
+                if tailnet.clients.contains(client), gate.approvals[client] != nil || client != AgentControlTailnet.grokBotClient {
                     Button { sheet = SheetClient(id: client) } label: { Image(systemName: "info.circle") }
                         .buttonStyle(.borderless).help("Setup and key").accessibilityLabel("Details")
                 }
@@ -185,13 +185,12 @@ private struct SheetClient: Identifiable { let id: String }
 /// Grok Bot's "Add a custom connector" form, field for field, so each value can be copied across.
 private struct GrokBotSetupSheet: View {
     @ObservedObject var tailnet: AgentControlTailnetListener
-    @Environment(\.dismiss) private var dismiss
     @State private var confirming = false
     private let client = AgentControlTailnet.grokBotClient
 
     var body: some View {
         let url = tailnet.serverURL.flatMap { $0.hasPrefix("https://") ? $0 : nil }
-        Form {
+        SheetLayout(hasKey: tailnet.authorizationValue(for: client) != nil, confirming: $confirming, extra: GrokBotApp.url, width: 500) {
             Section("1. In Grok Bot, connect Tailscale") {
                 LabeledContent("Connect apps → Your plugins → Tailscale") {
                     Text(tailnet.grokBotOnTailnet ? "Connected" : "Waiting").foregroundStyle(.secondary)
@@ -200,7 +199,7 @@ private struct GrokBotSetupSheet: View {
             Section("2. Add a custom connector") {
                 FormField(label: "Name", value: "msgblast")
                 FormField(label: "Type", value: "Remote HTTPS", copyable: false)
-                FormField(label: "Server URL", value: url ?? "Needs HTTPS first", copyable: url != nil)
+                FormField(label: "Server URL", value: url ?? (tailnet.enabled ? "Needs HTTPS first" : "Turn on Tailscale first"), copyable: url != nil)
                 FormField(label: "Header", value: "Authorization")
                 if let value = tailnet.authorizationValue(for: client) {
                     FormField(label: "Value", value: "Bearer ••••••••", secret: value)
@@ -211,10 +210,6 @@ private struct GrokBotSetupSheet: View {
             }
             Section("3. Click Add plugin, then approve msgblast here") {}
         }
-        .formStyle(.grouped)
-        .frame(width: 500)
-        .fixedSize(horizontal: false, vertical: true)
-        .toolbar { SheetToolbar(hasKey: tailnet.authorizationValue(for: client) != nil, confirming: $confirming, extra: GrokBotApp.url) { dismiss() } }
         .newKeyConfirmation($confirming, name: "Grok Bot") { tailnet.rotateToken(client) }
     }
 }
@@ -223,11 +218,10 @@ private struct GrokBotSetupSheet: View {
 private struct KeySheet: View {
     @ObservedObject var tailnet: AgentControlTailnetListener
     let client: String
-    @Environment(\.dismiss) private var dismiss
     @State private var confirming = false
 
     var body: some View {
-        Form {
+        SheetLayout(hasKey: tailnet.authorizationHeader(for: client) != nil, confirming: $confirming, extra: nil, width: 420) {
             Section(client) {
                 if let header = tailnet.authorizationHeader(for: client) {
                     LabeledContent("Header") { Button("Copy") { Pasteboard.copySecret(header) } }
@@ -243,27 +237,32 @@ private struct KeySheet: View {
                 }
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 420)
-        .fixedSize(horizontal: false, vertical: true)
-        .toolbar { SheetToolbar(hasKey: tailnet.authorizationHeader(for: client) != nil, confirming: $confirming, extra: nil) { dismiss() } }
         .newKeyConfirmation($confirming, name: client) { tailnet.rotateToken(client) }
     }
 }
 
-/// New Key, an optional Open Grok Bot, and Done.
-private struct SheetToolbar: ToolbarContent {
+/// A sheet's form with New Key, an optional Open Grok Bot, and Done along the bottom. Esc and Return close it.
+private struct SheetLayout<Content: View>: View {
     let hasKey: Bool
     @Binding var confirming: Bool
     let extra: URL?
-    let done: () -> Void
+    let width: CGFloat
+    @ViewBuilder let content: Content
+    @Environment(\.dismiss) private var dismiss
 
-    var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .cancellationAction) {
-            if let extra { Button("Open Grok Bot") { NSWorkspace.shared.open(extra) } }
-            Button(hasKey ? "New Key…" : "Make Key") { confirming = true }
+    var body: some View {
+        VStack(spacing: 0) {
+            Form { content }.formStyle(.grouped).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                if let extra { Button("Open Grok Bot") { NSWorkspace.shared.open(extra) } }
+                Button(hasKey ? "New Key…" : "Make Key") { confirming = true }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding([.horizontal, .bottom], 20)
         }
-        ToolbarItem(placement: .confirmationAction) { Button("Done", action: done) }
+        .frame(width: width)
+        .onExitCommand { dismiss() }
     }
 }
 
