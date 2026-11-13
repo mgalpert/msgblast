@@ -295,13 +295,34 @@ private struct GrokBotSetupSheet: View {
                 FormField(label: "Client ID", value: "Leave empty", copyable: false)
             } header: {
                 Text("2. Add a custom connector")
-                Text("In Grok Bot press ⌘⇧M (Connect apps), scroll down, then Add a custom connector. Already have one? Its Manage button edits it.")
+                HStack(spacing: 4) {
+                    Text("In Grok Bot click")
+                    ConnectAppsIcon()
+                    Text("in the sidebar (⌘⇧M), scroll to the bottom, then Add a custom connector.")
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                Text("Already added msgblast? Click Manage on its card and replace the Value instead.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("3. Click Add plugin, then approve msgblast here") {}
         }
         .newKeyConfirmation($confirming, name: "Grok Bot") { tailnet.rotateToken(client) }
     }
+}
+
+/// Grok Bot's Connect apps button: three rounded squares and a plus, so people can spot it in Grok Bot's sidebar.
+private struct ConnectAppsIcon: View {
+    var body: some View {
+        Grid(horizontalSpacing: 1.5, verticalSpacing: 1.5) {
+            GridRow { tile; tile }
+            GridRow { tile; Image(systemName: "plus").font(.system(size: 6, weight: .bold)).frame(width: 5, height: 5) }
+        }
+        .padding(3)
+        .overlay(Circle().stroke(.secondary.opacity(0.4)))
+        .accessibilityLabel("Connect apps")
+    }
+
+    private var tile: some View { RoundedRectangle(cornerRadius: 1.5).stroke(lineWidth: 1).frame(width: 5, height: 5) }
 }
 
 /// Copy actions for a tailnet agent's key, available only right after the key is made.
