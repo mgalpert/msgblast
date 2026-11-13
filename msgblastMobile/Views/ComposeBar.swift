@@ -52,6 +52,9 @@ struct ComposeBar: View {
     @State private var refusedCount = 0
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var fieldFocused = false
+    /// The person started writing here (focused the field, typed, added a file or tapped Send).
+    /// Until then the bar only reads: no prepare on the Mac and no status line.
+    @State private var engaged = false
     /// The recipient strip above the field, opened from the badge.
     @State private var recipientsOpen = false
     private var choosesRecipients: Bool { selection != nil && conversationID != nil && members.count > 1 }
@@ -73,8 +76,10 @@ struct ComposeBar: View {
     }
     @State private var capturing = false
     private var block: ComposeBlock? {
-        presenter.composeBlock(canSend: app.connection.state.canSend, connectionText: app.connection.state == .macLocked ? app.connection.state.statusText : "Not connected",
-                               agentIDs: recipients, conversation: conversationID, prepareReasons: prepareReasons)
+        let connection = app.connection.state
+        return presenter.composeBlock(canSend: connection.canSend, connectionText: connection == .macLocked ? connection.statusText : "Not connected",
+                                      agentIDs: recipients, conversation: conversationID, prepareReasons: prepareReasons,
+                                      connectionPassing: connection.isPassing(reconnectingSince: app.connection.reconnectingSince))
     }
 
     /// Send fills with the tint once there is something to send and someone to send it to.
@@ -100,14 +105,16 @@ struct ComposeBar: View {
         .sensoryFeedback(.error, trigger: refusedCount)
         .onChange(of: focusRequest) { _, _ in fieldFocused = true }
         // The strip goes with the keyboard.
-        .onChange(of: fieldFocused) { _, focused in if !focused { withAnimation(.snappy) { recipientsOpen = false } } }
+        .onChange(of: fieldFocused) { _, focused in if focused { engage() } else { withAnimation(.snappy) { recipientsOpen = false } } }
         .sensoryFeedback(.selection, trigger: selection?.wrappedValue)
         .onAppear {
-            text = app.store.draft(draftKey); prepare()
+            text = app.store.draft(draftKey)
+            if hasContent { engage() }
             applyFixtureFocus()
         }
-        .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; prepare() }
-        .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey) }
+        .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; if engaged { prepare() } }
+        .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey); if hasContent { engage() } }
+        .onChange(of: attachments.count) { _, count in if count > 0 { engage() } }
         // The timeout said unconfirmed; then a reconnect's query said the Mac did send it.
         .onChange(of: inFlight.flatMap { app.store.commands[$0.id]?.status }) { _, status in if status == .applied { lateApplied() } }
         // A refused prepare runs again once the agents it named can accept a send.
@@ -249,6 +256,8 @@ struct ComposeBar: View {
     private var status: Status? {
         // With nobody chosen, Send is simply disabled; there is nothing to explain.
         if recipients.isEmpty { return nil }
+        // Reading a thread shows nothing; Send stays off on its own while it can't send.
+        if !engaged { return nil }
         if let block {
             // Quiet for a passing state (checking, handling a request); orange only to fix something.
             if !block.warns { return Status(text: block.text, detail: block.detail, progress: true) }
@@ -284,6 +293,13 @@ struct ComposeBar: View {
 
     /// Tells the Mac which agents are coming so their pages are ready before Send.
     private func prepare() { Task { await runPrepare() } }
+
+    /// The first sign of writing: from here the bar prepares and shows its status.
+    private func engage() {
+        guard !engaged else { return }
+        engaged = true
+        prepare()
+    }
 
     /// Returns false when the Mac refused or did not answer; the reason stays on screen with
     /// Try Again until the next try. Only website agents need preparing (Messages contacts,
@@ -324,6 +340,7 @@ struct ComposeBar: View {
 
     private func send() {
         dictation.stop()
+        engaged = true
         guard !prepareReasons.isEmpty else { submit(); return }
         // The last prepare was refused: prepare again, and send only if it now succeeds.
         sending = true

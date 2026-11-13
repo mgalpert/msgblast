@@ -293,6 +293,9 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(block("dots"), .blocked("Allow Accessibility on your Mac"))
         XCTAssertEqual(block("dots")?.warns, true, "Something to fix on the Mac warns")
         XCTAssertEqual(presenter.composeBlock(canSend: false, connectionText: "Reconnecting…", agentIDs: ["muse"], conversation: nil, prepareReasons: [:])?.warns, true)
+        let passing = presenter.composeBlock(canSend: false, connectionText: "Not connected", agentIDs: ["muse"], conversation: nil, prepareReasons: [:], connectionPassing: true)
+        XCTAssertEqual(passing, .waiting("Connecting…"), "A connection coming back waits quietly, with Send still off")
+        XCTAssertEqual(passing?.allowsSend, false)
     }
 
     func testDirectThreadsAreTitledByTheirPromptOrName() {

@@ -246,9 +246,10 @@ final class ConnectionTests: XCTestCase {
         XCTAssertNil(MacConnectionState.connected.navigationSubtitle(lastHeard: now, reconnectingSince: nil, now: now))
         XCTAssertEqual(MacConnectionState.macLocked.navigationSubtitle(lastHeard: now.addingTimeInterval(-40), reconnectingSince: nil, now: now), "Mac Locked · 40s ago")
         let reconnecting = MacConnectionState.reconnecting(attempt: 1, retryAt: now)
-        XCTAssertEqual(reconnecting.navigationSubtitle(lastHeard: nil, reconnectingSince: now.addingTimeInterval(-5), now: now), "Reconnecting…")
+        XCTAssertNil(reconnecting.navigationSubtitle(lastHeard: nil, reconnectingSince: now.addingTimeInterval(-5), now: now), "A short reconnect stays quiet")
+        XCTAssertNil(MacConnectionState.connecting.navigationSubtitle(lastHeard: nil, reconnectingSince: nil, now: now), "Returning to the foreground stays quiet")
         XCTAssertEqual(reconnecting.navigationSubtitle(lastHeard: nil, reconnectingSince: now.addingTimeInterval(-21), now: now), "Reconnecting… Mac asleep or offline")
-        XCTAssertEqual(MacConnectionState.stopped.navigationSubtitle(lastHeard: nil, reconnectingSince: nil, now: now), "Disconnected")
+        XCTAssertNil(MacConnectionState.stopped.navigationSubtitle(lastHeard: nil, reconnectingSince: nil, now: now), "Stopped in the background stays quiet")
         XCTAssertEqual(MacConnectionState.pairingLost("x").navigationSubtitle(lastHeard: nil, reconnectingSince: nil, now: now), "Not Paired")
         XCTAssertEqual(MacConnectionState.ago(now.addingTimeInterval(-150), now: now), "2m ago")
     }
