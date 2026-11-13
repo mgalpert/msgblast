@@ -6,7 +6,7 @@ import WebKit
 @MainActor
 public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published public private(set) var state = WebWorkspaceState()
-    @Published public private(set) var snapshot = WebPageSnapshot() { didSet { activePage?.snapshot = snapshot } }
+    @Published public private(set) var snapshot = WebPageSnapshot() { didSet { activePage?.snapshot = snapshot; rememberSharedTurns() } }
     @Published public private(set) var isSending = false
     @Published public private(set) var connected = false
     @Published public private(set) var loading = false { didSet { activePage?.loading = loading } }
@@ -44,11 +44,26 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func messagesForComparison(_ id: UUID) -> [WebPageMessage] {
         // One account-wide page holds every comparison's turns; each comparison sees only its own.
         // Desktop apps share a conversation too, but their history is native and kept per comparison.
-        if (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation {
-            return Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
+        if sharesPage {
+            let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
+            let saved = state.sharedTurns[id.uuidString] ?? []
+            return live.isEmpty || live.count < saved.count ? saved : live
         }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
+    }
+    private var sharesPage: Bool { (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation }
+    /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
+    private func rememberSharedTurns() {
+        guard sharesPage else { return }
+        let merged = Self.keepingSharedTurns(state.sharedTurns, live: Self.comparisonTurns(snapshot.messages, attempts: state.attempts))
+        if merged != state.sharedTurns { updateState { $0.sharedTurns = merged } }
+    }
+    /// A comparison's saved turns are replaced by the page's, never by fewer.
+    static func keepingSharedTurns(_ saved: [String: [WebPageMessage]], live: [UUID: [WebPageMessage]]) -> [String: [WebPageMessage]] {
+        var kept = saved
+        for (id, turns) in live where turns.count >= (saved[id.uuidString]?.count ?? 0) { kept[id.uuidString] = turns }
+        return kept
     }
     /// Splits a shared page by request: each request a comparison sent owns its user message and the
     /// replies up to the next user message. Turns from before any request, or from requests sent

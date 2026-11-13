@@ -86,6 +86,8 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var conversationURLs: [String: URL] = [:]
     public var webDrafts: [String: String] = [:]
     public var localConversations: [String: [WebPageMessage]] = [:]
+    /// Each comparison's turns as last seen on an account-wide page, kept after the page drops them.
+    public var sharedTurns: [String: [WebPageMessage]] = [:]
     public var localSessionIDs: [String: String] = [:]
     // Mark the exact session created with configured tools. Old IDs stay available
     // for recovery when a restricted session is replaced from its saved transcript.
@@ -95,7 +97,7 @@ public struct WebWorkspaceState: Codable, Sendable {
     public var localDrafts: [String: String] = [:]
     public var localDraftRevisions: [String: UUID] = [:]
     public init() {}
-    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, websiteEnabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, localSessionIDs, localDrafts, localDraftRevisions, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
+    private enum CodingKeys: String, CodingKey { case claudeConversations, chatgptConversations, geminiPreferences, geminiComparisonPreferences, geminiConversations, museAppConversations, desktopConversation, providerIdentityVersion, enabled, websiteEnabled, dotsURL, savedAvatar, grokBotRememberedConnection, sessionID, displayName, draft, selected, includeMuse, messageRecipients, comparisonID, attempts, conversationURLs, webDrafts, museConversations, localConversations, sharedTurns, localSessionIDs, localDrafts, localDraftRevisions, localConfiguredSessionIDs, localPreviousSessionIDs, localSessionPolicyVersions }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         providerIdentityVersion = try c.decodeIfPresent(Int.self, forKey: .providerIdentityVersion) ?? 1
@@ -122,6 +124,7 @@ public struct WebWorkspaceState: Codable, Sendable {
             ?? c.decodeIfPresent([String: URL].self, forKey: .museConversations) ?? [:]
         webDrafts = try c.decodeIfPresent([String: String].self, forKey: .webDrafts) ?? [:]
         localConversations = try c.decodeIfPresent([String: [WebPageMessage]].self, forKey: .localConversations) ?? [:]
+        sharedTurns = try c.decodeIfPresent([String: [WebPageMessage]].self, forKey: .sharedTurns) ?? [:]
         localSessionIDs = try c.decodeIfPresent([String: String].self, forKey: .localSessionIDs) ?? [:]
         localSessionPolicyVersions = try c.decodeIfPresent([String: Int].self, forKey: .localSessionPolicyVersions) ?? [:]
         localConfiguredSessionIDs = try c.decodeIfPresent([String: String].self, forKey: .localConfiguredSessionIDs) ?? [:]
@@ -155,6 +158,7 @@ public struct WebWorkspaceState: Codable, Sendable {
         try c.encode(conversationURLs, forKey: .conversationURLs)
         try c.encode(webDrafts, forKey: .webDrafts)
         try c.encode(localConversations, forKey: .localConversations)
+        try c.encode(sharedTurns, forKey: .sharedTurns)
         try c.encode(localSessionIDs, forKey: .localSessionIDs)
         try c.encode(localDrafts, forKey: .localDrafts)
         try c.encode(localDraftRevisions, forKey: .localDraftRevisions)

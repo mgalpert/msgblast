@@ -199,6 +199,22 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(turns(second), ["u2", "a2", "u4", "a4"])
     }
 
+    func testSharedTurnsSurviveThePageDroppingThemAndARelaunch() throws {
+        let thread = UUID(), other = UUID()
+        let shown = [WebPageMessage(id: "u1", role: "user", text: "Suggest a cable"), WebPageMessage(id: "a1", role: "assistant", text: "Example Cable")]
+        var saved = WebAgentSession.keepingSharedTurns([:], live: [thread: shown])
+        // The page reloads without the thread: an empty or shorter live slice never replaces it.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [thread: Array(shown.prefix(1)), other: []])
+        XCTAssertEqual(saved[thread.uuidString], shown)
+        XCTAssertEqual(saved[other.uuidString], [])
+        var state = WebWorkspaceState()
+        state.sharedTurns = saved
+        let restored = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(restored.sharedTurns[thread.uuidString], shown)
+        let older = Data(#"{"sessionID":"\#(UUID().uuidString)"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(WebWorkspaceState.self, from: older).sharedTurns, [:], "Older saved state has no saved turns")
+    }
+
     func testUnlandedRequestCannotClaimAnOlderIdenticalMessage() {
         let page = [WebPageMessage(id: "u0", role: "user", text: "hi"), WebPageMessage(id: "a0", role: "assistant", text: "Earlier answer")]
         var attempt = WebSendAttempt(text: "hi", status: .uncertain)
