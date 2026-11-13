@@ -210,3 +210,109 @@ Hosted Cloud Agents run on Ubuntu and cannot validate the native Mac app. Follow
 - For nonvisual changes, show the relevant terminal/API workflow when feasible. If meaningful visual evidence cannot be captured, write the reason for a person to review. `scripts/check_pr_evidence.py` does not accept that explanation, an empty `<video>`, a local file, an unrelated image, or an example hidden in a code fence, indented code block, HTML comment, pre or code element, inline code, or escape. This setup change can record the workflow, so its screenshots and playable video stay mandatory.
 - Label local fixtures, simulated inputs, edited timing, and other demonstration limitations accurately. Refresh evidence after changes that affect what it demonstrates. Do not start paid jobs or live matches solely to capture evidence without existing authorization.
 - When the user asks for screenshots of a PR, show the changed feature's evidence, not the currently open browser page.
+
+## Owner working rules
+
+These rules come from the owner's feedback to agents across many threads. When
+the owner says something newer that conflicts, the newer message wins; update
+this section in the same PR so the next agent does not repeat the old rule.
+
+### Quality and scope
+
+- Quality over speed. Build it right the first time, and finish it so a user can
+  use it, not a partial version to extend later. A feature that reads but cannot
+  act (for example, outside-agent access without send tools) is not finished.
+- Build for every msgblast user. Setup that only works on the owner's Mac (a test
+  build path, a host name, a manual step the owner did once) does not count as
+  done. If a fix needs the user to run a command, build it into the app instead.
+- When a protocol or platform offers a feature that helps users, include it even
+  if few clients support it yet.
+
+### Verify before asking
+
+- Check it yourself before you ask the owner to. Launch the build, take real
+  screenshots, and use iPhone Mirroring for phone checks. The owner will not
+  accept a claim of "it works" without them.
+- Report exactly what ran and what did not. A check you did not run is reported
+  as not run, never as passing.
+
+### Builds handed to the owner
+
+- Merge current `origin/main` into the branch first (merge, do not rewrite), build
+  from that commit, and say which `main` commit it includes. A build from an old
+  branch tests something that will never ship.
+- Give every build a unique, specific app name, such as "msgblast Dev (App Agent
+  fixes)", never plain "msgblast Dev". macOS grants and app state follow the
+  app's identity, so two builds with one name collide.
+- Use `scripts/build_test_app.py` signed slot builds so a slot's Accessibility,
+  Screen Recording and Full Disk Access grants carry over between builds. Do not
+  hand over ad-hoc copies that make the owner approve the same grants again.
+- Reuse existing sign-ins (for example by importing cookies into the test
+  profile) instead of asking the owner to sign in to each agent again.
+
+### Testing without disturbing the owner
+
+- Foreground UI tests run in a test VM or virtual window, never on the owner's
+  own desktop. Avoid leaving crash dialogs or stray windows in front of them.
+- App agents must work in the background: no focus steal, no bringing the agent
+  app forward, and no switching desktops. An agent on another desktop must still
+  work. An app that opens in the foreground and then does nothing is a bug.
+- Some agents or accounts only exist on specific machines. Say which machine a
+  live check needs instead of substituting a different account.
+
+### Product and interface design
+
+- Design it the way Apple would: clean, little text, one clear control per idea.
+  Remove instructions, authorization text and internal names (sidebar names,
+  shortcuts) that the user does not need.
+- Keep animations consistent with the control's closed state, such as a panel
+  that slides up and down from where it rests.
+- When msgblast sets up a third-party app, mirror what the user sees in that app:
+  the same field names, its icon, and where to find the setting.
+- Phone screens stay quiet while they read: no flashing "Connecting…" or "Not
+  connected" during a normal read, cached results first, and only agents the user
+  can use. See [mobile design principles](mobile-design-principles.md).
+- Do not add options the owner did not ask for; the owner has removed
+  transcript-streaming settings for this reason.
+
+### Safe defaults
+
+- Do not let users hurt themselves. Turn on what a setup needs once the user has
+  opted in (for example, the network transport when outside agents are allowed),
+  and keep anything the user deletes recoverable.
+- Prefer a button that does the step over a copied terminal command. If a command
+  must be copied, say so on screen; never put one on the clipboard unexpectedly.
+- When a list of choices is offered (agents, providers), use a menu with a
+  renamable "Other", so analytics can tell which choices people use.
+
+### Analytics
+
+- New user-facing features ship with analytics events defined in the
+  [telemetry contract](../telemetry/README.md). Events never carry message content,
+  contact names, keys, tailnet names, IPs or usernames.
+- Deploying the telemetry worker is the owner's release step.
+
+### Public repository
+
+- Every pushed screenshot and recording is public, and history keeps replaced
+  files. Before pushing evidence, hide public IPs, tailnet DNS names (show
+  `<mac>.<tailnet>.ts.net`), `/Users/<name>` paths (show `~`), key characters,
+  and emails, including in video frames. Push evidence as one commit on a new
+  branch.
+
+### CI, merging and releases
+
+- The required checks are those described in [review guardrails](review-guardrails.md).
+  The owner has asked for a review of which checks to keep; until a change lands
+  on `main`, treat every current check as required and do not weaken one to pass.
+- Agents do not merge PRs, post `Independent model review` or Size-exception
+  statuses, or cut releases unless the owner says so in that thread. A merge by
+  hand between ordered release merges voids the approvals that follow.
+- Releases are cut by the owner. Prefer one complete release over a stream of
+  small ones, and use the owner's wording in release notes.
+
+### Communicating with the owner
+
+- Lead with the answer. A status question gets a direct status.
+- When several things wait on the owner, give one short ordered list of exactly
+  what they need to do, and do not repeat an ask they have already answered.
