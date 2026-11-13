@@ -128,7 +128,7 @@ struct RemoteSettingsView: View {
 struct RemoteOptionControls: View {
     @ObservedObject var service: RemoteService
     var compact = false
-    private static let messagesCaption = "Off by default. An iMessage cannot be unsent, and your phone already has Messages."
+    private static let messagesCaption = "Turns on when a phone pairs. An iMessage cannot be unsent, and your phone already has Messages."
 
     var body: some View {
         Group {
