@@ -121,7 +121,7 @@ struct WebPageScript {
             const modal=all('[role="dialog"],[aria-modal="true"]').some(e=>{const r=e.getBoundingClientRect();
                 const offScreen=r.width>0 && r.height>0 && (r.right<=0 || r.bottom<=0 || r.left>=innerWidth || r.top>=innerHeight);
                 return e.getAttribute('aria-hidden')!=='true' && !offScreen;});
-            const generating=all('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"],#rufus-loader-avatar:not(.rufus-visibility-hidden)').length>0;
+            const rufusPending=config.provider==='alexaShopping'&&all('#rufus-loader-avatar:not(.rufus-visibility-hidden)').length>0&&(()=>{const m=messages();return m.length>0&&m[m.length-1].role==='user';})();const generating=all('button[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop response"],button[aria-label="Stop"],.dial-msg.writing,[data-render-id="thinking"]').length>0||rufusPending;
             if (!pathAllowed()) reason=`Open a ${config.name} chat to send from MsgBlast.`;
             else if (login) reason=`Sign in to ${config.name} to send this request.`;
             // Responsive sidebars hide their account control without ending the session.
@@ -299,7 +299,7 @@ struct WebPageScript {
         <button id="rufus-panel-header-overflow-button" aria-label="Alexa overflow menu">•••</button>
         <div id="menu" hidden><button id="rufus-chat-history-ingress-button">Chat history</button><button id="rufus-new-chat-ingress-button">New chat</button></div>
         <div id="rufus-container-overlay" style="position:absolute;top:0;bottom:0;left:100%;right:auto;background:white;z-index:2;overflow:auto"><button id="rufus-panel-header-new-chat" aria-label="Start a new chat">Start a new chat</button><button id="history-back">Back</button><div id="rufus-react-chat-history-renderer"><div id="history-rows"></div></div><div class="rufus-end-of-chat-history">End of chat history</div></div>
-        <div id="rufus-conversation-container"></div><textarea id="rufus-text-area" maxlength="500" placeholder="Ask a shopping question"></textarea>
+        <div id="rufus-conversation-container"></div><div id="rufus-loader-avatar"></div><textarea id="rufus-text-area" maxlength="500" placeholder="Ask a shopping question"></textarea>
         <button id="rufus-submit-button" aria-label="Submit" class="rufus-submit-button--disabled">Send</button></div>
         <button onclick="document.getElementById('nav-link-accountList').hidden=true;chat.hidden=true;login.hidden=false">Sign out of fixture</button></div>
         <div id="login" hidden><p>Sign in to continue.</p><button data-testid="login-button" onclick="document.getElementById('nav-link-accountList').hidden=false;chat.hidden=false;login.hidden=true">Sign in to fixture</button></div>

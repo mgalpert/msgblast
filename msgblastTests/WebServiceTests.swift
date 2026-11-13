@@ -1,5 +1,6 @@
 import XCTest
 import WebKit
+import msgblastRemoteProtocol
 @testable import msgblastCore
 
 @MainActor
@@ -87,6 +88,42 @@ final class WebServiceTests: XCTestCase {
         XCTAssertFalse(session.snapshot.ready)
         XCTAssertFalse(session.isReadyForOnboarding)
         XCTAssertTrue(session.snapshot.reason.contains("unavailable"))
+    }
+
+    func testAlexaShoppingIdleLoaderIsNotAPendingReply() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let loader = try await session.webView.callAsyncJavaScript(
+            "return !!document.querySelector('#rufus-loader-avatar:not(.rufus-visibility-hidden)')",
+            arguments: [:], in: nil, contentWorld: .page) as? Bool
+        XCTAssertEqual(loader, true)
+        XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
+        XCTAssertFalse(session.snapshot.reason.hasPrefix("Wait for"))
+        let idle = AvailabilityCalculator.availability(AgentSessionSignals(session), inputs: MacAvailabilityInputs(), otherDesktopSending: false, now: Date())
+        XCTAssertNotEqual(idle.readiness.state, "busy", idle.readiness.state)
+        _ = try await session.webView.callAsyncJavaScript("""
+            const user=document.createElement('article');
+            user.className='rufus-customer-text-wrap';
+            user.textContent='Need a bottle';
+            document.getElementById('rufus-conversation-container').append(user);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertTrue(session.snapshot.reason.hasPrefix("Wait for"))
+        XCTAssertTrue(session.snapshot.reason.hasSuffix("current reply."))
+        _ = try await session.webView.callAsyncJavaScript("""
+            const reply=document.createElement('article');
+            reply.setAttribute('data-csa-c-content-id','rufus-dsk-section-markdownSection-idle');
+            reply.setAttribute('data-csa-c-group-id','idle-reply');
+            reply.textContent='Try this bottle';
+            document.getElementById('rufus-conversation-container').append(reply);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
     }
 
     func testAlexaShoppingNewDocumentCannotReuseAnEarlierSubmissionReceipt() async throws {
