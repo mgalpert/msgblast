@@ -1,0 +1,16 @@
+{
+  "pr": 134,
+  "reviewed_head": "7badaa87c613bb5a56dd563229ccfc0ac75fd425",
+  "base": "bbb84dc5bbcc6a549f0c929f0076ce858bed7485",
+  "previous_reviewed_heads": [
+    "d512382f7614c370ef497d866b1a9798daf30f05",
+    "479eb5c85bfe26ea530a1d904cb15ee2c339550b"
+  ],
+  "previous_receipt": "pr-134-d512382.json",
+  "reviewer": "independent model (OpenAI Codex CLI, gpt-6.1-sol, read-only sandbox); commits authored with Claude Opus 5.5 trailers",
+  "scope": "479eb5c8: remote fixture expects a new pairing to turn iMessage sends on, then turns them off and keeps the refusal check. 7badaa87: merge of main (#133) only.",
+  "verdict": "approve",
+  "findings": [],
+  "notes": "Fixture keeps messagesSendsOff coverage. Merge brings in exactly #133; ViewModelTests keeps both PRs' tests; no adverse interaction.",
+  "tests": "scripts/test_web_comparisons.sh build/contributor-tests passes at 479eb5c8 (the CI native-lane failure); msgblastMobileTests 63/63 at 7badaa87; RemoteServerTests 7/7 at d512382"
+}
