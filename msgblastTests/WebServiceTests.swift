@@ -159,19 +159,59 @@ final class WebServiceTests: XCTestCase {
     }
 
     func testSharedTurnsSurviveThePageDroppingThemAndARelaunch() throws {
-        let thread = UUID(), other = UUID()
-        let shown = [WebPageMessage(id: "u1", role: "user", text: "Suggest a cable"), WebPageMessage(id: "a1", role: "assistant", text: "Example Cable")]
-        var saved = WebAgentSession.keepingSharedTurns([:], live: [thread: shown])
-        // The page reloads without the thread: an empty or shorter live slice never replaces it.
-        saved = WebAgentSession.keepingSharedTurns(saved, live: [thread: Array(shown.prefix(1)), other: []])
-        XCTAssertEqual(saved[thread.uuidString], shown)
-        XCTAssertEqual(saved[other.uuidString], [])
+        let a = UUID(), b = UUID()
+        func message(_ id: String, _ role: String, _ text: String) -> WebPageMessage { WebPageMessage(id: id, role: role, text: text) }
+        let first = [message("u1", "user", "Suggest a cable"), message("a1", "assistant", "Example Cable")]
+        var saved = WebAgentSession.keepingSharedTurns([:], live: [a: first], onPage: ["u1", "a1"])
+        // The page reloads without the thread, or shows only a recent window: saved turns stay.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: []], onPage: [])
+        XCTAssertEqual(saved[a.uuidString], first)
+        // A reply still streaming in shows less text during a reload; the fuller saved text stays.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [message("u1", "user", "Suggest a cable"), message("a1", "assistant", "Exam")]], onPage: ["u1", "a1"])
+        XCTAssertEqual(saved[a.uuidString], first)
+        // A reload renumbers a message the page shows again: it is adopted, not repeated.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [message("u1b", "user", "Suggest a cable")]], onPage: ["u1b"])
+        XCTAssertEqual(saved[a.uuidString]?.map(\.id), ["u1b", "a1"])
+        // A turn first attributed to A that now belongs to B leaves A.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [message("u2", "user", "hi")]], onPage: ["u2"])
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [], b: [message("u2", "user", "hi")]], onPage: ["u2"])
+        XCTAssertEqual(saved[a.uuidString]?.map(\.id), ["u1b", "a1"])
+        XCTAssertEqual(saved[b.uuidString]?.map(\.id), ["u2"])
         var state = WebWorkspaceState()
         state.sharedTurns = saved
         let restored = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONEncoder().encode(state))
-        XCTAssertEqual(restored.sharedTurns[thread.uuidString], shown)
+        XCTAssertEqual(restored.sharedTurns, saved)
         let older = Data(#"{"sessionID":"\#(UUID().uuidString)"}"#.utf8)
         XCTAssertEqual(try JSONDecoder().decode(WebWorkspaceState.self, from: older).sharedTurns, [:], "Older saved state has no saved turns")
+    }
+
+    func testSharedPageServesSavedTurnsAfterThePageDropsThemAndPrunesEndedOnes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let thread = UUID(), other = UUID()
+        var attempt = WebSendAttempt(text: "Need a bottle", status: .observed)
+        attempt.comparisonID = thread
+        session.updateState { $0.attempts.append(attempt) }
+        _ = try await session.webView.callAsyncJavaScript("""
+            const container=document.getElementById('rufus-conversation-container');
+            const user=document.createElement('article'); user.className='rufus-customer-text-wrap'; user.textContent='Need a bottle';
+            const reply=document.createElement('article');
+            reply.setAttribute('data-csa-c-content-id','rufus-dsk-section-markdownSection-saved'); reply.setAttribute('data-csa-c-group-id','saved-reply');
+            reply.textContent='Try this bottle';
+            container.append(user, reply);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"])
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-conversation-container').replaceChildren()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"], "The page dropped the turns; the saved copy remains")
+        XCTAssertEqual(session.messagesForComparison(other), [])
+        session.pruneSharedTurns(keeping: [other])
+        XCTAssertNil(session.state.sharedTurns[thread.uuidString], "An ended comparison keeps its turns in its own history")
     }
 
     func testUnlandedRequestCannotClaimAnOlderIdenticalMessage() {

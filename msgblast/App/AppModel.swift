@@ -680,7 +680,12 @@ final class AppModel: ObservableObject {
         state.comparisons[i].endedWebHistory = Dictionary(uniqueKeysWithValues: previous.resolvedWebAgentIDs.map { agent in
             (agent.id, webAgents.session(for: agent)?.messagesForComparison(id) ?? [])
         })
-        do { try save(); return true }
+        do {
+            try save()
+            let open = Set(state.comparisons.filter { $0.endedAt == nil }.map(\.id))
+            webAgents.sessions.forEach { $0.pruneSharedTurns(keeping: open) }
+            return true
+        }
         catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
     }
 
