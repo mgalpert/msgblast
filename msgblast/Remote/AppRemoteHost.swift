@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import msgblastCore
 import msgblastRemoteProtocol
@@ -40,7 +41,10 @@ final class AppRemoteHost: RemoteCommandHost {
         guard let member = comparison.members.first(where: { $0.id == memberID }), member.chat.eligible else {
             return .rejected(.unknownAgent, "This iMessage recipient is gone from your Mac")
         }
-        if model.demo { return .applied(conversationID: id) }
+        // While Messages is in front the person is reading there; never switch its chat.
+        if model.demo || NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.MobileSMS" {
+            return .applied(conversationID: id)
+        }
         guard let database = model.database, let unread = try? database.hasUnreadMessages(chatID: member.chat.id) else {
             return .rejected(.failed, "Messages history is unavailable on your Mac")
         }

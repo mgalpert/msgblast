@@ -71,10 +71,12 @@ public final class MessagesDatabase {
     }
     public func hasUnreadMessages(chatID: String) throws -> Bool {
         guard columns.contains("is_read") else { return false }
+        // Tapbacks can stay unread after the chat is opened, so only real messages count.
+        let tapback = columns.contains("associated_message_type") ? " AND COALESCE(m.associated_message_type,0)=0" : ""
         let sql = """
         SELECT 1 FROM chat c JOIN chat_message_join cm ON cm.chat_id=c.ROWID
         JOIN message m ON m.ROWID=cm.message_id
-        WHERE c.guid=? AND m.is_from_me=0 AND m.is_read=0 LIMIT 1
+        WHERE c.guid=? AND m.is_from_me=0 AND m.is_read=0\(tapback) LIMIT 1
         """
         return try !rows(sql, values: [chatID]).isEmpty
     }

@@ -65,13 +65,12 @@ struct ConversationView: View {
         }
     }
 
+    /// Only the newest iMessage reply's chat: the Mac shows one chat in Messages at a time.
     private func messagesToMarkRead(_ turns: [RemoteTurn]) -> [String: String] {
-        guard scenePhase == .active, app.connection.state.canSend, openedAtBottom, atBottom else { return [:] }
-        var latest: [String: String] = [:]
-        for turn in turns where turn.origin == .messagesHistory && turn.role == .assistant {
-            if let agentID = turn.agentID { latest[agentID] = turn.id }
-        }
-        return latest
+        guard scenePhase == .active, app.connection.state.canSend, openedAtBottom, atBottom,
+              let turn = turns.last(where: { $0.origin == .messagesHistory && $0.role == .assistant }),
+              let agentID = turn.agentID else { return [:] }
+        return [agentID: turn.id]
     }
 
     private func content(_ conversation: RemoteConversation) -> some View {
