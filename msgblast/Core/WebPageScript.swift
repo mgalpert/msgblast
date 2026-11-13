@@ -91,7 +91,8 @@ struct WebPageScript {
             const title=label(e.querySelector('img')?.closest('[aria-label]'));
             if (!title) return null;
             const price=text.match(/\$ ?(\d[\d,]*)(?: |\.)(\d{2})(?!\d)/);
-            const rating=label(e.querySelector('[aria-label*="out of 5 stars"]')).replace(/\.(\s+|$)/g,', ').replace(/,\s*$/,'');
+            const stars=label(e.querySelector('[aria-label*="out of 5 stars"]')).match(/^([\d.]+) out of 5 stars\.?\s*([\d,]+) ratings?/);
+            const rating=stars?`${stars[1]}★ (${stars[2]})`:'';
             const blurb=label(e.querySelector('[role="link"][aria-label^="More details about "]')).replace(/^More details about /,'');
             const asin=e.querySelector('[data-csa-c-nile-action-id^="asin_cards_"]')?.getAttribute('data-csa-c-nile-action-id').match(/^asin_cards_([A-Z0-9]{10})_/)?.[1];
             return [title,price?`$${price[1]}.${price[2]}`:'',rating,blurb,asin?`https://www.amazon.com/dp/${asin}`:''].filter(Boolean).join(' · ');

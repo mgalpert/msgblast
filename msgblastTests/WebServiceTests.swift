@@ -114,7 +114,7 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(replies, [
             "Here are some cables.",
             "Top Picks Under $15",
-            "Anker USB C to USB C Cable, 60W (2-Pack, 6 ft) · $9.99 · 4.7 out of 5 stars, 91,395 ratings · Braided nylon 6 ft cables rated for 60W charging. · https://www.amazon.com/dp/B0ABCDEFGH",
+            "Anker USB C to USB C Cable, 60W (2-Pack, 6 ft) · $9.99 · 4.7★ (91,395) · Braided nylon 6 ft cables rated for 60W charging. · https://www.amazon.com/dp/B0ABCDEFGH",
         ])
         XCTAssertFalse(replies.joined().contains("Purchased"), "Order history badges stay on the Mac")
     }
