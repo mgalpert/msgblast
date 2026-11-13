@@ -53,15 +53,28 @@ final class WebImageCacheTests: XCTestCase {
         let html = "https://m.media-amazon.com/images/I/page.jpg"
         let huge = "https://m.media-amazon.com/images/I/huge.jpg"
         let header = "https://m.media-amazon.com/images/I/header.jpg"
+        let svg = "https://m.media-amazon.com/images/I/vector.svg"
+        WebImageProtocol.replies[svg] = WebImageProtocol.Reply(mime: "image/svg+xml", body: Data("<svg/>".utf8))
         WebImageProtocol.replies[html] = WebImageProtocol.Reply(mime: "text/html", body: Data("nope".utf8))
         WebImageProtocol.replies[huge] = WebImageProtocol.Reply(body: Data(repeating: 1, count: 9))
         WebImageProtocol.replies[header] = WebImageProtocol.Reply(body: Data([1, 2, 3, 4]), contentLength: "9")
         let images = cache(in: directory, maxBytes: 8)
-        images.prefetch([html, huge, header])
-        await settle { images.isCoolingDown(html) && images.isCoolingDown(huge) && images.isCoolingDown(header) }
-        XCTAssertTrue(images.attachments(for: [html, huge, header]).isEmpty)
+        images.prefetch([html, huge, header, svg])
+        await settle { images.isCoolingDown(html) && images.isCoolingDown(huge) && images.isCoolingDown(header) && images.isCoolingDown(svg) }
+        XCTAssertTrue(images.attachments(for: [html, huge, header, svg]).isEmpty)
         let stored = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         XCTAssertEqual(stored.count, 0)
+    }
+
+    func testRedirectGuardKeepsOnlyAmazonImageHosts() async throws {
+        let guardian = WebImageRedirectGuard()
+        let task = URLSession.shared.dataTask(with: URL(string: "https://m.media-amazon.com/images/I/a.jpg")!)
+        let response = try XCTUnwrap(HTTPURLResponse(url: task.originalRequest!.url!, statusCode: 302, httpVersion: nil, headerFields: nil))
+        let away = await guardian.urlSession(.shared, task: task, willPerformHTTPRedirection: response, newRequest: URLRequest(url: URL(string: "https://evil.example.com/x.jpg")!))
+        XCTAssertNil(away)
+        let cdn = URLRequest(url: URL(string: "https://images-na.ssl-images-amazon.com/images/I/b.jpg")!)
+        let kept = await guardian.urlSession(.shared, task: task, willPerformHTTPRedirection: response, newRequest: cdn)
+        XCTAssertEqual(kept, cdn)
     }
 
     func testCachesAValidImageByURLHash() async throws {

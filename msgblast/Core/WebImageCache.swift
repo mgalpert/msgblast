@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 /// HTTPS Amazon CDN hosts used for Alexa product photos. The page script uses the same allowlist.
 public enum WebImageURL {
@@ -14,6 +15,7 @@ public enum WebImageURL {
 @MainActor
 public final class WebImageCache {
     public static let maxByteCount = 2 * 1024 * 1024
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "msgblast", category: "WebImageCache")
     public var onChange: (@MainActor () -> Void)?
     private var files: [String: MessageAttachment] = [:]
     private var inflight: Set<String> = []
@@ -74,63 +76,64 @@ public final class WebImageCache {
     private func download(_ urlString: String) async {
         defer { inflight.remove(urlString) }
         guard let url = WebImageURL.allowed(urlString) else { failedAt[urlString] = now(); return }
+        let digest = Self.digest(urlString), host = url.host ?? ""
+        Self.log.info("Downloading \(host, privacy: .public) \(digest.prefix(8), privacy: .public)")
         do {
-            let image = try await fetched(url)
-            files[urlString] = try store(image, urlString: urlString)
+            // Network and disk work run off the main actor; only the bookkeeping below is isolated.
+            files[urlString] = try await Self.fetchAndStore(url, digest: digest, session: session, maxBytes: maxBytes, directory: directory)
             failedAt[urlString] = nil
+            Self.log.info("Cached \(digest.prefix(8), privacy: .public)")
             onChange?()
         } catch {
             failedAt[urlString] = now()
+            Self.log.error("Image \(digest.prefix(8), privacy: .public) failed: \((error as? URLError)?.code.rawValue ?? -1, privacy: .public)")
         }
     }
 
-    private func fetched(_ url: URL) async throws -> (data: Data, mime: String) {
+    private nonisolated static func fetchAndStore(_ url: URL, digest: String, session: URLSession, maxBytes: Int, directory: URL) async throws -> MessageAttachment {
         let (bytes, response) = try await session.bytes(from: url)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        guard let mime = Self.imageMIME(http) else { throw URLError(.cannotDecodeContentData) }
+        guard let mime = imageMIME(http) else { throw URLError(.cannotDecodeContentData) }
         guard http.expectedContentLength <= Int64(maxBytes) else { throw URLError(.dataLengthExceedsMaximum) }
         var data = Data()
+        data.reserveCapacity(Int(max(0, min(http.expectedContentLength, Int64(maxBytes)))))
         // Stop reading as soon as a response without a length passes the cap.
         for try await byte in bytes {
             data.append(byte)
             if data.count > maxBytes { throw URLError(.dataLengthExceedsMaximum) }
         }
-        guard Self.withinLimit(http.expectedContentLength, count: data.count, max: maxBytes) else { throw URLError(.dataLengthExceedsMaximum) }
-        return (data, mime)
-    }
-
-    private func store(_ image: (data: Data, mime: String), urlString: String) throws -> MessageAttachment {
-        let digest = Self.digest(urlString)
-        let ext = Self.fileExtension(image.mime)
+        guard withinLimit(http.expectedContentLength, count: data.count, max: maxBytes) else { throw URLError(.dataLengthExceedsMaximum) }
+        let ext = fileExtension(mime) ?? "jpg"
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let destination = directory.appendingPathComponent(digest + "." + ext)
-        try image.data.write(to: destination, options: .atomic)
+        try data.write(to: destination, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-        return MessageAttachment(id: digest, filename: "product." + ext, path: destination.path, mimeType: image.mime, byteCount: Int64(image.data.count))
+        return MessageAttachment(id: digest, filename: "product." + ext, path: destination.path, mimeType: mime, byteCount: Int64(data.count))
     }
 
-    static func imageMIME(_ response: HTTPURLResponse) -> String? {
+    /// Only raster formats the phone decodes; SVG and anything else is refused.
+    nonisolated static func imageMIME(_ response: HTTPURLResponse) -> String? {
         guard let raw = response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first else { return nil }
         let mime = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return mime.hasPrefix("image/") ? mime : nil
+        return fileExtension(mime) == nil ? nil : mime
     }
 
-    static func withinLimit(_ expected: Int64, count: Int, max: Int) -> Bool {
+    nonisolated static func withinLimit(_ expected: Int64, count: Int, max: Int) -> Bool {
         if expected > Int64(max) { return false }
         return count > 0 && count <= max
     }
 
-    static func digest(_ url: String) -> String {
+    nonisolated static func digest(_ url: String) -> String {
         SHA256.hash(data: Data(url.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    static func fileExtension(_ mime: String) -> String {
+    nonisolated static func fileExtension(_ mime: String) -> String? {
         switch mime {
         case "image/jpeg", "image/jpg": "jpg"
         case "image/png": "png"
         case "image/gif": "gif"
         case "image/webp": "webp"
-        default: "img"
+        default: nil
         }
     }
 }

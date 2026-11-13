@@ -190,8 +190,10 @@ public enum RemoteProjectionBuilder {
         }
     }
 
+    /// All of a message's photos or none, so an attachment index never points at a different file later.
     private static func downloadedImages(_ message: WebPageMessage, input: RemoteProjectionInput) -> [MessageAttachment] {
-        (message.images ?? []).compactMap { input.webImages[$0] }
+        let files = (message.images ?? []).filter { WebImageURL.allowed($0) != nil }.map { input.webImages[$0] }
+        return files.contains { $0 == nil } ? [] : files.compactMap { $0 }
     }
 
     /// Same turn ids as `appendWebAgents`, and only files that have finished downloading.

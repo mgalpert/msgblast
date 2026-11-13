@@ -117,15 +117,20 @@ final class RemoteProjectionTests: XCTestCase {
             WebPageMessage(id: "user", role: "user", text: "Suggest a cable"),
             WebPageMessage(id: "card", role: "assistant", text: "Example Cable · $9.99", images: [first, missing, second]),
         ]]]
-        input.webImages = [first: one, second: two]
         let turnID = "w:alexaShopping:\(comparison.id.uuidString):1"
+        // While one photo is still downloading the card shows none, so indexes never shift.
+        input.webImages = [first: one, second: two]
+        XCTAssertEqual(RemoteProjectionBuilder.state(from: input).turns.first { $0.id == turnID }?.attachments, [])
+        XCTAssertNil(RemoteProjectionBuilder.attachmentFiles(from: input)[turnID])
+        let three = MessageAttachment(id: "three", filename: "product.jpg", path: "/tmp/three.jpg", mimeType: "image/jpeg", byteCount: 6)
+        input.webImages[missing] = three
         let state = RemoteProjectionBuilder.state(from: input)
         let turn = try XCTUnwrap(state.turns.first { $0.id == turnID })
         XCTAssertEqual(turn.text, "Example Cable · $9.99")
-        XCTAssertEqual(turn.attachments.map(\.id), ["one", "two"])
+        XCTAssertEqual(turn.attachments.map(\.id), ["one", "three", "two"])
         XCTAssertEqual(state.turns.filter { $0.id == turnID }.count, 1)
         XCTAssertEqual(state.turns.first { $0.id == "w:alexaShopping:\(comparison.id.uuidString):0" }?.attachments, [])
-        XCTAssertEqual(RemoteProjectionBuilder.attachmentFiles(from: input)[turnID], [one, two])
+        XCTAssertEqual(RemoteProjectionBuilder.attachmentFiles(from: input)[turnID], [one, three, two])
         input.webImages = [:]
         let pending = RemoteProjectionBuilder.state(from: input)
         XCTAssertEqual(pending.turns.map(\.id), state.turns.map(\.id), "A later download updates the same turn ids")
