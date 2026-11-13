@@ -113,6 +113,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
+    private var desktopSendPressedAttempts: Set<UUID> = []
     private let museApp: MuseAppConversation
     private let claudeApp: ClaudeAppConversation
     private let chatgptApp: ChatGPTAppConversation
@@ -1843,8 +1844,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 geminiBinding = try state.geminiBinding(for: id) ?? GeminiConversationBinding(comparisonID: id, mode: geminiPreferences.mode)
             }
             let sendFocus = foreground
-            let submitAction: @Sendable () async -> Void = { await sendFocus?.restoreAfterSubmission() }
             let outgoingID = attempt.id
+            let submitAction: @Sendable () async -> Void = { [weak self] in await self?.recordDesktopSendPressed(outgoingID); await sendFocus?.restoreAfterSubmission() }
             let submitted: @Sendable () async throws -> Void = { [weak self] in
                 guard let self else { throw CancellationError() }
                 try await self.recordDesktopSubmission(attemptID: outgoingID); await Self.handOffAfterSubmission(leased: sendFocus != nil, onSubmissionFinished)
@@ -1997,8 +1998,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider == .geminiApp, let problem = error as? GeminiSelectionError {
                 geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
             }
-            attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
-            let submitted = (state.attempts.first { $0.id == attempt.id }?.status).map { $0 != .attempting } ?? false
+            let submitted = desktopSendPressedAttempts.contains(attempt.id) || (state.attempts.first { $0.id == attempt.id }?.status).map { $0 != .attempting } ?? false
+            attempt.status = Self.failureStatus(for: error, started: started, submitted: submitted, provider: provider)
             let detail = Self.failureDetail(for: error, started: started, submitted: submitted, provider: provider)
             attempt.detail = detail
             self.error = detail
@@ -2006,8 +2007,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         do { try await foreground?.restore() }
         catch { self.error = error.localizedDescription }
-        updateNativeSnapshot()
+        desktopSendPressedAttempts.remove(attempt.id); updateNativeSnapshot()
         return attempt
+    }
+
+    private static func failureStatus(for error: Error, started: Bool, submitted: Bool, provider: WebProvider) -> WebSendStatus {
+        if provider == .geminiApp, error is GeminiSelectionError, !submitted { return .notSent }
+        return started || submitted ? .uncertain : .notSent
     }
 
     private static func failureDetail(for error: Error, started: Bool, submitted: Bool, provider: WebProvider) -> String {
@@ -2016,6 +2022,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         guard case let .interstitial(app, prompt) = error as? DesktopAppError, !submitted else { return error.localizedDescription }
         return "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app), then send again. Nothing was sent."
+    }
+
+    private func recordDesktopSendPressed(_ attemptID: UUID) {
+        desktopSendPressedAttempts.insert(attemptID)
     }
 
     private func recordDesktopSubmission(attemptID: UUID) throws {

@@ -1468,6 +1468,33 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
     }
 
     @MainActor
+    func testDotsInterstitialOnFirstReadAfterSendIsUncertain() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let reads = f.directory.appendingPathComponent("first-post-send-read")
+        let adapter = f.adapter(transformNative: { root in
+            guard FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path) else { return root }
+            try "1".write(to: reads, atomically: true, encoding: .utf8)
+            return Self.addingDotsInterstitial(to: root)
+        })
+        let storage = f.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Dots.app"), processID: 42) }, open: { _, _ in })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
+                                      desktopApps: client, desktopDriver: .init(executable: f.executable), chatgptApp: adapter)
+        defer { session.beginShutdown() }
+        let result = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+        let attempt = try XCTUnwrap(result)
+        XCTAssertEqual(try String(contentsOf: reads, encoding: .utf8), "1")
+        XCTAssertEqual(attempt.status, .uncertain)
+        XCTAssertFalse(attempt.detail?.contains("Nothing was sent") ?? false, attempt.detail ?? "")
+    }
+
+    @MainActor
     func testDotsInterstitialAfterSubmissionDoesNotClaimNothingWasSent() async throws {
         let f = try fixture(kind: .dots, followup: true)
         defer { try? FileManager.default.removeItem(at: f.directory) }
@@ -1477,13 +1504,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             let read = (Int((try? String(contentsOf: reads, encoding: .utf8)) ?? "0") ?? 0) + 1
             try String(read).write(to: reads, atomically: true, encoding: .utf8)
             guard read > 1 else { return Self.hidingAssistantAnswer(root) }
-            func cover(_ node: inout ChatGPTAXNode) -> Bool {
-                if node.role == "AXWebArea" { node.children.append(.init(role: "AXHeading", label: "Contact your dot anywhere")); return true }
-                return node.children.indices.contains { cover(&node.children[$0]) }
-            }
-            var root = root
-            _ = cover(&root)
-            return root
+            return Self.addingDotsInterstitial(to: root)
         })
         let storage = f.directory.appendingPathComponent("workspace.json")
         var workspace = WebWorkspaceState()
@@ -2007,6 +2028,16 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             else { for index in node.children.indices { hide(&node.children[index]) } }
         }
         hide(&root)
+        return root
+    }
+
+    private static func addingDotsInterstitial(to root: ChatGPTAXNode) -> ChatGPTAXNode {
+        var root = root
+        func cover(_ node: inout ChatGPTAXNode) -> Bool {
+            if node.role == "AXWebArea" { node.children.append(.init(role: "AXHeading", label: "Contact your dot anywhere")); return true }
+            return node.children.indices.contains { cover(&node.children[$0]) }
+        }
+        _ = cover(&root)
         return root
     }
 
