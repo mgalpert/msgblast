@@ -183,7 +183,9 @@ struct PhoneSidebarPanel: View {
                     .accessibilityLabel("Pairing QR code")
                 Text("Expires in \(Int(offer.expiresAt.timeIntervalSince(now)))s").font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 if let fingerprint = service.identityFingerprint {
-                    Text("Key \(fingerprint)").font(.caption.monospaced()).textSelection(.enabled)
+                    // Not selectable: on macOS 27.2 a selectable Text with its own accessibility label sends
+                    // SwiftUI into endless recursion when an accessibility client reads the label.
+                    Text("Key \(fingerprint)").font(.caption.monospaced())
                         .accessibilityLabel("Mac key fingerprint \(fingerprint). The phone shows the same before pairing.")
                 }
             } else if pairing.offer == nil {
