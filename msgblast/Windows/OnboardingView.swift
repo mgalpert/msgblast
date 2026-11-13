@@ -274,6 +274,7 @@ struct OnboardingView: View {
         let installed = desktop.map { setup.desktopInstallations[$0]?.isInstalled == true } ?? true
         let available = choiceAvailable(choice)
         let canInstall = desktop.map { !installed && setup.desktopInstallations[$0] != nil } ?? false
+        let accessibilityLabel: LocalizedStringKey = canInstall ? "Install \(choice.name)" : "Choose \(choice.name)"
         return Button {
             if canInstall, let desktop {
                 if !model.demo { NSWorkspace.shared.open(desktop.homeURL) }
@@ -281,41 +282,71 @@ struct OnboardingView: View {
                 setup.toggleChoice(choice)
             }
         } label: {
-            HStack(spacing: 14) {
-                if let provider = choice.provider {
-                    AgentAvatar(agent: AgentArtwork.agent(for: setup.session(for: provider)), name: choice.name, size: 44)
-                } else if let runtime = choice.runtime {
-                    AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.runtimeAvatar(for: runtime)), name: choice.name, size: 44)
-                } else if choice == .otherMessages {
-                    Image(systemName: "message.fill").font(.system(size: 26)).foregroundStyle(.green)
-                        .frame(width: 44, height: 44)
-                } else {
-                    AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice)), name: choice.name, size: 44)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(choice == .otherMessages ? "Another Messages agent" : choice.name)
-                        .font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
-                    if let desktop {
-                        Text(setup.desktopInstallations[desktop] == nil ? "Checking…" : installed ? "Installed" : "Install")
-                            .font(.caption).foregroundStyle(canInstall ? Color.blue : .secondary)
-                            .accessibilityIdentifier("desktop-installation-\(desktop.rawValue)")
-                    } else if choice.isMessages {
-                        Text(available ? "Added from Messages" : "Not found in Messages")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 6)
-                Image(systemName: canInstall ? "arrow.down.circle" : selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22)).foregroundStyle(selected ? Color.blue : .secondary)
-            }
-            .padding(12).frame(maxWidth: .infinity, minHeight: 74, maxHeight: 74, alignment: .leading)
-            .background(selected ? Color.blue.opacity(0.12) : Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.blue : Color.primary.opacity(0.14), lineWidth: selected ? 1.5 : 1))
-            .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain).accessibilityLabel(canInstall ? "Install \(choice.name)" : "Choose \(choice.name)")
+            choiceLabel(choice, selected: selected, desktop: desktop, installed: installed, available: available, canInstall: canInstall)
+        }.buttonStyle(.plain).accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier("onboarding-choice-\(choice.rawValue)")
-            .accessibilityValue(!installed ? "Not installed" : !available && choice.isMessages && (setup.state.approvedPermissionSections ?? []).contains(.messaging) ? "Not found in Messages. \(selectionStatus)" : !available ? "Permission required. \(selectionStatus)" : desktop != nil ? "Installed. \(selectionStatus)" : selectionStatus)
+            .accessibilityValue(choiceAccessibilityValue(choice, installed: installed, available: available, desktop: desktop != nil, selectionStatus: selectionStatus))
             .disabled(!available && !selected && !canInstall)
+    }
+
+    private func choiceLabel(_ choice: OnboardingChoice, selected: Bool, desktop: WebProvider?, installed: Bool, available: Bool, canInstall: Bool) -> some View {
+        let title: String = choice == .otherMessages ? "Another Messages agent" : choice.name
+        let messagesStatus: LocalizedStringKey = available ? "Added from Messages" : "Not found in Messages"
+        let statusColor: Color = canInstall ? Color.blue : .secondary
+        let symbol: String = canInstall ? "arrow.down.circle" : selected ? "checkmark.circle.fill" : "circle"
+        let symbolColor: Color = selected ? Color.blue : .secondary
+        let fill: Color = selected ? Color.blue.opacity(0.12) : Color.primary.opacity(0.035)
+        let stroke: Color = selected ? Color.blue : Color.primary.opacity(0.14)
+        let strokeWidth: CGFloat = selected ? 1.5 : 1
+        return HStack(spacing: 14) {
+            choiceAvatar(choice)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
+                if let desktop {
+                    Text(installationStatus(desktop, installed: installed))
+                        .font(.caption).foregroundStyle(statusColor)
+                        .accessibilityIdentifier("desktop-installation-\(desktop.rawValue)")
+                } else if choice.isMessages {
+                    Text(messagesStatus)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 6)
+            Image(systemName: symbol)
+                .font(.system(size: 22)).foregroundStyle(symbolColor)
+        }
+        .padding(12).frame(maxWidth: .infinity, minHeight: 74, maxHeight: 74, alignment: .leading)
+        .background(fill, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(stroke, lineWidth: strokeWidth))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func installationStatus(_ desktop: WebProvider, installed: Bool) -> LocalizedStringKey {
+        setup.desktopInstallations[desktop] == nil ? "Checking…" : installed ? "Installed" : "Install"
+    }
+
+    @ViewBuilder private func choiceAvatar(_ choice: OnboardingChoice) -> some View {
+        if let provider = choice.provider {
+            AgentAvatar(agent: AgentArtwork.agent(for: setup.session(for: provider)), name: choice.name, size: 44)
+        } else if let runtime = choice.runtime {
+            AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.runtimeAvatar(for: runtime)), name: choice.name, size: 44)
+        } else if choice == .otherMessages {
+            Image(systemName: "message.fill").font(.system(size: 26)).foregroundStyle(.green)
+                .frame(width: 44, height: 44)
+        } else {
+            AgentAvatar(agent: Agent(name: choice.name, handles: [], avatar: AgentArtwork.messageAvatar(for: choice)), name: choice.name, size: 44)
+        }
+    }
+
+    private func choiceAccessibilityValue(_ choice: OnboardingChoice, installed: Bool, available: Bool, desktop: Bool, selectionStatus: String) -> String {
+        if !installed { return "Not installed" }
+        if !available && choice.isMessages && (setup.state.approvedPermissionSections ?? []).contains(.messaging) {
+            return "Not found in Messages. \(selectionStatus)"
+        }
+        if !available { return "Permission required. \(selectionStatus)" }
+        if desktop { return "Installed. \(selectionStatus)" }
+        return selectionStatus
     }
 
 }
