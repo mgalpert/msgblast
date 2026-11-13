@@ -15,7 +15,9 @@ struct OutsideAgentsSettingsView: View {
                 .help("Agents such as Claude Code and Codex connect through the msgblast command. Each asks once and gets the access you choose.")
                 .accessibilityIdentifier("outside-agents-enabled")
             if listener.enabled {
-                LabeledContent("Set up an agent") { setupMenu }
+                InstallRow(tool: .claudeCode)
+                InstallRow(tool: .codex)
+                LabeledContent("Other agents") { setupMenu }
                 AgentSendsSettings(activity: activity)
             }
             if let error = listener.error ?? gate.saveError { ErrorRow(text: error) }
@@ -31,6 +33,7 @@ struct OutsideAgentsSettingsView: View {
         Menu("Copy Setup") {
             Button("Claude Code") { Pasteboard.copy(Self.setup("claude")) }
             Button("Codex") { Pasteboard.copy(Self.setup("codex")) }
+            Divider()
             Button("Cursor or Gemini CLI") { Pasteboard.copy(AgentControlCLI.mcpConfig(executable: AgentControlCommand.executable)) }
             Button("Other MCP App") { Pasteboard.copy(Self.mcpCommand()) }
             Divider()
@@ -40,9 +43,11 @@ struct OutsideAgentsSettingsView: View {
         .help("Copies the command or config for that agent. Run it, or paste it into the agent's MCP settings.")
     }
 
-    /// The command that adds msgblast as an MCP server to `claude` or `codex`. Each asks for approval on first use.
+    /// Replaces any msgblast entry in `claude` or `codex` with this build's, for every project (Claude Code's
+    /// user scope; Codex's config is global already). Each agent still asks for approval on first use.
     static func setup(_ tool: String, executable: String = AgentControlCommand.executable) -> String {
-        "\(tool) mcp add msgblast -- \(mcpCommand(executable: executable))"
+        let scope = tool == "claude" ? " --scope user" : ""
+        return "\(tool) mcp remove\(scope) msgblast >/dev/null 2>&1; \(tool) mcp add\(scope) msgblast -- \(mcpCommand(executable: executable))"
     }
 
     /// The stdio MCP server command, for any MCP client on this Mac.
@@ -97,6 +102,48 @@ private struct TailnetSection: View {
                 Button("Check Again") { tailnet.refreshStatus() }
             }
             .controlSize(.small)
+        }
+    }
+}
+
+/// Adds msgblast to Claude Code or Codex by running its own `mcp add` in a login shell, so the person's PATH finds it.
+private struct InstallRow: View {
+    enum Tool: String { case claudeCode = "claude", codex
+        var label: String { self == .claudeCode ? "Claude Code" : "Codex" }
+    }
+    let tool: Tool
+    @State private var state: String?
+    @State private var running = false
+
+    var body: some View {
+        LabeledContent {
+            Button(running ? "Adding…" : state == "added" ? "Added" : "Add") { Task { await install() } }
+                .disabled(running)
+        } label: {
+            Text(tool.label)
+            if let state, state != "added" { Text(state).foregroundStyle(.red) }
+        }
+        .help("Runs \(tool.rawValue) mcp add for you. Restart \(tool.label) afterwards.")
+    }
+
+    private func install() async {
+        running = true
+        let command = OutsideAgentsSettingsView.setup(tool.rawValue)
+        let status = await Task.detached { () -> Int32 in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", command]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return -1 }
+            process.waitUntilExit()
+            return process.terminationStatus
+        }.value
+        running = false
+        switch status {
+        case 0: state = "added"
+        case 127: state = "\(tool.label) isn't installed, or isn't on your PATH."
+        default: state = "Couldn't add msgblast. Choose Copy Setup and run it in Terminal to see why."
         }
     }
 }

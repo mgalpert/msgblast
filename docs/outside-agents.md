@@ -12,10 +12,12 @@ leave a message half sent.
 ## Connect your agents
 
 The paths below are the installed app. Settings → Outside agents → Copy Setup
-copies the command for the build you are running.
+copies the command for the build you are running, which for a test build is that build's own path.
 
-- **Claude Code:** `claude mcp add msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp`
-- **Codex:** `codex mcp add msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp`
+- **Claude Code and Codex:** Settings → Outside agents → **Add** next to each runs the command
+  below for you, replacing any older msgblast entry. Restart the agent afterwards. By hand:
+  `claude mcp add --scope user msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp` or
+  `codex mcp add msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp`
 - **Cursor and Gemini CLI:** Settings → Outside agents → Copy Setup → Cursor or Gemini CLI, then
   paste that JSON into the client's MCP config. It names the msgblast command and
   the `mcp` argument.
