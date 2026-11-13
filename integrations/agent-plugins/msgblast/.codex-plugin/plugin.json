@@ -1,7 +1,7 @@
 {
   "name": "msgblast",
   "version": "0.1.0",
-  "description": "Read your msgblast agents, comparisons and replies on this Mac, and show comparisons side by side.",
+  "description": "Message your msgblast agents, read their replies and comparisons on this Mac, and show comparisons side by side.",
   "author": {
     "name": "msgblast contributors"
   },

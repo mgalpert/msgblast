@@ -161,10 +161,12 @@ import msgblastCore
 
     /// The local Outside agents socket turned on or off. This listens only while that is on.
     /// The first time it turns on, Tailscale access turns on too when this Mac is on a tailnet.
-    func noteLocal(_ on: Bool) {
+    /// `byUser` is true only when the person switched outside agents on just now. Tailscale turns on with it
+    /// then, never at launch, so an upgrade with outside agents already on doesn't start listening on the tailnet.
+    func noteLocal(_ on: Bool, byUser: Bool = false) {
         localOn = on
         guard !store.loadFailed else { return }
-        if on, !chosen, !store.enabled, !AgentControlTailnet.tailnetAddresses().isEmpty {
+        if on, byUser, !chosen, !store.enabled, !AgentControlTailnet.tailnetAddresses().isEmpty {
             enabled = true
             return
         }

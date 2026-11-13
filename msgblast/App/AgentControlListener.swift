@@ -28,12 +28,12 @@ import msgblastCore
         get { listener != nil }
         set {
             UserDefaults.standard.set(newValue, forKey: Self.enabledKey)
-            newValue ? start() : stop()
+            newValue ? start(byUser: true) : stop()
             objectWillChange.send()
         }
     }
 
-    private func start() {
+    private func start(byUser: Bool = false) {
         guard listener == nil else { return }
         try? FileManager.default.removeItem(at: socket)
         let parameters = NWParameters.tcp
@@ -55,7 +55,7 @@ import msgblastCore
             sessions.open()
             startObserving()
             error = gate.loadFailed ? "Saved outside-agent approvals could not be read, so every agent is refused." : nil
-            tailnet.noteLocal(true)
+            tailnet.noteLocal(true, byUser: byUser)
         } catch { self.error = error.localizedDescription }
     }
 

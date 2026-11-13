@@ -3,7 +3,7 @@
 Agents on this Mac, such as Claude Code and Codex, can use msgblast through the
 `msgblast` command and its stdio MCP server (`msgblast mcp`). Grok Bot can use the
 same tools over Tailscale; see [Grok Bot over Tailscale](grok-bot.md). Everything
-is off until Settings → Outside agents → "Let agents on this Mac use msgblast" is on.
+is off until Settings → Outside agents → "Allow agents on this Mac" is on.
 Switching it off again ends every open session at once: nothing new runs, even
 if an approval prompt is answered afterwards, and a request that was running gets
 no reply. A send already under way finishes, because stopping it halfway could
@@ -11,12 +11,12 @@ leave a message half sent.
 
 ## Connect your agents
 
-The paths below are the installed app. Settings → Outside agents copies the
-command for the build you are running.
+The paths below are the installed app. Settings → Outside agents → Copy Setup
+copies the command for the build you are running.
 
 - **Claude Code:** `claude mcp add msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp`
 - **Codex:** `codex mcp add msgblast -- /Applications/msgblast.app/Contents/MacOS/msgblast mcp`
-- **Cursor and Gemini CLI:** Settings → Outside agents → Copy MCP config, then
+- **Cursor and Gemini CLI:** Settings → Outside agents → Copy Setup → Cursor or Gemini CLI, then
   paste that JSON into the client's MCP config. It names the msgblast command and
   the `mcp` argument.
 - **Claude Desktop:** add the same MCP server in Claude Desktop's developer
@@ -38,7 +38,7 @@ one level or chooses Don't Allow, which msgblast remembers until it quits.
 - **Full access:** everything above, plus the send tools. That includes Messages
   contacts, so a Full access agent can send iMessages to real people.
 
-Settings lists each approved agent with its level and a Remove button.
+Settings lists each approved agent under Agents, with its level and a remove button.
 
 msgblast knows an agent only by the name it gives. Any program running as you on
 this Mac can run the `msgblast` command with an approved name, such as "Claude
@@ -110,6 +110,6 @@ Every new send call is refused, and the error names the code `agentSendsStopped`
 A stopped call isn't stored, so once sends are allowed again the same call, with
 the same `requestId`, can be repeated. Agents can still read. The setting is
 saved, so quitting msgblast doesn't turn sends back on.
-Settings → Outside agents has the same switch and lists the last agent sends since
-msgblast opened, with each one's result. The list never holds message text and
+Settings → Outside agents has the same switch, and Recent sends under it lists the last
+agent sends since msgblast opened, with each one's result. The list never holds message text and
 is not saved.
