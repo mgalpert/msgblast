@@ -7,20 +7,27 @@ actor ChatGPTAppConversation {
     private let timing: DesktopAppConversation.Timing
     private let readNative: NativeRead
     private let readNavigation: @Sendable (DesktopAppConversation.Target) throws -> ChatGPTAppNavigation
+    private let exposeWebContent: @Sendable (Int) -> Void
     private var occupied = false
     init(executable: URL? = nil, timing: DesktopAppConversation.Timing = .init(),
          readNavigation: @escaping @Sendable (DesktopAppConversation.Target) throws -> ChatGPTAppNavigation = ChatGPTAppProfile.captureNavigation,
-         readNative: @escaping NativeRead = ChatGPTAppProfile.capture) {
+         readNative: @escaping NativeRead = ChatGPTAppProfile.capture,
+         exposeWebContent: @escaping @Sendable (Int) -> Void = ChatGPTAppProfile.exposeWebContent) {
         driver = DesktopAppConversation(executable: executable, timing: timing); self.timing = timing; self.readNative = readNative
-        self.readNavigation = readNavigation
+        self.readNavigation = readNavigation; self.exposeWebContent = exposeWebContent
     }
     private func read(_ target: DesktopAppConversation.Target) async throws -> ChatGPTAppObservation {
         let reader = readNative
-        for attempt in 0..<3 {
+        // Chromium can take about 5 s to expose its tree after being asked; allow about 10 s.
+        for attempt in 0..<41 {
             try Task.checkCancellation()
             do { return try await Task.detached { try reader(target) }.value }
             catch {
                 switch error {
+                case ChatGPTObservationError.webContentUnavailable:
+                    guard attempt < 40 else { throw error }
+                    exposeWebContent(target.pid)
+                    try await Task.sleep(for: min(timing.pollInterval, .milliseconds(250)))
                 case ChatGPTObservationError.transient, DesktopAccessibilityError.incomplete, DesktopAccessibilityError.invalidElement:
                     guard attempt < 2 else { throw error }
                     try await Task.sleep(for: timing.pollInterval)
@@ -161,8 +168,7 @@ actor ChatGPTAppConversation {
         }
         if binding.kind == .dots {
             if native.kind != .dots {
-                let header = try native.unique(native.nodes.filter { $0.children.contains(where: { $0.role == "AXButton" && $0.label == "New chat" && $0.classes.contains("sidebar-item") }) })
-                let dot = try native.unique(header.children.filter { $0.role == "AXButton" && $0.classes.contains("sidebar-item") && $0.label != "New chat" && $0.visible })
+                let dot = try ChatGPTAppNavigation(validatedNodes: native.nodes).dotButton()
                 try await action(control: dot, target: target, session: session, expected: native)
                 native = try await read(target)
             }

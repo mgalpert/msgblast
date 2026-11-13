@@ -66,6 +66,14 @@ final class DesktopAccessibilityTests: XCTestCase {
         XCTAssertThrowsError(try MuseAppProfile.parseReply(foreign))
     }
 
+    func testLongDotsHistoryFitsTheDefaultWalk() throws {
+        // A long Dots DM measured 6,490 accessibility nodes before its composer.
+        var source = [0: Source(node: .init(role: "AXWindow"), children: Array(1...6_500))]
+        for id in 1..<6_500 { source[id] = Source(node: .init(role: "AXStaticText", value: "Message \(id)")) }
+        source[6_500] = Source(node: .init(role: "AXTextArea", label: "Message", value: ""))
+        XCTAssertEqual(try read(source, app: .dots).children.last?.label, "Message")
+    }
+
     func testEveryProfileRejectsPartialTreesInsteadOfReturningAUsableComposer() throws {
         let source = [0: Source(node: .init(role: "AXWindow"), children: [1, 2]),
                       1: Source(node: .init(role: "AXTextArea", label: "Message", value: "")),
