@@ -201,6 +201,10 @@ final class AppRemoteHost: RemoteCommandHost {
             let reasons = Dictionary(uniqueKeysWithValues: blocked.map { ($0.id.id, availabilityModel.availability(for: $0.id.id)?.reasons.first?.userText ?? $0.snapshot.reason) })
             return .rejected(.notReady, "Not every agent was ready", conversationID: id, reasons: reasons)
         }
+        // A phone prepare never changes the conversation open on the Mac: switching on one
+        // device must not switch the other. When the Mac shows another conversation, nothing is
+        // opened here; a send from the phone prepares its pages itself and waits for readiness.
+        guard model.webAgents.comparisonID == id else { return .applied(conversationID: id) }
         let capture = RemoteErrorCapture()
         // The whole answer is bounded: a page that never finishes loading must not hold the
         // phone's "Getting ready…" forever. Preparation keeps going after the deadline; the

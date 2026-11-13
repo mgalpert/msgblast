@@ -124,9 +124,11 @@ Rules the Mac enforces:
   composer draft, and sets aside the Mac's Messages drafts and files for its own
   follow-up. Errors go to the command result, not the Mac's alert.
 - The phone sends `prepareConversation` when it opens a composer or changes
-  recipients. The Mac runs the same prepare paths as its composer (it may open a
-  website chat page, never launches an app, never sends) and answers when the agents
-  are ready, or with each agent's reason (`notReady`). A newer prepare replaces
+  recipients. When the Mac has that conversation open, it runs the same prepare paths
+  as its composer (it may open a website chat page, never launches an app, never
+  sends) and answers when the agents are ready, or with each agent's reason
+  (`notReady`). A prepare never switches the Mac to another conversation: when the
+  Mac shows a different one, it answers from availability alone and the send prepares. A newer prepare replaces
   prepares still waiting in the queue; those are answered `applied` ("Replaced by a
   newer request"). The phone's own deadline (30 s) restarts on each `accepted`, so a
   prepare waiting behind another is not given up on. If a send still finds a page
