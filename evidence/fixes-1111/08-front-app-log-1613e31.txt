@@ -1,0 +1,18 @@
+Front-app log in the msgblast test VM, build 1613e31 (msgblast Dev (Fixes 1111 VM)), ChatGPT 26.1103.
+Each line is a change of the frontmost app, logged inside the VM by a NSWorkspace activation watcher.
+
+A1  ChatGPT quit, msgblast in front, Connect at 21:20:41Z
+2026-11-13T21:20:43.960Z activated ChatGPT
+2026-11-13T21:20:44.038Z activated msgblast Dev (Fixes 1111 VM)      flash 0.08 s
+2026-11-13T21:20:44.769Z activated ChatGPT                            (ChatGPT retakes the front during its launch)
+2026-11-13T21:20:45.058Z activated msgblast Dev (Fixes 1111 VM)      flash 0.29 s
+
+A2  ChatGPT running and hidden with its window, Connect at 21:21:12Z
+(no activation: ChatGPT unhidden in the background, msgblast stays in front)
+
+A3  ChatGPT running, main window closed, hidden, Connect at 21:21:44Z
+2026-11-13T21:21:47.470Z activated ChatGPT
+2026-11-13T21:21:47.537Z activated msgblast Dev (Fixes 1111 VM)      flash 0.07 s
+
+Send (06/07)  New Blast to ChatGPT, Return at 21:34:51.8Z, reply shown within about 20 s
+(no activation in the VM from 21:34:00Z to the end of the recording; the host Mac's front app did not change)
