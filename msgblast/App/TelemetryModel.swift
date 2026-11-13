@@ -82,6 +82,10 @@ extension AppModel {
                 counts[knownChoice?.rawValue ?? "otherMessages", default: 0] += 1
             }
         }
+        // Approved outside agents, by kind only. Their names never leave the Mac.
+        for name in agentControl.gate.approvals.keys {
+            counts[AgentControlTailnet.Kind(name: name).telemetryID, default: 0] += 1
+        }
         return counts.mapValues { min(100, $0) }
     }
     func recordMessageSubmission(kind: TelemetryProperties.Kind, recipientCount: Int, started: Date, logicalID: UUID) {

@@ -35,6 +35,17 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertNil(AgentControlTailnet.remoteClientName(String(repeating: "a", count: AgentControlTailnet.maximumClientName + 1)))
     }
 
+    func testKindsCountByNameNotText() {
+        XCTAssertEqual(AgentControlTailnet.Kind(name: "Claude Code 2 (Tailscale)"), .claudeCode)
+        XCTAssertEqual(AgentControlTailnet.Kind(name: "claude-code"), .claudeCode)
+        XCTAssertEqual(AgentControlTailnet.Kind(name: "Claude Desktop"), .claudeDesktop)
+        XCTAssertEqual(AgentControlTailnet.Kind(name: AgentControlTailnet.grokBotClient), .grokBot)
+        XCTAssertEqual(AgentControlTailnet.Kind(name: "Gemini CLI (Tailscale)"), .geminiCLI)
+        XCTAssertEqual(AgentControlTailnet.Kind(name: "My laptop"), .other)
+        XCTAssertEqual(AgentControlTailnet.Kind.claudeCode.telemetryID, "outsideClaudeCode")
+        XCTAssertEqual(AgentControlTailnet.Kind.geminiCLI.telemetryID, "outsideGeminiCLI")
+    }
+
     func testStoreKeepsOneKeyPerClient() {
         var store = AgentControlTailnetStore(enabled: true)
         let grok = store.issue(AgentControlTailnet.grokBotClient)

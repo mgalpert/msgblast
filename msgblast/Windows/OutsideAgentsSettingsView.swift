@@ -110,6 +110,7 @@ private struct AgentsSection: View {
     let turnOnTailnet: () -> Void
     @State private var sheet: SheetClient?
     @State private var adding = false
+    @State private var newKind = AgentControlTailnet.Kind.claudeCode
     @State private var newName = ""
     @State private var addError: String?
 
@@ -121,7 +122,7 @@ private struct AgentsSection: View {
     var body: some View {
         Section("Agents") {
             ForEach(names, id: \.self) { row($0) }
-            if tailnetOn { addRow }
+            addRow
         }
         .sheet(item: $sheet) { item in
             if item.id == AgentControlTailnet.grokBotClient {
@@ -178,20 +179,41 @@ private struct AgentsSection: View {
         Button { adding = true } label: { Label("Add Agent…", systemImage: "plus") }
             .buttonStyle(.borderless)
             .popover(isPresented: $adding, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("Name", text: $newName, prompt: Text("Claude Code on my laptop")).frame(width: 240).onSubmit(add)
-                    if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
-                    HStack { Spacer(); Button("Add", action: add).keyboardShortcut(.defaultAction).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty) }
+                Form {
+                    Picker("Agent", selection: $newKind) {
+                        ForEach(AgentControlTailnet.Kind.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    if newKind == .other {
+                        TextField("Name", text: $newName, prompt: Text("My agent")).onSubmit(add)
+                    }
+                    if let addError { Text(addError).foregroundStyle(.red) }
                 }
-                .padding()
+                .formStyle(.grouped)
+                .frame(width: 300)
+                .fixedSize(horizontal: false, vertical: true)
+                HStack { Spacer(); Button("Add", action: add).keyboardShortcut(.defaultAction).disabled(newKind == .other && newName.trimmingCharacters(in: .whitespaces).isEmpty) }
+                    .padding([.horizontal, .bottom])
             }
-            .help("Adds an agent on another device with its own key.")
+            .help("Adds an agent on another device, with its own key, over Tailscale.")
     }
 
+    /// Known agents get their own name, numbered when one already exists, so usage counts by kind.
     private func add() {
-        addError = tailnet.add(newName)
+        if newKind == .grokBot {
+            adding = false
+            return setUpGrokBot()
+        }
+        if !tailnetOn { turnOnTailnet() }
+        let base = newKind == .other ? newName : newKind.label
+        var typed = base
+        var number = 2
+        while let name = AgentControlTailnet.remoteClientName(typed), tailnet.clients.contains(name) || gate.approvals[name] != nil {
+            typed = "\(base) \(number)"
+            number += 1
+        }
+        addError = tailnet.add(typed)
         guard addError == nil else { return }
-        sheet = SheetClient(id: AgentControlTailnet.remoteClientName(newName) ?? newName)
+        sheet = SheetClient(id: AgentControlTailnet.remoteClientName(typed) ?? typed)
         newName = ""
         adding = false
     }
