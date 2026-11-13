@@ -1,0 +1,15 @@
+$ msgblast mcp   (client Evidence Agent)
+initialize -> capabilities.extensions: ['io.modelcontextprotocol/ui', 'openai/mentions']
+tools/list ->
+  msgblast_agent_message       readOnlyHint=False ui.visibility=['model'] ui.resourceUri=None
+  msgblast_agents_list         readOnlyHint=True  ui.visibility=None ui.resourceUri=None
+  msgblast_blast_follow_up     readOnlyHint=False ui.visibility=['model'] ui.resourceUri=None
+  msgblast_blast_start         readOnlyHint=False ui.visibility=['model'] ui.resourceUri=None
+  msgblast_blast_wait          readOnlyHint=True  ui.visibility=None ui.resourceUri=ui://msgblast/comparison
+  msgblast_comparison_end      readOnlyHint=False ui.visibility=['model'] ui.resourceUri=None
+  msgblast_comparison_read     readOnlyHint=True  ui.visibility=None ui.resourceUri=ui://msgblast/comparison
+  msgblast_comparisons_list    readOnlyHint=True  ui.visibility=None ui.resourceUri=ui://msgblast/comparison
+  msgblast_mentions            readOnlyHint=True  ui.visibility=['model', 'app'] ui.resourceUri=None
+  msgblast_request_status      readOnlyHint=True  ui.visibility=None ui.resourceUri=None
+  msgblast_status              readOnlyHint=True  ui.visibility=None ui.resourceUri=None
+resources/read ui://msgblast/comparison -> text/html;profile=mcp-app, 14449 chars, starts '<!doctype html>', _meta {"openai/ui": {"availableDisplayModes": ["inline", "fullscreen"]}, "ui": {"prefersBorder": true}}

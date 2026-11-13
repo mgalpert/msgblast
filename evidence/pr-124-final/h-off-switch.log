@@ -1,0 +1,8 @@
+$ msgblast status   (Outside agents switched off, 23:31:55Z)
+exit=5
+msgblast is not running, or Settings → Outside agents is off.
+$ msgblast status   (switched back on, 23:32:03Z)
+{
+  "busyAgents" : [
+
+exit=0

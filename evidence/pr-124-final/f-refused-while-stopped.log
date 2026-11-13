@@ -1,0 +1,15 @@
+$ msgblast call msgblast_blast_start {agents:[web:chatgptApp], text:"msgblast test: reply with the word ok", requestId:"evidence-70a4940-stopped"}   (23:30:38Z)
+exit=1
+$ msgblast call msgblast_request_status {requestId:"evidence-70a4940-stopped"}
+{
+  "agents" : [
+
+  ],
+  "code" : "unknownCommand",
+  "message" : "Your Mac lost this request. Check the conversation",
+  "outcome" : "unknown",
+  "replayed" : false,
+  "requestId" : "evidence-70a4940-stopped"
+}
+exit=0
+Agent sends are stopped in msgblast. The person can allow them again in msgblast. Nothing was sent (agentSendsStopped). Once the person allows agent sends, the same call can be repeated.
