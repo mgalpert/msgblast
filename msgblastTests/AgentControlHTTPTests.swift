@@ -144,8 +144,10 @@ final class AgentControlHTTPTests: XCTestCase {
         XCTAssertTrue(bearerWins.body.isEmpty)
         XCTAssertFalse(String(decoding: bearerWins.encoded(), as: UTF8.self).contains("nope"))
         XCTAssertFalse(String(decoding: bearerWins.encoded(), as: UTF8.self).contains("secret-token"))
+        let pasted = await endpoint.handle(try request("POST", "/mcp", toolsList, headers: ["Authorization": "Authorization: Bearer secret-token"]), peer: "100.64.0.1")
+        XCTAssertEqual(pasted.status, 200)
         let calls = await socket.lines
-        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls.count, 3)
     }
 
     func testWrongTokenDoesNotAskForApproval() async throws {

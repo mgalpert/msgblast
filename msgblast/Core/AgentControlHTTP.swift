@@ -158,8 +158,10 @@ public actor AgentControlHTTPEndpoint {
         return .accepted(client)
     }
 
+    /// Also takes a value pasted with its header name, `Authorization: Bearer <key>`, a common slip in header forms.
     private func bearer(_ value: String?) -> String? {
-        guard let value else { return nil }
+        guard var value else { return nil }
+        if value.lowercased().hasPrefix("authorization:") { value = String(value.dropFirst("authorization:".count)) }
         let parts = value.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
         guard parts.count == 2, parts[0].caseInsensitiveCompare("bearer") == .orderedSame else { return nil }
         let token = String(parts[1])
