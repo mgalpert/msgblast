@@ -218,6 +218,19 @@ final class WebServiceTests: XCTestCase {
         saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [], b: [message("u2", "user", "hi")]], onPage: ["u2"])
         XCTAssertEqual(saved[a.uuidString]?.map(\.id), ["u1b", "a1"])
         XCTAssertEqual(saved[b.uuidString]?.map(\.id), ["u2"])
+        // The page shows only a recent window: new turns follow the older saved ones.
+        var window = WebAgentSession.keepingSharedTurns([a.uuidString: first], live: [a: [message("u5", "user", "And a case?"), message("a5", "assistant", "Example Case")]], onPage: ["u5", "a5"])
+        XCTAssertEqual(window[a.uuidString]?.map(\.id), ["u1", "a1", "u5", "a5"])
+        // Repeated turns are not folded into one when a reload renumbers the first of them.
+        let repeated = [message("h1", "user", "hi"), message("s1", "assistant", "Sure")]
+        window = WebAgentSession.keepingSharedTurns([a.uuidString: repeated], live: [a: [message("h1b", "user", "hi"), message("s1", "assistant", "Sure"), message("h2", "user", "hi"), message("s2", "assistant", "Sure")]], onPage: ["h1b", "s1", "h2", "s2"])
+        XCTAssertEqual(window[a.uuidString]?.map(\.id), ["h1b", "s1", "h2", "s2"])
+        // A turn that leaves and is later attributed back returns to its place on the page.
+        let full = [message("u1", "user", "x"), message("a1", "assistant", "y"), message("u3", "user", "z"), message("a3", "assistant", "w")]
+        let ids = Set(full.map(\.id))
+        window = WebAgentSession.keepingSharedTurns([a.uuidString: full], live: [a: Array(full.prefix(2)), b: Array(full.suffix(2))], onPage: ids)
+        window = WebAgentSession.keepingSharedTurns(window, live: [a: full, b: []], onPage: ids)
+        XCTAssertEqual(window[a.uuidString]?.map(\.id), ["u1", "a1", "u3", "a3"])
         var state = WebWorkspaceState()
         state.sharedTurns = saved
         let restored = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONEncoder().encode(state))
@@ -251,6 +264,11 @@ final class WebServiceTests: XCTestCase {
         await session.refresh()
         XCTAssertEqual(session.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"], "The page dropped the turns; the saved copy remains")
         XCTAssertEqual(session.messagesForComparison(other), [])
+        // Quitting right after a reply keeps it: the pending save is flushed, and a relaunch reads it.
+        await session.cancelAndWait()
+        let relaunched = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { relaunched.beginShutdown() }
+        XCTAssertEqual(relaunched.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"])
         session.pruneSharedTurns(keeping: [other])
         XCTAssertNil(session.state.sharedTurns[thread.uuidString], "An ended comparison keeps its turns in its own history")
     }

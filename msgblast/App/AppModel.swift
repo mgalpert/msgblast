@@ -163,6 +163,7 @@ final class AppModel: ObservableObject {
             webAgents.sessions.forEach { $0.updateState { $0.selected = false } }
         }
         persist()
+        if !storageLoadFailed { pruneSharedTurns() }
         accessGuide.checkHistory = { [weak self] in
             guard let self, !self.busy else { return false }
             self.refresh(forMessagesSetup: true)
@@ -685,11 +686,16 @@ final class AppModel: ObservableObject {
         })
         do {
             try save()
-            let open = Set(state.comparisons.filter { $0.endedAt == nil }.map(\.id))
-            webAgents.sessions.forEach { $0.pruneSharedTurns(keeping: open) }
+            pruneSharedTurns()
             return true
         }
         catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
+    }
+
+    /// Shared-page agents keep saved turns only for conversations that exist and are still open.
+    private func pruneSharedTurns() {
+        let open = Set(state.comparisons.filter { $0.endedAt == nil }.map(\.id))
+        webAgents.sessions.forEach { $0.pruneSharedTurns(keeping: open) }
     }
 
     /// Names a conversation; an empty name or the prompt's own title returns to the prompt.

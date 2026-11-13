@@ -56,7 +56,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
     /// Saving waits for the page to settle rather than writing on every streamed update.
     private func rememberSharedTurns() {
-        guard sharesPage else { return }
+        guard sharesPage, !shuttingDown else { return }
         let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts)
         let kept = Self.keepingSharedTurns(state.sharedTurns, live: live, onPage: Set(snapshot.messages.map(\.id)))
         guard kept != state.sharedTurns else { return }
@@ -73,24 +73,35 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let kept = state.sharedTurns.filter { UUID(uuidString: $0.key).map(open.contains) == true }
         if kept != state.sharedTurns { updateState { $0.sharedTurns = kept } }
     }
-    /// Merges by message: saved order first with the page's text (unless the page shows less of it),
-    /// then turns new to the comparison. A turn still on the page but now owned by another
-    /// comparison leaves this one; a turn the page no longer shows stays saved.
+    /// Merges by message. Turns the page still shows for the comparison take their page order, with
+    /// the page's text unless it shows less of it; a turn the page no longer shows keeps its place;
+    /// a turn the page now attributes to another comparison leaves this one. A reload can renumber
+    /// a message: the saved turn in the same place with the same role and text is replaced, not repeated.
     static func keepingSharedTurns(_ saved: [String: [WebPageMessage]], live: [UUID: [WebPageMessage]], onPage: Set<String>) -> [String: [WebPageMessage]] {
         var kept = saved
-        let keys = Set(saved.keys).union(live.keys.map(\.uuidString))
-        for key in keys {
+        for key in Set(saved.keys).union(live.keys.map(\.uuidString)) {
             let current = UUID(uuidString: key).flatMap { live[$0] } ?? []
-            let liveByID = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-            var merged = (saved[key] ?? []).compactMap { old -> WebPageMessage? in
-                guard let fresh = liveByID[old.id] else { return onPage.contains(old.id) ? nil : old }
-                return fresh.text.count < old.text.count ? old : fresh
-            }
-            for fresh in current where !merged.contains(where: { $0.id == fresh.id }) {
-                // A reload can renumber a message the page shows again; adopt it instead of repeating it.
-                if let old = merged.firstIndex(where: { !onPage.contains($0.id) && $0.role == fresh.role && $0.text == fresh.text }) {
-                    merged[old] = fresh
-                } else { merged.append(fresh) }
+            let ownIDs = Set(current.map(\.id))
+            var merged = (saved[key] ?? []).filter { ownIDs.contains($0.id) || !onPage.contains($0.id) }
+            // `next` is where the following page turn belongs; until a turn anchors it, new turns are newest.
+            var next = 0, anchored = false
+            for fresh in current {
+                if let at = merged.firstIndex(where: { $0.id == fresh.id }) {
+                    let turn = fresh.text.count >= merged[at].text.count ? fresh : merged[at]
+                    // A turn saved ahead of an earlier page turn moves back into page order.
+                    if at < next { merged.remove(at: at); merged.insert(turn, at: next - 1) } else { merged[at] = turn; next = at + 1 }
+                    anchored = true
+                    continue
+                }
+                if next < merged.count, !onPage.contains(merged[next].id), merged[next].role == fresh.role, merged[next].text == fresh.text {
+                    merged[next] = fresh
+                } else if anchored {
+                    merged.insert(fresh, at: next)
+                } else {
+                    merged.append(fresh); next = merged.count - 1
+                }
+                anchored = true
+                next += 1
             }
             kept[key] = merged
         }
@@ -1810,9 +1821,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         requestCancelled = true
         nativeRequest?.cancel()
     }
-    public func beginShutdown() { shuttingDown = true; poll?.cancel(); stopNativeRecovery(); cancelNativeRequest(); stopGrokBotConnection() }
+    public func beginShutdown() {
+        shuttingDown = true; poll?.cancel(); stopNativeRecovery(); cancelNativeRequest(); stopGrokBotConnection()
+        sharedTurnsSave?.cancel(); sharedTurnsSave = nil
+    }
     public func cancelAndWait() async {
         if !shuttingDown { try? await saveBrowserDrafts() }
+        // A reply that arrived just before quitting is still waiting for its debounced save.
+        if sharedTurnsSave != nil, !shuttingDown { persist() }
         beginShutdown()
         while provider.usesNativeConversation && isSending { try? await Task.sleep(for: .milliseconds(20)) }
     }
