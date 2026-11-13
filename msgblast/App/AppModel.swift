@@ -954,11 +954,16 @@ final class AppModel: ObservableObject {
         }
     }
     @discardableResult
-    func openMessages(_ member: Member) -> Bool {
+    /// `activates: false` hands Messages the chat without bringing it forward.
+    func openMessages(_ member: Member, activates: Bool = true) -> Bool {
         let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+#?="))
         guard let encoded = member.chat.id.addingPercentEncoding(withAllowedCharacters: allowed),
               let url = URL(string: "imessage://?chat=\(encoded)") else { return false }
-        return NSWorkspace.shared.open(url)
+        guard !activates else { return NSWorkspace.shared.open(url) }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        NSWorkspace.shared.open(url, configuration: configuration)
+        return true
     }
     func setting(_ pane: String) { if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) } }
 }

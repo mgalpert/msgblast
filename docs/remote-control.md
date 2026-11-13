@@ -47,8 +47,8 @@ removes the record. There are no accounts.
 When you reach the latest replies in an open phone thread, msgblast asks the
 paired Mac to clear unread iMessages for the Messages recipients in that view.
 For a chat with unread messages, the Mac opens the matching conversation in
-Apple Messages, which manages its own read state and receipts. This can bring
-Messages forward. It requires an unlocked Mac and access to Messages history.
+Apple Messages in the background, without bringing it forward; Messages manages
+its own read state and receipts. It requires an unlocked Mac and access to Messages history.
 
 ## Network and bind policy
 

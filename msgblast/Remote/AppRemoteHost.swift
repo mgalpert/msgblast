@@ -44,8 +44,9 @@ final class AppRemoteHost: RemoteCommandHost {
         guard let database = model.database, let unread = try? database.hasUnreadMessages(chatID: member.chat.id) else {
             return .rejected(.failed, "Messages history is unavailable on your Mac")
         }
-        // Opening this exact saved chat lets Apple Messages update its own read state.
-        guard !unread || model.openMessages(member) else {
+        // Opening this exact saved chat lets Apple Messages update its own read state,
+        // without bringing Messages forward on the Mac.
+        guard !unread || model.openMessages(member, activates: false) else {
             return .rejected(.failed, "Could not open the conversation in Messages")
         }
         return .applied(conversationID: id)
