@@ -1,0 +1,11 @@
+{
+  "pr": 133,
+  "reviewed_head": "085c6da130e11c04747ae8a38d90d296130040d5",
+  "base": "e5056e35ea1dd80b4378a366911c575b267618fb",
+  "reviewer": "independent model (OpenAI Codex CLI, gpt-6.1-sol, read-only sandbox), not the authoring models",
+  "scope": "ProjectionPresenter.defaultNewSelection requires selectedForSharedSend; presenter test; debug fixture adds a ready, unselected rabbit OS3; doc wording",
+  "verdict": "approve",
+  "findings": [],
+  "notes": "Busy agents keep the existing default-selection policy. Extra blocked/busy Messages cases would strengthen coverage. defaultNewSelection has one production caller; no phone UI tests depend on it.",
+  "tests": "msgblastMobileKit macOS: msgblastMobileTests 62 tests, 0 failures; CI mobile, linux, swift-complexity, evidence, PR scope pass; real iPhone check via iPhone Mirroring: only the Mac-selected agent was checked"
+}
