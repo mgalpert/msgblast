@@ -2,7 +2,7 @@ import Foundation
 import Network
 import msgblastCore
 
-/// HTTP MCP on this Mac's Tailscale addresses, for Grok Bot and any other MCP client on the tailnet, each with its own key. Nothing listens unless Outside agents is on and the person turns this on.
+/// HTTP MCP on this Mac's Tailscale addresses, for Grok Bot and any other MCP client on the tailnet, each with its own key. Nothing listens unless Outside agents is on and this is on; it turns on with Outside agents the first time when this Mac is on a tailnet.
 @MainActor final class AgentControlTailnetListener: ObservableObject {
     @Published private var store: AgentControlTailnetStore
     /// Keys shown once, by client, while msgblast runs. Only hashes are saved.
@@ -17,6 +17,8 @@ import msgblastCore
     @Published private(set) var lastCalled: Date?
 
     private let file: URL
+    /// False until the person has saved a Tailscale choice, so the first switch-on can default it on.
+    private var chosen: Bool
     private let gate: AgentControlGate
     private weak var host: AppModel?
     private var localOn = false
@@ -37,6 +39,7 @@ import msgblastCore
         self.host = host
         let loaded = AgentControlTailnetStore.load(location)
         store = loaded
+        chosen = FileManager.default.fileExists(atPath: location.path)
         if loaded.loadFailed { error = "Saved Tailscale settings could not be read, so agents over Tailscale stay off." }
     }
 
@@ -156,9 +159,14 @@ import msgblastCore
     }
 
     /// The local Outside agents socket turned on or off. This listens only while that is on.
+    /// The first time it turns on, Tailscale access turns on too when this Mac is on a tailnet.
     func noteLocal(_ on: Bool) {
         localOn = on
         guard !store.loadFailed else { return }
+        if on, !chosen, !store.enabled, !AgentControlTailnet.tailnetAddresses().isEmpty {
+            enabled = true
+            return
+        }
         if on, store.enabled { listen() } else { stopSockets() }
     }
 
@@ -168,7 +176,7 @@ import msgblastCore
     }
 
     private func persist(previous: AgentControlTailnetStore, previousPlain: [String: String], then: () -> Void) {
-        do { try store.save(file) } catch {
+        do { try store.save(file); chosen = true } catch {
             store = previous
             keys = previousPlain
             self.error = error.localizedDescription

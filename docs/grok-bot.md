@@ -13,7 +13,7 @@ Other MCP clients on your tailnet can still use msgblast's plain `http://` addre
 
 ## Setup
 
-1. In msgblast, open Settings → Outside agents and turn on "Let agents on other devices use msgblast over Tailscale". That also turns on "Let agents on this Mac use msgblast", which it needs. The first key is made for Grok Bot.
+1. In msgblast, open Settings → Outside agents and turn on "Let agents on this Mac use msgblast". The first time, when this Mac is on a tailnet, "Let agents on other devices use msgblast over Tailscale" turns on with it and makes the first key for Grok Bot. Turning the Tailscale switch on by itself also turns on outside agents, which it needs. Either switch can be turned off.
 2. Once per tailnet: in the [Tailscale admin console](https://login.tailscale.com/admin/dns), under DNS, turn on HTTPS Certificates.
 3. Once per Mac: in msgblast, click "Tailscale Serve → Copy command", paste it into Terminal and run it. The command is:
 
