@@ -1,0 +1,21 @@
+{
+  "pr": 97,
+  "base_sha": "e8923705e660a4c95a20fd6808486effa790a0c8",
+  "head_sha": "417ab4e4a251af834ccf8414aa902ed8b40e834b",
+  "previous_head": "f1451a929f0cf00db72e4e1bf4ff6e47c7f1fd17",
+  "previous_receipt": "guardrail-receipts/pr-97-f1451a9.json",
+  "date": "2026-11-13",
+  "authors": "Claude Opus agent in msg's 'Add outside agent settings to settings PR' thread, at the owner's request",
+  "reviewer": "Anthropic Claude Sonnet, an independent subagent that wrote none of this code",
+  "verdict": "approve",
+  "exact_head_reviewed": true,
+  "scope": "delta f1451a9..417ab4e: merge of main e892370 (#122 build_test_app.py signing slots)",
+  "verified": [
+    "Delta is 4 files (docs/testing-builds.md, scripts/build_preview_apps.py, scripts/build_test_app.py, scripts/tests/test_build_test_app.py), identical to main's own change since the merge base",
+    "No conflict markers; no #97 file is touched by the merge",
+    "build_test_app.py has no reference to Settings ids or outside-agent code; build_preview_apps.py change is additive with an optional parameter",
+    "python3 -m unittest scripts/tests/test_build_test_app.py: 17 tests OK"
+  ],
+  "findings": [],
+  "limits": "No Swift toolchain in the review environment; the delta has no Swift changes"
+}
