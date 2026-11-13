@@ -18,7 +18,9 @@ public struct AgentControlHTTPRequest: Equatable, Sendable {
     static let bodyLimit = 1_048_576
 
     /// HTTP/1.1 only. The body is `Content-Length` bytes. `Transfer-Encoding` is rejected.
+    /// `buffer` may be a slice that doesn't start at index 0, as it is after a keep-alive request was removed.
     public static func parse(_ buffer: Data) -> ParseResult {
+        let buffer = buffer.startIndex == 0 ? buffer : Data(buffer)
         let marker = Data([13, 10, 13, 10])
         guard let range = buffer.range(of: marker) else {
             return buffer.count > headerLimit ? .tooLarge : .incomplete
