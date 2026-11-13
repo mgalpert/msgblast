@@ -36,12 +36,12 @@ choice is remembered.
    transcript and to its own P-256 key, and signs the transcript with that key.
 4. The Mac stores only the phone's public key, name, and created/last-seen dates.
 
-The sidebar's Phone section shows the same code by itself while it is expanded,
+The sidebar's Phone section shows the same code by itself while it is open,
 Remote is on and no phone is paired. It replaces an expired code only while
-msgblast is the active app, and a code closed on purpose (Settings → Cancel,
-Forget) stays closed until you click **Show pairing code**. It opens pairing codes
-only while expanded and closes them when collapsed, so Settings → Remote keeps its
-own **Pair a phone…** flow.
+msgblast is the active app. A code cancelled in Settings → Remote stays closed in
+the open section until you click **Show pairing code**. Closing the section closes
+only a code the section opened itself, so a code from Settings → Remote →
+**Pair a phone…** stays up.
 
 One phone per Mac. **Pair a different phone…** asks for confirmation; the new
 phone replaces the old record only after it pairs. **Forget** disconnects and

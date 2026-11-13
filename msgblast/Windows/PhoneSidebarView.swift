@@ -126,6 +126,9 @@ struct PhoneSidebarPanel: View {
     @ObservedObject private var power: MacPowerState
     @State private var now = Date()
     @State private var confirmingForget = false
+    /// Whether the open code was minted here. The panel closes only its own codes, so a code
+    /// opened from Settings → Remote → Pair a phone… outlives the panel.
+    @State private var ownsOffer = false
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(service: RemoteService) {
@@ -166,9 +169,9 @@ struct PhoneSidebarPanel: View {
         .onReceive(tick) { now = $0; replaceExpiredOffer() }
         .onAppear { refreshOffer() }
         .onChange(of: wantsOffer) { _, wants in
-            if wants { refreshOffer() } else if pairing.offer != nil { pairing.closeOffer() }
+            if wants { refreshOffer() } else { closeOwnOffer() }
         }
-        .onDisappear { if wantsOffer, pairing.offer != nil { pairing.closeOffer() } }
+        .onDisappear(perform: closeOwnOffer)
     }
 
     @ViewBuilder private var qrBlock: some View {
@@ -214,7 +217,12 @@ struct PhoneSidebarPanel: View {
     /// Opens a code when one is wanted and none is valid.
     private func refreshOffer() {
         guard wantsOffer, !pairing.isOfferValid else { return }
-        _ = try? service.showPairingCode()
+        if (try? service.showPairingCode()) != nil { ownsOffer = true }
+    }
+
+    private func closeOwnOffer() {
+        if ownsOffer, pairing.offer != nil { pairing.closeOffer() }
+        ownsOffer = false
     }
 
     /// Replaces an expired code, but only while msgblast is the active app, so a hidden or
