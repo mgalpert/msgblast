@@ -53,7 +53,7 @@ struct WebPageScript {
         case .alexaShopping:
             selectors = (#"#nav-flyout-rufus #rufus-text-area"#,
                          #"#nav-flyout-rufus #rufus-submit-button"#,
-                         #"#rufus-conversation-container .rufus-customer-text-wrap,#rufus-conversation-container [data-csa-c-content-id^="rufus-dsk-section-markdownSection-"]"#,
+                         #"#rufus-conversation-container .rufus-customer-text-wrap,#rufus-conversation-container [data-csa-c-content-id^="rufus-dsk-section-markdownSection-"],#rufus-conversation-container [data-csa-c-content-id^="rufus-dsk-section-categoryHeader-"],#rufus-conversation-container [data-csa-c-content-id^="rufus-dsk-section-container-"]"#,
                          #"#nav-link-accountList[data-nav-ref="nav_youraccount_btn"],#nav-link-accountList a[data-nav-ref="nav_youraccount_btn"]"#)
         }
         let config: [String: String] = ["name":provider.name,"provider":provider.rawValue,"host":provider.homeURL.host!,"editor":selectors.editor,"send":selectors.send,"messages":selectors.messages,"account":selectors.account]
@@ -83,6 +83,19 @@ struct WebPageScript {
         }
         const pathAllowed = () => location.protocol==='https:' && location.hostname===config.host &&
             (config.provider==='alexaShopping' ? (['/','/ref=nav_logo','/ref=nav_signin'].includes(location.pathname) && !location.hash && [...new URLSearchParams(location.search).keys()].every(k=>['ref','ref_'].includes(k))) : config.provider==='dots' ? (location.pathname==='/dots/home' || /^\/dots\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(location.pathname)) : config.provider==='claude' ? /^\/(new|chat\/[a-zA-Z0-9-]+)\/?$/.test(location.pathname) : /^(\/|\/c\/[a-zA-Z0-9-]+\/?)$/.test(location.pathname));
+        // Alexa shows each product as its own section with no links; read it as one line the phone can show.
+        const alexaProduct = e => {
+            const label=n=>n?.getAttribute('aria-label')?.trim()||'';
+            const copy=e.cloneNode(true); copy.querySelectorAll('div,span').forEach(n=>n.append(document.createTextNode(' ')));
+            const text=normalized(copy.textContent||'');
+            const title=label(e.querySelector('img')?.closest('[aria-label]'));
+            if (!title) return null;
+            const price=text.match(/\$ ?(\d[\d,]*)(?: |\.)(\d{2})(?!\d)/);
+            const rating=label(e.querySelector('[aria-label*="out of 5 stars"]')).replace(/\.(\s+|$)/g,', ').replace(/,\s*$/,'');
+            const blurb=label(e.querySelector('[role="link"][aria-label^="More details about "]')).replace(/^More details about /,'');
+            const asin=e.querySelector('[data-csa-c-nile-action-id^="asin_cards_"]')?.getAttribute('data-csa-c-nile-action-id').match(/^asin_cards_([A-Z0-9]{10})_/)?.[1];
+            return [title,price?`$${price[1]}.${price[2]}`:'',rating,blurb,asin?`https://www.amazon.com/dp/${asin}`:''].filter(Boolean).join(' · ');
+        };
         const messages = () => [...document.querySelectorAll(config.messages)].filter(e => !e.parentElement?.closest(config.messages)).map(e => {
             let role=e.getAttribute('data-message-author-role') || e.getAttribute('data-message-role');
             let id=e.getAttribute('data-message-id') || e.closest('[data-message-id]')?.getAttribute('data-message-id');
@@ -99,9 +112,11 @@ struct WebPageScript {
             const copy=(config.provider==='dots' ? e.querySelector('.message-text') || document.createElement('span') : e).cloneNode(true); copy.querySelectorAll('button,[role="button"],time').forEach(n=>n.remove());
             if (config.provider==='chatgpt') copy.querySelectorAll('h4[data-conversation-role]').forEach(n=>n.remove());
             if (config.provider==='os3') copy.querySelectorAll('.dial-meta,.dial-reaction').forEach(n=>n.remove());
+            if (config.provider==='alexaShopping') copy.querySelectorAll('[role="link"]').forEach(n=>n.remove());
+            const product=config.provider==='alexaShopping' && (e.getAttribute('data-csa-c-content-id')||'').startsWith('rufus-dsk-section-container-') ? alexaProduct(e) : null;
             copy.querySelectorAll('br,p,div,li,pre,blockquote').forEach(n=>n.append(document.createTextNode(' ')));
             if (!observation.ids.has(e)) observation.ids.set(e,`node-${++observation.nextID}`);
-            return {id:id||(config.provider==='alexaShopping'?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:normalized(copy.textContent||'')};
+            return {id:id||(config.provider==='alexaShopping'?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:product??normalized(copy.textContent||'')};
         });
         const conversationLocation = () => {
             const url=new URL(location.href),params=[...url.searchParams];

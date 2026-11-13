@@ -90,6 +90,35 @@ final class WebServiceTests: XCTestCase {
         XCTAssertTrue(session.snapshot.reason.contains("unavailable"))
     }
 
+    func testAlexaShoppingProductCardsReachTheTranscriptAsText() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        // Amazon's reply: a text section, a category header, then one section per product card.
+        let card = #"<div data-csa-c-type="container" data-csa-c-group-id="container-1" data-csa-c-content-id="rufus-dsk-section-container-1"><div><div><div><div role="presentation" tabindex="0" class="r-1loqt21"><div role="presentation"><div><div class="r-1mlwlqe" aria-label="Anker USB C to USB C Cable, 60W (2-Pack, 6 ft)"><img src="x.jpg"></div></div></div><div role="checkbox" aria-label="Select this product to compare"></div><div><div><div><div class="css-146c3p1">Purchased Apr 2025</div></div></div><div class="css-146c3p1 r-8akbws">Anker USB C to USB C Cable, 60W (2-Pack, 6 ft)</div><div aria-label="4.7 out of 5 stars. 91,395 ratings."><div class="css-146c3p1">4.7</div><svg></svg><div class="css-146c3p1">(91,395)</div></div><div class="css-146c3p1">10K+ bought in past month</div><div><div><div><div class="css-146c3p1">$</div><div class="css-146c3p1">9</div><div class="css-146c3p1">99</div></div></div><div class="css-146c3p1">($5.00/count)</div></div><div role="image" aria-label="Prime eligible"><svg></svg></div><div class="css-146c3p1">Two-Day</div><button role="button" data-csa-c-content-id="rufus-dsk-section-asinCard-1" data-csa-c-nile-action-id="asin_cards_B0ABCDEFGH_open_url_1_2"><div class="css-146c3p1">Add to cart</div></button></div></div></div></div></div><div class="css-146c3p1"><span><span>Braided nylon 6 ft cables rated for 60W charging.</span></span></div><div class="css-146c3p1 r-1loqt21" role="link" aria-label="More details about Braided nylon 6 ft cables rated for 60W charging.">More details</div></div>"#
+        _ = try await session.webView.callAsyncJavaScript("""
+            const container=document.getElementById('rufus-conversation-container');
+            const user=document.createElement('article');
+            user.className='rufus-customer-text-wrap';
+            user.textContent='Suggest a USB-C cable';
+            container.append(user);
+            container.insertAdjacentHTML('beforeend', '<div data-csa-c-group-id="markdownSection-a" data-csa-c-content-id="rufus-dsk-section-markdownSection-a">Here are some cables.</div>'
+                + '<div data-csa-c-group-id="categoryHeader-b" data-csa-c-content-id="rufus-dsk-section-categoryHeader-b"><div>Top Picks Under $15</div><div role="link" aria-label="see more Top Picks Under $15">see more</div></div>'
+                + card);
+            """, arguments: ["card": card], in: nil, contentWorld: .page)
+        await session.refresh()
+        let replies = session.snapshot.messages.filter { $0.role == "assistant" }.map(\.text)
+        XCTAssertEqual(replies, [
+            "Here are some cables.",
+            "Top Picks Under $15",
+            "Anker USB C to USB C Cable, 60W (2-Pack, 6 ft) · $9.99 · 4.7 out of 5 stars, 91,395 ratings · Braided nylon 6 ft cables rated for 60W charging. · https://www.amazon.com/dp/B0ABCDEFGH",
+        ])
+        XCTAssertFalse(replies.joined().contains("Purchased"), "Order history badges stay on the Mac")
+    }
+
     func testAlexaShoppingIdleLoaderIsNotAPendingReply() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
