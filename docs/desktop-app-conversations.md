@@ -62,7 +62,7 @@ independent app may submit while earlier replies are still being collected.
 ChatGPT and Dots focus, type, and submit with background input and never
 activate the app to send. Copies of the same app retain their shared surface
 until reply collection finishes.
-When msgblast launches ChatGPT or reopens its closed window, ChatGPT brings itself forward and msgblast hands the front back right away, so it may flash briefly. A hidden ChatGPT with an open window is only unhidden and stays in the background.
+When msgblast launches ChatGPT or reopens its closed window, ChatGPT brings itself forward and msgblast hands the front back right away, so it may flash briefly. A hidden ChatGPT whose accessibility tree reports an open window is only unhidden and stays in the background; a window on another Space is reopened and may flash.
 An explicit Connect or conversation start reopens hidden apps as well as closed
 apps; a running process and a WindowServer entry alone do not prove the app is
 readable. Passive readiness checks never open or activate apps. An unverifiable

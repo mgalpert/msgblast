@@ -38,32 +38,73 @@ struct DesktopAppInstallationClient: Sendable {
         })
     }
 
+    enum FrontObservation: Equatable, Sendable {
+        case previous, target, other
+    }
+
     static func launchPlan(activates: Bool, running: Bool, hidden: Bool, hasStandardWindow: Bool) -> (unhide: Bool, open: Bool, activates: Bool, restoreFront: Bool) {
         guard !activates else { return (false, true, true, false) }
         guard running, hasStandardWindow else { return (hidden, true, false, true) }
         return (hidden, false, false, false)
     }
 
+    static func shouldCheckWindow(activates: Bool, running: Bool) -> Bool {
+        !activates && running
+    }
+
+    static func afterUnhide(windowAppeared: Bool) -> (open: Bool, restoreFront: Bool) {
+        (open: !windowAppeared, restoreFront: !windowAppeared)
+    }
+
+    static func frontObservation(frontmostPID: Int32?, previousPID: Int32, targetPID: Int32?) -> FrontObservation {
+        guard let frontmostPID else { return .other }
+        if let targetPID, frontmostPID == targetPID { return .target }
+        return frontmostPID == previousPID ? .previous : .other
+    }
+
     @MainActor private static func openSystem(_ url: URL, activates: Bool) async throws {
+        if activates {
+            try await openApplication(url, activates: true)
+            return
+        }
         let target = runningApplication(for: url)
+        var hasStandardWindow = false
+        if shouldCheckWindow(activates: activates, running: target != nil) {
+            hasStandardWindow = await standardWindow(processID: target?.processIdentifier)
+        }
         let plan = launchPlan(activates: activates, running: target != nil, hidden: target?.isHidden == true,
-                              hasStandardWindow: target.map(hasStandardWindow) == true)
-        guard plan.open else { if plan.unhide { target?.unhide() }; return }
+                              hasStandardWindow: hasStandardWindow)
+        if plan.open {
+            try await openBackground(url, target: target, plan: plan)
+            return
+        }
+        if plan.unhide { target?.unhide() }
+        let postUnhide = afterUnhide(windowAppeared: await standardWindowAppeared(processID: target?.processIdentifier))
+        guard postUnhide.open else { return }
+        try await openBackground(url, target: target, plan: (false, postUnhide.open, false, postUnhide.restoreFront))
+    }
+
+    @MainActor private static func openBackground(_ url: URL, target: NSRunningApplication?, plan: (unhide: Bool, open: Bool, activates: Bool, restoreFront: Bool)) async throws {
         let previous = NSWorkspace.shared.frontmostApplication
         let wasActive = target?.isActive == true
         if plan.unhide { target?.unhide() }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = plan.activates
-        _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        try await openApplication(url, activates: plan.activates)
         guard plan.restoreFront else { return }
-        let targetPID = target?.processIdentifier
-        try? await restoreFront(after: .seconds(5), targetIsFrontmostActive: {
-            guard let app = runningApplication(for: url), app.isActive else { return false }
-            return NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
+        guard let previous else { return }
+        try? await restoreFront(after: .seconds(5), observeFront: {
+            let targetPID = runningApplication(for: url)?.processIdentifier
+            return frontObservation(frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                                    previousPID: previous.processIdentifier, targetPID: targetPID)
         }, previousCanRestore: {
-            guard let previous, !wasActive, !previous.isTerminated else { return false }
-            return previous.processIdentifier != targetPID && previous.bundleIdentifier != Bundle(url: url)?.bundleIdentifier
-        }, restore: { previous?.activate(options: []) })
+            guard !wasActive, !previous.isTerminated else { return false }
+            return previous.processIdentifier != runningApplication(for: url)?.processIdentifier
+        }, restore: { previous.activate(options: []) })
+    }
+
+    @MainActor private static func openApplication(_ url: URL, activates: Bool) async throws {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = activates
+        _ = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
     }
 
     @MainActor private static func runningApplication(for url: URL) -> NSRunningApplication? {
@@ -72,9 +113,16 @@ struct DesktopAppInstallationClient: Sendable {
         }
     }
 
-    @MainActor private static func hasStandardWindow(_ application: NSRunningApplication) -> Bool {
+    @MainActor private static func standardWindow(processID: Int32?) async -> Bool {
+        guard let processID else { return false }
+        return await Task.detached { Self.standardWindowSync(processID: processID) }.value
+    }
+
+    private nonisolated static func standardWindowSync(processID: Int32) -> Bool {
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(application.processIdentifier), kAXWindowsAttribute as CFString, &value) == .success,
+        let application = AXUIElementCreateApplication(processID)
+        AXUIElementSetMessagingTimeout(application, 0.5)
+        guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return false }
         return windows.contains { window in
             var subrole: CFTypeRef?
@@ -82,18 +130,32 @@ struct DesktopAppInstallationClient: Sendable {
         }
     }
 
+    @MainActor private static func standardWindowAppeared(processID: Int32?) async -> Bool {
+        guard let processID else { return false }
+        let clock = ContinuousClock(), deadline = clock.now.advanced(by: .seconds(1))
+        while clock.now < deadline {
+            if await standardWindow(processID: processID) { return true }
+            try? await clock.sleep(for: .milliseconds(100))
+        }
+        return false
+    }
+
     /// ChatGPT brings itself forward on launch and on a reopen event even when asked not to,
     /// so a background open hands the front back to the app that had it. Known limits: ChatGPT
     /// still shows as a brief flash; a launch whose window appears more than five seconds after
-    /// the open returns is not handed back; a deliberate switch to ChatGPT within those five
-    /// seconds is undone.
+    /// the open is not handed back; a deliberate switch to ChatGPT within those five
+    /// seconds is undone, while a switch to another app cancels the hand-back. A window on
+    /// another Space is reopened, so it also flashes.
     @MainActor static func restoreFront<C: Clock>(after timeout: Duration, interval: Duration = .milliseconds(50), clock: C = ContinuousClock(),
-                                                  targetIsFrontmostActive: @MainActor @Sendable () -> Bool, previousCanRestore: @MainActor @Sendable () -> Bool,
+                                                  observeFront: @MainActor @Sendable () -> FrontObservation, previousCanRestore: @MainActor @Sendable () -> Bool,
                                                   restore: @MainActor @Sendable () -> Void) async throws where C.Duration == Duration {
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {
-            if targetIsFrontmostActive() { if previousCanRestore() { restore() }; return }
-            try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
+            switch observeFront() {
+            case .previous: try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
+            case .target: if previousCanRestore() { restore() }; return
+            case .other: return
+            }
         }
     }
 

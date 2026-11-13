@@ -207,36 +207,66 @@ final class DesktopAppInstallationTests: XCTestCase {
         }
     }
 
-    func testBackgroundRestoreReturnsFrontOnceTargetActivates() async throws {
-        let result = try await backgroundRestoreResult(activeAt: 3, previousCanRestore: true)
-        XCTAssertEqual(result.restores, 1)
-        XCTAssertEqual(result.checks, 3)
+    func testBackgroundUnhideWaitsForAnAccessibleWindowBeforeReopening() {
+        let plan = DesktopAppInstallationClient.launchPlan(activates: false, running: true, hidden: true, hasStandardWindow: true)
+        let appeared = DesktopAppInstallationClient.afterUnhide(windowAppeared: true)
+        let missing = DesktopAppInstallationClient.afterUnhide(windowAppeared: false)
+        XCTAssertTrue(plan.unhide)
+        XCTAssertFalse(appeared.open)
+        XCTAssertFalse(appeared.restoreFront)
+        XCTAssertTrue(missing.open)
+        XCTAssertTrue(missing.restoreFront)
     }
 
-    func testBackgroundRestoreEndsAtDeadlineWhenTargetNeverActivates() async throws {
-        let result = try await backgroundRestoreResult(activeAt: 0, previousCanRestore: true)
+    func testExplicitOpenDoesNotInspectWindows() {
+        XCTAssertFalse(DesktopAppInstallationClient.shouldCheckWindow(activates: true, running: true))
+        XCTAssertTrue(DesktopAppInstallationClient.shouldCheckWindow(activates: false, running: true))
+    }
+
+    func testFrontObservationStopsForAnyAppOtherThanThePreviousOrTargetApp() {
+        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: 1, previousPID: 1, targetPID: 2), .previous)
+        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: 2, previousPID: 1, targetPID: 2), .target)
+        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: 3, previousPID: 1, targetPID: 2), .other)
+        XCTAssertEqual(DesktopAppInstallationClient.frontObservation(frontmostPID: nil, previousPID: 1, targetPID: 2), .other)
+    }
+
+    func testBackgroundRestoreReturnsFrontAfterTargetTakesOver() async throws {
+        let result = try await backgroundRestoreResult(observations: [.previous, .target], previousCanRestore: true)
+        XCTAssertEqual(result.restores, 1)
+        XCTAssertEqual(result.checks, 2)
+    }
+
+    func testBackgroundRestoreStopsWhenAnotherAppTakesOver() async throws {
+        let result = try await backgroundRestoreResult(observations: [.previous, .other, .target], previousCanRestore: true)
+        XCTAssertEqual(result.restores, 0)
+        XCTAssertEqual(result.checks, 2)
+    }
+
+    func testBackgroundRestoreEndsAtDeadlineWhenPreviousStaysFrontmost() async throws {
+        let result = try await backgroundRestoreResult(observations: [.previous], previousCanRestore: true)
         XCTAssertEqual(result.restores, 0)
         XCTAssertLessThan(result.checks, 101)
     }
 
     func testBackgroundRestoreStopsWhenPreviousCannotBeRestored() async throws {
-        let result = try await backgroundRestoreResult(activeAt: 3, previousCanRestore: false)
+        let result = try await backgroundRestoreResult(observations: [.target], previousCanRestore: false)
         XCTAssertEqual(result.restores, 0)
-        XCTAssertEqual(result.checks, 3)
+        XCTAssertEqual(result.checks, 1)
     }
 
     func testBackgroundRestoreDoesNotRestoreTargetThatActivatesAfterDeadline() async throws {
-        let result = try await backgroundRestoreResult(activeAt: 102, previousCanRestore: true)
+        let observations: [DesktopAppInstallationClient.FrontObservation] = Array(repeating: .previous, count: 101) + [.target]
+        let result = try await backgroundRestoreResult(observations: observations, previousCanRestore: true)
         XCTAssertEqual(result.restores, 0)
         XCTAssertLessThan(result.checks, 101)
     }
 
-    private func backgroundRestoreResult(activeAt: Int, previousCanRestore: Bool) async throws -> (checks: Int, restores: Int) {
+    private func backgroundRestoreResult(observations: [DesktopAppInstallationClient.FrontObservation], previousCanRestore: Bool) async throws -> (checks: Int, restores: Int) {
         let clock = AdvancingClock()
         var checks = 0, restores = 0
-        try await DesktopAppInstallationClient.restoreFront(after: .seconds(5), clock: clock, targetIsFrontmostActive: {
+        try await DesktopAppInstallationClient.restoreFront(after: .seconds(5), clock: clock, observeFront: {
             defer { checks += 1 }
-            return activeAt > 0 && checks + 1 >= activeAt
+            return observations[min(checks, observations.count - 1)]
         }, previousCanRestore: { previousCanRestore }, restore: { restores += 1 })
         return (checks, restores)
     }
