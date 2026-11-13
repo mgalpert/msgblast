@@ -3,8 +3,9 @@ import Foundation
 /// The block Settings copies into Grok Bot, and the three readiness lines on that card.
 public enum AgentControlTailnetSetup {
     /// One block: title, server URL, and bearer header. No trailing newline.
-    public static func text(url: String, key: String) -> String {
-        ["msgblast MCP server for Grok Bot", "Server URL: \(url)", "Header: Authorization: Bearer \(key)"].joined(separator: "\n")
+    public static func text(url: String, key: String, client: String = AgentControlTailnet.grokBotClient) -> String {
+        let name = client.hasSuffix(" (Tailscale)") ? String(client.dropLast(" (Tailscale)".count)) : client
+        return ["msgblast MCP server for \(name)", "Server URL: \(url)", "Header: Authorization: Bearer \(key)"].joined(separator: "\n")
     }
 
     /// Tailscale, HTTPS certificates, then whether Grok Bot has called. Each line starts with ✓ or ⚠︎,

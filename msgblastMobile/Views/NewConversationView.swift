@@ -7,8 +7,8 @@ import msgblastRemoteProtocol
 /// the conversation, this same screen becomes its thread in place.
 struct NewConversationView: View {
     @ObservedObject var app: MobileApp
-    /// The checked agents. Starts with every agent that can take a send (and Messages contacts
-    /// the Mac has selected); taps add and remove, and none checked means no one.
+    /// The checked agents. Starts with the Mac's selected agents that can take a send;
+    /// taps add and remove, and none checked means no one.
     @State private var selected: [String] = []
     /// After the initial fill, so only later taps spring into the header.
     @State private var settled = false
