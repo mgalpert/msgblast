@@ -1495,6 +1495,30 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
     }
 
     @MainActor
+    func testDotsInterstitialBeforeSendIsNotSentAndNeverUncertain() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { Self.addingDotsInterstitial(to: $0) })
+        let storage = f.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Dots.app"), processID: 42) }, open: { _, _ in })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
+                                      desktopApps: client, desktopDriver: .init(executable: f.executable), chatgptApp: adapter)
+        defer { session.beginShutdown() }
+        let result = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+        // A failure before anything is typed must stay "not sent": an
+        // uncertain attempt would block every later send of this chat.
+        if let result { XCTAssertEqual(result.status, .notSent, result.detail ?? "") }
+        XCTAssertFalse(session.state.attempts.contains { $0.status == .uncertain }, session.error ?? "")
+        XCTAssertFalse(f.calls().contains { ["type_text", "press_key"].contains($0["tool"] as? String ?? "") })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path))
+    }
+
+    @MainActor
     func testDotsInterstitialAfterSubmissionDoesNotClaimNothingWasSent() async throws {
         let f = try fixture(kind: .dots, followup: true)
         defer { try? FileManager.default.removeItem(at: f.directory) }

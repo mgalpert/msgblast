@@ -1998,7 +1998,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider == .geminiApp, let problem = error as? GeminiSelectionError {
                 geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
             }
-            let submitted = desktopSendPressedAttempts.contains(attempt.id) || (state.attempts.first { $0.id == attempt.id }?.status).map { $0 != .attempting } ?? false
+            let submitted = desktopSendPressedAttempts.contains(attempt.id) || (state.attempts.first { $0.id == attempt.id }?.status).map { [WebSendStatus.waiting, .observed].contains($0) } ?? false
             attempt.status = Self.failureStatus(for: error, started: started, submitted: submitted, provider: provider)
             let detail = Self.failureDetail(for: error, started: started, submitted: submitted, provider: provider)
             attempt.detail = detail
