@@ -282,7 +282,7 @@ private struct GrokBotSetupSheet: View {
                     Text(tailnet.grokBotOnTailnet ? "Connected" : "Waiting").foregroundStyle(.secondary)
                 }
             }
-            Section("2. Add a custom connector") {
+            Section {
                 FormField(label: "Name", value: "msgblast")
                 FormField(label: "Type", value: "Remote HTTPS", copyable: false)
                 FormField(label: "Server URL", value: url ?? (tailnet.enabled ? "Needs HTTPS first" : "Turn on Tailscale first"), copyable: url != nil)
@@ -293,6 +293,10 @@ private struct GrokBotSetupSheet: View {
                     FormField(label: "Value", value: "Make a new key to copy it", copyable: false)
                 }
                 FormField(label: "Client ID", value: "Leave empty", copyable: false)
+            } header: {
+                Text("2. Add a custom connector")
+                Text("Connect apps (sidebar) → Add a custom connector, at the bottom of the list. Already have one? Its Manage button edits it.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("3. Click Add plugin, then approve msgblast here") {}
         }
