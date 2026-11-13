@@ -138,11 +138,6 @@ public final class MobileApp: ObservableObject {
         store.storeAvatar(data, for: ref)
     }
 
-    public func markMessagesRead(conversationID: UUID, agentID: String) -> Bool {
-        let command = RemoteCommand(action: .markMessagesRead(conversationID: conversationID, agentID: agentID))
-        return (try? connection.send(command)) != nil
-    }
-
     /// Records it (saved before it leaves, so a relaunch can still ask about it) and sends now,
     /// or throws without queueing when disconnected. A record that cannot be written throws
     /// before anything is sent.

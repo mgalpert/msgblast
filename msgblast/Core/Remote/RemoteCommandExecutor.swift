@@ -119,7 +119,6 @@ public protocol RemoteCommandHost: AnyObject {
     func avatar(_ ref: String) -> Data?
     /// Names a conversation through the Mac's model. The executor has checked the name.
     func renameConversation(_ id: UUID, title: String) -> RemoteHostResult
-    func markMessagesRead(_ id: UUID, memberID: UUID) -> RemoteHostResult
     /// One attachment of a projected turn, prepared for the phone; only files recorded on
     /// that turn are ever read.
     func attachment(turnID: String, index: Int, maxBytes: Int) -> RemoteAttachmentFetch
@@ -386,7 +385,7 @@ public final class RemoteCommandExecutor {
         if case .setKeepAwake(let enabled) = command.action { return outcome(command, host.setKeepAwake(enabled)) }
         guard !host.isLocked else { return reject(command, .macLocked, "Your Mac is locked") }
         switch command.action {
-        case .endConversation, .renameConversation, .markMessagesRead, .requestReport: return await applyConversationCommand(command, host: host)
+        case .endConversation, .renameConversation, .requestReport: return await applyConversationCommand(command, host: host)
         case .acknowledgeIncomplete, .cancelNative, .setKeepAwake: return applyAgentCommand(command, host: host)
         case .uploadAttachmentChunk, .attachStaged: return applyAttachmentCommand(command, host: host)
         case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
@@ -399,9 +398,6 @@ public final class RemoteCommandExecutor {
         switch command.action {
         case .endConversation(let id): return endConversation(command, id, host: host)
         case .renameConversation(let id, let title): return renameConversation(command, id, title: title, host: host)
-        case .markMessagesRead(let id, let agentID):
-            guard let memberID = RemoteAgentIDs.messagesAgent(agentID) else { return reject(command, .invalidCommand, "Choose an iMessage recipient") }
-            return outcome(command, host.markMessagesRead(id, memberID: memberID))
         case .requestReport(let id):
             guard case .active? = host.conversation(id) else { return reject(command, .unknownConversation, "Reports need an active conversation") }
             return outcome(command, await host.requestReport(id))

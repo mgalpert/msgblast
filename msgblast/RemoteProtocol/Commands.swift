@@ -41,7 +41,6 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     /// Names a conversation (Messages' "Change Name"). The Mac trims it and refuses an empty
     /// name or one over 80 characters. Older Macs answer `unsupported`.
     case renameConversation(conversationID: UUID, title: String)
-    case markMessagesRead(conversationID: UUID, agentID: String)
     /// Read-only: one attachment of a turn, on demand. Images come back as JPEG scaled to
     /// fit `maxBytes` (320 px thumbnails up to 256 KB, else 1600 px); other files whole when
     /// they fit `maxBytes` and `RemoteProtocol.maximumAttachmentFetchBytes`. Older Macs answer
@@ -77,7 +76,6 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .queryCommand: "queryCommand"
         case .fetchAvatar: "fetchAvatar"
         case .renameConversation: "renameConversation"
-        case .markMessagesRead: "markMessagesRead"
         case .fetchAttachment: "fetchAttachment"
         case .unknown(let kind): kind
         case .createConversation, .sendShared, .sendPrivate, .endConversation, .acknowledgeIncomplete, .cancelNative,
@@ -147,8 +145,6 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case "fetchAttachment":
             return .fetchAttachment(turnID: try c.decode(String.self, forKey: .turnID), index: try c.decode(Int.self, forKey: .index), maxBytes: try c.decode(Int.self, forKey: .maxBytes))
         case "renameConversation": return .renameConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID), title: try c.decode(String.self, forKey: .title))
-        case "markMessagesRead":
-            return .markMessagesRead(conversationID: try c.decode(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID))
         default: return .unknown(kind: kind)
         }
     }
@@ -160,7 +156,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
             try encodeMessageFields(into: &c)
         case .setKeepAwake, .uploadAttachmentChunk, .attachStaged, .requestReport, .prepareConversation:
             try encodeTransferFields(into: &c)
-        case .queryCommand, .fetchAvatar, .renameConversation, .markMessagesRead, .fetchAttachment, .unknown:
+        case .queryCommand, .fetchAvatar, .renameConversation, .fetchAttachment, .unknown:
             try encodeLookupFields(into: &c)
         }
     }
@@ -199,8 +195,6 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .renameConversation(let id, let title): try c.encode(id, forKey: .conversationID); try c.encode(title, forKey: .title)
         case .fetchAttachment(let turnID, let index, let maxBytes):
             try c.encode(turnID, forKey: .turnID); try c.encode(index, forKey: .index); try c.encode(maxBytes, forKey: .maxBytes)
-        case .markMessagesRead(let id, let agentID):
-            try c.encode(id, forKey: .conversationID); try c.encode(agentID, forKey: .agentID)
         default: break
         }
     }

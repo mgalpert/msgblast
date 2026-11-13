@@ -62,8 +62,7 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .uploadAttachmentChunk(uploadID: UUID(), filename: "a.txt", index: 0, count: 2, data: Data([1, 2, 3])),
             .attachStaged(uploadID: UUID(), sha256: Data(SHA256.hash(data: Data([1])))), .requestReport(conversationID: conversation),
             .prepareConversation(conversationID: nil, agentIDs: ["claude"]), .prepareConversation(conversationID: conversation, agentIDs: []), .queryCommand(clientCommandID: UUID()), .fetchAvatar(ref: "sha256:00ff"),
-            .renameConversation(conversationID: conversation, title: "Pesto"),
-            .markMessagesRead(conversationID: conversation, agentID: "messages:1"), .fetchAttachment(turnID: "m:guid-1", index: 1, maxBytes: 200_000)]
+            .renameConversation(conversationID: conversation, title: "Pesto"), .fetchAttachment(turnID: "m:guid-1", index: 1, maxBytes: 200_000)]
         for action in actions { try roundTrip(RemoteCommand(action: action)) }
         XCTAssertEqual(actions.filter(\.isSend).count, 3)
 

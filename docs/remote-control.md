@@ -44,15 +44,6 @@ One phone per Mac. **Pair a different phone…** asks for confirmation; the new
 phone replaces the old record only after it pairs. **Forget** disconnects and
 removes the record. There are no accounts.
 
-When you reach the latest replies in an open phone thread, msgblast asks the
-paired Mac to clear unread iMessages for the newest Messages reply in that view.
-If that chat has unread messages (tapbacks do not count), the Mac opens it in
-Apple Messages in the background, without bringing Messages forward, and
-Messages manages its own read state. If you have read receipts on in Messages,
-the sender sees the chat as read. While Messages is the frontmost app the Mac
-leaves it alone, so it never switches the chat you are looking at. It requires
-an unlocked Mac and access to Messages history.
-
 ## Network and bind policy
 
 | Policy | Binds |

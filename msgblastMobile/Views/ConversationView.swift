@@ -4,7 +4,6 @@ import msgblastRemoteProtocol
 
 struct ConversationView: View {
     @ObservedObject var app: MobileApp
-    @Environment(\.scenePhase) private var scenePhase
     let conversationID: UUID
     /// The keyboard stays up when a new conversation becomes this thread.
     var startFocused = false
@@ -47,7 +46,6 @@ struct ConversationView: View {
     /// Within 40 pt of the newest message; only then does the thread follow new content.
     @State private var atBottom = true
     @State private var openedAtBottom = false
-    @State private var markedMessagesTurns: Set<String> = []
     /// A tapback pill's height, scaled with the caption like the pill itself.
     @ScaledMetric(relativeTo: .caption) private var reactionPill: CGFloat = Space.reactionPill
 
@@ -63,14 +61,6 @@ struct ConversationView: View {
         } else {
             ContentUnavailableView("Not on Your Mac", systemImage: "questionmark.bubble")
         }
-    }
-
-    /// Only the newest iMessage reply's chat: the Mac shows one chat in Messages at a time.
-    private func messagesToMarkRead(_ turns: [RemoteTurn]) -> [String: String] {
-        guard scenePhase == .active, app.connection.state.canSend, openedAtBottom, atBottom,
-              let turn = turns.last(where: { $0.origin == .messagesHistory && $0.role == .assistant }),
-              let agentID = turn.agentID else { return [:] }
-        return [agentID: turn.id]
     }
 
     private func content(_ conversation: RemoteConversation) -> some View {
@@ -108,13 +98,6 @@ struct ConversationView: View {
         .safeAreaInset(edge: .bottom) { composeBar(conversation) }
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: messagesToMarkRead(turns), initial: true) { _, turns in
-            for (agentID, turnID) in turns where !markedMessagesTurns.contains(turnID) {
-                if app.markMessagesRead(conversationID: conversationID, agentID: agentID) {
-                    markedMessagesTurns.insert(turnID)
-                }
-            }
-        }
         .onAppear {
             app.store.markOpened(conversationID)
             if startFocused { focusRequest += 1 }

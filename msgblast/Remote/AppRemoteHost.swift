@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import msgblastCore
 import msgblastRemoteProtocol
@@ -32,28 +31,6 @@ final class AppRemoteHost: RemoteCommandHost {
         guard let comparison = model.comparison(id) else { return nil }
         if comparison.endedAt != nil { return .ended }
         return .active(members: comparison.members.map { RemoteAgentIDs.messages($0.id) } + comparison.resolvedWebAgentIDs.map(\.id))
-    }
-
-    func markMessagesRead(_ id: UUID, memberID: UUID) -> RemoteHostResult {
-        guard let comparison = model.comparison(id) else {
-            return .rejected(.unknownConversation, "This conversation is gone from your Mac")
-        }
-        guard let member = comparison.members.first(where: { $0.id == memberID }), member.chat.eligible else {
-            return .rejected(.unknownAgent, "This iMessage recipient is gone from your Mac")
-        }
-        // While Messages is in front the person is reading there; never switch its chat.
-        if model.demo || NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.MobileSMS" {
-            return .applied(conversationID: id)
-        }
-        guard let database = model.database, let unread = try? database.hasUnreadMessages(chatID: member.chat.id) else {
-            return .rejected(.failed, "Messages history is unavailable on your Mac")
-        }
-        // Opening this exact saved chat lets Apple Messages update its own read state,
-        // without bringing Messages forward on the Mac.
-        guard !unread || model.openMessages(member, activates: false) else {
-            return .rejected(.failed, "Could not open the conversation in Messages")
-        }
-        return .applied(conversationID: id)
     }
 
     private func session(_ agentID: String) -> WebAgentSession? { model.webAgents.sessions.first { $0.id.id == agentID } }
