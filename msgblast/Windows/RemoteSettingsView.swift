@@ -48,7 +48,7 @@ struct RemoteSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Send iMessages from the phone", isOn: Binding(get: { service.settings.allowMessagesSends }, set: { service.setAllowMessagesSends($0) }))
                     .toggleStyle(.switch).accessibilityIdentifier("remote-allow-messages")
-                Text("Off by default. An iMessage cannot be unsent, and your phone already has Messages.")
+                Text("Turns on when a phone pairs. An iMessage cannot be unsent, and your phone already has Messages.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if service.variant == .demo {
