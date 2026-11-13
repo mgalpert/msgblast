@@ -1468,6 +1468,27 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
     }
 
     @MainActor
+    func testDotsInterstitialBeforeAttemptingIsNotSent() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { Self.addingDotsInterstitial(to: $0) })
+        let storage = f.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Dots.app"), processID: 42) }, open: { _, _ in })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
+                                      desktopApps: client, desktopDriver: .init(executable: f.executable), chatgptApp: adapter)
+        defer { session.beginShutdown() }
+        let result = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+        let attempt = try XCTUnwrap(result)
+        XCTAssertEqual(attempt.status, .notSent)
+        XCTAssertTrue(attempt.detail?.contains("Nothing was sent") ?? false, attempt.detail ?? "")
+    }
+
+    @MainActor
     func testDotsInterstitialOnFirstReadAfterSendIsUncertain() async throws {
         let f = try fixture(kind: .dots, followup: true)
         defer { try? FileManager.default.removeItem(at: f.directory) }

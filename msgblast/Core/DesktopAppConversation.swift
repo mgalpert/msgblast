@@ -39,7 +39,7 @@ enum DesktopAppError: LocalizedError {
     case incompleteSnapshot
     var errorDescription: String? { switch self {
         case .unavailable(let reason): reason
-        case .interstitial(let app, let prompt): "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app)."
+        case .interstitial(let app, let prompt): "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app), then send again. Nothing was sent."
         case .incompleteSnapshot: "The app's accessibility snapshot is incomplete. Nothing will be sent automatically."
     } }
 }

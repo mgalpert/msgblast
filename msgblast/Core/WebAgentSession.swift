@@ -1998,8 +1998,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider == .geminiApp, let problem = error as? GeminiSelectionError {
                 geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
             }
-            let submitted = desktopSendPressedAttempts.contains(attempt.id) || (state.attempts.first { $0.id == attempt.id }?.status).map { [WebSendStatus.waiting, .observed].contains($0) } ?? false
-            attempt.status = Self.failureStatus(for: error, started: started, submitted: submitted, provider: provider)
+            let submitted = desktopSendPressedAttempts.contains(attempt.id) || [.waiting, .observed].contains(state.attempts.first { $0.id == attempt.id }?.status)
+            attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
             let detail = Self.failureDetail(for: error, started: started, submitted: submitted, provider: provider)
             attempt.detail = detail
             self.error = detail
@@ -2011,17 +2011,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return attempt
     }
 
-    private static func failureStatus(for error: Error, started: Bool, submitted: Bool, provider: WebProvider) -> WebSendStatus {
-        if provider == .geminiApp, error is GeminiSelectionError, !submitted { return .notSent }
-        return started || submitted ? .uncertain : .notSent
-    }
-
     private static func failureDetail(for error: Error, started: Bool, submitted: Bool, provider: WebProvider) -> String {
         if error is CancellationError {
             return started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
         }
-        guard case let .interstitial(app, prompt) = error as? DesktopAppError, !submitted else { return error.localizedDescription }
-        return "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app), then send again. Nothing was sent."
+        // After Send was pressed the message may have gone out, so never say nothing was sent.
+        guard case let .interstitial(app, prompt) = error as? DesktopAppError, submitted else { return error.localizedDescription }
+        return "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app)."
     }
 
     private func recordDesktopSendPressed(_ attemptID: UUID) {
