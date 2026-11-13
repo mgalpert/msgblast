@@ -45,24 +45,55 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         // One account-wide page holds every comparison's turns; each comparison sees only its own.
         // Desktop apps share a conversation too, but their history is native and kept per comparison.
         if sharesPage {
-            let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
-            let saved = state.sharedTurns[id.uuidString] ?? []
-            return live.isEmpty || live.count < saved.count ? saved : live
+            // The saved copy already merges everything the page has shown for this comparison.
+            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
         }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
     }
+    private var sharedTurnsSave: Task<Void, Never>?
     private var sharesPage: Bool { (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation }
     /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
+    /// Saving waits for the page to settle rather than writing on every streamed update.
     private func rememberSharedTurns() {
         guard sharesPage else { return }
-        let merged = Self.keepingSharedTurns(state.sharedTurns, live: Self.comparisonTurns(snapshot.messages, attempts: state.attempts))
-        if merged != state.sharedTurns { updateState { $0.sharedTurns = merged } }
+        let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts)
+        let kept = Self.keepingSharedTurns(state.sharedTurns, live: live, onPage: Set(snapshot.messages.map(\.id)))
+        guard kept != state.sharedTurns else { return }
+        state.sharedTurns = kept
+        sharedTurnsSave?.cancel()
+        sharedTurnsSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.persist()
+        }
     }
-    /// A comparison's saved turns are replaced by the page's, never by fewer.
-    static func keepingSharedTurns(_ saved: [String: [WebPageMessage]], live: [UUID: [WebPageMessage]]) -> [String: [WebPageMessage]] {
+    /// Ended comparisons keep their turns in their own history; only open ones need a saved copy here.
+    public func pruneSharedTurns(keeping open: Set<UUID>) {
+        let kept = state.sharedTurns.filter { UUID(uuidString: $0.key).map(open.contains) == true }
+        if kept != state.sharedTurns { updateState { $0.sharedTurns = kept } }
+    }
+    /// Merges by message: saved order first with the page's text (unless the page shows less of it),
+    /// then turns new to the comparison. A turn still on the page but now owned by another
+    /// comparison leaves this one; a turn the page no longer shows stays saved.
+    static func keepingSharedTurns(_ saved: [String: [WebPageMessage]], live: [UUID: [WebPageMessage]], onPage: Set<String>) -> [String: [WebPageMessage]] {
         var kept = saved
-        for (id, turns) in live where turns.count >= (saved[id.uuidString]?.count ?? 0) { kept[id.uuidString] = turns }
+        let keys = Set(saved.keys).union(live.keys.map(\.uuidString))
+        for key in keys {
+            let current = UUID(uuidString: key).flatMap { live[$0] } ?? []
+            let liveByID = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            var merged = (saved[key] ?? []).compactMap { old -> WebPageMessage? in
+                guard let fresh = liveByID[old.id] else { return onPage.contains(old.id) ? nil : old }
+                return fresh.text.count < old.text.count ? old : fresh
+            }
+            for fresh in current where !merged.contains(where: { $0.id == fresh.id }) {
+                // A reload can renumber a message the page shows again; adopt it instead of repeating it.
+                if let old = merged.firstIndex(where: { !onPage.contains($0.id) && $0.role == fresh.role && $0.text == fresh.text }) {
+                    merged[old] = fresh
+                } else { merged.append(fresh) }
+            }
+            kept[key] = merged
+        }
         return kept
     }
     /// Splits a shared page by request: each request a comparison sent owns its user message and the
