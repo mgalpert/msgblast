@@ -119,6 +119,28 @@ final class WebServiceTests: XCTestCase {
         XCTAssertFalse(replies.joined().contains("Purchased"), "Order history badges stay on the Mac")
     }
 
+    func testSharedConversationPageGivesEachComparisonOnlyItsOwnTurns() {
+        let first = UUID(), second = UUID(), unsent = UUID()
+        let page = [
+            WebPageMessage(id: "u0", role: "user", text: "Older request from the website"),
+            WebPageMessage(id: "a0", role: "assistant", text: "Older answer"),
+            WebPageMessage(id: "u1", role: "user", text: "Suggest a cable"),
+            WebPageMessage(id: "a1", role: "assistant", text: "Example Cable"),
+            WebPageMessage(id: "u2", role: "user", text: "Suggest a bottle"),
+            WebPageMessage(id: "a2", role: "assistant", text: "Example Bottle"),
+        ]
+        var observed = WebSendAttempt(text: "Suggest a cable", status: .observed)
+        observed.comparisonID = first; observed.messageID = "u1"
+        // A request that was not yet attributed still starts its comparison by its text.
+        var pending = WebSendAttempt(text: "Suggest  a bottle", status: .uncertain)
+        pending.comparisonID = second
+        let attempts = [observed, pending]
+        func slice(_ id: UUID) -> [String] { WebAgentSession.comparisonSlice(page, attempts: attempts, comparison: id).map(\.id) }
+        XCTAssertEqual(slice(first), ["u1", "a1"], "An earlier comparison keeps its turns after the page moves on")
+        XCTAssertEqual(slice(second), ["u2", "a2"])
+        XCTAssertEqual(slice(unsent), [], "A new comparison shows nothing from the shared page before it sends")
+    }
+
     func testAlexaShoppingIdleLoaderIsNotAPendingReply() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
