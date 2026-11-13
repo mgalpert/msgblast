@@ -2010,17 +2010,60 @@ final class ChatGPTCurrentLayoutTests: XCTestCase {
     }
 
     func testCurrentLayoutRequiresExactlyOnePanelAndOneDot() throws {
-        let secondSurface = Self.dots.replacingOccurrences(of: #""classes":["message-list"]"#, with: #""subrole":"AXLandmarkMain","classes":["message-list","MainContentSurface-Second"]"#)
-        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(secondSurface)))
+        let surface = #"{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-EnuIYE""#
+        let secondSurface = Self.dots.replacingOccurrences(of: surface, with: #"{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-Second"]},"# + surface)
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(secondSurface))) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s native conversation panel is unavailable.")
+        }
         let removedPanel = Self.chat.replacingOccurrences(of: "MainContentSurface-EnuIYE", with: "Other-EnuIYE")
-        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(removedPanel)))
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(removedPanel))) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s native conversation panel is unavailable.")
+        }
         let dot = #"{"role":"AXButton","label":"Example Dot 1 unread message","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":162}}"#
         let other = #"{"role":"AXButton","classes":["sidebar-item"],"label":"Other Dot","frame":{"x":0,"y":0,"w":10,"h":10}}"#
         let secondDot = Self.chat.replacingOccurrences(of: dot, with: dot + "," + other)
-        XCTAssertThrowsError(try ChatGPTAppNavigation(root: tree(secondDot)).dotButton())
+        XCTAssertThrowsError(try ChatGPTAppNavigation(root: tree(secondDot)).dotButton()) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s Dot navigation is unavailable or ambiguous.")
+        }
         let composer = #"{"role":"AXTextArea","label":"Ask ChatGPT","value":"Ask ChatGPT\n","focused":true,"children":[{"role":"AXGroup","classes":["placeholder"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Ask ChatGPT"}]}]}]}"#
         let nestedComposer = #"{"role":"AXWebArea","url":"app://-/index.html","children":["# + composer + "]}"
-        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(Self.chat.replacingOccurrences(of: composer, with: nestedComposer))))
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(Self.chat.replacingOccurrences(of: composer, with: nestedComposer)))) { error in
+            guard case ChatGPTObservationError.composerUnavailable = error else { return XCTFail("\(error)") }
+        }
+        let open = #"classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":["#
+        let nested = Self.chat.replacingOccurrences(of: open, with: open + #"{"role":"AXGroup","id":"x-chat-panel","children":["#)
+            .replacingOccurrences(of: #"],"id":"_r_61p_""#, with: #"]}],"id":"_r_61p_""#)
+        XCTAssertEqual(try ChatGPTAppObservation(root: tree(nested)).messages, try ChatGPTAppObservation(root: tree(Self.chat)).messages)
+        let sibling = Self.chat.replacingOccurrences(of: surface, with: #"{"role":"AXGroup","id":"sibling-chat-panel"},"# + surface)
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(sibling))) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s native conversation panel is unavailable.")
+        }
+    }
+
+    func testCurrentLayoutReadsDotSetupWithoutAComposer() throws {
+        let setup = try replacingSurfaceChildren(Self.dots, with: #"{"role":"AXHeading","label":"Create your dot"}"#)
+        let native = try ChatGPTAppObservation(root: tree(setup))
+        XCTAssertEqual(native.kind, .dots)
+        XCTAssertTrue(native.dotSetup)
+        XCTAssertNil(native.composer)
+    }
+
+    func testCurrentLayoutSidebarWithoutFieldsIsTransient() throws {
+        let newChat = #"{"role":"AXButton","label":"New chat","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":131}}"#
+        let header = newChat + "," + #"{"role":"AXButton","label":"Your dot","classes":["sidebar-item"]}"#
+        let screen = try replacingSurfaceChildren(Self.dots.replacingOccurrences(of: newChat, with: header), with: "")
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(screen))) { error in
+            guard case ChatGPTObservationError.transient = error else { return XCTFail("\(error)") }
+        }
+    }
+
+    private func replacingSurfaceChildren(_ json: String, with children: String) throws -> String {
+        let start = #"classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":["#
+        let end = #"],"id":"_r_61p_""#
+        guard let startRange = json.range(of: start), let endRange = json.range(of: end), startRange.upperBound < endRange.lowerBound else {
+            throw NSError(domain: "ChatGPTCurrentLayoutTests", code: 3)
+        }
+        return json.replacingCharacters(in: startRange.upperBound..<endRange.lowerBound, with: children)
     }
 
     private func tree(_ json: String) throws -> ChatGPTAXNode {

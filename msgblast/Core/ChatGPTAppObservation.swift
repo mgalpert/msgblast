@@ -180,7 +180,7 @@ struct ChatGPTAppObservation: Sendable {
         if try Self.dotSetupOrTransient(nodes) {
             composer = nil; kind = .dots; draft = ""; generating = false; messages = []; return
         }
-        let panel = Self.safeNodes(try Self.conversationPanel(nodes))
+        let panel = Self.safeNodes(try Self.conversationPanel(web))
         let composer = try Self.readComposer(panel)
         self.composer = composer.node
         kind = composer.kind
@@ -227,11 +227,16 @@ struct ChatGPTAppObservation: Sendable {
         }
         return false
     }
-    // ChatGPT 26.1103 dropped the -chat-panel id and marks the conversation with MainContentSurface.
-    private static func conversationPanel(_ nodes: [ChatGPTAXNode]) throws -> ChatGPTAXNode {
-        let panels = nodes.filter { $0.id.hasSuffix("-chat-panel") || ($0.subrole == "AXLandmarkMain" && $0.classes.contains { $0.hasPrefix("MainContentSurface-") }) }
+    // ChatGPT 26.1103 dropped the -chat-panel id and marks the conversation with MainContentSurface. A nested match is the same panel.
+    private static func conversationPanel(_ root: ChatGPTAXNode) throws -> ChatGPTAXNode {
+        let panels = panelMatches(root)
         guard panels.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s native conversation panel is unavailable.") }
         return panels[0]
+    }
+    private static func panelMatches(_ node: ChatGPTAXNode) -> [ChatGPTAXNode] {
+        let panel = node.id.hasSuffix("-chat-panel") || (node.subrole == "AXLandmarkMain" && node.classes.contains { $0.hasPrefix("MainContentSurface-") })
+        if panel { return [node] }
+        return node.children.filter { $0.role != "AXWebArea" }.flatMap(panelMatches)
     }
     private static func readComposer(_ panel: [ChatGPTAXNode]) throws -> (node: ChatGPTAXNode, kind: ChatGPTAppKind, draft: String, generating: Bool) {
         let fields = panel.filter { $0.role == "AXTextArea" && ["Ask ChatGPT", "Message"].contains($0.label) }
