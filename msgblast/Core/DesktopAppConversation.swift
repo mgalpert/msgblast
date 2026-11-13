@@ -811,6 +811,10 @@ actor DesktopAppConversation {
         return nil
     }
 
+    /// msgblast's own window, as the foreground lease captures it before handing the front away.
+    func currentHostWindow() async throws -> Target {
+        try await captureHostWindow()
+    }
     func endSession(_ session: String) async {
         _ = try? await call("end_session", ["session": session], as: Action.self)
     }

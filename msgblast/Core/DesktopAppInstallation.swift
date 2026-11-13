@@ -24,15 +24,14 @@ struct DesktopAppInstallationClient: Sendable {
     var open: @MainActor @Sendable (URL, Bool) async throws -> Void
     var isHidden: @MainActor @Sendable (DesktopAppProvider) -> Bool = { _ in false }
 
-    /// Gives the front back to the app that had it before a background open. Called at most
-    /// once per open, only after the guarded watch decides the target took the front itself.
+    /// Gives the front back to the app that had it before a background open. Called up to
+    /// `maxHandBacks` times per open, each time the guarded watch sees the target take the front.
     typealias FrontHandBack = @MainActor @Sendable (_ previousPID: Int32) async -> Void
 
+    /// Best effort only: macOS may ignore an activation requested from the background.
     static let activatePrevious: FrontHandBack = { pid in
         NSRunningApplication(processIdentifier: pid)?.activate(options: [])
     }
-
-    static var system: Self { system(handBack: activatePrevious) }
 
     static func system(handBack: @escaping FrontHandBack) -> Self {
         .init(inspect: { app in
@@ -49,7 +48,7 @@ struct DesktopAppInstallationClient: Sendable {
     }
 
     /// Everything the hand-back decision depends on: who was in front when the open started,
-    /// every app activation since then, and the front right now.
+    /// every app activation since then, the front right now, and the hand-backs made so far.
     struct FrontWatchState: Equatable, Sendable {
         var previousPID: Int32?
         var targetWasActive: Bool
@@ -57,18 +56,29 @@ struct DesktopAppInstallationClient: Sendable {
         var frontmostPID: Int32?
         var targetPID: Int32?
         var previousRunning: Bool
+        var handBacks = 0
+        var sinceLastHandBack: Duration?
     }
 
     enum HandBackDecision: Equatable, Sendable {
-        case wait, handBack, cancel
+        case wait, handBack, cancel, done
     }
 
+    static let maxHandBacks = 3
+    static let quietAfterHandBack: Duration = .milliseconds(1500)
+
+    /// After a launch ChatGPT keeps asking for the front for about a second, so each time it
+    /// takes the front again it is handed back again, up to `maxHandBacks` times. Any
+    /// activation by an app other than ChatGPT or the previous app cancels for good.
     static func handBackDecision(_ state: FrontWatchState) -> HandBackDecision {
         guard let previous = state.previousPID, !state.targetWasActive, state.previousRunning,
               previous != state.targetPID else { return .cancel }
-        guard state.activations.allSatisfy({ $0 == state.targetPID }) else { return .cancel }
-        guard !state.activations.isEmpty, state.frontmostPID != nil, state.frontmostPID == state.targetPID else { return .wait }
-        return .handBack
+        guard state.activations.allSatisfy({ $0 == state.targetPID || $0 == previous }) else { return .cancel }
+        guard state.handBacks < maxHandBacks else { return .done }
+        let targetActivations = state.activations.filter { $0 == state.targetPID }.count
+        if state.frontmostPID != nil, state.frontmostPID == state.targetPID, targetActivations > state.handBacks { return .handBack }
+        if state.handBacks > 0, state.frontmostPID == previous, let quiet = state.sinceLastHandBack, quiet >= quietAfterHandBack { return .done }
+        return .wait
     }
 
     /// The effects of a background open, injected so the order of steps can be tested.
@@ -158,23 +168,34 @@ struct DesktopAppInstallationClient: Sendable {
     }
 
     /// ChatGPT brings itself forward on launch and on a reopen event even when asked not to,
-    /// so a background open hands the front back to the app that had it. Activations are
-    /// tracked from before the open starts. Known limits: ChatGPT still shows as a brief flash;
-    /// a window that appears more than five seconds after the open is not handed back; a
-    /// deliberate switch to ChatGPT within those five seconds is undone, while a switch to any
-    /// other app cancels the hand-back for good. A window on another Space is missing from the
-    /// accessibility window list, so it is reopened and flashes too.
+    /// so a background open hands the front back to the app that had it. When that app is
+    /// msgblast, the hand-back goes through its accessibility driver; for any other app it is
+    /// best effort and macOS may ignore it. Activations are tracked from before the open
+    /// starts. Known limits: a reopen shows one brief flash (about 0.1 s); a launch can show
+    /// two (about 0.1 s and 0.3 s), because ChatGPT keeps taking the front for about a second
+    /// and is handed back each time, up to three times. A window that appears more than five
+    /// seconds after the open is not handed back; a deliberate switch to ChatGPT within those
+    /// five seconds is undone, while a switch to any other app cancels the hand-back for good.
+    /// A window on another Space is missing from the accessibility window list, so it is
+    /// reopened and flashes too.
     @MainActor static func awaitHandBack<C: Clock>(after timeout: Duration, interval: Duration = .milliseconds(50), clock: C = ContinuousClock(),
                                                    state: @MainActor () -> FrontWatchState,
                                                    handBack: FrontHandBack) async throws where C.Duration == Duration {
         let deadline = clock.now.advanced(by: timeout)
+        var handBacks = 0, lastHandBack: C.Instant?
         while clock.now < deadline {
-            let current = state()
+            var current = state()
+            current.handBacks = handBacks
+            current.sinceLastHandBack = lastHandBack.map { $0.duration(to: clock.now) }
             switch handBackDecision(current) {
-            case .wait: try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
-            case .handBack: if let previous = current.previousPID { await handBack(previous) }; return
-            case .cancel: return
+            case .wait: break
+            case .handBack:
+                if let previous = current.previousPID { await handBack(previous) }
+                handBacks += 1
+                lastHandBack = clock.now
+            case .cancel, .done: return
             }
+            try await clock.sleep(for: min(interval, clock.now.duration(to: deadline)))
         }
     }
 
@@ -210,5 +231,43 @@ struct DesktopAppInstallationClient: Sendable {
         return .init(previousPID: previousPID, targetWasActive: targetWasActive, activations: activations,
                      frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
                      targetPID: targetPID, previousRunning: previousRunning)
+    }
+}
+
+/// Hands the front back to msgblast's own window through the accessibility driver, which
+/// works where activating msgblast's process from the background does not. The window is
+/// captured before a background open and cleared once the open returns; the hand-back runs
+/// inside the open.
+@MainActor final class DesktopHandBackHost {
+    private(set) var target: DesktopAppConversation.Target?
+    var driver: DesktopAppConversation?
+    private let ownPID: Int32
+    private let fallback: DesktopAppInstallationClient.FrontHandBack
+
+    init(ownPID: Int32 = ProcessInfo.processInfo.processIdentifier,
+         fallback: @escaping DesktopAppInstallationClient.FrontHandBack = DesktopAppInstallationClient.activatePrevious) {
+        self.ownPID = ownPID
+        self.fallback = fallback
+    }
+
+    func systemClient(driver: DesktopAppConversation) -> DesktopAppInstallationClient {
+        self.driver = driver
+        return .system(handBack: { [self] pid in await handBack(previousPID: pid) })
+    }
+
+    func whileOpening(_ open: () async throws -> Void) async throws {
+        target = try? await driver?.currentHostWindow()
+        defer { target = nil }
+        try await open()
+    }
+
+    func handBack(previousPID: Int32) async {
+        if previousPID == ownPID, let target, let driver {
+            let session = "msgblast-handback-\(UUID().uuidString)"
+            let activated = (try? await driver.activate(target, session: session)) != nil
+            await driver.endSession(session)
+            if activated { return }
+        }
+        await fallback(previousPID)
     }
 }

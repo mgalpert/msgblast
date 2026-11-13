@@ -124,6 +124,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private let wabiApp: WabiAppConversation
     private let desktopApps: DesktopAppInstallationClient
     private let desktopDriver: DesktopAppConversation
+    private let handBackHost = DesktopHandBackHost()
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
     private var grokBotReceiver: GrokBotCallbackReceiver?
@@ -185,7 +186,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         self.chatgptApp = chatgptApp
         self.geminiApp = geminiApp
         self.wabiApp = wabiApp
-        self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
+        self.desktopApps = desktopApps ?? (fixture ? .demo : handBackHost.systemClient(driver: desktopDriver))
         self.desktopDriver = desktopDriver
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
@@ -1389,6 +1390,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
     }
 
+    /// A background open captures msgblast's window first, so ChatGPT's self-activation can be handed back to it.
+    private func openDesktopApp(_ url: URL, activates: Bool) async throws {
+        guard !activates else { return try await desktopApps.open(url, true) }
+        try await handBackHost.whileOpening { try await desktopApps.open(url, false) }
+    }
+
     private func launchDesktopAppForConversation() async throws {
         guard let app = provider.desktopApp else { return }
         try Task.checkCancellation()
@@ -1415,7 +1422,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 } catch is CancellationError { throw CancellationError() }
                 catch { try checkCurrent() }
             }
-            try await desktopApps.open(url, app.requiresForegroundSubmission)
+            try await openDesktopApp(url, activates: app.requiresForegroundSubmission)
             try checkCurrent()
             let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             repeat {

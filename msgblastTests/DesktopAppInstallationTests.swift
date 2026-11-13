@@ -329,6 +329,112 @@ final class DesktopAppInstallationTests: XCTestCase {
         XCTAssertEqual(handBacks, [])
     }
 
+    func testHandBackDecisionAllowsTheBurstButNotAThirdApp() {
+        var retake = watchState([2, 1, 2])
+        retake.handBacks = 1
+        XCTAssertEqual(Client.handBackDecision(retake), .handBack)
+        var quiet = watchState([2, 1], front: 1)
+        quiet.handBacks = 1
+        quiet.sinceLastHandBack = .seconds(1)
+        XCTAssertEqual(Client.handBackDecision(quiet), .wait)
+        quiet.sinceLastHandBack = .milliseconds(1500)
+        XCTAssertEqual(Client.handBackDecision(quiet), .done)
+        var third = watchState([2, 1, 3], front: 3)
+        third.handBacks = 1
+        XCTAssertEqual(Client.handBackDecision(third), .cancel)
+        var capped = watchState([2, 1, 2, 1, 2, 1, 2])
+        capped.handBacks = 3
+        XCTAssertEqual(Client.handBackDecision(capped), .done)
+    }
+
+    func testHandBackRepeatsWhenTheTargetRetakesTheFrontDuringALaunch() async throws {
+        // A → ChatGPT → A → ChatGPT, then A stays in front.
+        let handBacks = try await handBackResult([watchState([], front: 1), watchState([2]), watchState([2, 1], front: 1),
+                                                  watchState([2, 1, 2]), watchState([2, 1, 2, 1], front: 1)])
+        XCTAssertEqual(handBacks, [1, 1])
+    }
+
+    func testHandBackStopsForGoodWhenAThirdAppActivatesAfterAHandBack() async throws {
+        // A → ChatGPT → A → B.
+        let handBacks = try await handBackResult([watchState([2]), watchState([2, 1], front: 1), watchState([2, 1, 3], front: 3),
+                                                  watchState([2, 1, 3, 2])])
+        XCTAssertEqual(handBacks, [1])
+    }
+
+    func testHandBackIsCappedAtThreePerOpen() async throws {
+        var states: [Client.FrontWatchState] = []
+        var events: [Int32] = []
+        for _ in 0..<6 {
+            events.append(2); states.append(watchState(events))
+            events.append(1); states.append(watchState(events, front: 1))
+        }
+        let handBacks = try await handBackResult(states)
+        XCTAssertEqual(handBacks, [1, 1, 1])
+    }
+
+    func testHandBackEndsAfterTheQuietGapWithThePreviousAppInFront() async throws {
+        let clock = AdvancingClock()
+        var checks = 0
+        try await Client.awaitHandBack(after: .seconds(5), clock: clock, state: {
+            defer { checks += 1 }
+            return checks == 0 ? self.watchState([2]) : self.watchState([2, 1], front: 1)
+        }, handBack: { _ in })
+        XCTAssertEqual(clock.sleeps.reduce(.zero, +), .milliseconds(1500))
+    }
+
+    private final class DriverCalls: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: [(tool: String, payload: [String: Any])] = []
+        var all: [(tool: String, payload: [String: Any])] { lock.withLock { recorded } }
+        func record(_ tool: String, _ payload: [String: Any]) { lock.withLock { recorded.append((tool, payload)) } }
+    }
+
+    private func handBackDriver(_ calls: DriverCalls) -> DesktopAppConversation {
+        DesktopAppConversation(executable: URL(fileURLWithPath: "/fixture/cua-driver"), runProcess: { _, arguments, _, _, _ in
+            let payload = try JSONSerialization.jsonObject(with: Data(arguments[2].utf8)) as? [String: Any] ?? [:]
+            calls.record(arguments[1], payload)
+            guard arguments[1] == "bring_to_front" else { return .init(status: 0, stdout: "{}") }
+            return .init(status: 0, stdout: #"{"activated":true,"pid":42,"window_id":101,"exact_window_effect":{"verified":true}}"#)
+        }, captureHostWindow: { .init(pid: 42, window: 101) })
+    }
+
+    func testHandBackToMsgblastBringsItsCapturedWindowToTheFront() async throws {
+        let calls = DriverCalls()
+        final class Fallbacks: @unchecked Sendable { var pids: [Int32] = [] }
+        let fallbacks = Fallbacks()
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { fallbacks.pids.append($0) })
+        host.driver = handBackDriver(calls)
+        try await host.whileOpening { await host.handBack(previousPID: 42) }
+        XCTAssertEqual(calls.all.map(\.tool), ["bring_to_front", "end_session"])
+        XCTAssertEqual(calls.all.first?.payload["window_id"] as? Int, 101)
+        XCTAssertEqual(calls.all.first?.payload["pid"] as? Int, 42)
+        XCTAssertEqual(calls.all.first?.payload["session"] as? String, calls.all.last?.payload["session"] as? String)
+        XCTAssertEqual(fallbacks.pids, [])
+    }
+
+    func testHandBackToAnotherAppDoesNotUseTheDriver() async throws {
+        let calls = DriverCalls()
+        final class Fallbacks: @unchecked Sendable { var pids: [Int32] = [] }
+        let fallbacks = Fallbacks()
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { fallbacks.pids.append($0) })
+        host.driver = handBackDriver(calls)
+        try await host.whileOpening { await host.handBack(previousPID: 7) }
+        XCTAssertTrue(calls.all.isEmpty)
+        XCTAssertEqual(fallbacks.pids, [7])
+    }
+
+    func testHandBackHostIsClearedAfterTheOpenReturnsOrThrows() async throws {
+        let host = DesktopHandBackHost(ownPID: 42, fallback: { _ in })
+        host.driver = handBackDriver(DriverCalls())
+        var seen: DesktopAppConversation.Target?
+        try await host.whileOpening { seen = host.target }
+        XCTAssertEqual(seen, .init(pid: 42, window: 101))
+        XCTAssertNil(host.target)
+        struct OpenFailed: Error {}
+        do { try await host.whileOpening { throw OpenFailed() } } catch {}
+        XCTAssertNil(host.target)
+    }
+
     private func handBackResult(_ states: [Client.FrontWatchState]) async throws -> [Int32] {
         final class Box: @unchecked Sendable { var pids: [Int32] = [] }
         let box = Box()
