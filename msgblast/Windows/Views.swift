@@ -269,7 +269,7 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                if model.usesMessages { MessagesAccessBanner(model: model) }
+                StatusBanners(model: model)
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
             }
@@ -325,6 +325,15 @@ struct MainView: View {
             Spacer()
             Button("Reset sample data") { model.resetDemo() }
         }.font(.caption).padding(12).disabled(model.busy)
+    }
+}
+
+/// Banners above the agents workspace.
+private struct StatusBanners: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        if model.usesMessages { MessagesAccessBanner(model: model) }
+        AgentSendsBanner(activity: model.agentSendActivity)
     }
 }
 
@@ -846,7 +855,7 @@ struct AppSettingsView: View {
                             .modifier(SettingsPageVisibility(visible: page == category))
                     }
                     settingsPage(.outsideAgents) {
-                        Section { OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate) }
+                        OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate, activity: model.agentSendActivity)
                     }
                     settingsPage(.remote) {
                         Section { RemoteSettingsView(service: model.remote) }

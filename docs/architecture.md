@@ -27,11 +27,13 @@ source](build-from-source.md) and [Testing](testing.md) for runnable commands.
 | Local CLI execution | `msgblast/Core/LocalPersonalAgent.swift`, `LocalAgentDetection.swift` | Executable/account detection, conversation adapters, restricted reports, and process cleanup |
 | Grok Bot | `msgblast/Core/GrokBot*.swift` | Webhook requests, secure storage, loopback replies, and bundled tunnel process |
 | Remote control | `msgblast/RemoteProtocol/`, `msgblast/Core/Remote/`, `msgblast/Remote/`, `Windows/RemoteSettingsView.swift`, `scripts/remote_client/` | Phone wire protocol framework, pairing, TLS/Tailscale/LAN listener, availability, projection, command execution through AppModel. See [Remote control](remote-control.md) |
-| Outside agents | `msgblast/Core/AgentControl*.swift`, `App/AgentControlHost.swift`, `App/AgentControlListener.swift`, `App/AgentControlTailnetListener.swift`, `App/AgentControlTailnetConnection.swift`, `App/AgentControlCommand.swift`, `Windows/OutsideAgentsSettingsView.swift` under `msgblast/` | Tool catalog and access levels, wait-for-events feed, per-agent approvals, and the owner-only local socket in the build's support folder (off by default). Running the app executable with a command (`msgblast status`, `msgblast mcp`) acts as the `msgblast` command and the stdio MCP server, speaking MCP 2026-07-28 and the older `initialize` handshake. An optional Tailscale HTTP endpoint lets Grok Bot call the same tools |
+| Outside agents | `msgblast/Core/AgentControl*.swift`, `App/AgentControlHost.swift`, `App/AgentControlListener.swift`, `App/AgentControlTailnetListener.swift`, `App/AgentControlTailnetConnection.swift`, `App/AgentControlCommand.swift`, `App/AgentControlSends.swift`, `Windows/OutsideAgentsSettingsView.swift` under `msgblast/` | Tool catalog and access levels, send tools that run through the remote command executor (see [Outside agents](outside-agents.md)), wait-for-events feed, per-agent approvals, and the owner-only local socket in the build's support folder (off by default). Running the app executable with a command (`msgblast status`, `msgblast mcp`) acts as the `msgblast` command and the stdio MCP server, speaking MCP 2026-07-28 and the older `initialize` handshake. An optional Tailscale HTTP endpoint lets Grok Bot call the same tools |
 | Feedback | `Core/DiagnosticReport.swift`, `FeedbackSubmission.swift`, `Windows/FeedbackView.swift` under `msgblast/` | Explicit feedback note, allowed diagnostics, and private intake submission |
 | Download service | `download/` | Signed-feed verification and fixed latest.zip redirect |
 | Feedback handler | `feedback/` | Validated private R2 intake; template integrated into a separate production landing Worker |
 | Build/release tooling | `scripts/`, `.github/workflows/` | Project generation, helpers, previews, installers, validation, and distribution |
+
+Outside agents can open comparisons as an MCP App. The UI resource is `ui://msgblast/comparison` (`text/html;profile=mcp-app`). `msgblast_comparisons_list`, `msgblast_comparison_read`, and `msgblast_blast_wait` each carry it in `_meta.ui.resourceUri`. `msgblast_comparisons_list` is the global entry point, so Claude Desktop, Codex, and ChatGPT can open the side-by-side view from their own navigation. Codex and ChatGPT can also @-mention a comparison: `msgblast_mentions` returns `msgblast://comparison/<id>` links, and reading that URI runs `msgblast_comparison_read`. The view only reads; it cannot send. See [Outside agents](outside-agents.md).
 
 ## Settings organization
 
@@ -86,13 +88,18 @@ Connections use separate transports:
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
 | Remote control (optional) | One paired phone over Tailscale or the LAN, encrypted end to end; the Mac executes every send |
-| Grok Bot over Tailscale | Optional HTTP MCP bound only to this Mac's Tailscale addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`). Off unless Outside agents and the Tailscale toggle are both on |
+| Grok Bot over Tailscale | Optional HTTP MCP bound only to this Mac's Tailscale addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`) and to `127.0.0.1` for Tailscale Serve's private `https://`. Off unless Outside agents and the Tailscale toggle are both on |
 
 Grok Bot can join the tailnet and call remote MCP over HTTP. When both toggles are
 on, msgblast listens on each Tailscale address on `utun` interfaces that are up:
 IPv4 `100.64.0.0/10` and IPv6 `fd7a:115c:a1e0::/48`. Each listener's required local
-endpoint is that address. It never binds a wildcard, loopback, or Funnel, and it
-rebinds when the addresses change. The server URL is
+endpoint is that address. It also binds `127.0.0.1` on the same port as the backend
+for Tailscale Serve, and takes a request there only when Serve's `X-Forwarded-For`
+names a tailnet address in its last entry, the one Serve appends. It never binds a wildcard
+or Funnel, and it rebinds when the addresses change. Grok Bot needs `https://`, so
+once `tailscale serve status --json` shows a site proxying `/` to that backend with no
+Funnel, and certificates are on, the server URL is Serve's
+`https://<MagicDNS name>:47443/mcp`. Otherwise it is
 `http://<MagicDNS name>:<port>/mcp` (default port 47480). The name is `Self.DNSName`
 from `tailscale status --json`, without the trailing dot. If the name is missing,
 the URL uses this Mac's `100.x` address and Settings says so. The token travels in

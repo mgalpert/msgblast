@@ -90,7 +90,7 @@ final class AgentControlMCPTests: XCTestCase {
         let error = try XCTUnwrap(old["error"] as? [String: Any])
         XCTAssertEqual(error["code"] as? Int, -32022)
         XCTAssertEqual((error["data"] as? [String: Any])?["requested"] as? String, "1900-01-01")
-        let unknown = try await send(server, #"{"jsonrpc":"2.0","id":2,"method":"resources/list"}"#)
+        let unknown = try await send(server, #"{"jsonrpc":"2.0","id":2,"method":"prompts/list"}"#)
         XCTAssertEqual((unknown["error"] as? [String: Any])?["code"] as? Int, -32601)
         let garbage = try await send(server, "{")
         XCTAssertEqual((garbage["error"] as? [String: Any])?["code"] as? Int, -32700)

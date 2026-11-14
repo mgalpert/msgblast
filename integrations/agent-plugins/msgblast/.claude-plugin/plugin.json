@@ -1,0 +1,10 @@
+{
+  "name": "msgblast",
+  "description": "Message your msgblast agents, read their replies and comparisons on this Mac, and show comparisons side by side.",
+  "version": "0.1.0",
+  "author": {
+    "name": "msgblast contributors"
+  },
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/"
+}

@@ -2,7 +2,7 @@ import Foundation
 import Network
 import msgblastCore
 
-/// HTTP MCP on this Mac's Tailscale addresses, for Grok Bot and any other MCP client on the tailnet, each with its own key. Nothing listens unless Outside agents is on and the person turns this on.
+/// HTTP MCP on this Mac's Tailscale addresses, for Grok Bot and any other MCP client on the tailnet, each with its own key. Nothing listens unless Outside agents is on and this is on; it turns on with Outside agents the first time when this Mac is on a tailnet.
 @MainActor final class AgentControlTailnetListener: ObservableObject {
     @Published private var store: AgentControlTailnetStore
     /// Keys shown once, by client, while msgblast runs. Only hashes are saved.
@@ -11,10 +11,16 @@ import msgblastCore
     @Published private var addresses: [String] = []
     @Published private var magicName: String?
     @Published private var httpsEnabled = false
+    @Published private var serve: AgentControlTailnetServe.State?
     @Published private var grokBotPeer = false
+    @Published private var firewall: AgentControlFirewall.State?
     @Published private(set) var lastCalled: Date?
+    /// Set when an agent sent a key msgblast doesn't know since the last accepted Grok Bot call or new key.
+    @Published private(set) var wrongKey = false
 
     private let file: URL
+    /// False until the person has saved a Tailscale choice, so the first switch-on can default it on.
+    private var chosen: Bool
     private let gate: AgentControlGate
     private weak var host: AppModel?
     private var localOn = false
@@ -27,6 +33,7 @@ import msgblastCore
     private var lastStatusAt: Date?
     private var statusTask: Task<Void, Never>?
     private var statusQueued = false
+    private var statusFailures = 0
 
     init(directory: URL, gate: AgentControlGate, host: AppModel?) {
         let location = directory.appendingPathComponent(AgentControlTailnetStore.fileName)
@@ -35,6 +42,7 @@ import msgblastCore
         self.host = host
         let loaded = AgentControlTailnetStore.load(location)
         store = loaded
+        chosen = FileManager.default.fileExists(atPath: location.path)
         if loaded.loadFailed { error = "Saved Tailscale settings could not be read, so agents over Tailscale stay off." }
     }
 
@@ -56,26 +64,41 @@ import msgblastCore
                 store.enabled = false
             }
             persist(previous: previous, previousPlain: previousPlain) {
-                if newValue { listen() } else { stopSockets(); error = nil }
+                if newValue { listen() } else { stopSockets(); error = nil; firewall = nil }
             }
         }
     }
 
-    /// `http://<MagicDNS>:<port>/mcp`. The first 100.x address when the name is missing.
+    /// Tailscale Serve's private `https://<MagicDNS>:47443/mcp` once it points at msgblast. Otherwise
+    /// `http://<MagicDNS>:<port>/mcp`, or the first 100.x address when the name is missing.
     var serverURL: String? {
         guard store.enabled, !addresses.isEmpty else { return nil }
+        if httpsEnabled, case .ready(let url)? = serve { return url }
         if let name = magicName, !name.isEmpty { return hostURL(name) }
         guard let address = addresses.first(where: { !$0.contains(":") }) else { return nil }
         return hostURL(address)
     }
 
     /// True when the URL had to use a 100.x address because MagicDNS had no name.
-    var showsAddressFallback: Bool { serverURL != nil && (magicName ?? "").isEmpty }
+    var showsAddressFallback: Bool { serverURL?.hasPrefix("http://") == true && (magicName ?? "").isEmpty }
+
+    /// The Tailscale Serve command, while certificates are on and Serve doesn't point at msgblast yet.
+    var serveCommand: String? {
+        guard enabled, httpsEnabled, serve != .funnel else { return nil }
+        if case .ready? = serve { return nil }
+        return AgentControlTailnetServe.command(backendPort: store.port)
+    }
 
     /// Every agent with a Tailscale key, by name.
     var clients: [String] { store.hashes.keys.sorted() }
 
     func authorizationHeader(for client: String) -> String? { keys[client].map { "Authorization: Bearer \($0)" } }
+
+    /// True once a Grok Bot device shows up on this tailnet.
+    var grokBotOnTailnet: Bool { grokBotPeer }
+
+    /// The header value alone, for forms with separate name and value boxes.
+    func authorizationValue(for client: String) -> String? { keys[client].map { "Bearer \($0)" } }
 
     /// Path token, only while the plaintext is still in memory.
     func pathURL(for client: String) -> String? {
@@ -89,10 +112,15 @@ import msgblastCore
         return AgentControlTailnetSetup.text(url: serverURL, key: key, client: client)
     }
 
-    /// Tailscale and certificates; the Grok Bot line only while Grok Bot has a key.
+    /// Tailscale, the firewall when it is on, and certificates; the Grok Bot line only while Grok Bot has a key.
     var readiness: [String] {
-        let lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
-        return store.hashes[AgentControlTailnet.grokBotClient] == nil ? Array(lines.prefix(2)) : lines
+        var lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, serve: serve, backendPort: store.port,
+                                                   grokBotPeer: grokBotPeer, lastCalled: lastCalled)
+        if store.hashes[AgentControlTailnet.grokBotClient] == nil { lines = Array(lines.prefix(2)) }
+        if enabled, let firewall, let line = AgentControlFirewall.line(firewall) {
+            lines.insert(line, at: 1)
+        }
+        return lines
     }
 
     /// Adds an agent with its own key. Returns a message when the name can't be used.
@@ -112,7 +140,7 @@ import msgblastCore
         let previousPlain = keys
         guard let issued = store.issue(client) else { return }
         keys[client] = issued
-        if client == AgentControlTailnet.grokBotClient { lastCalled = nil }
+        if client == AgentControlTailnet.grokBotClient { lastCalled = nil; wrongKey = false }
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -123,7 +151,7 @@ import msgblastCore
         let previousPlain = keys
         store.revoke(client)
         keys[client] = nil
-        if client == AgentControlTailnet.grokBotClient { lastCalled = nil }
+        if client == AgentControlTailnet.grokBotClient { lastCalled = nil; wrongKey = false }
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -134,9 +162,16 @@ import msgblastCore
     }
 
     /// The local Outside agents socket turned on or off. This listens only while that is on.
-    func noteLocal(_ on: Bool) {
+    /// The first time it turns on, Tailscale access turns on too when this Mac is on a tailnet.
+    /// `byUser` is true only when the person switched outside agents on just now. Tailscale turns on with it
+    /// then, never at launch, so an upgrade with outside agents already on doesn't start listening on the tailnet.
+    func noteLocal(_ on: Bool, byUser: Bool = false) {
         localOn = on
         guard !store.loadFailed else { return }
+        if on, byUser, !chosen, !store.enabled, !AgentControlTailnet.tailnetAddresses().isEmpty {
+            enabled = true
+            return
+        }
         if on, store.enabled { listen() } else { stopSockets() }
     }
 
@@ -146,7 +181,7 @@ import msgblastCore
     }
 
     private func persist(previous: AgentControlTailnetStore, previousPlain: [String: String], then: () -> Void) {
-        do { try store.save(file) } catch {
+        do { try store.save(file); chosen = true } catch {
             store = previous
             keys = previousPlain
             self.error = error.localizedDescription
@@ -186,7 +221,7 @@ import msgblastCore
             bound = []
             return
         }
-        if found == bound, listeners.count == found.count, error == nil { return }
+        if found == bound, listeners.count == found.count + 1, error == nil { return }
         cancelListeners()
         // A connection on an address this Mac no longer has would never be closed otherwise.
         if found != bound { closeLinks() }
@@ -194,16 +229,18 @@ import msgblastCore
             error = "Could not listen on port \(store.port)."
             return
         }
-        let failure = bind(found, port: port)
+        // Loopback is only for Tailscale Serve, which forwards private https:// requests from the tailnet.
+        let targets = found + [AgentControlTailnetServe.loopback]
+        let failure = bind(targets, port: port)
         bound = found
-        if listeners.count == found.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
+        if listeners.count == targets.count { error = nil } else { self.error = failure ?? "Could not listen on the Tailscale address." }
     }
 
-    /// Starts a listener on each Tailscale address. Returns the last error, if any.
+    /// Starts a listener on each Tailscale address and on loopback. Returns the last error, if any.
     private func bind(_ found: [String], port: NWEndpoint.Port) -> String? {
         var failure: String?
         for address in found {
-            guard AgentControlTailnet.isTailnetPeer(address) else { continue }
+            guard AgentControlTailnet.isTailnetPeer(address) || address == AgentControlTailnetServe.loopback else { continue }
             do {
                 let parameters = NWParameters.tcp
                 parameters.allowLocalEndpointReuse = true
@@ -253,7 +290,8 @@ import msgblastCore
 
     private func accept(_ connection: NWConnection) {
         let peer = AgentControlTailnetConnection.peer(connection)
-        guard links.count < Self.maximumLinks, AgentControlTailnet.isTailnetPeer(peer) else { connection.cancel(); return }
+        let allowed = AgentControlTailnet.isTailnetPeer(peer) || peer == AgentControlTailnetServe.loopback
+        guard links.count < Self.maximumLinks, allowed else { connection.cancel(); return }
         let link = AgentControlTailnetLink(connection: connection, peer: peer, owner: self)
         links.append(link)
         link.start()
@@ -263,9 +301,14 @@ import msgblastCore
 
     func respond(_ request: AgentControlHTTPRequest, peer: String) async -> AgentControlHTTPResponse {
         guard let endpoint else { return AgentControlHTTPResponse(status: 503, headers: [], body: Data()) }
-        let response = await endpoint.handle(request, peer: peer)
+        // Through Serve the socket peer is loopback; the caller is the tailnet address Serve forwarded for.
+        let caller = peer == AgentControlTailnetServe.loopback ? AgentControlTailnetServe.forwardedPeer(request.headers) ?? "" : peer
+        let response = await endpoint.handle(request, peer: caller)
         // The readiness line is about Grok Bot, so only its key counts.
         if let when = await endpoint.lastAuthorizedByClient[AgentControlTailnet.grokBotClient], when != lastCalled { lastCalled = when }
+        let wrong = await endpoint.lastWrongKey
+        let stale = wrong.map { $0 > (lastCalled ?? .distantPast) } ?? false
+        if stale != wrongKey { wrongKey = stale }
         return response
     }
 
@@ -275,16 +318,22 @@ import msgblastCore
         return AgentControlHTTPEndpoint(hashes: store.hashes, version: version) { try await bridge.exchange($0) }
     }
 
+    /// Runs one request. A request still waiting when the endpoint is switched off or rebuilt for a
+    /// new key runs nothing.
     func reply(_ line: Data) async throws -> Data {
-        guard let host else { throw CocoaError(.fileReadNoSuchFile) }
-        return await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0, overTailscale: true) })
+        guard let host, let current = endpoint else { throw CocoaError(.fileReadNoSuchFile) }
+        return await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0, overTailscale: true) },
+                                              isLive: { endpoint === current })
     }
 
     /// Status when the card appears and when the network changes. At most one fetch every 30 seconds.
+    /// A Tailscale toggle that is on with no firewall reading yet fetches immediately. The firewall
+    /// queries run only then, and they are read-only.
     func refreshStatus() {
         if statusTask != nil { statusQueued = true; return }
         let now = Date()
-        if let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
+        let firewallPending = enabled && firewall == nil
+        if !firewallPending, let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
             statusQueued = true
             let wait = 30 - now.timeIntervalSince(lastStatusAt)
             statusTask = Task { @MainActor [weak self] in
@@ -298,12 +347,28 @@ import msgblastCore
             return
         }
         lastStatusAt = now
+        let includeFirewall = enabled
+        let appPath = Bundle.main.bundlePath
+        let backendPort = store.port
         statusTask = Task { @MainActor [weak self] in
-            let parsed = await Task.detached(priority: .utility) { AgentControlTailnetDNS.fetch() }.value
+            let parsed = await Task.detached(priority: .utility) {
+                (AgentControlTailnetDNS.fetch(), includeFirewall ? AgentControlTailnetDNS.firewall(appPath: appPath) : nil,
+                 AgentControlTailnetDNS.serve(backendPort: backendPort))
+            }.value
             guard let self, !Task.isCancelled else { return }
-            self.magicName = parsed?.magicName
-            self.httpsEnabled = parsed?.httpsEnabled ?? false
-            self.grokBotPeer = parsed?.grokBotPeer ?? false
+            // A failed read (Tailscale busy or updating) keeps the last answer and asks again soon,
+            // instead of reporting Tailscale as disconnected.
+            if let status = parsed.0 {
+                self.magicName = status.magicName
+                self.httpsEnabled = status.httpsEnabled
+                self.grokBotPeer = status.grokBotPeer
+                self.statusFailures = 0
+            } else if self.statusFailures < 3 {
+                self.statusFailures += 1
+                self.statusQueued = true
+            }
+            if let serve = parsed.2 { self.serve = serve }
+            if includeFirewall, self.enabled { self.firewall = parsed.1 }
             self.statusTask = nil
             let queued = self.statusQueued
             self.statusQueued = false
