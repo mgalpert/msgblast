@@ -139,7 +139,7 @@ public actor AgentControlMCPServer {
             let access = tool["access"] as? String ?? ""
             var description = tool["description"] as? String ?? ""
             if tool["allowed"] as? Bool != true {
-                description += " Needs \(access) access. The person can change this in msgblast → Settings → Outside agents."
+                description += " Needs \(access). The person can change this in msgblast → Settings → Outside agents."
             }
             var listed: [String: Any] = ["name": tool["name"] ?? "", "title": tool["title"] ?? "", "description": description,
                     "inputSchema": tool["inputSchema"] ?? ["type": "object"],

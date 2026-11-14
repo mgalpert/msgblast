@@ -52,7 +52,7 @@ final class AgentControlMCPTests: XCTestCase {
         XCTAssertEqual(tools.map { $0["name"] as? String }, ["msgblast_status", "msgblast_send"])
         XCTAssertEqual((tools[0]["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool, true)
         XCTAssertEqual((tools[1]["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool, false)
-        XCTAssertTrue((tools[1]["description"] as? String ?? "").contains("Needs Full access"))
+        XCTAssertTrue((tools[1]["description"] as? String ?? "").contains("Needs Full access. The person can change this"))
         XCTAssertNil((list["result"] as? [String: Any])?["resultType"])
         let request = try await forwarded(socket)
         XCTAssertEqual(request["client"] as? String, "Claude Code")
