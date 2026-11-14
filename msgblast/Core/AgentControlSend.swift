@@ -100,6 +100,9 @@ public enum AgentControlSend {
 
     private static func sendable(_ id: String) throws -> String {
         guard let remote = remoteID(id) else {
+            if id.hasPrefix("featured:") {
+                throw AgentControlError.invalidArguments("\(id) isn't connected to a Messages contact yet. Connect it in msgblast, then use its messages: id from msgblast_agents_list.")
+            }
             throw AgentControlError.invalidArguments("\(id) is not an agent msgblast can send to. Use ids from msgblast_agents_list.")
         }
         return remote
