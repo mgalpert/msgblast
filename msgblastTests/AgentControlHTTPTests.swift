@@ -112,7 +112,7 @@ final class AgentControlHTTPTests: XCTestCase {
         let endpoint = endpoint("secret-token", socket)
         let denied = await endpoint.handle(try request("POST", "/mcp", "{}"), peer: "100.64.0.1")
         XCTAssertEqual(denied.status, 401)
-        XCTAssertEqual(header(denied, "WWW-Authenticate"), "Bearer")
+        XCTAssertEqual(header(denied, "WWW-Authenticate"), AgentControlHTTPEndpoint.challenge)
         XCTAssertTrue(denied.body.isEmpty)
         let elsewhere = await endpoint.handle(try request("POST", "/status", "{}"), peer: "100.64.0.1")
         XCTAssertEqual(elsewhere.status, 404)
@@ -144,8 +144,10 @@ final class AgentControlHTTPTests: XCTestCase {
         XCTAssertTrue(bearerWins.body.isEmpty)
         XCTAssertFalse(String(decoding: bearerWins.encoded(), as: UTF8.self).contains("nope"))
         XCTAssertFalse(String(decoding: bearerWins.encoded(), as: UTF8.self).contains("secret-token"))
+        let pasted = await endpoint.handle(try request("POST", "/mcp", toolsList, headers: ["Authorization": "Authorization: Bearer secret-token"]), peer: "100.64.0.1")
+        XCTAssertEqual(pasted.status, 200)
         let calls = await socket.lines
-        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls.count, 3)
     }
 
     func testWrongTokenDoesNotAskForApproval() async throws {
@@ -153,7 +155,8 @@ final class AgentControlHTTPTests: XCTestCase {
         let endpoint = endpoint("secret-token", socket)
         let wrong = await endpoint.handle(try request("POST", "/mcp/nope", toolsList), peer: "100.64.0.1")
         XCTAssertEqual(wrong.status, 401)
-        XCTAssertEqual(header(wrong, "WWW-Authenticate"), "Bearer")
+        XCTAssertEqual(header(wrong, "WWW-Authenticate"), AgentControlHTTPEndpoint.challenge)
+        XCTAssertTrue(AgentControlHTTPEndpoint.challenge.hasPrefix("Bearer error=\"invalid_token\""))
         XCTAssertTrue(wrong.body.isEmpty)
         XCTAssertFalse(String(decoding: wrong.encoded(), as: UTF8.self).contains("nope"))
         XCTAssertFalse(String(decoding: wrong.encoded(), as: UTF8.self).contains("secret-token"))

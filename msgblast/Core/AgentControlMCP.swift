@@ -7,7 +7,15 @@ public actor AgentControlMCPServer {
     public static let modernVersion = "2026-07-28"
     /// 2025-03-26 is left out on purpose: it requires JSON-RPC batches, which msgblast refuses.
     public static let legacyVersions = ["2025-11-25", "2025-06-18"]
-    static let instructions = "msgblast sends one prompt to many AI agents and Messages contacts at once and keeps their replies side by side as a comparison. Use msgblast_agents_list to see the agents, msgblast_comparisons_list and msgblast_comparison_read to read comparisons, msgblast_mentions to search them for @-mentions, and msgblast_blast_wait to wait for replies instead of polling. Each agent gets the access level the person chose in msgblast."
+    static let instructions = """
+    msgblast sends one prompt to many AI agents and Messages contacts at once and keeps their replies side by side as a comparison.
+    1. Call msgblast_agents_list first. Pass its ids, never names, to the other tools.
+    2. To message one agent, use msgblast_agent_message. To ask several at once, use msgblast_blast_start; msgblast_blast_follow_up continues that comparison.
+    3. Then call msgblast_blast_wait with the comparison id and the result's after, instead of polling, and msgblast_comparison_read for the full replies.
+    Give every send a requestId. After a timeout, ask msgblast_request_status before sending again, so nothing goes out twice.
+    Messages contacts are real people: send to one only when the person asked you to, with the text they approved.
+    Each agent gets the access level the person chose in msgblast. Read only can list and read but not send; a send then fails with needsAccess, so tell the person to switch you to Full access in msgblast Settings, Outside agents.
+    """
     static let unavailable = "msgblast is not running, or Settings → Outside agents is off."
 
     private struct Failure: Error { let code: Int, message: String; var requested: String? = nil }
