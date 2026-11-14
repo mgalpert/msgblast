@@ -1,0 +1,42 @@
+{
+  "pr": 124,
+  "reviewed_head": "70a4940c0a0893cd435000d4a96fbb0c5cd10736",
+  "base": "39d1622e5f778ddcba89f59cc3c81fe9ccc23a6a",
+  "previous_reviewed_heads": [
+    "2bc6973ee3e70839bb11d77efe0302172a7c8161",
+    "b99f86fdac9ae89e4bae8ac179a1999e7b4a2ebf",
+    "37bc75c2c6338e00115a61305d84a11bb4745885",
+    "aac0ac4aff33c0ec00690a53ce5d16fcfb6b66db",
+    "b53aaaa340cc5ffe4f870b28c9629bac48095647",
+    "9b2abe7da1406e1775f2cceea6e0e95ace093e1e",
+    "a62bcc268a4b1cdff8fb549c462e58237d0220c5"
+  ],
+  "previous_receipt": null,
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+  "scope": "Delta a62bcc2..70a4940 on the PR's first-parent line: 93cdeef merge of main (#133), 3ce2a58 merge of main 72c6604 (#134), 5d18706 fix for the crash on a second keep-alive request over Tailscale (AgentControlHTTPRequest.parse rebases a Data slice to zero-based storage, plus testParseAKeepAliveBufferAfterRemoveFirst), 807febe merge of main (#132), 70a4940 merge of main 39d1622 (#123). Also a secrets and privacy scan of the whole PR diff 39d1622..70a4940. Everything up to a62bcc2 was reviewed earlier by the same model family: full review of the MCP App, mentions and installs (2bc6973), merge-only review showing #116/#117 unchanged from their reviewed heads (2bc6973), and delta reviews at b99f86f, 37bc75c, aac0ac4, b53aaaa, 9b2abe7 and a62bcc2.",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Core/AgentControlHTTP.swift:23",
+      "text": "The Data(buffer) copy runs only when startIndex != 0 and is bounded by the 16 KiB header and 1 MiB body limits; drain() re-parses per request, so heavy pipelining repeats a capped copy. Acceptable, no change."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblastTests/AgentControlHTTPTests.swift:65-76",
+      "text": "The test relies on removeFirst leaving a non-zero startIndex (asserted) and on Data(slice) rebasing to 0. The reviewer could not run Swift; CI native at 70a4940 and the Mac suite at 70a4940 both ran the test and passed."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Remote/RemoteService.swift:126",
+      "text": "#134 makes pairing a phone set allowMessagesSends to true. Agent sends already force it on (msgblast/App/AgentControlSends.swift:25) and the docs say the phone setting does not apply to agents, so nothing conflicts."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Core/DesktopAppConversation.swift:18",
+      "text": "#123 drops the foreground lease for ChatGPT and Dots. Agent sends go through RemoteCommandExecutor, AppRemoteHost and WebAgentSession unchanged and never relied on foregrounding."
+    }
+  ],
+  "notes": "Each merge's tree equals git merge-tree --write-tree of its parents (93cdeef 5bc9a783, 3ce2a58 75561067, 807febe ccfb4319, 70a4940 f4cf24e7): no hand-resolved content and nothing from main reverted. PR diff e5056e3..a62bcc2 vs 39d1622..70a4940: the 41 files of the earlier diff all have zero line differences; the new diff adds only AgentControlHTTP.swift and AgentControlHTTPTests.swift, from 5d18706 (+2 source lines, +13 test lines), for 43 files. parse: every index use is zero-based after the copy; consumed is a count, so the caller's removeFirst(consumed) stays right; the only Data buffer that gets removeFirst is AgentControlTailnetLink's. No API the PR calls (RemoteCommandExecutor(host:), AppRemoteHost settings, AvailabilityModel, remoteAvailabilityInputs) changed on main. Secrets scan of 2,118 added lines: no keys, tokens, tailnet names, IPs, /Users paths, emails or account names. Live run at this exact head in the test VM (two msg-approved ChatGPT prompts) is the PR's Evidence-SHA 70a4940. Size is about 2,120 lines against the 1,200 limit and needs msg's Size-exception review at this head.",
+  "tests": "CI Validate msgblast at 70a4940 (run 43525838060): native, linux and mobile passed; swift-complexity and evidence passed. msg's Mac at 70a4940: full unit suite 1,075 run, 0 failed, 1 skipped; AgentControl suites 92 tests, 0 failures. Python guardrail suite and context budget pass locally."
+}
