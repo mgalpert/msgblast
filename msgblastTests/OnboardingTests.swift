@@ -422,9 +422,11 @@ final class OnboardingTests: XCTestCase {
     func testWebsiteSelectionOffersBrowserImportBeforeProviderSignIn() {
         var onboarding = OnboardingState()
         onboarding.toggle(.chatgpt)
+        onboarding.toggle(.alexaShopping)
         onboarding.toggle(.fo)
         onboarding.begin()
         XCTAssertEqual(onboarding.stage.rawValue, "importing")
+        XCTAssertTrue(onboarding.pendingWebProviders.contains(.alexaShopping))
         XCTAssertTrue(onboarding.completed.isEmpty, "Offering import must not claim an account is connected")
     }
 

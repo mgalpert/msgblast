@@ -72,3 +72,24 @@ The Dots demo uses synthetic SVG and CSS artwork and local conversation replies.
 `WebAgentIcons/instinct.jpg` is the updated contact photo shared by Instinct, exported from the user's Contacts at their request on October 9, 2026. The JPEG is preserved unchanged (SHA-256: `c8b5cc54b618246582c37003b52d649e139200963ffb4c241d30965a7e25a1e4`). Only the artwork is bundled; the local contact export, addresses, and identifiers are excluded.
 
 `fo.jpg` and `szn.jpg` remain unchanged copies of the user's saved contact artwork retained in `docs/images/readme/agent-icons/`. Bundled artwork identifies choices before Contacts access. During Messages setup, a selected contact's own picture takes precedence, with bundled artwork as the fallback.
+
+## Alexa Shopping adaptation
+
+`WebAgentIcons/alexaShopping.png` is a user-requested ImageGen adaptation of the
+Alexa for shopping wordmark supplied in the user's screenshot. It stacks cyan-to-blue gradient
+“alexa” above charcoal “for shopping” on white, with padding for the app's existing
+circular avatar mask. It is custom rearranged artwork, not an unmodified official
+logo. Amazon retains its names and trademark rights.
+
+Generated with the built-in ImageGen tool using this prompt:
+
+> Rearrange the supplied Alexa for shopping logo into a square profile avatar.
+> Stack large blue handwritten lowercase “alexa” above smaller charcoal gray
+> “for shopping”. Preserve the reference letterforms and colors, optically center
+> the group, and leave circular-crop safe padding. Use a solid white background,
+> crisp flat typography, no border, shadow, extra symbol, or watermark.
+
+The final color refinement uses the gradient endpoints from Amazon's live
+[Alexa header SVG](https://m.media-amazon.com/images/G/01/Rufus_Desktop/Alexa_For_Shopping_Header.svg):
+`#0ABEFF` at the lower left and `#004EFF` at the upper right. ImageGen was
+instructed to change only the “alexa” fill and preserve the layout and gray tagline.

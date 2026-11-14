@@ -242,10 +242,7 @@ struct MainView: View {
                 }
             }.listStyle(.sidebar).navigationTitle("msgblast")
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 8) {
-                        UpdateSidebar(updater: updater)
-                        WhatsNewSidebar()
-                    }.padding(12)
+                    SidebarFooter(service: model.remote, updater: updater).padding(12)
                         .background(Color(nsColor: .windowBackgroundColor))
                         .overlay(alignment: .top) { Divider() }
                 }
@@ -269,7 +266,7 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                if model.usesMessages { MessagesAccessBanner(model: model) }
+                StatusBanners(model: model)
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
             }
@@ -328,17 +325,31 @@ struct MainView: View {
     }
 }
 
+/// Banners above the agents workspace.
+private struct StatusBanners: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        if model.usesMessages { MessagesAccessBanner(model: model) }
+        AgentSendsBanner(activity: model.agentSendActivity)
+    }
+}
+
 private struct MessagesAccessBanner: View {
     @ObservedObject var model: AppModel
     @ObservedObject var guide: MessagesAccessGuide
     init(model: AppModel) { self.model = model; guide = model.accessGuide }
     var body: some View {
-        if !model.databaseAvailable || guide.flow.isActive || guide.flow.stage == .verified {
-            MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable).padding(18).help(model.databaseStatus)
-            if model.permissionGuidePreview {
-                Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
+        Group {
+            if !model.databaseAvailable {
+                MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: false).padding(18).help(model.databaseStatus)
+                if model.permissionGuidePreview {
+                    Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
+        // Like Discover: once access is granted the row goes away, so clear the finished handoff.
+        .onChange(of: guide.flow.stage) { _, stage in if stage == .verified { guide.dismissCompletion() } }
+        .onAppear { if model.databaseAvailable && guide.flow.stage == .verified { guide.dismissCompletion() } }
     }
 }
 
@@ -363,11 +374,13 @@ struct ConversationView: View {
                 }
                 if !model.databaseAvailable { Text(model.databaseStatus).font(.caption).foregroundStyle(.orange).padding(12) }
                 if let headerControls {
-                    TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
+                    TranscriptView(model: model, comparison: comparison, member: member)
                         .contentShape(Rectangle())
-                        .simultaneousGesture(TapGesture().onEnded { if !model.busy { headerControls.selectConversation() } })
+                        .simultaneousGesture(TapGesture().onEnded {
+                            if comparison.endedAt == nil, !model.busy { headerControls.selectConversation() }
+                        })
                 } else {
-                    TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
+                    TranscriptView(model: model, comparison: comparison, member: member)
                 }
                 MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || (model.webBroadcastBusy && !model.webBroadcastInputsFinished) || member.anchor == nil) {
                     Task { await model.followUp(comparisonID, only: memberID) }
@@ -413,6 +426,7 @@ struct TranscriptView: View {
                                     ForEach(message.attachments) { file in AttachmentView(attachment: file) }
                                     if let payload = message.businessPayload {
                                         BusinessChoicesView(model: model, message: message, member: member, payload: payload)
+                                            .disabled(comparison.endedAt != nil)
                                     } else if let preview = message.linkPreview {
                                         if !preview.remainingText.isEmpty {
                                             textBubble(message, text: preview.remainingText, tail: false)
@@ -441,6 +455,9 @@ struct TranscriptView: View {
                     }
                 }.padding(.horizontal, 20).padding(.bottom, 10)
                 Color.clear.frame(height: 1).id(bottomID)
+                }
+                .background(alignment: .topLeading) {
+                    if comparison.endedAt != nil { TranscriptScroller().frame(width: 0, height: 0) }
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in
                     if followingBottom { proxy.scrollTo(bottomID, anchor: .bottom) }
@@ -481,6 +498,20 @@ struct TranscriptView: View {
         if Calendar.current.isDateInToday(date) { return "Today \(time)" }
         if Calendar.current.isDateInYesterday(date) { return "Yesterday \(time)" }
         return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) + " at " + time
+    }
+}
+
+private struct TranscriptScroller: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ScrollerAnchor() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class ScrollerAnchor: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil, let scrollView = enclosingScrollView else { return }
+            scrollView.scrollerStyle = .legacy
+            scrollView.autohidesScrollers = true
+        }
     }
 }
 
@@ -826,7 +857,7 @@ struct AppSettingsView: View {
                             .modifier(SettingsPageVisibility(visible: page == category))
                     }
                     settingsPage(.outsideAgents) {
-                        Section { OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate) }
+                        OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate, activity: model.agentSendActivity)
                     }
                     settingsPage(.remote) {
                         Section { RemoteSettingsView(service: model.remote) }

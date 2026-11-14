@@ -60,6 +60,7 @@ enum DesktopAppWorkflow {
     }
 
     static func transient(_ error: Error) -> Bool {
+        if case ChatGPTObservationError.webContentUnavailable = error { return false }
         if error is MuseObservationError || error is DesktopAccessibilityError || error is ClaudeObservationError || error is ChatGPTObservationError || error is GeminiObservationError || error is WabiObservationError { return true }
         if case DesktopAppError.incompleteSnapshot = error { return true }
         return false
@@ -70,7 +71,7 @@ enum DesktopAppWorkflow {
                                            check: () async throws -> Value) async throws -> Value {
         do { return try await check() }
         catch {
-            guard transient(error), let driver,
+            guard transient(error), app.requiresForegroundSubmission, let driver,
                   let focus = try await driver.beginForeground(app, session: "msgblast-connect-\(UUID())") else { throw error }
             let result: Value
             do { result = try await check() }
@@ -83,12 +84,12 @@ enum DesktopAppWorkflow {
         }
     }
 
-    /// Navigation needed for a send runs under the same foreground ownership
-    /// as input, so a background click cannot silently leave the old chat open.
+    /// Navigation takes the foreground only for apps whose input does.
     static func preparation<Value: Sendable>(_ app: DesktopAppProvider, driver: DesktopAppConversation?,
                                             isolation: isolated (any Actor)? = #isolation,
                                             prepare: () async throws -> Value) async throws -> Value {
-        guard let driver, let focus = try await driver.beginForeground(app, session: "msgblast-prepare-\(UUID())") else {
+        guard let driver, app.requiresForegroundSubmission,
+              let focus = try await driver.beginForeground(app, session: "msgblast-prepare-\(UUID())") else {
             return try await prepare()
         }
         let value: Value
