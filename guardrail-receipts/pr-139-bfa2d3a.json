@@ -1,0 +1,51 @@
+{
+  "pr": 139,
+  "reviewed_head": "bfa2d3a848eda7f161b392ae8300c613b017c26c",
+  "base": "7a3664e3098609db4e3f2f2dc55b6a8eeda0effc",
+  "previous_reviewed_heads": [
+    "9af40eb053662fb11a98b37aa09eb65daa63e251"
+  ],
+  "previous_receipt": null,
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+  "scope": "Full review of git diff 7a3664e..9af40eb (all Swift in App, Core, Windows and tests; telemetry/worker.mjs and README; docs; both plugins), including a secrets and privacy scan of the whole diff. Delta review of 9af40eb..bfa2d3a (InstallRow null stdin and 30 s timeout, neutral old-key wording, docs on X-Forwarded-For and the Tailscale default-on), plus the featured-id dedupe in AgentGridModel. Swift not compiled by the reviewer; Linux CI passed, native CI runs on the PR.",
+  "verdict": "approve",
+  "findings": [
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Windows/OutsideAgentsSettingsView.swift (InstallRow.install)",
+      "text": "Null stdin and a 30 s terminate stop the Add row hanging; a terminated run shows the generic 'Couldn't add msgblast' message. Process captured in asyncAfter may warn under strict concurrency; native CI shows it."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Core/AgentControlHTTP.swift (lastWrongKey)",
+      "text": "The wrong-key flag is global, so any tailnet peer can trigger the neutral 'An agent sent an old key' line. UI only, not a security issue."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/App/AgentControlTailnetListener.swift (noteLocal byUser)",
+      "text": "First user switch-on of outside agents also turns on Tailscale listening when signed in to Tailscale; keys and approvals still required; now disclosed in docs/outside-agents.md."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/App/AgentControlTailnetListener.swift (respond)",
+      "text": "Loopback accepts only when the last X-Forwarded-For entry (the one Serve appends) is a tailnet address; a local process could forge it but still needs a valid key and approval. No App-layer test for this path; forwardedPeer is tested."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/App/AgentControlHost.swift (controlID)",
+      "text": "featured: ids map to messages:<uuid> only for contacts in state.agents; confirmed no duplicate entries in agents_list. No new send capability."
+    },
+    {
+      "severity": "NOTE",
+      "file": "telemetry/worker.mjs",
+      "text": "Deploy the worker before shipping the app: outside* keys fail validation on the old worker and the whole batch is dropped."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Windows/OutsideAgentsSettingsView.swift (setUpGrokBot)",
+      "text": "After a restart, Set Up rotates the Grok key if Grok was added but never approved, invalidating that unapproved connector. Acceptable."
+    }
+  ],
+  "privacy_scan": "clean: only example.ts.net, 100.101.102.103-style samples, RFC1918/1.2.3.4 test inputs and fixed ports; no usernames, tailnet names, keys or secrets",
+  "generated_at": "2026-11-14T04:55:00Z"
+}
