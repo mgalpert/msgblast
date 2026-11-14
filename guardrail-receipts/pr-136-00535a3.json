@@ -1,0 +1,48 @@
+{
+  "pr": 136,
+  "reviewed_head": "00535a3ce4f490f0a8bef287d2f296b3f3906183",
+  "base": "51fedbe2fa4daec0dff208c1150ea280590ab7ce",
+  "previous_reviewed_heads": [
+    "e2f2d22",
+    "fd0896cdfc873004b452c4c967740ddfc79263d6"
+  ],
+  "previous_receipt": null,
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+  "scope": "Full review of e2f2d22 (RemoteCommandExecutor replace and second accepted, MobileApp onProgress, PrepareWait, ComposeBar engaged gate, ConnectionController isPassing and subtitles, Presentation composeBlock, AppRemoteHost prepare not switching the Mac's conversation, tests, fixture, docs). Delta review of git diff origin/main...fd0896c (injectable sleep in PrepareWait; the rest is main merges). Later commits only add evidence and merge main, which touches none of #136's files. Swift not compiled by the reviewer; CI runs on the PR. fd0896c..00535a3: main merges 15828a5 (#126) and 51fedbe (#143) touch none of #136's code files (docs/remote-control.md merged cleanly, #126's sidebar sections only), plus the evidence commit b7466be (four files under docs/pr-evidence/pr-136/, checked by eye). Diff vs base: 16 files, 217+/44-. Up-to-date rule off per msg: #125 (shares RemoteCommandExecutor.swift), #135 and #140 (shares AppRemoteHost.swift) land before #136; earlier trial merges with them were clean, but rerun a trial merge or watch main CI after #136 merges.",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Remote/AppRemoteHost.swift (prepareConversation)",
+      "text": "A New Conversation prepare while the Mac has another conversation open answers applied without preparing; the send then prepares and waits for readiness. Matches docs and fixture."
+    },
+    {
+      "severity": "MINOR (accepted)",
+      "file": "msgblastMobile/Views/ComposeBar.swift (engaged)",
+      "text": "Never reset; a ComposeBar reused across conversations would inherit it. Cosmetic."
+    },
+    {
+      "severity": "MINOR (accepted)",
+      "file": "msgblastMobile/Kit/Connection/ConnectionController.swift (isPassing)",
+      "text": ".stopped counts as passing, so an engaged bar in a long background stop shows a quiet Connecting\u2026 with Send off."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblastMobileTests/ViewModelTests.swift",
+      "text": "The silent half of the PrepareWait test leaves its perform waiting up to the 90 s command timeout. Harmless."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblastTests/RemoteCommandExecutorTests.swift",
+      "text": "No test of a prepare replaced behind another conversation's prepare, or of ledger replay of a replaced command; recording is consistent."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblastMobile/Views/ComposeBar.swift",
+      "text": "The engaged gate is view-only state with no unit test; covered by the live check."
+    }
+  ],
+  "privacy_scan": "clean: both screenshots and the video (frames every 4 s) show only Demo fixture agents and text; no IPs, tailnet names, usernames, emails, QR codes or key characters. The video starts after pairing; the raw recording with the key fingerprint stays local and unpublished.",
+  "live_testing": "iPhone Simulator paired to the Demo Mac fixture, not a real iPhone and not a real Mac (screen control for iPhone Mirroring is auto-denied over Remote Control). Phone app and Demo Mac built from b452eae (main 39d1622). First New Conversation with a website agent: pass. Old thread after 62 s in background is quiet: pass. 'The Mac keeps its own conversation' is covered only by CI (remote_control_model fixture checkRemoteWebsiteSend). The real-phone check stays on msg's 0.11.0 test list (release-0.11.0/items/pr-136.md).",
+  "generated_at": "2026-11-14T07:22:00Z"
+}
