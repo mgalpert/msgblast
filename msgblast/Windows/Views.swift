@@ -855,7 +855,7 @@ struct AppSettingsView: View {
                             .modifier(SettingsPageVisibility(visible: page == category))
                     }
                     settingsPage(.outsideAgents) {
-                        Section { OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate, activity: model.agentSendActivity) }
+                        OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate, activity: model.agentSendActivity)
                     }
                     settingsPage(.remote) {
                         Section { RemoteSettingsView(service: model.remote) }
