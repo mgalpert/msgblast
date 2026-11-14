@@ -11,7 +11,7 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Turns your voice into message text on this phone</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Needed for dictating a message</string>
+	<string>msgblast uses the microphone when you dictate a message. Only the resulting text goes to your Mac.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

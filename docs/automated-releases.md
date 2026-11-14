@@ -41,6 +41,26 @@ The workflow writes the private seed to an owner-only file in the temporary runn
 
 No hosting account/bucket/domain is created by the workflow. Until these variables/secrets are configured, its preflight fails with the missing configuration name before building or publishing.
 
+## Enable iPhone uploads to TestFlight
+
+Create a GitHub Actions environment named `testflight` for this repository.
+Restrict deployment to `main` and release tags. Use a dedicated App Store
+Connect team API key that can provision and sign the iPhone app and upload
+builds. App Store Connect team keys apply to all apps on the team. Keep the
+TestFlight credentials separate from Mac notarization.
+
+Set the environment secret `MSGBLAST_TESTFLIGHT_API_KEY` to the contents of the
+downloaded `.p8`. Set environment variables `MSGBLAST_TESTFLIGHT_KEY_ID` and
+`MSGBLAST_TESTFLIGHT_ISSUER_ID` from App Store Connect. Once those are in place,
+set the repository variable `MSGBLAST_TESTFLIGHT_ENABLED` to `true`.
+
+After the Mac release succeeds, the iPhone job uses its source revision,
+marketing version, and allocated build number. Keep manual uploads below the
+next release counter value so they do not collide with automation. If the
+upload job fails after sending the build, check App Store Connect before
+rerunning it. Follow the [TestFlight checklist](testflight-checklist.md) for
+testing and tester access.
+
 ## Each release
 
 Keep `release-notes/VERSION.md` brief: start with at most three short bullets about changes users will notice. Put setup instructions and technical detail after the highlights. Add a `## Contributors` section with linked GitHub handles and a specific thank-you; verify attribution from the release's commit range or pull requests. The sidebar shows the highlights and credits first, with full notes available on demand. `release-notes/highlights.json` supplies concise summaries for older long-form notes.

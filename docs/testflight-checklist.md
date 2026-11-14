@@ -48,10 +48,9 @@ portal; items marked **this Mac** are local setup observed on 2026-10-30.
 - [ ] **repo** Confirm the marketing version and build for the first upload.
   The project default is `MARKETING_VERSION 0.1.0`, `CURRENT_PROJECT_VERSION
   1`. TestFlight requires each upload of the same version to carry a higher
-  build number. **Decision (project lead):** every TestFlight archive passes
-  the build number to `xcodebuild` as `CURRENT_PROJECT_VERSION=<n>`, the way
-  the Mac release workflow does. Do not edit `generate_project.py` or the
-  generated project to bump builds; its values stay development defaults.
+  build number. Release automation passes the Mac release version and its
+  allocated build number to the iPhone archive. Local archives pass both as
+  build settings too. The generated project keeps its development defaults.
 - [ ] **repo** The app icon is the canonical Icon Composer bundle compiled for
   iOS. Verify the archive's `Assets.car` carries the 1024 pt marketing icon
   (`assetutil --info` on the archived `Assets.car`), since App Store Connect
@@ -72,7 +71,8 @@ These are present today; read each one as a reviewer would.
   `NSBonjourServices`; without it iOS blocks discovery silently.
 - [ ] Photo Library: "msgblast sends the photos you choose to your Messages
   agents through your Mac."
-- [ ] Microphone: "Needed for dictating a message." Speech Recognition: "Turns
+- [ ] Microphone: "msgblast uses the microphone when you dictate a message. Only
+  the resulting text goes to your Mac." Speech Recognition: "Turns
   your voice into message text on this phone." Dictation falls back to Apple's
   server recognizer when on-device is unavailable; the app shows a one-time
   note when that happens. Mention it in the beta description.
@@ -89,15 +89,12 @@ editing (`git archive HEAD | tar -x -C build/export`), as the local previews do.
 - [ ] Archive:
 
   ```sh
-  xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile \
-    -configuration Release -destination 'generic/platform=iOS' \
-    -archivePath build/msgblastMobile.xcarchive \
-    DEVELOPMENT_TEAM=C4XLZBEPK8 CODE_SIGN_STYLE=Automatic \
-    CURRENT_PROJECT_VERSION=<n> \
-    -allowProvisioningUpdates archive
+  bash scripts/archive_testflight.sh VERSION BUILD build/msgblastMobile.xcarchive \
+    -allowProvisioningUpdates
   ```
 
-  `<n>` is higher than the last processed build for that marketing version.
+  Use the Mac release's marketing version and a build number higher than the
+  last processed build for that version.
 
 - [ ] Export and upload with an `ExportOptions.plist` whose `method` is
   `app-store-connect`, `destination` is `upload`, `teamID` is `C4XLZBEPK8`,
@@ -109,9 +106,8 @@ editing (`git archive HEAD | tar -x -C build/export`), as the local previews do.
     -exportPath build/testflight -allowProvisioningUpdates
   ```
 
-  `scripts/ExportOptions-testflight.plist` is committed with these values; it
-  has not yet been used for a real upload. Xcode Organizer's Distribute App is
-  the fallback for the first upload.
+  `scripts/ExportOptions-testflight.plist` keeps the stamped version and build
+  number during upload. Xcode Organizer's Distribute App also works.
 - [ ] Before uploading, run the same gates as a local reinstall: kit tests
   hosted on macOS, the Mac remote classes, the protocol tests, the Python
   suite, and a device smoke test of pairing, a send, and a reply.
