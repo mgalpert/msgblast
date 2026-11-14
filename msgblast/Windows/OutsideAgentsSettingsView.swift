@@ -286,7 +286,7 @@ private struct GrokBotSetupSheet: View {
                 FormField(label: "Name", value: "msgblast")
                 FormField(label: "Type", value: "Remote HTTPS", copyable: false)
                 FormField(label: "Server URL", value: url ?? (tailnet.enabled ? "Needs HTTPS first" : "Turn on Tailscale first"), copyable: url != nil)
-                FormField(label: "Header", value: "Authorization")
+                FormField(label: "Key", value: "Authorization")
                 if let value = tailnet.authorizationValue(for: client) {
                     FormField(label: "Value", value: "Bearer ••••••••", secret: value)
                 } else {
