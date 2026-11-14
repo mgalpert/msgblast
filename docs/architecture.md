@@ -88,13 +88,18 @@ Connections use separate transports:
 | Optional CLI conversations | Separate Codex CLI / Claude Code agents using installed CLI accounts, configured tools, and saved sessions |
 | Grok Bot | Direct webhook call and authenticated reply through a temporary bundled cloudflared tunnel |
 | Remote control (optional) | One paired phone over Tailscale or the LAN, encrypted end to end; the Mac executes every send |
-| Grok Bot over Tailscale | Optional HTTP MCP bound only to this Mac's Tailscale addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`). Off unless Outside agents and the Tailscale toggle are both on |
+| Grok Bot over Tailscale | Optional HTTP MCP bound only to this Mac's Tailscale addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`) and to `127.0.0.1` for Tailscale Serve's private `https://`. Off unless Outside agents and the Tailscale toggle are both on |
 
 Grok Bot can join the tailnet and call remote MCP over HTTP. When both toggles are
 on, msgblast listens on each Tailscale address on `utun` interfaces that are up:
 IPv4 `100.64.0.0/10` and IPv6 `fd7a:115c:a1e0::/48`. Each listener's required local
-endpoint is that address. It never binds a wildcard, loopback, or Funnel, and it
-rebinds when the addresses change. The server URL is
+endpoint is that address. It also binds `127.0.0.1` on the same port as the backend
+for Tailscale Serve, and takes a request there only when Serve's `X-Forwarded-For`
+names a tailnet address in its last entry, the one Serve appends. It never binds a wildcard
+or Funnel, and it rebinds when the addresses change. Grok Bot needs `https://`, so
+once `tailscale serve status --json` shows a site proxying `/` to that backend with no
+Funnel, and certificates are on, the server URL is Serve's
+`https://<MagicDNS name>:47443/mcp`. Otherwise it is
 `http://<MagicDNS name>:<port>/mcp` (default port 47480). The name is `Self.DNSName`
 from `tailscale status --json`, without the trailing dot. If the name is missing,
 the URL uses this Mac's `100.x` address and Settings says so. The token travels in

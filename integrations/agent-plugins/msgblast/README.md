@@ -6,7 +6,7 @@ Codex and Claude Code can load it as a plugin. `.mcp.json` starts the installed 
 
 `/Applications/msgblast.app/Contents/MacOS/msgblast mcp`
 
-The setup skill asks the person to turn on Settings → Outside agents and approve the agent. It never asks for keys or passwords.
+The setup skill asks the person to turn on Settings → Outside agents and approve the agent. It never asks for keys or passwords. The use skill lists agents, sends one message or a blast, waits for replies and reads the comparison, and asks before messaging a Messages contact.
 
 ## Install locally for review
 

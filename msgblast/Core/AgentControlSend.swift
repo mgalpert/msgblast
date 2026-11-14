@@ -100,6 +100,9 @@ public enum AgentControlSend {
 
     private static func sendable(_ id: String) throws -> String {
         guard let remote = remoteID(id) else {
+            if id.hasPrefix("featured:") {
+                throw AgentControlError.invalidArguments("\(id) isn't connected to a Messages contact yet. Connect it in msgblast, then use its messages: id from msgblast_agents_list.")
+            }
             throw AgentControlError.invalidArguments("\(id) is not an agent msgblast can send to. Use ids from msgblast_agents_list.")
         }
         return remote
@@ -125,9 +128,13 @@ public enum AgentControlSend {
                 outcome = "refused"
             }
         }
+        // The executor's own text for this case is written for the phone; an agent needs to know nothing was stored.
+        let message = outcome == "unknown" ? unknownMessage : result.message
         return AgentControlSendResult(outcome: outcome, requestId: requestID, replayed: result.replayed, comparisonId: result.conversationID,
-                                      code: result.code?.rawValue, message: result.message, agents: rows)
+                                      code: result.code?.rawValue, message: message, agents: rows)
     }
+
+    static let unknownMessage = "msgblast has no record of this requestId. Calls refused before they ran, such as while agent sends are stopped, aren't stored, and msgblast forgets requests when it quits. Check the comparison before sending again."
 
     /// Why a send was refused, per agent, with its code. The executor stores a refusal under its
     /// requestId, so a caller that named one is told a repeat gets the same answer. Stop refuses

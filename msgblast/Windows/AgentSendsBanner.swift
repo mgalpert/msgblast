@@ -31,17 +31,15 @@ struct AgentSendsSettings: View {
 
     var body: some View {
         Toggle("Stop agent sends", isOn: $activity.stopped)
-        Text("While on, agents with Full access can still read, but nothing they ask to send goes out.")
-            .font(.caption).foregroundStyle(.secondary)
+            .help("While on, agents with Full access can still read, but nothing they ask to send goes out.")
         if !activity.log.entries.isEmpty {
-            Text("Agent sends since msgblast opened").font(.caption).foregroundStyle(.secondary)
-            ForEach(activity.log.entries.prefix(10)) { entry in
-                HStack {
-                    Text(entry.summary)
-                    Spacer()
-                    Text(entry.result ?? "Sending…").foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                    Text(entry.started, style: .time).foregroundStyle(.secondary)
-                }.font(.caption)
+            DisclosureGroup("Recent sends") {
+                ForEach(activity.log.entries.prefix(10)) { entry in
+                    LabeledContent(entry.summary) {
+                        Text("\(entry.result ?? "Sending…") · \(entry.started.formatted(date: .omitted, time: .shortened))")
+                            .lineLimit(1).truncationMode(.tail)
+                    }
+                }
             }
         }
     }

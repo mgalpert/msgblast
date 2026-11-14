@@ -44,7 +44,10 @@ PostHog's required distinct ID.
 
 Provider keys: `chatgpt`, `claude`, `grok`, `muse`, `dots`, `os3`, `hark`,
 `grokbot`, `codexCLI`, `claudeCode`, `openclaw`, `hermes`, `instinct`, `fo`, `szn`,
-`poke`, `otherMessages`. Custom names and contact identities are never accepted.
+`poke`, `otherMessages`, and for approved outside agents `outsideClaudeCode`,
+`outsideCodex`, `outsideCursor`, `outsideGeminiCLI`, `outsideChatGPT`,
+`outsideClaudeDesktop`, `outsideGrokBot`, `outsideOther`. Custom names and contact
+identities are never accepted; an outside agent counts only by kind.
 
 Optional common properties: `buildChannel` (`development` or `production`), `appVersion` (32-character safe version token),
 `osMajor` (15–99), `cohortDay` (0–3660, only with `distinctID`), `cohortStartedAt` (ISO8601 UTC, only with `distinctID`), and `fixture`
