@@ -204,6 +204,7 @@ public final class RemoteListener: ObservableObject {
             return nil
         }
         if let requested, let bound = await bindSavedPort(requested, addresses: selected) { return bound }
+        guard active else { return nil }
         for _ in 0..<retry.randomAttempts {
             let candidate = randomPort()
             guard let opened = await open(selected, port: candidate) else { continue }
