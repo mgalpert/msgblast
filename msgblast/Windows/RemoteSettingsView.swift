@@ -25,6 +25,8 @@ struct RemoteSettingsView: View {
 
     var body: some View {
         content.onReceive(tick) { now = $0 }
+            // A "no address" reason is stale once the Mac is listening again.
+            .onChange(of: service.endpoints.isEmpty) { _, empty in if !empty { pairingError = nil } }
     }
 
     @ViewBuilder private var content: some View {

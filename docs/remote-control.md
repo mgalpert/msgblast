@@ -65,7 +65,11 @@ temporary port is never saved; Settings → Remote shows the port in use and a
 warning while it is temporary. It never binds loopback (the Grok Bot callback range)
 or a wildcard address, and never uses Tailscale Funnel. Bonjour `_msgblast._tcp`
 is advertised only by LAN listeners, scoped to their interface. Addresses are
-rechecked when the network changes. Both the Mac App Store and standalone
+rechecked when the network changes. If remote control is on but the Mac has no
+address yet (Tailscale still connecting at launch or after sleep, Wi-Fi off), the
+listener tries again every few seconds and on every network change, and the Mac
+shows the reason instead of a pairing code, because a code with no address can
+only fail on the phone with "No address for this Mac." Both the Mac App Store and standalone
 Tailscale apps work, because detection reads interface addresses only; a Mac with
 two Tailscale daemons gets both addresses.
 

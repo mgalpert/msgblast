@@ -141,17 +141,26 @@ final class RemoteService: ObservableObject {
             objectWillChange.send()
             return
         }
-        let listener = self.listener ?? RemoteListener(identity: identity, serviceName: "msgblast on \(macName)") { [weak server] in server?.accept($0) }
+        let listener = self.listener ?? makeListener(identity: identity, server: server)
         self.listener = listener
-        listener.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         let pairing = pairing
-        // Only a first port is saved. A temporary port after the saved one stayed busy is
-        // never saved: the paired phone knows only the saved port, which is reclaimed.
-        if let port = await listener.start(policy: settings.bindPolicy, port: settings.port, reclaimSavedPort: { pairing.device != nil }),
-           settings.port == nil {
-            update { $0.port = port }
-        }
+        await listener.start(policy: settings.bindPolicy, port: settings.port, reclaimSavedPort: { pairing.device != nil })
         objectWillChange.send()
+    }
+
+    private func makeListener(identity: RemoteIdentity, server: RemoteServer) -> RemoteListener {
+        let listener = RemoteListener(identity: identity, serviceName: "msgblast on \(macName)") { [weak server] in server?.accept($0) }
+        listener.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        // Only a first port is saved, including one bound later when Tailscale or Wi-Fi comes up.
+        // A temporary port after the saved one stayed busy is never saved: the paired phone
+        // knows only the saved port, which is reclaimed.
+        listener.$port.compactMap { $0 }.sink { [weak self] port in
+            Task { @MainActor in
+                guard let self, self.settings.port == nil, self.listener?.waitingForPort == nil, self.listener?.port == port else { return }
+                self.update { $0.port = port }
+            }
+        }.store(in: &subscriptions)
+        return listener
     }
 
     func stop() {
@@ -184,6 +193,9 @@ final class RemoteService: ObservableObject {
     @discardableResult
     func showPairingCode(confirmReplacement: Bool = false) throws -> RemotePairingOffer {
         guard let identity else { throw RemotePairingFailure.storage(problem ?? "Turn on remote control first.") }
+        // A code with no address cannot work: the phone would only say "No address for this Mac."
+        // (The Demo app without a port pairs over memory and has no address on purpose.)
+        if !(model.demo && listener == nil), endpoints.isEmpty || port == nil { throw RemoteNoAddress(listenerError: listenerError) }
         let offer = try pairing.openOffer(macName: macName, variant: variant, endpoints: endpoints, port: port ?? 0, identity: identity, confirmReplacement: confirmReplacement)
         objectWillChange.send()
         return offer
@@ -212,5 +224,14 @@ final class RemoteService: ObservableObject {
         if let error = listenerError { return error }
         if let port, !endpoints.isEmpty { return "Listening on \(endpoints.map(\.host).joined(separator: ", ")) port \(port)" }
         return "Starting…"
+    }
+}
+
+/// Pairing was asked for while the listener has no address (Tailscale or Wi-Fi is not up, or
+/// no port could be opened). The listener keeps retrying on its own.
+struct RemoteNoAddress: LocalizedError, Equatable {
+    var listenerError: String?
+    var errorDescription: String? {
+        (listenerError ?? "This Mac has no Tailscale or Wi-Fi address yet.") + " msgblast keeps checking and shows a code once the phone can reach this Mac."
     }
 }
