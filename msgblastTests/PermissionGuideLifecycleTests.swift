@@ -41,4 +41,22 @@ final class PermissionGuideLifecycleTests: XCTestCase {
         restarted.observeHistory(available: true)
         XCTAssertEqual(restarted.flow.stage, .idle)
     }
+
+    func testOnlyGrantsThatAskToReturnBringMsgblastForward() throws {
+        let suite = "msgblastPermissionTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var raised = 0
+        let guide = MessagesAccessGuide(defaults: defaults, pendingKey: "appAccessHandoffPending") { _ in raised += 1 }
+        guide.checkHistory = { true }
+        guide.start(permissionName: "Screen Recording")
+        XCTAssertEqual(guide.flow.stage, .verified)
+        XCTAssertEqual(raised, 0)
+        guide.cancel()
+        guide.start(permissionName: "Accessibility", returnOnGrant: true)
+        XCTAssertEqual(guide.flow.stage, .verified)
+        XCTAssertEqual(raised, 1)
+        guide.observeHistory(available: true)
+        XCTAssertEqual(raised, 1)
+    }
 }
