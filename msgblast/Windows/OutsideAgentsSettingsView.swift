@@ -302,8 +302,6 @@ private struct GrokBotSetupSheet: View {
                     Text("then scroll down to Add a custom connector.")
                 }
                 .font(.caption).foregroundStyle(.secondary)
-                Text("Already added msgblast? Click Manage on its card and replace the Value instead.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("3. Ask Grok Bot to use msgblast, then click Allow in the alert") {
                 if tailnet.wrongKey {
