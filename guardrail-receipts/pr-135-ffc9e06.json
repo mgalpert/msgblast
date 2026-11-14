@@ -1,0 +1,34 @@
+{
+    "pr": 135,
+    "reviewed_head": "ffc9e06d966b67b1e334a49dab4eca94aa5e9a08",
+    "base": "75f425406b03f08ac427d320811b4eff0f0393f6",
+    "previous_reviewed_heads": [
+        "b300ed6",
+        "fe4315344c8cd217f62f71c177592f4c88a8b9c1",
+        "5933e5ded6bb2f4c24ab5aebacfeea758d1317bd",
+        "34b95a5f697d6146edefbdc5a9760aeaca122e8d"
+    ],
+    "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+    "scope": "Merge-only delta 34b95a5..ffc9e06: ffc9e06 merges #125 at 75f4254 (main 51fedbe, #143's permission files). Its tree equals git merge-tree --write-tree of its parents (d5ccf4a9); nothing hand-resolved. Own diff 75f4254...ffc9e06 is identical to the reviewed d283b74...34b95a5 (ignoring index lines). Full review of the PR code: Own diff d283b74...34b95a5 (11 files, +474/-9): WebImageCache (Amazon CDN https-only download, type allowlist jpeg/png/gif/webp, size cap, redirect guard, off main actor, SHA-256 file names), RemoteProjection attaching photos all-or-none per message, ConversationView .id, AppModel hook, WebPageScript image URLs, regenerated pbxproj, tests. Stacked on #125: branch contains d283b74; base is #125's branch until it merges, then retargeted to main with the same 11-file diff. 34b95a5 merges d283b74; the only hand step was regenerating the project with scripts/generate_project.py (WebImageCache.swift and its tests each have one build file).",
+    "verdict": "approve with notes",
+    "findings": [
+        {
+            "severity": "MINOR",
+            "file": "msgblast/Core/WebImageCache.swift",
+            "text": "No pruning of the web-images directory (one file up to 2 MB per product URL, forever); in-memory map not revalidated if a file is deleted. Follow-up for 0.11.1."
+        },
+        {
+            "severity": "NOTE",
+            "file": "msgblast/Core/WebImageCache.swift",
+            "text": "Byte-by-byte read up to the 2 MB cap is slow but off the main actor."
+        },
+        {
+            "severity": "NOTE",
+            "file": "msgblast/Core/Remote/RemoteProjection.swift",
+            "text": "RemoteTurn.contentHash covers text only; nothing reads it, attachments still propagate."
+        }
+    ],
+    "notes": "Download safety verified: https + Amazon CDN hosts only, off-list redirects refused, SVG excluded, size cap up front and while streaming, cookies off. The reviewer could not run Swift.",
+    "tests": "CI at 34b95a5: PR scope and linux passed; native, mobile, swift-complexity green or re-running at the previous head; CI at the new head running at receipt time. Live: iPhone Mirroring run 2026-11-13 at a563f97: product lines show their photos, a photo opens full size, photos kept after reopening; Mac downloaded 8 photos in ~20 s. Opening an amazon.com link from the phone not verified (Mirroring cannot scroll). Final live check 2026-11-14 06:38Z on msg's real iPhone through iPhone Mirroring, Mac copy and iPhone app built from 34b95a5 (contains #125 d283b74, main 15828a5): new thread empty with only Alexa selected; reply with product lines, prices, ratings, amazon.com/dp links and photos (7 downloaded in ~20 s); photo opens full size; reopened thread keeps replies and photos. Evidence commit 401281312bba96c36ee2270a949fd59d751bd3a8 (branch claude/evidence-pr-125-135-34b95a5).",
+    "previous_receipt": "pr-135-34b95a5.json"
+}
