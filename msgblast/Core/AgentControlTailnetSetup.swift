@@ -71,3 +71,38 @@ public enum AgentControlTailnetStatus {
         return false
     }
 }
+
+/// Read-only macOS Application Firewall state. msgblast never changes firewall settings.
+public enum AgentControlFirewall {
+    public enum State: Equatable, Sendable {
+        case off, onAllowed, onBlocked, onUnknown, blockAll
+    }
+
+    /// `globalState` is `socketfilterfw --getglobalstate`. `appBlocked` is `--getappblocked`, or nil when that query failed.
+    /// State 2 is block-all. Any other app text, including nil, is unknown while the firewall is on.
+    public static func parse(globalState: String, appBlocked: String?) -> State {
+        if globalState.contains("State = 2") { return .blockAll }
+        if globalState.contains("State = 0") { return .off }
+        guard globalState.contains("State = 1") else { return .onUnknown }
+        guard let appBlocked else { return .onUnknown }
+        if appBlocked.contains("is blocked") { return .onBlocked }
+        if appBlocked.contains("is permitted") { return .onAllowed }
+        return .onUnknown
+    }
+
+    /// Nil when the firewall is off. Marks match the other Tailscale readiness lines.
+    public static func line(_ state: State) -> String? {
+        switch state {
+        case .off:
+            return nil
+        case .onAllowed:
+            return "\u{2713} The macOS firewall allows msgblast incoming connections."
+        case .onBlocked:
+            return "\u{26A0}\u{FE0E} The macOS firewall blocks msgblast, so agents on other devices can't reach it. Allow msgblast in System Settings → Network → Firewall → Options."
+        case .onUnknown:
+            return "\u{26A0}\u{FE0E} The macOS firewall is on. If agents on other devices can't connect, allow msgblast in System Settings → Network → Firewall → Options."
+        case .blockAll:
+            return "\u{26A0}\u{FE0E} The macOS firewall blocks all incoming connections, so agents on other devices can't reach msgblast. Turn off \"Block all incoming connections\" in System Settings → Network → Firewall → Options."
+        }
+    }
+}

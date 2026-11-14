@@ -40,4 +40,4 @@ msgblast serves `http://` only. If the form asks for an `https://` address, say 
 
 After they confirm the connector is saved, call the msgblast tool `msgblast_status`. The person approves that call in msgblast. The prompt names the client "Grok Bot (Tailscale)". Show them the result.
 
-If the call fails, ask them to read the three readiness lines on the msgblast Tailscale card and follow the line that has a warning.
+If the call fails, ask them to read the readiness lines on the msgblast Tailscale card and follow the one that has a warning.

@@ -4,7 +4,11 @@ import XCTest
 @MainActor final class AgentControlGateTests: XCTestCase {
     private final class Host: AgentControlHost {
         let controlEvents = AgentControlEvents()
-        func controlStatus() -> AgentControlStatus { AgentControlStatus(version: "1.0", permissions: [:], busyAgents: []) }
+        var statusCalls = 0
+        func controlStatus() -> AgentControlStatus {
+            statusCalls += 1
+            return AgentControlStatus(version: "1.0", permissions: [:], busyAgents: [])
+        }
         func controlAgents() -> [AgentControlAgent] { [] }
         func controlComparisons() -> [Comparison] { [] }
         func controlTranscript(_ comparison: Comparison) -> [AgentControlTurn] { [] }
@@ -27,6 +31,7 @@ import XCTest
         }
     }
     private final class Names { var values: [String] = [] }
+    private final class Flag { var live = true }
     private var file: URL!
 
     override func setUp() async throws {
@@ -107,7 +112,10 @@ import XCTest
         XCTAssertEqual(list["id"] as? Int, 1)
         let tools = try XCTUnwrap((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])
         XCTAssertEqual(tools.count, AgentControl.tools.count)
-        XCTAssertTrue(tools.allSatisfy { $0["allowed"] as? Bool == true && $0["inputSchema"] is [String: Any] })
+        XCTAssertTrue(tools.allSatisfy { $0["inputSchema"] is [String: Any] })
+        // Read only: the read tools are allowed and the send tools are listed but not allowed.
+        XCTAssertEqual(tools.compactMap { $0["allowed"] as? Bool }, AgentControl.tools.map { $0.access == .readOnly })
+        XCTAssertTrue(tools.contains { $0["allowed"] as? Bool == false })
         let status = try await send(#"{"id":"a","client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":{}}"#, gate: gate)
         XCTAssertEqual((status["result"] as? [String: Any])?["version"] as? String, "1.0")
         let unknown = try await send(#"{"id":3,"client":"Claude Code","method":"tools/call","name":"msgblast_nope"}"#, gate: gate)
@@ -186,5 +194,38 @@ import XCTest
         XCTAssertEqual(pendingBody["id"] as? Int, 1)
         XCTAssertNotNil((pendingBody["result"] as? [String: Any])?["tools"])
         XCTAssertEqual(gate.approvals["Pending"], .full)
+    }
+
+    func testNothingRunsOnceTheSessionIsClosed() async throws {
+        let gate = AgentControlGate(file: file)
+        try gate.set(.full, for: "Agent")
+        let host = Host()
+        let line = #"{"id":1,"client":"Agent","method":"tools/call","name":"msgblast_status","arguments":{}}"#
+        let data = await AgentControlWire.respond(to: Data(line.utf8), host: host, gate: gate, approve: { _ in nil }, isLive: { false })
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual((body["error"] as? [String: Any])?["code"] as? String, "unavailable")
+        XCTAssertEqual(host.statusCalls, 0)
+    }
+
+    func testApprovalAnsweredAfterSwitchingOffRunsNothing() async throws {
+        let gate = AgentControlGate(file: file)
+        let host = Host()
+        let pause = Pause()
+        let flag = Flag()
+        let line = #"{"id":1,"client":"New","method":"tools/call","name":"msgblast_status","arguments":{}}"#
+        let pending = Task {
+            await AgentControlWire.respond(to: Data(line.utf8), host: host, gate: gate, approve: { _ in await pause.wait() },
+                                           isLive: { flag.live })
+        }
+        for _ in 0..<100 where !pause.started { await Task.yield() }
+        XCTAssertTrue(pause.started)
+        flag.live = false
+        pause.finish(.full)
+        let reply = await pending.value
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+        XCTAssertEqual((body["error"] as? [String: Any])?["code"] as? String, "unavailable")
+        XCTAssertEqual(host.statusCalls, 0)
+        // The person's choice in the prompt is still kept.
+        XCTAssertEqual(gate.approvals["New"], .full)
     }
 }
