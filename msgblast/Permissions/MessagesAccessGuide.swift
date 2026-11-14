@@ -21,12 +21,16 @@ final class MessagesAccessGuide: ObservableObject {
     private var appName = "msgblast"
     private var permissionName = "Full Disk Access"
     private var checkAccess: (() async -> Bool)?
+    private var returnOnGrant = false
+    private let bringForward: @MainActor (NSWindow?) -> Void
     static let pendingKey = "messagesAccessHandoffPending"
     private let settingsBundleID = "com.apple.systempreferences"
 
-    init(defaults: UserDefaults = .standard, pendingKey: String = MessagesAccessGuide.pendingKey) {
+    init(defaults: UserDefaults = .standard, pendingKey: String = MessagesAccessGuide.pendingKey,
+         bringForward: @escaping @MainActor (NSWindow?) -> Void = MessagesAccessGuide.bringAppForward) {
         self.defaults = defaults
         requestKey = pendingKey
+        self.bringForward = bringForward
     }
 
     func observeHistory(available: Bool) {
@@ -39,12 +43,13 @@ final class MessagesAccessGuide: ObservableObject {
             stopOperation()
             if !dragInProgress { hidePanel() }
             message = nil
+            if returnOnGrant { returnOnGrant = false; bringForward(sourceView?.window) }
         }
     }
 
     func start(appURL: URL = Bundle.main.bundleURL, appName: String = "msgblast",
                pane: String = "Privacy_AllFiles", permissionName: String = "Full Disk Access",
-               checkAccess: (() async -> Bool)? = nil) {
+               returnOnGrant: Bool = false, checkAccess: (() async -> Bool)? = nil) {
         guard !dragInProgress, !returning else { return }
         if flow.isActive {
             stopOperation()
@@ -54,7 +59,7 @@ final class MessagesAccessGuide: ObservableObject {
         self.appURL = appURL
         self.appName = appName
         self.permissionName = permissionName
-        self.checkAccess = checkAccess
+        self.checkAccess = checkAccess; self.returnOnGrant = returnOnGrant
         message = nil
         defaults.set(true, forKey: requestKey)
         flow.begin()
@@ -138,6 +143,15 @@ final class MessagesAccessGuide: ObservableObject {
         }
     }
 
+    // Accessibility takes effect without a relaunch, so macOS leaves System
+    // Settings in front. Once trusted, AX can raise msgblast if activation is refused.
+    static func bringAppForward(_ window: NSWindow?) {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        guard !NSApp.isActive, AXIsProcessTrusted() else { return }
+        AXUIElementSetAttributeValue(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    }
+
     func dismissCompletion() {
         defaults.removeObject(forKey: requestKey)
         flow.cancel()
@@ -145,6 +159,7 @@ final class MessagesAccessGuide: ObservableObject {
 
     private func stopOperation() {
         generation = UUID()
+        if flow.stage != .verified { returnOnGrant = false }
         operation?.cancel()
         operation = nil
         returning = false
