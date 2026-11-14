@@ -126,17 +126,23 @@ Rules the Mac enforces:
 - Each command has a `clientCommandID`. A replay returns the stored or in-progress
   result and never repeats the action. The ledger is in memory only.
 - Sends run one at a time, so Mac app requests stay serial across commands. A send
-  that waits is answered `accepted`, then re-checked when it starts; if the Mac
-  user started a send meanwhile it is refused (`macBusy`), never retried.
+  that waits is answered `accepted`, then a second `accepted` ("Started on your
+  Mac") when its turn comes, and is re-checked then; if the Mac user started a send
+  meanwhile it is refused (`macBusy`), never retried.
 - Nothing is retried. A phone that loses the connection mid-send must show the
   send as unconfirmed.
 - A remote command never opens a Contacts prompt, never takes or clears the Mac's
   composer draft, and sets aside the Mac's Messages drafts and files for its own
   follow-up. Errors go to the command result, not the Mac's alert.
 - The phone sends `prepareConversation` when it opens a composer or changes
-  recipients. The Mac runs the same prepare paths as its composer (it may open a
-  website chat page, never launches an app, never sends) and answers when the agents
-  are ready, or with each agent's reason (`notReady`). If a send still finds a page
+  recipients. When the Mac has that conversation open, it runs the same prepare paths
+  as its composer (it may open a website chat page, never launches an app, never
+  sends) and answers when the agents are ready, or with each agent's reason
+  (`notReady`). A prepare never switches the Mac to another conversation: when the
+  Mac shows a different one, it answers from availability alone and the send prepares. A newer prepare replaces
+  prepares still waiting in the queue; those are answered `applied` ("Replaced by a
+  newer request"). The phone's own deadline (30 s) restarts on each `accepted`, so a
+  prepare waiting behind another is not given up on. If a send still finds a page
   that had to be prepared, nothing has been submitted; the Mac waits up to 20 seconds
   for readiness without navigating again and then sends once, or answers `notReady`
   with nothing submitted. The phone never has to "send again". `preparedNotSent`

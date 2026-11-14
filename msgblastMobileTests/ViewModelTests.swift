@@ -293,6 +293,9 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(block("dots"), .blocked("Allow Accessibility on your Mac"))
         XCTAssertEqual(block("dots")?.warns, true, "Something to fix on the Mac warns")
         XCTAssertEqual(presenter.composeBlock(canSend: false, connectionText: "Reconnecting…", agentIDs: ["muse"], conversation: nil, prepareReasons: [:])?.warns, true)
+        let passing = presenter.composeBlock(canSend: false, connectionText: "Not connected", agentIDs: ["muse"], conversation: nil, prepareReasons: [:], connectionPassing: true)
+        XCTAssertEqual(passing, .waiting("Connecting…"), "A connection coming back waits quietly, with Send still off")
+        XCTAssertEqual(passing?.allowsSend, false)
     }
 
     func testDirectThreadsAreTitledByTheirPromptOrName() {
@@ -610,6 +613,42 @@ final class MobileAppTests: XCTestCase {
         let result = Task { try await app.perform(action) { sent.value = $0 } }
         await settle { sent.value.map { command in mac.commands.contains { $0.clientCommandID == command.clientCommandID } } ?? false }
         return (try XCTUnwrap(sent.value).clientCommandID, result)
+    }
+
+    /// A prepare queued behind another on the Mac takes longer in all than the phone's deadline;
+    /// each report (queued, started) restarts that deadline, so its answer still arrives. The
+    /// deadline's clock is the test's: timers never fire on their own, so timing cannot flake.
+    func testAPrepareThatReportsProgressIsNotGivenUpAtTheDeadline() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        _ = try await app.pair(link: mac.offer().url.absoluteString, deviceName: "Phone")
+        await settle { app.store.projection.seq != nil }
+        mac.answerCommands = false
+        let prepare = RemoteAction.prepareConversation(conversationID: nil, agentIDs: ["claude"])
+        let sent = Slot<RemoteCommand>(), timers = Slot<Int>()
+        let neverFires: @Sendable (Duration) async throws -> Void = { _ in
+            await MainActor.run { timers.value = (timers.value ?? 0) + 1 }
+            try await Task.sleep(for: .seconds(3600))
+        }
+        let wait = Task {
+            await PrepareWait.run(timeout: .seconds(30), sleep: neverFires) { progress in
+                try await app.perform(prepare, onSent: { sent.value = $0 }, onProgress: { _ in progress() })
+            }
+        }
+        await settle { sent.value != nil && timers.value == 1 }
+        let id = try XCTUnwrap(sent.value).clientCommandID
+        for (count, message) in [(2, "Waiting for the previous request"), (3, "Started on your Mac")] {
+            mac.sessions.last!.send(.commandResult(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: message)))
+            await settle { timers.value == count }
+            XCTAssertEqual(timers.value, count, "Each report starts the deadline again")
+        }
+        mac.sessions.last!.send(.commandResult(RemoteCommandResult(clientCommandID: id, outcome: .applied)))
+        guard case .result(let result) = await wait.value else { return XCTFail("The Mac's answer ends the wait") }
+        XCTAssertEqual(result.outcome, .applied)
+
+        // A deadline that runs out with no answer and no report gives up.
+        let silent = await PrepareWait.run(timeout: .seconds(30), sleep: { _ in }) { _ in try await app.perform(prepare) }
+        guard case .timedOut = silent else { return XCTFail("No answer and no report must time out") }
     }
 
     func testPairSendAndUnconfirmedWhenTheConnectionDrops() async throws {
