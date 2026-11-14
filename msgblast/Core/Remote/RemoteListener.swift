@@ -203,28 +203,11 @@ public final class RemoteListener: ObservableObject {
             startRecovering()
             return nil
         }
-        if let requested {
-            let deadline = ContinuousClock.now + retry.savedPortWindow
-            var attempt = 0
-            while true {
-                attempt += 1
-                if let opened = await open(selected, port: requested) {
-                    // Remote control was turned off while binding: keep nothing open.
-                    guard active else { opened.forEach { $0.cancel() }; return nil }
-                    adopt(opened, addresses: selected, port: requested)
-                    if attempt > 1 { Self.logger.info("Remote control is listening on saved port \(requested, privacy: .public) after \(attempt, privacy: .public) attempts") }
-                    return requested
-                }
-                guard ContinuousClock.now + retry.savedPortInterval < deadline, !Task.isCancelled else { break }
-                try? await Task.sleep(for: retry.savedPortInterval)
-            }
-            Self.logger.notice("Saved port \(requested, privacy: .public) stayed busy; using a temporary port")
-        }
+        if let requested, let bound = await bindSavedPort(requested, addresses: selected) { return bound }
         for _ in 0..<retry.randomAttempts {
             let candidate = randomPort()
             guard let opened = await open(selected, port: candidate) else { continue }
-            guard active else { opened.forEach { $0.cancel() }; return nil }
-            adopt(opened, addresses: selected, port: candidate)
+            guard adoptIfActive(opened, addresses: selected, port: candidate) else { return nil }
             if let requested { waitingForPort = requested; startReclaiming(requested) }
             return candidate
         }
@@ -232,6 +215,32 @@ public final class RemoteListener: ObservableObject {
         Self.logger.notice("Remote control could not open a port; retrying")
         startRecovering()
         return nil
+    }
+
+    /// Tries the saved port for `savedPortWindow`. Nil when it stayed busy (or remote control
+    /// was turned off meanwhile).
+    private func bindSavedPort(_ requested: UInt16, addresses selected: [RemoteInterfaceAddress]) async -> UInt16? {
+        let deadline = ContinuousClock.now + retry.savedPortWindow
+        var attempt = 0
+        while true {
+            attempt += 1
+            if let opened = await open(selected, port: requested) {
+                guard adoptIfActive(opened, addresses: selected, port: requested) else { return nil }
+                if attempt > 1 { Self.logger.info("Remote control is listening on saved port \(requested, privacy: .public) after \(attempt, privacy: .public) attempts") }
+                return requested
+            }
+            guard ContinuousClock.now + retry.savedPortInterval < deadline, !Task.isCancelled else { break }
+            try? await Task.sleep(for: retry.savedPortInterval)
+        }
+        Self.logger.notice("Saved port \(requested, privacy: .public) stayed busy; using a temporary port")
+        return nil
+    }
+
+    /// Remote control may have been turned off while binding: then nothing stays open.
+    private func adoptIfActive(_ opened: [any RemoteBoundListener], addresses selected: [RemoteInterfaceAddress], port: UInt16) -> Bool {
+        guard active else { opened.forEach { $0.cancel() }; return false }
+        adopt(opened, addresses: selected, port: port)
+        return true
     }
 
     /// A start that found no address or no free port is not final: Tailscale may connect
