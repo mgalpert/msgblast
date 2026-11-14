@@ -970,8 +970,7 @@ final class AppModel: ObservableObject {
         }
     }
     func openMessages(_ member: Member) {
-        let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+#?="))
-        if let encoded = member.chat.id.addingPercentEncoding(withAllowedCharacters: allowed), let url = URL(string: "imessage://?chat=\(encoded)") { NSWorkspace.shared.open(url) }
+        if let url = member.chat.messagesURL { NSWorkspace.shared.open(url) }
     }
     func setting(_ pane: String) { if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) } }
 }
