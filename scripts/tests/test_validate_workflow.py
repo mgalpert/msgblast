@@ -33,11 +33,12 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertNotIn("MSGBLAST_R2_ACCESS_KEY_ID", text)
         self.assertNotIn("MSGBLAST_R2_SECRET_ACCESS_KEY", text)
         self.assertNotIn("tags:", text)
-        self.assertIn("runs-on: xcode-27", text)
+        self.assertIn("|| '\"xcode-27\"')", text)
+        self.assertNotIn("runs-on: self-hosted", text)
         self.assertIn("DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer", text)
         self.assertIn("-only-testing:msgblastTests", text)
         self.assertIn("-p test_test_builds.py -k real_lipo -v", text)
-        self.assertIn("python3 scripts/test_updates.py --derived-data build/updater-validation", text)
+        self.assertIn('python3 scripts/test_updates.py --derived-data "$MSGBLAST_DERIVED_DATA"', text)
         self.assertIn("ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo", text)
         self.assertIn(CHECKOUT, text)
         self.assertIn(CHECKOUT, release)
@@ -73,6 +74,28 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertNotIn("pull_request_target", evidence)
         self.assertNotIn("secrets.", evidence)
         self.assertNotIn("tags:", evidence)
+
+    def test_studio_runner_is_opt_in_and_never_runs_fork_code(self):
+        text = WORKFLOW.read_text()
+        studio = ("${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && "
+                  "(github.event_name != 'pull_request' || "
+                  "github.event.pull_request.head.repo.full_name == github.repository) && "
+                  "'[\"self-hosted\",\"macOS\",\"ARM64\",\"msgblast-studio\"]' || '\"xcode-27\"') }}")
+        native = text.split("\n  native:\n", 1)[1].split("\n  preview:\n", 1)[0]
+        preview = text.split("\n  preview:\n", 1)[1]
+        for job in (native, preview):
+            self.assertIn("runs-on: " + studio, job)
+        self.assertNotIn("self-hosted", text.split("\n  native:\n", 1)[0])
+        self.assertIn('if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then', native)
+        self.assertIn('$HOME/Library/Caches/msgblast-ci/$RUNNER_NAME/DerivedData', native)
+        self.assertIn('derived="$PWD/build/updater-validation"', native)
+        self.assertIn("scripts/ci/studio-job-started.sh", native)
+        docs = (ROOT / "docs/studio-runner.md").read_text()
+        self.assertIn("ACTIONS_RUNNER_HOOK_JOB_STARTED", docs)
+        self.assertLess(native.index("MSGBLAST_DERIVED_DATA=$derived"), native.index("xcodebuild -project"))
+        for workflow in ("release-adhoc.yml", "stable-dev.yml", "test-build.yml", "verify-signing.yml",
+                         "code-quality.yml", "pr-scope.yml", "pr-evidence.yml"):
+            self.assertNotIn("self-hosted", (ROOT / ".github/workflows" / workflow).read_text())
 
     def test_signing_verification_cannot_publish_and_cleans_credentials(self):
         text = (ROOT / ".github/workflows/verify-signing.yml").read_text()

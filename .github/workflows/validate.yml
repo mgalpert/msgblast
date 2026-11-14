@@ -43,7 +43,14 @@ jobs:
         run: node --test telemetry/worker.test.mjs
 
   native:
-    runs-on: xcode-27
+    # A Mac Studio runner is used only when the owner turns it on with the
+    # MSGBLAST_STUDIO_RUNNER repository variable, and only for pushes to main,
+    # manual runs, and pull requests from branches in this repository. Pull
+    # requests from forks use the GitHub-hosted xcode-27 runner. A pull request
+    # can edit this line, so the Studio's own job-started hook
+    # (scripts/ci/studio-job-started.sh) is what refuses fork code there.
+    # Unset the variable to fall back.
+    runs-on: ${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
@@ -57,6 +64,20 @@ jobs:
           ref: ${{ env.REVIEW_SHA }}
           persist-credentials: false
 
+      - name: Choose the derived-data folder
+        # GitHub-hosted runners start empty, so the build stays in the workspace.
+        # A self-hosted Studio keeps one derived-data folder per runner outside
+        # the workspace, so checkout's clean does not delete it and later runs
+        # build incrementally instead of from scratch.
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = self-hosted ]; then
+            derived="$HOME/Library/Caches/msgblast-ci/$RUNNER_NAME/DerivedData"
+          else
+            derived="$PWD/build/updater-validation"
+          fi
+          mkdir -p "$derived"
+          echo "MSGBLAST_DERIVED_DATA=$derived" >> "$GITHUB_ENV"
+
       - name: Show selected Xcode
         run: xcodebuild -version
 
@@ -69,7 +90,7 @@ jobs:
           rm -rf build/native-tests.xcresult
           mkdir -p build
           xcodebuild -project msgblast.xcodeproj -scheme msgblast \
-            -derivedDataPath build/updater-validation \
+            -derivedDataPath "$MSGBLAST_DERIVED_DATA" \
             -destination 'platform=macOS,arch=arm64' \
             -resultBundlePath "$PWD/build/native-tests.xcresult" \
             ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
@@ -99,16 +120,16 @@ jobs:
           retention-days: 14
 
       - name: Exercise real Sparkle updater with isolated fixtures
-        run: python3 scripts/test_updates.py --derived-data build/updater-validation
+        run: python3 scripts/test_updates.py --derived-data "$MSGBLAST_DERIVED_DATA"
 
       - name: Verify crash consent and uncertain retry through the local intake
-        run: bash scripts/test_crash_reporting.sh build/updater-validation
+        run: bash scripts/test_crash_reporting.sh "$MSGBLAST_DERIVED_DATA"
 
       - name: Verify Settings permission checks and consent boundaries
         run: bash scripts/test_app_permissions.sh
 
       - name: Verify controller state and permission recovery across app restarts
-        run: bash scripts/test_web_comparisons.sh build/updater-validation
+        run: bash scripts/test_web_comparisons.sh "$MSGBLAST_DERIVED_DATA"
 
   mobile:
     runs-on: xcode-27
@@ -197,7 +218,14 @@ jobs:
       (github.event_name == 'pull_request' &&
        startsWith(github.head_ref, 'cursor/') &&
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: xcode-27
+    # A Mac Studio runner is used only when the owner turns it on with the
+    # MSGBLAST_STUDIO_RUNNER repository variable, and only for pushes to main,
+    # manual runs, and pull requests from branches in this repository. Pull
+    # requests from forks use the GitHub-hosted xcode-27 runner. A pull request
+    # can edit this line, so the Studio's own job-started hook
+    # (scripts/ci/studio-job-started.sh) is what refuses fork code there.
+    # Unset the variable to fall back.
+    runs-on: ${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
     timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
