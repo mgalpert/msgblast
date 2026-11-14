@@ -12,6 +12,7 @@ import msgblastCore
     @Published private var magicName: String?
     @Published private var httpsEnabled = false
     @Published private var grokBotPeer = false
+    @Published private var firewall: AgentControlFirewall.State?
     @Published private(set) var lastCalled: Date?
 
     private let file: URL
@@ -56,7 +57,7 @@ import msgblastCore
                 store.enabled = false
             }
             persist(previous: previous, previousPlain: previousPlain) {
-                if newValue { listen() } else { stopSockets(); error = nil }
+                if newValue { listen() } else { stopSockets(); error = nil; firewall = nil }
             }
         }
     }
@@ -89,10 +90,14 @@ import msgblastCore
         return AgentControlTailnetSetup.text(url: serverURL, key: key, client: client)
     }
 
-    /// Tailscale and certificates; the Grok Bot line only while Grok Bot has a key.
+    /// Tailscale, the firewall when it is on, and certificates; the Grok Bot line only while Grok Bot has a key.
     var readiness: [String] {
-        let lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
-        return store.hashes[AgentControlTailnet.grokBotClient] == nil ? Array(lines.prefix(2)) : lines
+        var lines = AgentControlTailnetSetup.lines(magicName: magicName, httpsEnabled: httpsEnabled, grokBotPeer: grokBotPeer, lastCalled: lastCalled)
+        if store.hashes[AgentControlTailnet.grokBotClient] == nil { lines = Array(lines.prefix(2)) }
+        if enabled, let firewall, let line = AgentControlFirewall.line(firewall) {
+            lines.insert(line, at: 1)
+        }
+        return lines
     }
 
     /// Adds an agent with its own key. Returns a message when the name can't be used.
@@ -275,16 +280,22 @@ import msgblastCore
         return AgentControlHTTPEndpoint(hashes: store.hashes, version: version) { try await bridge.exchange($0) }
     }
 
+    /// Runs one request. A request still waiting when the endpoint is switched off or rebuilt for a
+    /// new key runs nothing.
     func reply(_ line: Data) async throws -> Data {
-        guard let host else { throw CocoaError(.fileReadNoSuchFile) }
-        return await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0, overTailscale: true) })
+        guard let host, let current = endpoint else { throw CocoaError(.fileReadNoSuchFile) }
+        return await AgentControlWire.respond(to: line, host: host, gate: gate, approve: { await approveOutsideAgent($0, overTailscale: true) },
+                                              isLive: { endpoint === current })
     }
 
     /// Status when the card appears and when the network changes. At most one fetch every 30 seconds.
+    /// A Tailscale toggle that is on with no firewall reading yet fetches immediately. The firewall
+    /// queries run only then, and they are read-only.
     func refreshStatus() {
         if statusTask != nil { statusQueued = true; return }
         let now = Date()
-        if let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
+        let firewallPending = enabled && firewall == nil
+        if !firewallPending, let lastStatusAt, now.timeIntervalSince(lastStatusAt) < 30 {
             statusQueued = true
             let wait = 30 - now.timeIntervalSince(lastStatusAt)
             statusTask = Task { @MainActor [weak self] in
@@ -298,12 +309,17 @@ import msgblastCore
             return
         }
         lastStatusAt = now
+        let includeFirewall = enabled
+        let appPath = Bundle.main.bundlePath
         statusTask = Task { @MainActor [weak self] in
-            let parsed = await Task.detached(priority: .utility) { AgentControlTailnetDNS.fetch() }.value
+            let parsed = await Task.detached(priority: .utility) {
+                (AgentControlTailnetDNS.fetch(), includeFirewall ? AgentControlTailnetDNS.firewall(appPath: appPath) : nil)
+            }.value
             guard let self, !Task.isCancelled else { return }
-            self.magicName = parsed?.magicName
-            self.httpsEnabled = parsed?.httpsEnabled ?? false
-            self.grokBotPeer = parsed?.grokBotPeer ?? false
+            self.magicName = parsed.0?.magicName
+            self.httpsEnabled = parsed.0?.httpsEnabled ?? false
+            self.grokBotPeer = parsed.0?.grokBotPeer ?? false
+            if includeFirewall, self.enabled { self.firewall = parsed.1 }
             self.statusTask = nil
             let queued = self.statusQueued
             self.statusQueued = false

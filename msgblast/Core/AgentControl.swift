@@ -1,4 +1,5 @@
 import Foundation
+import msgblastRemoteProtocol
 
 /// How much an outside agent may do. Approval in msgblast picks one level per agent.
 /// Raw values are saved; 1 was a removed middle level and must never read as Full access.
@@ -12,12 +13,15 @@ public enum AgentControlAccess: Int, Codable, CaseIterable, Comparable, Sendable
 
 public enum AgentControlError: LocalizedError, Equatable {
     case unknownTool(String), needsAccess(AgentControlAccess), invalidArguments(String), notFound(String)
+    /// msgblast did not send: the Mac is locked or busy, an agent isn't ready, or too many sends.
+    case refused(String)
     public var errorDescription: String? {
         switch self {
         case .unknownTool(let name): "No msgblast tool is named \(name)."
         case .needsAccess(let level): "This needs \(level.label) access in msgblast."
         case .invalidArguments(let detail): "Invalid arguments: \(detail)"
         case .notFound(let id): "Nothing in msgblast matches \(id)."
+        case .refused(let why): why
         }
     }
 }
@@ -68,6 +72,17 @@ public struct AgentControlComparison: Codable, Equatable, Sendable {
     func controlComparisons() -> [Comparison]
     func controlTranscript(_ comparison: Comparison) -> [AgentControlTurn]
     var controlEvents: AgentControlEvents { get }
+    /// Runs a send command for `client` and returns its final result. Never retries.
+    func controlSend(_ command: RemoteCommand, client: String) async -> RemoteCommandResult
+    /// The stored result of an earlier send command. Never runs anything.
+    func controlSendStatus(_ id: UUID) -> RemoteCommandResult
+}
+
+public extension AgentControlHost {
+    func controlSend(_ command: RemoteCommand, client: String) async -> RemoteCommandResult {
+        .rejected(command.clientCommandID, .unsupported, "This msgblast can't send for outside agents")
+    }
+    func controlSendStatus(_ id: UUID) -> RemoteCommandResult { .rejected(id, .unknownCommand, "No record of this request") }
 }
 
 public struct AgentControlWaitResult: Codable, Equatable, Sendable {
@@ -83,18 +98,24 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
                          summary: "Agents msgblast can send to. Hidden agents only with includeHidden.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"includeHidden":{"type":"boolean"}}}"#),
         AgentControlTool(name: "msgblast_comparisons_list", title: "List comparisons",
-                         summary: "Saved comparisons, newest first. query filters by prompt text.",
+                         summary: "Saved comparisons, newest first. query filters by name or prompt.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}}}"#),
+        AgentControlTool(name: "msgblast_mentions", title: "Mention comparisons",
+                         summary: "Comparisons whose name or prompt matches query, as resource links for @-mentions. query may be empty.",
+                         access: .readOnly, inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#),
         AgentControlTool(name: "msgblast_comparison_read", title: "Read a comparison",
                          summary: "A comparison's prompt, each agent's submission state, and the conversation so far.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}"#),
         AgentControlTool(name: "msgblast_blast_wait", title: "Wait for replies",
                          summary: "Waits up to timeoutSeconds for events after cursor `after` (a reply arrived, a send finished, an agent turned busy or ready). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"after":{"type":"integer","minimum":0},"comparisonId":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":0,"maximum":300}}}"#)
-    ]
+    ] + AgentControlSend.tools
 
-    /// Runs one tool. Arguments and the result are JSON.
-    public static func call(_ name: String, arguments: Data, access: AgentControlAccess, host: AgentControlHost) async throws -> Data {
+    /// Sends allowed per agent name; see `AgentControlSendLimit`.
+    static var sendLimit = AgentControlSendLimit()
+
+    /// Runs one tool for `client`, the approved agent name. Arguments and the result are JSON.
+    public static func call(_ name: String, arguments: Data, access: AgentControlAccess, host: AgentControlHost, client: String = "") async throws -> Data {
         guard let tool = tools.first(where: { $0.name == name }) else { throw AgentControlError.unknownTool(name) }
         guard access >= tool.access else { throw AgentControlError.needsAccess(tool.access) }
         let input = try arguments.isEmpty ? Arguments() : decode(arguments)
@@ -107,8 +128,12 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
             return try encoder.encode(host.controlAgents().filter { $0.visible || input.includeHidden == true })
         case "msgblast_comparisons_list":
             return try encoder.encode(comparisons(host, query: input.query, limit: input.limit ?? 20))
+        case "msgblast_mentions":
+            return try encoder.encode(mentions(host, query: input.query))
         case "msgblast_blast_wait":
             return try await encoder.encode(wait(host, after: input.after, comparisonID: input.comparisonId, timeout: input.timeoutSeconds ?? 60))
+        case _ where name == "msgblast_request_status" || AgentControlSend.names.contains(name):
+            return try await encoder.encode(send(name, input, client: client, host: host))
         default:
             return try encoder.encode(comparison(host, id: input.id))
         }
@@ -117,11 +142,67 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
     private struct Arguments: Decodable {
         var includeHidden: Bool?, query: String?, limit: Int?, id: String?
         var after: Int?, comparisonId: String?, timeoutSeconds: Int?
+        var text: String?, agents: [String]?, agent: String?, requestId: String?
+    }
+
+    /// `msgblast_request_status`: the stored result, or `unknown`. Never runs anything.
+    private static func status(_ requestId: String?, client: String, host: AgentControlHost) throws -> AgentControlSendResult {
+        guard let request = requestId else { throw AgentControlError.invalidArguments("requestId is required") }
+        let stored = host.controlSendStatus(AgentControlSend.commandID(client: client, requestID: try requestID(request)))
+        return try AgentControlSend.result(stored, requestID: request, agents: host.controlAgents(), refusalThrows: false)
+    }
+
+    private static func requestID(_ raw: String) throws -> String {
+        guard !raw.isEmpty, raw.count <= 200 else { throw AgentControlError.invalidArguments("requestId must be 1 to 200 characters") }
+        return raw
+    }
+
+    /// One send tool call. A requestId msgblast already knows returns its stored result
+    /// without counting against the limit; anything new waits for its final result.
+    private static func send(_ name: String, _ input: Arguments, client: String, host: AgentControlHost) async throws -> AgentControlSendResult {
+        if name == "msgblast_request_status" { return try status(input.requestId, client: client, host: host) }
+        let request = try input.requestId.map(requestID) ?? UUID().uuidString
+        let id = AgentControlSend.commandID(client: client, requestID: request)
+        let fields = AgentControlSend.Input(text: input.text, agents: input.agents, agent: input.agent, comparisonID: input.comparisonId)
+        let command = try AgentControlSend.command(name, fields, id: id)
+        if host.controlSendStatus(id).code == .unknownCommand, !sendLimit.allow(client) {
+            throw AgentControlError.refused("Too many sends from \(client) in a short time. Wait a minute, then try again. Nothing was sent (tooManySends).")
+        }
+        let after = host.controlEvents.cursor
+        let result = await host.controlSend(command, client: client)
+        var reply = try AgentControlSend.result(result, requestID: request, agents: host.controlAgents(), refusalThrows: true,
+                                                named: input.requestId != nil)
+        // A replay's replies may predate this call, so it gets no cursor rather than a late one.
+        if !result.replayed { reply.after = after }
+        return reply
     }
 
     private static func decode(_ data: Data) throws -> Arguments {
         do { return try JSONDecoder().decode(Arguments.self, from: data) }
         catch { throw AgentControlError.invalidArguments(error.localizedDescription) }
+    }
+
+    private struct MentionLink: Encodable {
+        var type, uri, name, description, mimeType: String
+    }
+    private struct MentionResult: Encodable { var items: [MentionLink] }
+
+    /// Name or prompt, one place, for the list tool and for @-mentions.
+    private static func matches(_ comparison: Comparison, query: String) -> Bool {
+        query.isEmpty || comparison.prompt.localizedCaseInsensitiveContains(query) || comparison.title.localizedCaseInsensitiveContains(query)
+    }
+
+    private static func mentions(_ host: AgentControlHost, query: String?) throws -> MentionResult {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let items = try comparisons(host, query: query, limit: 20).map { summary -> MentionLink in
+            let count = summary.agents.count
+            return MentionLink(type: "resource_link", uri: "msgblast://comparison/\(summary.id.uuidString)",
+                               name: String(summary.title.prefix(80)),
+                               description: "\(formatter.string(from: summary.created)) · \(count) \(count == 1 ? "agent" : "agents")",
+                               mimeType: "application/json")
+        }
+        return MentionResult(items: items)
     }
 
     private static func names(_ comparison: Comparison, agents: [AgentControlAgent]) -> [String] {
@@ -134,7 +215,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         let agents = host.controlAgents()
         let text = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return host.controlComparisons()
-            .filter { text.isEmpty || $0.prompt.localizedCaseInsensitiveContains(text) }
+            .filter { matches($0, query: text) }
             .sorted { $0.created > $1.created }
             .prefix(limit)
             .map { AgentControlComparisonSummary(id: $0.id, title: $0.title, created: $0.created, ended: $0.endedAt, agents: names($0, agents: agents)) }

@@ -87,7 +87,10 @@ import Foundation
 /// `{"id":1,"client":"Claude Code","method":"tools/list"}` or
 /// `{"id":2,"client":"Claude Code","method":"tools/call","name":"msgblast_status","arguments":{}}`.
 public enum AgentControlWire {
-    @MainActor public static func respond(to line: Data, host: AgentControlHost, gate: AgentControlGate, approve: @escaping AgentControlGate.Approve) async -> Data {
+    /// `isLive` turns false once the session the request came on is closed, for example when Outside
+    /// agents is switched off while an approval prompt is open. Nothing runs after that.
+    @MainActor public static func respond(to line: Data, host: AgentControlHost, gate: AgentControlGate, approve: @escaping AgentControlGate.Approve,
+                                          isLive: @MainActor () -> Bool = { true }) async -> Data {
         guard let request = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             return reply(nil, error: "invalidRequest", "Each line must be one JSON object.")
         }
@@ -98,9 +101,10 @@ public enum AgentControlWire {
         guard let access = await gate.access(for: client, approve: approve) else {
             return reply(id, error: "notApproved", notApproved(client, gate: gate))
         }
+        guard isLive() else { return reply(id, error: "unavailable", "msgblast closed this session, because Outside agents was switched off or its key changed. Nothing was run.") }
         switch request["method"] as? String {
         case "tools/list": return reply(id, result: ["tools": toolList(access)])
-        case "tools/call": return await call(request, id: id, access: access, host: host)
+        case "tools/call": return await call(request, id: id, access: access, host: host, client: client)
         default: return reply(id, error: "invalidRequest", "Unknown method. Use tools/list or tools/call.")
         }
     }
@@ -119,13 +123,14 @@ public enum AgentControlWire {
         }
     }
 
-    @MainActor private static func call(_ request: [String: Any], id: Any?, access: AgentControlAccess, host: AgentControlHost) async -> Data {
+    @MainActor private static func call(_ request: [String: Any], id: Any?, access: AgentControlAccess, host: AgentControlHost,
+                                         client: String) async -> Data {
         guard let name = request["name"] as? String else { return reply(id, error: "invalidRequest", "tools/call needs \"name\".") }
         guard let arguments = encoded(request["arguments"]) else {
             return reply(id, error: "invalidArguments", "arguments must be a JSON object.")
         }
         do {
-            let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host)
+            let data = try await AgentControl.call(name, arguments: arguments, access: access, host: host, client: client)
             return reply(id, result: try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed))
         } catch let error as AgentControlError {
             return reply(id, error: code(error), error.localizedDescription)
@@ -151,6 +156,7 @@ public enum AgentControlWire {
         case .needsAccess: "needsAccess"
         case .invalidArguments: "invalidArguments"
         case .notFound: "notFound"
+        case .refused: "refused"
         case nil: "failed"
         }
     }
