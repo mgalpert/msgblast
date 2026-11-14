@@ -1,0 +1,41 @@
+{
+  "pr": 143,
+  "reviewed_head": "a500a5a1a30e0d803ab273c19330502c616cf831",
+  "base": "15828a5ad1e2212a6967e69d563aaa2cf5357532",
+  "previous_reviewed_heads": [
+    "ddb3cf91c9a7059780e316b828d4d5d2b52c8212"
+  ],
+  "previous_receipt": "pr-143-ddb3cf9.json",
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+  "scope": "Merge-only delta ddb3cf9..a500a5a: a500a5a merges main 15828a5 (#126). Its tree equals git merge-tree --write-tree of its parents (c0fdec91): nothing hand-resolved. PR diff 15828a5..a500a5a is identical to the reviewed 675afc5..ddb3cf9 diff (ignoring index lines). Main's changes in 675afc5..15828a5 (phone sidebar, remote settings, docs, a Python accessibility test) do not touch MessagesAccessGuide, PermissionControlsView or the activation path. Full review of the PR code was done at ddb3cf9 by the same reviewer family: Full PR diff 675afc5...ddb3cf9: msgblast/Permissions/MessagesAccessGuide.swift (returnOnGrant option, bringAppForward with AX frontmost fallback, @MainActor hook), msgblast/Windows/PermissionsSettingsView.swift (Accessibility passes returnOnGrant: true), msgblastTests/PermissionGuideLifecycleTests.swift (new test). ddb3cf9 merges main 675afc5; its tree equals git merge-tree --write-tree of its parents (58960d7e), so nothing was hand-resolved. Secrets and privacy scan of added lines.",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "MINOR",
+      "file": "msgblast/Permissions/MessagesAccessGuide.swift:150",
+      "text": "NSApp.isActive is read right after activate(ignoringOtherApps:), which is asynchronous, so the AX fallback usually runs too. Harmless: gated on AXIsProcessTrusted() and limited to our own pid. Live VM run confirmed msgblast comes forward about 0.5 s after the grant."
+    },
+    {
+      "severity": "MINOR",
+      "file": "msgblast/Permissions/MessagesAccessGuide.swift:46",
+      "text": "If the grant is detected while a drag is in progress, the raise is not deferred like the panel hide. Rare and cosmetic."
+    },
+    {
+      "severity": "MINOR",
+      "file": "msgblastTests/PermissionGuideLifecycleTests.swift:45",
+      "text": "Test goes through the checkHistory shortcut, not the poll path; a cancel-then-grant case would strengthen it."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Permissions/MessagesAccessGuide.swift:162",
+      "text": "Keeping the flag relies on observeHistory setting flow to .verified before stopOperation(); reordering would break it."
+    },
+    {
+      "severity": "NOTE",
+      "file": "msgblast/Permissions/MessagesAccessGuide.swift",
+      "text": "Concurrency is sound: class is @MainActor, poll task inherits it, the hook is a @MainActor closure."
+    }
+  ],
+  "notes": "returnOnGrant fires once and only for Accessibility; Full Disk Access callers and Screen Recording use false. It is cleared on cancel, fail and restart, and a later pending-key observeHistory cannot fire it. No keys, tokens, IPs, usernames, /Users paths or emails in added lines. The reviewer could not run Swift.",
+  "tests": "msg's Mac, Xcode 27.0 beta, at d481edb (same PR code as ddb3cf9; ddb3cf9 only adds main 675afc5): PermissionGuideLifecycleTests and PermissionHandoffTests, 6 run, 0 failures. Live run in the msgblast-fg-lab VM with \"msgblast Dev (Bring Forward 1114)\": Accessibility grant brought msgblast in front of System Settings about 0.5 s later; Screen Recording left macOS's Quit & Reopen prompt in front. At ddb3cf9 CI: PR scope, linux, mobile and evidence passed. CI at a500a5a running at receipt time."
+}
