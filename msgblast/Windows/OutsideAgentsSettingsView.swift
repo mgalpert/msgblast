@@ -396,11 +396,12 @@ private struct SheetLayout<Content: View>: View {
                 Button(hasKey ? "New Key…" : "Make Key") { confirming = true }
                 Spacer()
                 Button("Done") { SetupWindow.close() }.keyboardShortcut(.defaultAction)
+                // Esc in a plain window needs a cancel button; this one is invisible.
+                Button("Close") { SetupWindow.close() }.keyboardShortcut(.cancelAction).hidden().frame(width: 0)
             }
             .padding([.horizontal, .bottom], 20)
         }
         .frame(width: width)
-        .onExitCommand { SetupWindow.close() }
     }
 }
 
