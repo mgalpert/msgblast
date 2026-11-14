@@ -884,6 +884,7 @@ struct AppSettingsView: View {
         .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 700)
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: page) { _, _ in shortcut.cancelRecording() }
+        .background(UnifiedSettingsToolbar())
     }
 
     @ViewBuilder private var historyButtons: some View {
@@ -1017,4 +1018,19 @@ private struct WebAgentSettingsView: View {
             }
         }
     }
+}
+
+/// SwiftUI gives the Settings window the centered preferences toolbar. Switch it to the unified
+/// style so the traffic lights, back/forward and the page name share one row, like System Settings.
+private struct UnifiedSettingsToolbar: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+        func apply() { window?.toolbarStyle = .unified }
+    }
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ nsView: Probe, context: Context) { nsView.apply() }
 }
