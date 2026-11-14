@@ -1,0 +1,25 @@
+{
+  "pr": 126,
+  "reviewed_head": "bbb9bd0bd6889b695cffb8f9b7a8f797f8819455",
+  "base": "675afc50a41f39eb5b7b4c2dfd977062877bf46f",
+  "previous_reviewed_heads": [
+    "ec4def91d8d2ab541cd8e7536dda17520aa93b8e",
+    "4499003"
+  ],
+  "previous_receipt": null,
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+  "scope": "Full review of git diff 675afc5..ec4def9 excluding binary evidence (PhoneSidebarView, PhoneSidebarState, RemoteSettingsView, Views, AppModel, Models messagesURL, BuildFeatureView, FeedbackView, tests, the selectable-text source check, docs, release notes, evidence README) with a privacy scan. Delta review of ec4def9..bbb9bd0 (offer ownership by exact code, Show pairing code when expired in the background, hardened source check). Swift not compiled by the reviewer; Python tests run at head (pass); CI runs on the PR.",
+  "verdict": "approve",
+  "findings": [
+    {"severity": "MAJOR (fixed in bbb9bd0)", "file": "msgblast/Windows/PhoneSidebarView.swift (ownsOffer)", "text": "After Settings cancelled the panel's code and opened its own, closing the panel closed the Settings code. Now the panel stores the minted code and closes the offer only if it is still that code."},
+    {"severity": "MINOR (fixed in bbb9bd0)", "file": "msgblast/Windows/PhoneSidebarView.swift (qrBlock)", "text": "An expired code while msgblast was inactive showed an endless spinner; it now shows Show pairing code."},
+    {"severity": "MINOR (fixed in bbb9bd0)", "file": "scripts/tests/test_accessibility_text_selection.py", "text": "Chains broke at closures, blank lines and comments, and comments or strings could match; now followed and stripped, with two new tests. A large modifier closure could give a false positive (safe direction)."},
+    {"severity": "MINOR (accepted)", "file": "msgblast/Windows/PhoneSidebarView.swift (replaceExpiredOffer)", "text": "When a Settings code expires while msgblast is active, the panel replaces it and owns the new one."},
+    {"severity": "MINOR (accepted)", "file": "msgblast/Windows/PhoneSidebarView.swift (onChange wantsOffer)", "text": "A lock/unlock or Remote off/on cycle can re-mint a code that Settings had cancelled, without the button."},
+    {"severity": "MINOR (accepted)", "file": "msgblast/Core/Models.swift (messagesURL)", "text": "A business chat with a nil businessConversation flag but a urn:biz: handle would get the address link; spaces and SMS chats untested."},
+    {"severity": "NOTE", "file": "msgblastUITests", "text": "No UI test reads the removed labels; lookups use identifiers and values, which are kept."}
+  ],
+  "privacy_scan": "clean: no IPs, tailnet names, usernames, emails, phone numbers or key material; only example.com and 555 placeholders",
+  "live_testing": "Live on msg's MacBook Pro at 12b1be3 (sidebar, Settings and Remote code otherwise unchanged); not rechecked after merging main 675afc5 or after bbb9bd0. Smoke launch left to the release candidate build.",
+  "generated_at": "2026-11-14T05:54:00Z"
+}
