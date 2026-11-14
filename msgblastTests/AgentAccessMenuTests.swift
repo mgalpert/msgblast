@@ -46,11 +46,11 @@ import XCTest
     }
 
     /// Shows the page, then saves Full access for Codex while an alert-like window is key, closes that
-    /// window so the page becomes key again, and redraws a few times. Returns every level the rows saved.
+    /// window so the page becomes key again, redraws a few times and closes the page. Returns every
+    /// level the rows saved.
     private func approve(_ levels: Levels, in view: some View, existing: [String: AgentControlAccess] = [:]) -> [String] {
         levels.approvals = existing
         let page = window(NSHostingView(rootView: view), width: 680, height: 460)
-        defer { page.close() }
         settle(0.6)
         let alert = window(NSView(), width: 300, height: 120)
         settle(0.2)
@@ -62,6 +62,9 @@ import XCTest
             levels.redraws += 1
             settle(0.25)
         }
+        // The run that found the bug closed Settings with ⌘W about 3 seconds after Allow.
+        page.performClose(nil)
+        settle(0.6)
         return levels.writes
     }
 
