@@ -25,7 +25,7 @@ Other MCP clients on your tailnet can still use msgblast's plain `http://` addre
 4. In msgblast, click **Set Up…** on the Grok Bot row under Agents. It turns on outside agents and Tailscale if they are off, makes a key if none can be copied yet, and opens a sheet that follows Grok Bot's own form, with a copy button for each field. Once Grok Bot is approved, Set Up… becomes an ⓘ button and never replaces the key by itself.
 5. In Grok Bot, open Connect apps → Your plugins → Tailscale → Authenticate.
 6. In Grok Bot, click Connect apps (the icon of three squares and a plus), scroll to the bottom of the Connect apps page, and click Add a custom connector (or type "custom" in its search box). Grok Bot has no link that opens this form directly. To change an existing connector instead, click Manage on its card. Copy Name, Server URL, Key (`Authorization`) and Value (`Bearer <key>`) across from the sheet, keep Type at Remote HTTPS, and leave Client ID empty. Put the key only in the connector's header field, never in a chat message. If the whole line `Authorization: Bearer <key>` lands in the Value box, msgblast accepts it too.
-7. Click Add plugin, then ask Grok Bot to call `msgblast_status`. Approve it in msgblast. The prompt names the client "Grok Bot (Tailscale)" and starts on Read only.
+7. Click Add plugin, then ask Grok Bot to call `msgblast_status`. Approve it in msgblast. The prompt names the client "Grok Bot (Tailscale)" and starts on Read only. If step 3 of the Set Up… sheet says Grok Bot sent an old key, the connector still holds a key that New Key replaced: copy the Value again into the connector.
 
 For other clients, the ⓘ button on an agent's row has "URL and header", a copied block like this, with your own URL and key:
 

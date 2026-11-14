@@ -176,6 +176,8 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertEqual(denied.status, 401)
         let afterDenied = await endpoint.lastAuthorized
         XCTAssertNil(afterDenied)
+        let noKey = await endpoint.lastWrongKey
+        XCTAssertNil(noKey, "A request with no key is not a wrong key.")
         let accepted = await endpoint.handle(try request("POST", "/mcp", #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, headers: ["Authorization": "Bearer \(token)"]), peer: "100.64.0.1")
         XCTAssertEqual(accepted.status, 200)
         let stamp = await endpoint.lastAuthorized
@@ -186,6 +188,8 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertEqual(wrongAgain.status, 401)
         let afterWrong = await endpoint.lastAuthorized
         XCTAssertEqual(afterWrong, stamp)
+        let wrongKey = await endpoint.lastWrongKey
+        XCTAssertNotNil(wrongKey, "A key that matches no agent is recorded so Settings can say to copy it again.")
         let stranger = await endpoint.handle(try request("POST", "/mcp", #"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#, headers: ["Authorization": "Bearer \(token)"]), peer: "192.168.1.2")
         XCTAssertEqual(stranger.status, 403)
         let afterStranger = await endpoint.lastAuthorized

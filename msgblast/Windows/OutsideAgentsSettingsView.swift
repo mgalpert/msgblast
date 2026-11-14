@@ -173,7 +173,7 @@ private struct AgentsSection: View {
         }
         .sheet(item: $sheet) { item in
             if item.id == AgentControlTailnet.grokBotClient {
-                GrokBotSetupSheet(tailnet: tailnet)
+                GrokBotSetupSheet(tailnet: tailnet, gate: gate)
             } else {
                 KeySheet(tailnet: tailnet, client: item.id)
             }
@@ -271,6 +271,7 @@ private struct SheetClient: Identifiable { let id: String }
 /// Grok Bot's "Add a custom connector" form, field for field, so each value can be copied across.
 private struct GrokBotSetupSheet: View {
     @ObservedObject var tailnet: AgentControlTailnetListener
+    @ObservedObject var gate: AgentControlGate
     @State private var confirming = false
     private let client = AgentControlTailnet.grokBotClient
 
@@ -304,7 +305,16 @@ private struct GrokBotSetupSheet: View {
                 Text("Already added msgblast? Click Manage on its card and replace the Value instead.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("3. Click Add plugin, then approve msgblast here") {}
+            Section("3. Ask Grok Bot to use msgblast, then click Allow in the alert") {
+                if tailnet.wrongKey {
+                    Label("Grok Bot sent an old key. Copy the Value again.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                } else if gate.approvals[client] != nil {
+                    Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                } else {
+                    Text("Waiting for Grok Bot").foregroundStyle(.secondary)
+                }
+            }
         }
         .newKeyConfirmation($confirming, name: "Grok Bot") { tailnet.rotateToken(client) }
     }
