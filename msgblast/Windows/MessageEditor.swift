@@ -2,19 +2,6 @@ import AppKit
 import SwiftUI
 import msgblastCore
 
-enum MessageTextMeasurement {
-    static func size(_ text: String, width: CGFloat) -> CGSize {
-        let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 14)])
-        let layout = NSLayoutManager()
-        let container = NSTextContainer(size: NSSize(width: max(1, width), height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
-        layout.addTextContainer(container); storage.addLayoutManager(layout); layout.ensureLayout(for: container)
-        let size = layout.usedRect(for: container).size
-        return CGSize(width: max(1, ceil(size.width)), height: max(17, ceil(size.height)))
-    }
-}
-
-
 struct MessageEditor: NSViewRepresentable {
     @Binding var text: String
     let accessibilityName: String
@@ -77,6 +64,7 @@ struct MessageEditor: NSViewRepresentable {
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
         let width = max(1, proposal.width ?? 320)
-        return CGSize(width: width, height: min(100, max(22, context.coordinator.measure(text, width: width).height)))
+        // SwiftUI also probes zero and infinite widths; a capped measurement keeps a long draft from typesetting one glyph per line.
+        return CGSize(width: width, height: min(100, max(22, MessageTextMeasurement.size(text, width: width, maxHeight: 100).height)))
     }
 }
