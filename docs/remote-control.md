@@ -298,8 +298,10 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   status line, what blocks Send first, then "Getting ready…" while
   `prepareConversation` runs, then the last result, then "Opens ChatGPT on your
   Mac" once there is something to send; ⓘ shows the Mac's longer reason; photos and
-  files for Messages agents), the new-conversation list in the Mac's grid order
-  with Messages contacts apart, the status subtitle, and Settings (Mac name, key
+  files for Messages agents), the new-conversation list (only connected agents:
+  on the Mac's grid and set up there, so not turned off, not installed, never
+  connected, signed out or without a Messages chat; in the grid's order with
+  Messages contacts apart), the status subtitle, and Settings (Mac name, key
   fingerprint, status and route, Keep Mac Awake, Forget This Mac). Every screen
   follows one rule: a short line to glance at, the Mac's full text on demand.
 - **Compose bar after a refused prepare:** the Mac's reason stays above the
