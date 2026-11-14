@@ -1,0 +1,31 @@
+{
+  "pr": 146,
+  "reviewed_head": "5022dd30fe721bf2a565f4d87fe49c9db8683493",
+  "base": "9e2ecf8",
+  "previous_reviewed_heads": [
+    "2fed5b57a63b217a417bce751bb243347f12695f"
+  ],
+  "previous_receipt": null,
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this text); commits authored with Claude Fable 5.2 trailers",
+  "scope": "Full PR diff (three-dot against main eecd2ed): release-notes/0.11.0.md only, 11 insertions and 3 deletions. Every claim in the new text checked against docs and Swift sources on origin/main. Secrets and privacy scan of added lines.",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "MINOR",
+      "file": "release-notes/0.11.0.md:6",
+      "text": "'one line per product with its price, rating and link' is slightly absolute: WebPageScript.swift:86-100 adds price, rating and link only when Amazon provides them."
+    },
+    {
+      "severity": "NOTE",
+      "file": "release-notes/0.11.0.md:1-14",
+      "text": "11 bullets; docs/automated-releases.md asks for at most three short bullets first, then detail. The first three are short (125, 117, 71 characters) and are the What's New highlights."
+    },
+    {
+      "severity": "NOTE",
+      "file": "release-notes/0.11.0.md:3",
+      "text": "Photos on the iPhone confirmed from RemoteProjection.alexaProductImageURLs and WebImageCache; the iOS views were not opened."
+    }
+  ],
+  "notes": "First review at 2fed5b5 found the highlights too long and 'optional' for Alexa unconfirmed; both were changed in 5022dd3 and re-reviewed. Confirmed on main: outside agent tools and the Read only / Full access levels (docs/outside-agents.md, AgentControl.swift), pairing turns on Send iMessages from the phone (RemoteService.swift:126), Grok Bot https and the Add buttons (OutsideAgentsSettingsView.swift), bring forward after Accessibility (MessagesAccessGuide.swift:146-152), sidebar Phone section (PhoneSidebarView.swift). Structure matches 0.9.0 and 0.10.0. No secrets, hostnames or usernames. The branch is behind main by #140 only; no overlap.",
+  "tests": "Text-only change. The reviewer read the file and diffs and did not run the app. What's New evidence comes from the release candidate build."
+}
