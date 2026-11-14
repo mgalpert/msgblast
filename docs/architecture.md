@@ -95,7 +95,7 @@ on, msgblast listens on each Tailscale address on `utun` interfaces that are up:
 IPv4 `100.64.0.0/10` and IPv6 `fd7a:115c:a1e0::/48`. Each listener's required local
 endpoint is that address. It also binds `127.0.0.1` on the same port as the backend
 for Tailscale Serve, and takes a request there only when Serve's `X-Forwarded-For`
-names a tailnet address (Serve sets that header itself). It never binds a wildcard
+names a tailnet address in its last entry, the one Serve appends. It never binds a wildcard
 or Funnel, and it rebinds when the addresses change. Grok Bot needs `https://`, so
 once `tailscale serve status --json` shows a site proxying `/` to that backend with no
 Funnel, and certificates are on, the server URL is Serve's

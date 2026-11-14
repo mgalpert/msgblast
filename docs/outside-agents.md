@@ -25,6 +25,9 @@ copies the command for the build you are running, which for a test build is that
   settings. The comparison view is an MCP App and renders inline.
 - **Grok Bot:** uses Tailscale, not this stdio command. If the macOS firewall is
   on, allow msgblast incoming connections. See [Grok Bot over Tailscale](grok-bot.md).
+  The first time you switch on "Allow agents on this Mac" on a Mac signed in to
+  Tailscale, "Allow agents on other devices" turns on too. Every agent there still
+  needs its own key and your approval, and you can switch it off.
 
 [integrations/agent-plugins/msgblast/](../integrations/agent-plugins/msgblast/README.md)
 is a draft plugin for Codex and Claude Code. It is not published. `codex plugin add`

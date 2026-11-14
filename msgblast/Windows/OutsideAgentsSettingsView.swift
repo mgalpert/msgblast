@@ -133,9 +133,12 @@ private struct InstallRow: View {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             process.arguments = ["-lc", command]
+            process.standardInput = FileHandle.nullDevice
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             guard (try? process.run()) != nil else { return -1 }
+            // A prompt or a slow login shell must not leave the row on Adding… forever.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 30) { if process.isRunning { process.terminate() } }
             process.waitUntilExit()
             return process.terminationStatus
         }.value
@@ -325,7 +328,7 @@ private struct GrokBotSetupSheet: View {
             Section("3. Send this to Grok Bot, then click Allow in the alert") {
                 FormField(label: "Message", value: GrokBotApp.firstMessage)
                 if tailnet.wrongKey {
-                    Label("Grok Bot sent an old key. Copy the Value again.", systemImage: "exclamationmark.triangle.fill")
+                    Label("An agent sent an old key. If it's Grok Bot, copy the Value again.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 } else if gate.approvals[client] != nil {
                     Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
@@ -396,11 +399,12 @@ private struct SheetLayout<Content: View>: View {
                 Button(hasKey ? "New Key…" : "Make Key") { confirming = true }
                 Spacer()
                 Button("Done") { SetupWindow.close() }.keyboardShortcut(.defaultAction)
+                // Esc in a plain window needs a cancel button; this one is invisible.
+                Button("Close") { SetupWindow.close() }.keyboardShortcut(.cancelAction).hidden().frame(width: 0)
             }
             .padding([.horizontal, .bottom], 20)
         }
         .frame(width: width)
-        .onExitCommand { SetupWindow.close() }
     }
 }
 
