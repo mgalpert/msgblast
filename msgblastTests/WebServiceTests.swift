@@ -1,9 +1,334 @@
 import XCTest
 import WebKit
+import msgblastRemoteProtocol
 @testable import msgblastCore
 
 @MainActor
 final class WebServiceTests: XCTestCase {
+    func testAlexaShoppingSignedOutSetupOpensAmazonSignInInsteadOfTheStorefront() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        _ = try await session.webView.callAsyncJavaScript("""
+            document.getElementById('chat').hidden=true;
+            const account=document.getElementById('nav-link-accountList');
+            account.outerHTML='<a id="nav-link-accountList" href="/ap/signin?openid.return_to=%2F" data-nav-ref="nav_signin">Hello, sign in</a>';
+            document.getElementById('nav-link-accountList').onclick=event=>{
+                event.preventDefault();history.replaceState({},'',event.currentTarget.href);
+                document.getElementById('login').hidden=false;
+            };
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.webView.url?.path, "/ap/signin")
+        XCTAssertEqual(session.snapshot.signedIn, false)
+        XCTAssertFalse(session.isReadyForOnboarding)
+    }
+
+    func testAlexaShoppingRequiresSignInAndOpensOnlyItsChatComposer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        XCTAssertTrue(session.isReadyForOnboarding)
+        _ = try await session.webView.callAsyncJavaScript("history.replaceState({}, '', '/ref=nav_logo')", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        let comparison = UUID()
+        let sent = await session.send("Compare reusable water bottle materials", comparisonID: comparison)
+        XCTAssertEqual(sent?.status, .observed, sent?.detail ?? "Missing receipt")
+        try await waitFor { session.snapshot.messages.contains { $0.role == "assistant" } }
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.map(\.text), ["Compare reusable water bottle materials"])
+        let search = try await session.webView.callAsyncJavaScript("return document.getElementById('twotabsearchtextbox').value", arguments: [:], in: nil, contentWorld: .page)
+        XCTAssertEqual(search as? String, "")
+        let originalView = session.webView
+        session.updateState { $0.comparisonID = UUID() }
+        XCTAssertTrue(session.webView === originalView, "Changing comparisons must preserve Amazon’s selected chat")
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-panel-header-overflow-button').click();document.getElementById('rufus-new-chat-ingress-button').click()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.messages.isEmpty)
+        try await openAlexaFixtureHistory(session)
+        _ = try await session.webView.callAsyncJavaScript("document.querySelector('#history-rows button').click();", arguments: [:], in: nil, contentWorld: .page)
+        for _ in 0..<40 {
+            let reopened = try await session.webView.callAsyncJavaScript("return panel.hidden", arguments: [:], in: nil, contentWorld: .page) as? Bool
+            if reopened == true { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('nav-rufus-disco').click()", arguments: [:], in: nil, contentWorld: .page)
+        try await waitFor { session.snapshot.messages.filter { $0.role == "user" }.count == 1 }
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-text-area').value='Keep my private draft'", arguments: [:], in: nil, contentWorld: .page)
+        let blocked = await session.send("Must not replace draft", comparisonID: comparison)
+        XCTAssertEqual(blocked?.status, .notSent)
+        XCTAssertEqual(session.snapshot.draft, "Keep my private draft")
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-text-area').value='';chat.hidden=true;login.hidden=false;document.getElementById('nav-link-accountList').hidden=true", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.snapshot.signedIn, false)
+        XCTAssertFalse(session.isReadyForOnboarding)
+        let signedOut = await session.send("Must not send while signed out", comparisonID: comparison)
+        XCTAssertEqual(signedOut?.status, .notSent)
+    }
+
+    func testAlexaShoppingDistinguishesUnavailablePanelAndPreservesLongRequests() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let tooLong = await session.send(String(repeating: "x", count: 501))
+        XCTAssertEqual(tooLong?.status, .notSent)
+        XCTAssertTrue(tooLong?.detail?.contains("500-character") == true)
+        XCTAssertFalse(session.snapshot.hasDraft)
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('nav-flyout-rufus').remove();document.getElementById('nav-rufus-disco').remove()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.snapshot.signedIn, true)
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertFalse(session.isReadyForOnboarding)
+        XCTAssertTrue(session.snapshot.reason.contains("unavailable"))
+    }
+
+    func testAlexaShoppingProductCardsReachTheTranscriptAsText() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        // Amazon's reply: a text section, a category header, then one section per product card.
+        let card = #"<div data-csa-c-type="container" data-csa-c-group-id="container-1" data-csa-c-content-id="rufus-dsk-section-container-1"><div><div><div><div role="presentation" tabindex="0" class="r-1loqt21"><div role="presentation"><div><div class="r-1mlwlqe" aria-label="Anker USB C to USB C Cable, 60W (2-Pack, 6 ft)"><img src="x.jpg"></div></div></div><div role="checkbox" aria-label="Select this product to compare"></div><div><div><div><div class="css-146c3p1">Purchased Apr 2025</div></div></div><div class="css-146c3p1 r-8akbws">Anker USB C to USB C Cable, 60W (2-Pack, 6 ft)</div><div aria-label="4.7 out of 5 stars. 91,395 ratings."><div class="css-146c3p1">4.7</div><svg></svg><div class="css-146c3p1">(91,395)</div></div><div class="css-146c3p1">10K+ bought in past month</div><div><div><div><div class="css-146c3p1">$</div><div class="css-146c3p1">9</div><div class="css-146c3p1">99</div></div></div><div class="css-146c3p1">($5.00/count)</div></div><div role="image" aria-label="Prime eligible"><svg></svg></div><div class="css-146c3p1">Two-Day</div><button role="button" data-csa-c-content-id="rufus-dsk-section-asinCard-1" data-csa-c-nile-action-id="asin_cards_B0ABCDEFGH_open_url_1_2"><div class="css-146c3p1">Add to cart</div></button></div></div></div></div></div><div class="css-146c3p1"><span><span>Braided nylon 6 ft cables rated for 60W charging.</span></span></div><div class="css-146c3p1 r-1loqt21" role="link" aria-label="More details about Braided nylon 6 ft cables rated for 60W charging.">More details</div></div>"#
+        _ = try await session.webView.callAsyncJavaScript("""
+            const container=document.getElementById('rufus-conversation-container');
+            const user=document.createElement('article');
+            user.className='rufus-customer-text-wrap';
+            user.textContent='Suggest a USB-C cable';
+            container.append(user);
+            container.insertAdjacentHTML('beforeend', '<div data-csa-c-group-id="markdownSection-a" data-csa-c-content-id="rufus-dsk-section-markdownSection-a">Here are some cables.</div>'
+                + '<div data-csa-c-group-id="categoryHeader-b" data-csa-c-content-id="rufus-dsk-section-categoryHeader-b"><div>Top Picks Under $15</div><div role="link" aria-label="see more Top Picks Under $15">see more</div></div>'
+                + card);
+            """, arguments: ["card": card], in: nil, contentWorld: .page)
+        await session.refresh()
+        let replies = session.snapshot.messages.filter { $0.role == "assistant" }.map(\.text)
+        XCTAssertEqual(replies, [
+            "Here are some cables.",
+            "Top Picks Under $15",
+            "Anker USB C to USB C Cable, 60W (2-Pack, 6 ft) · $9.99 · 4.7★ (91,395) · Braided nylon 6 ft cables rated for 60W charging. · https://www.amazon.com/dp/B0ABCDEFGH",
+        ])
+        XCTAssertFalse(replies.joined().contains("Purchased"), "Order history badges stay on the Mac")
+    }
+
+    func testSharedConversationPageGivesEachComparisonOnlyItsOwnTurns() {
+        let first = UUID(), second = UUID(), unsent = UUID()
+        var clock = Date(timeIntervalSince1970: 0)
+        func attempt(_ text: String, _ comparison: UUID, _ status: WebSendStatus, id: String? = nil) -> WebSendAttempt {
+            var attempt = WebSendAttempt(text: text, status: status)
+            attempt.comparisonID = comparison; attempt.messageID = id
+            clock += 1; attempt.created = clock
+            return attempt
+        }
+        func message(_ id: String, _ role: String, _ text: String) -> WebPageMessage { WebPageMessage(id: id, role: role, text: text) }
+        var page = [
+            message("u0", "user", "hi"), message("a0", "assistant", "From the website, before any request"),
+            message("u1", "user", "hi"), message("a1", "assistant", "First answer"),
+            message("u2", "user", "hi"), message("a2", "assistant", "Second answer"),
+            message("u3", "user", "and a bottle?"), message("a3", "assistant", "First follow-up answer"),
+        ]
+        // The same prompt in two comparisons: an observed request keeps its message, and the
+        // unattributed one takes the next unowned match. A, B, A interleave on one page.
+        var attempts = [
+            attempt("hi", first, .observed, id: "u1"),
+            attempt("hi", second, .uncertain),
+            attempt("and  a bottle?", first, .observed, id: "u3"),
+            attempt("never reached the page", unsent, .notSent),
+        ]
+        func turns(_ id: UUID) -> [String] { WebAgentSession.comparisonTurns(page, attempts: attempts)[id]?.map(\.id) ?? [] }
+        XCTAssertEqual(turns(first), ["u1", "a1", "u3", "a3"])
+        XCTAssertEqual(turns(second), ["u2", "a2"])
+        XCTAssertEqual(turns(unsent), [], "An unsent or new comparison shows nothing from the shared page")
+        // A request with no matching message on the page resolves nothing and steals nothing.
+        attempts.append(attempt("not on the page", second, .uncertain))
+        XCTAssertEqual(turns(second), ["u2", "a2"])
+        // An ended comparison's turns stay the same as the shared page keeps growing.
+        let ended = turns(first)
+        page += [message("u4", "user", "later"), message("a4", "assistant", "Later answer")]
+        attempts.append(attempt("later", second, .observed, id: "u4"))
+        XCTAssertEqual(turns(first), ended)
+        XCTAssertEqual(turns(second), ["u2", "a2", "u4", "a4"])
+    }
+
+    func testSharedTurnsSurviveThePageDroppingThemAndARelaunch() throws {
+        let a = UUID(), b = UUID()
+        func message(_ id: String, _ role: String, _ text: String) -> WebPageMessage { WebPageMessage(id: id, role: role, text: text) }
+        let first = [message("u1", "user", "Suggest a cable"), message("a1", "assistant", "Example Cable")]
+        var saved = WebAgentSession.keepingSharedTurns([:], live: [a: first], onPage: ["u1", "a1"])
+        // The page reloads without the thread, or shows only a recent window: saved turns stay.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: []], onPage: [])
+        XCTAssertEqual(saved[a.uuidString], first)
+        // A reply still streaming in shows less text during a reload; the fuller saved text stays.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [message("u1", "user", "Suggest a cable"), message("a1", "assistant", "Exam")]], onPage: ["u1", "a1"])
+        XCTAssertEqual(saved[a.uuidString], first)
+        // A reload renumbers a message the page shows again: it is adopted, not repeated.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [message("u1b", "user", "Suggest a cable")]], onPage: ["u1b"])
+        XCTAssertEqual(saved[a.uuidString]?.map(\.id), ["u1b", "a1"])
+        // A turn first attributed to A that now belongs to B leaves A.
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [message("u2", "user", "hi")]], onPage: ["u2"])
+        saved = WebAgentSession.keepingSharedTurns(saved, live: [a: [], b: [message("u2", "user", "hi")]], onPage: ["u2"])
+        XCTAssertEqual(saved[a.uuidString]?.map(\.id), ["u1b", "a1"])
+        XCTAssertEqual(saved[b.uuidString]?.map(\.id), ["u2"])
+        // The page shows only a recent window: new turns follow the older saved ones.
+        var window = WebAgentSession.keepingSharedTurns([a.uuidString: first], live: [a: [message("u5", "user", "And a case?"), message("a5", "assistant", "Example Case")]], onPage: ["u5", "a5"])
+        XCTAssertEqual(window[a.uuidString]?.map(\.id), ["u1", "a1", "u5", "a5"])
+        // Repeated turns are not folded into one when a reload renumbers the first of them.
+        let repeated = [message("h1", "user", "hi"), message("s1", "assistant", "Sure")]
+        window = WebAgentSession.keepingSharedTurns([a.uuidString: repeated], live: [a: [message("h1b", "user", "hi"), message("s1", "assistant", "Sure"), message("h2", "user", "hi"), message("s2", "assistant", "Sure")]], onPage: ["h1b", "s1", "h2", "s2"])
+        XCTAssertEqual(window[a.uuidString]?.map(\.id), ["h1b", "s1", "h2", "s2"])
+        // A turn that leaves and is later attributed back returns to its place on the page.
+        let full = [message("u1", "user", "x"), message("a1", "assistant", "y"), message("u3", "user", "z"), message("a3", "assistant", "w")]
+        let ids = Set(full.map(\.id))
+        window = WebAgentSession.keepingSharedTurns([a.uuidString: full], live: [a: Array(full.prefix(2)), b: Array(full.suffix(2))], onPage: ids)
+        window = WebAgentSession.keepingSharedTurns(window, live: [a: full, b: []], onPage: ids)
+        XCTAssertEqual(window[a.uuidString]?.map(\.id), ["u1", "a1", "u3", "a3"])
+        var state = WebWorkspaceState()
+        state.sharedTurns = saved
+        let restored = try JSONDecoder().decode(WebWorkspaceState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(restored.sharedTurns, saved)
+        let older = Data(#"{"sessionID":"\#(UUID().uuidString)"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(WebWorkspaceState.self, from: older).sharedTurns, [:], "Older saved state has no saved turns")
+    }
+
+    func testSharedPageServesSavedTurnsAfterThePageDropsThemAndPrunesEndedOnes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let thread = UUID(), other = UUID()
+        var attempt = WebSendAttempt(text: "Need a bottle", status: .observed)
+        attempt.comparisonID = thread
+        session.updateState { $0.attempts.append(attempt) }
+        _ = try await session.webView.callAsyncJavaScript("""
+            const container=document.getElementById('rufus-conversation-container');
+            const user=document.createElement('article'); user.className='rufus-customer-text-wrap'; user.textContent='Need a bottle';
+            const reply=document.createElement('article');
+            reply.setAttribute('data-csa-c-content-id','rufus-dsk-section-markdownSection-saved'); reply.setAttribute('data-csa-c-group-id','saved-reply');
+            reply.textContent='Try this bottle';
+            container.append(user, reply);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"])
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-conversation-container').replaceChildren()", arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertEqual(session.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"], "The page dropped the turns; the saved copy remains")
+        XCTAssertEqual(session.messagesForComparison(other), [])
+        // Quitting right after a reply keeps it: the pending save is flushed, and a relaunch reads it.
+        // The app's quit path begins shutdown before waiting, so flush there too.
+        session.beginShutdown()
+        await session.cancelAndWait()
+        let relaunched = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { relaunched.beginShutdown() }
+        XCTAssertEqual(relaunched.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"])
+        session.pruneSharedTurns(keeping: [other])
+        XCTAssertNil(session.state.sharedTurns[thread.uuidString], "An ended comparison keeps its turns in its own history")
+    }
+
+    func testUnlandedRequestCannotClaimAnOlderIdenticalMessage() {
+        let page = [WebPageMessage(id: "u0", role: "user", text: "hi"), WebPageMessage(id: "a0", role: "assistant", text: "Earlier answer")]
+        var attempt = WebSendAttempt(text: "hi", status: .uncertain)
+        attempt.comparisonID = UUID()
+        attempt.receiptContext = WebReceiptContext(originalURL: WebProvider.alexaShopping.homeURL, baseline: page, existingPaths: [])
+        XCTAssertNil(WebAgentSession.comparisonTurns(page, attempts: [attempt])[attempt.comparisonID!])
+    }
+
+    func testAlexaShoppingIdleLoaderIsNotAPendingReply() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let loader = try await session.webView.callAsyncJavaScript(
+            "return !!document.querySelector('#rufus-loader-avatar:not(.rufus-visibility-hidden)')",
+            arguments: [:], in: nil, contentWorld: .page) as? Bool
+        XCTAssertEqual(loader, true)
+        XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
+        XCTAssertFalse(session.snapshot.reason.hasPrefix("Wait for"))
+        let idle = AvailabilityCalculator.availability(AgentSessionSignals(session), inputs: MacAvailabilityInputs(), otherDesktopSending: false, now: Date())
+        XCTAssertNotEqual(idle.readiness.state, "busy", idle.readiness.state)
+        // A storefront control outside the Alexa panel, such as a carousel's Stop button, is not a reply.
+        _ = try await session.webView.callAsyncJavaScript("""
+            const stop=document.createElement('button');
+            stop.setAttribute('aria-label','Stop');
+            stop.textContent='Stop';
+            document.body.prepend(stop);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
+        _ = try await session.webView.callAsyncJavaScript("""
+            const user=document.createElement('article');
+            user.className='rufus-customer-text-wrap';
+            user.textContent='Need a bottle';
+            document.getElementById('rufus-conversation-container').append(user);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertFalse(session.snapshot.ready)
+        XCTAssertTrue(session.snapshot.reason.hasPrefix("Wait for"))
+        XCTAssertTrue(session.snapshot.reason.hasSuffix("current reply."))
+        _ = try await session.webView.callAsyncJavaScript("""
+            const reply=document.createElement('article');
+            reply.setAttribute('data-csa-c-content-id','rufus-dsk-section-markdownSection-idle');
+            reply.setAttribute('data-csa-c-group-id','idle-reply');
+            reply.textContent='Try this bottle';
+            document.getElementById('rufus-conversation-container').append(reply);
+            """, arguments: [:], in: nil, contentWorld: .page)
+        await session.refresh()
+        XCTAssertTrue(session.snapshot.ready, session.snapshot.reason)
+    }
+
+    func testAlexaShoppingNewDocumentCannotReuseAnEarlierSubmissionReceipt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storage = directory.appendingPathComponent("alexa.json")
+        let first = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        first.connect()
+        try await waitFor { first.snapshot.ready }
+        let previous = await first.send("First fixture request", comparisonID: UUID())
+        XCTAssertEqual(previous?.status, .observed)
+        first.beginShutdown()
+        let reopened = WebAgentSession(provider: .alexaShopping, storageURL: storage, fixture: true)
+        defer { reopened.beginShutdown() }
+        reopened.connect()
+        try await waitFor { reopened.snapshot.ready }
+        let next = await reopened.send("Another fixture request", comparisonID: UUID())
+        XCTAssertEqual(next?.status, .observed, next?.detail ?? "Missing receipt")
+        XCTAssertNotEqual(next?.messageID, previous?.messageID)
+        var ambiguous = WebSendAttempt(text: "Another fixture request", status: .uncertain)
+        ambiguous.comparisonID = reopened.state.comparisonID
+        ambiguous.receiptContext = WebReceiptContext(originalURL: WebProvider.alexaShopping.homeURL, baseline: [], existingPaths: [], candidateURL: WebProvider.alexaShopping.homeURL)
+        reopened.updateState { $0.attempts = [ambiguous] }
+        try await waitFor { reopened.snapshot.messages.contains { $0.role == "assistant" } }
+        await reopened.refresh()
+        XCTAssertEqual(reopened.state.attempts.first?.status, .uncertain, "Amazon’s home URL cannot prove the original chat after reload")
+        XCTAssertFalse(reopened.canLinkCurrentConversation, "An earlier message cannot resolve an attempt without its original document identity")
+    }
+
+    func testAlexaShoppingAcceptsOnlyAmazonHomeAndKeepsItsOwnSavedIdentity() throws {
+        let provider = WebProvider.alexaShopping
+        XCTAssertEqual(provider.homeURL.absoluteString, "https://www.amazon.com/")
+        XCTAssertTrue(OnboardingChoice.offeredChoices.contains(.alexaShopping))
+        XCTAssertEqual(try JSONDecoder().decode(WebProvider.self, from: JSONEncoder().encode(provider)), provider)
+        for address in ["https://www.amazon.com/", "https://www.amazon.com/ref=nav_logo", "https://www.amazon.com/?ref_=nav_signin"] {
+            let url = try XCTUnwrap(URL(string: address))
+            XCTAssertTrue(provider.isChatURL(url))
+            XCTAssertEqual(provider.canonicalConversationURL(url), provider.homeURL)
+        }
+        for address in ["https://www.amazon.com/ap/signin", "https://www.amazon.com/gp/cart/view.html", "https://www.amazon.com/s?k=bottles", "https://www.amazon.com.evil.test/", "http://www.amazon.com/", "https://www.amazon.com/#other"] {
+            XCTAssertFalse(provider.isChatURL(try XCTUnwrap(URL(string: address))), address)
+        }
+    }
+
     func testCurrentGrokComboboxAndAccountMenuAllowSimultaneousBroadcast() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -625,6 +950,16 @@ final class WebServiceTests: XCTestCase {
     private func makeSession() throws -> WebAgentSession {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MsgBlast-WebTests-\(UUID())")
         return WebAgentSession(provider: .muse, storageURL: directory.appendingPathComponent("web.json"), fixture: true)
+    }
+
+    private func openAlexaFixtureHistory(_ session: WebAgentSession) async throws {
+        _ = try await session.webView.callAsyncJavaScript("document.getElementById('rufus-panel-header-overflow-button').click();document.getElementById('rufus-chat-history-ingress-button').click()", arguments: [:], in: nil, contentWorld: .page)
+        for _ in 0..<40 {
+            let loaded = try await session.webView.callAsyncJavaScript("return !!document.querySelector('#history-rows button') && !document.querySelector('#history-rows [role=status]')", arguments: [:], in: nil, contentWorld: .page) as? Bool
+            if loaded == true { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("Fixture history did not finish loading")
     }
 
     private func waitFor(file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool) async throws {

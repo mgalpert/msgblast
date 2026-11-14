@@ -50,7 +50,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(forms[.macApp], [.museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp])
         XCTAssertEqual(forms[.cli], [.codexCLI, .claudeCode])
         XCTAssertEqual(forms[.webhookBot], [.grokbot])
-        XCTAssertEqual(forms[.website], [.muse, .chatgpt, .claude, .grok, .dots, .os3, .hark])
+        XCTAssertEqual(forms[.website], [.muse, .chatgpt, .claude, .grok, .dots, .os3, .hark, .alexaShopping])
         XCTAssertEqual(Set([WebProvider.chatgpt, .chatgptApp, .codexCLI].map(AvailabilityCalculator.product)), [.chatgpt], "Forms of one product group together")
         XCTAssertEqual(evaluate(signals(.codexCLI)).formLabel, "Codex CLI")
         XCTAssertEqual(evaluate(signals(.chatgptApp)).formLabel, "ChatGPT · Mac app")

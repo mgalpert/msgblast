@@ -143,8 +143,8 @@ public enum AvailabilityCalculator {
         case .claude, .claudeApp, .claudeCode: .claude
         case .grokbot, .grokBotApp: .grokBot
         case .dots, .dotsApp: .dots
-        // These providers share their product's raw value: .grok, .os3, .hark and .wabi.
-        case .grok, .os3, .hark, .wabi: AgentProduct(rawValue: provider.rawValue)
+        // These providers share their product's raw value: .grok, .os3, .hark, .alexaShopping and .wabi.
+        case .grok, .os3, .hark, .alexaShopping, .wabi: AgentProduct(rawValue: provider.rawValue)
         case .geminiApp: .gemini
         }
     }

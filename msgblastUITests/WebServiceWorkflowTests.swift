@@ -2,6 +2,36 @@ import XCTest
 
 final class WebServiceWorkflowTests: XCTestCase {
     @MainActor
+    func testAlexaShoppingFixtureSendsAndKeepsNewChatAndHistoryAvailable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
+        for name in ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint"] {
+            app.buttons[name].click()
+        }
+        app.buttons["Edit agents"].click()
+        app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
+        let add = app.buttons["Add Alexa Shopping Web"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.click()
+        app.buttons["Done editing agents"].click()
+        app.buttons["Alexa Shopping Web"].click()
+        capture(app, name: "Alexa Shopping added — local fixture")
+        let editor = app.textViews["Shared prompt"]
+        editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText("Compare reusable water bottle materials")
+        app.buttons["Send & compare"].click()
+        let answer = reply(app, containing: "Simulated Alexa reply: Compare reusable water bottle materials")
+        XCTAssertTrue(answer.waitForExistence(timeout: 20))
+        capture(app, name: "Alexa Shopping reply — local fixture")
+        app.buttons["Alexa overflow menu"].click()
+        XCTAssertTrue(app.buttons["New chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Chat history"].exists)
+        capture(app, name: "Alexa New chat and Chat history — local fixture")
+    }
+
+    @MainActor
     func testAddNamedAccountFromSettingsAndOpenSeparateSignIn() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]
