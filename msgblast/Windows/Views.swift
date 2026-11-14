@@ -780,7 +780,7 @@ struct AppSettingsView: View {
         NavigationSplitView {
             List(selection: Binding<SettingsPage?>(get: { page }, set: { if let value = $0 { page = value } })) {
                 sidebarRow(.general)
-                Section("Agents") {
+                Section("Connections") {
                     sidebarRow(.apps)
                     sidebarRow(.websites)
                     sidebarRow(.cli)
