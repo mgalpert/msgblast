@@ -197,6 +197,7 @@ public final class RemoteListener: ObservableObject {
         let selected = addresses(policy)
         guard !selected.isEmpty else {
             error = policy == .tailscaleOnly ? "No Tailscale address on this Mac. Start Tailscale or choose another network option." : "No Tailscale or local network address on this Mac."
+            Self.logger.notice("Remote control has no address to listen on; retrying")
             startRecovering()
             return nil
         }
@@ -223,6 +224,7 @@ public final class RemoteListener: ObservableObject {
             return candidate
         }
         error = "msgblast could not open a port for remote control."
+        Self.logger.notice("Remote control could not open a port; retrying")
         startRecovering()
         return nil
     }
