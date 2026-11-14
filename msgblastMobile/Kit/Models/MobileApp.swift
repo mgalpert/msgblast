@@ -28,6 +28,13 @@ public final class MobileApp: ObservableObject {
     private var avatarRequests: [UUID: String] = [:]
     /// References the Mac could not serve this session (for example an older Mac); not asked again.
     private var avatarsUnavailable: Set<String> = []
+    /// Every send a compose bar is waiting on, until it is final. Kept here, not in a compose bar:
+    /// New Conversation replaces its compose bar with the thread once a later send creates it,
+    /// and a send that timed out before then must still be bound when the Mac confirms it.
+    @Published public private(set) var composeSends = ComposeSend.Pending()
+    /// Each tracked send's own completion, from the compose bar that sent it. A late confirmation
+    /// goes only to it, once: no other compose bar's field, files, reply or navigation is touched.
+    private var composeCompletions: [UUID: (ComposeSend.Late) -> Void] = [:]
 
     public init(database: LocalDatabase, keys: DeviceKeyStore, defaults: UserDefaults = .standard,
                 makeTransport: ((MacEndpoint, Data) -> ClientTransport)? = nil) throws {
@@ -99,6 +106,7 @@ public final class MobileApp: ObservableObject {
             return
         }
         store.handle(event)
+        if case .commandResult(let result) = event, composeSends.waitingIDs.contains(result.clientCommandID) { bindLateSends() }
         if case .commandResult(let result) = event, awaitsResult(result.clientCommandID) || requeries[result.clientCommandID] != nil {
             if result.outcome != .accepted {
                 requeries.removeValue(forKey: result.clientCommandID)?.task.cancel()
@@ -169,6 +177,41 @@ public final class MobileApp: ObservableObject {
         }
     }
 
+    // MARK: Compose sends
+
+    /// A compose bar's send left; it stays tracked until it is final. `onLate` is that bar's
+    /// own completion, run once if the Mac confirms the send only after the timeout gave up.
+    public func startComposeSend(_ send: ComposeSend.Pending.Send, onLate: @escaping (ComposeSend.Late) -> Void) {
+        composeSends.start(send)
+        composeCompletions[send.id] = onLate
+    }
+    /// The Mac answered it before the timeout; the compose bar finishes it.
+    public func composeSendAnswered(_ id: UUID) {
+        composeSends.answered(id)
+        composeCompletions[id] = nil
+    }
+    /// The timeout gave up on it: a later `applied` binds it to this send. One that arrived
+    /// between the timeout and here is bound now.
+    public func composeSendTimedOut(_ id: UUID) {
+        composeSends.timedOut(id)
+        bindLateSends()
+    }
+    /// Binds each timed-out send the Mac has since applied, whether or not its compose bar is
+    /// still on screen: its reply link is recorded, then its own completion runs, once.
+    private func bindLateSends() {
+        guard !composeSends.waitingIDs.isEmpty else { return }
+        let late = composeSends.lateConfirmations(in: store.commands)
+        var completions: [(ComposeSend.Late, (ComposeSend.Late) -> Void)] = []
+        for bound in late {
+            if let quoting = bound.send.quoting { store.recordReply(bound.send.id, quoting: quoting) }
+            if let completion = composeCompletions.removeValue(forKey: bound.send.id) { completions.append((bound, completion)) }
+        }
+        // A send the Mac refused leaves too, with no completion.
+        let tracked = Set(composeSends.sends.map(\.id))
+        composeCompletions = composeCompletions.filter { tracked.contains($0.key) }
+        for (bound, completion) in completions { completion(bound) }
+    }
+
     /// A waiter in this run, or a recorded command (for example restored after a relaunch) not yet final.
     private func awaitsResult(_ id: UUID) -> Bool { waiting[id] != nil || store.commands[id]?.isFinal == false }
 
@@ -221,6 +264,8 @@ public final class MobileApp: ObservableObject {
     public func forgetMac() {
         avatarRequests = [:]
         avatarsUnavailable = []
+        composeSends = ComposeSend.Pending()
+        composeCompletions = [:]
         failWaiting()
         connection.forget()
         store.forgetMac()

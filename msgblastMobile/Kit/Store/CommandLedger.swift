@@ -89,4 +89,56 @@ public enum ComposeSend {
         guard let record, record.status == .applied else { return nil }
         return LateConfirmation(conversationID: record.result?.conversationID ?? record.conversationID)
     }
+
+    /// A timed-out send the Mac then applied, bound to that send.
+    public struct Late: Equatable, Sendable {
+        public var send: Pending.Send
+        public var confirmation: LateConfirmation
+    }
+
+    /// The sends compose bars are waiting on, so a late `applied` (after the field already said
+    /// unconfirmed) finishes each as a prompt answer would. Not stored: the ledger keeps the records.
+    /// `MobileApp` owns it, so it outlives a compose bar New Conversation replaces with the thread,
+    /// and hands each late confirmation only to the completion of the compose bar that sent it.
+    public struct Pending: Sendable {
+        public struct Send: Equatable, Sendable {
+            public var id: UUID
+            public var text: String
+            public var attachmentIDs: [String]
+            /// The turn it replied to, if any.
+            public var quoting: String?
+            /// The conversation whose compose bar sent it; nil for New Conversation.
+            public var conversationID: UUID?
+            /// The phone's timeout gave up on it; only then is an `applied` late.
+            public var timedOut = false
+            public init(id: UUID, text: String, attachmentIDs: [String], quoting: String?, from conversationID: UUID? = nil) {
+                self.id = id; self.text = text; self.attachmentIDs = attachmentIDs; self.quoting = quoting
+                self.conversationID = conversationID
+            }
+        }
+        public private(set) var sends: [Send] = []
+        public init() {}
+
+        /// A new send joins the others; one still unconfirmed stays tracked until it is final.
+        public mutating func start(_ send: Send) { sends.append(send) }
+        /// The Mac answered this send before the timeout.
+        public mutating func answered(_ id: UUID) { sends.removeAll { $0.id == id } }
+        public mutating func timedOut(_ id: UUID) {
+            if let index = sends.firstIndex(where: { $0.id == id }) { sends[index].timedOut = true }
+        }
+        /// The timed-out sends, whose records the compose bar watches.
+        public var waitingIDs: [UUID] { sends.filter(\.timedOut).map(\.id) }
+
+        /// Timed-out sends the Mac has since applied, oldest first, each with its own confirmation.
+        /// They leave, as does one the Mac refused; the rest stay until they are final.
+        public mutating func lateConfirmations(in commands: [UUID: CommandRecord]) -> [Late] {
+            var confirmed: [Late] = []
+            sends.removeAll { send in
+                guard send.timedOut, let record = commands[send.id], record.isFinal else { return false }
+                if let late = ComposeSend.lateConfirmation(record) { confirmed.append(Late(send: send, confirmation: late)) }
+                return true
+            }
+            return confirmed
+        }
+    }
 }
