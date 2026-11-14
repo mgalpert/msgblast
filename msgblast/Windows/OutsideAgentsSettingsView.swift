@@ -302,6 +302,8 @@ private struct GrokBotSetupSheet: View {
                     Text("then scroll down to Add a custom connector.")
                 }
                 .font(.caption).foregroundStyle(.secondary)
+            } footer: {
+                Text("Copy all the fields into Grok Bot, then click Add plugin.")
             }
             Section("3. Ask Grok Bot to use msgblast, then click Allow in the alert") {
                 if tailnet.wrongKey {
