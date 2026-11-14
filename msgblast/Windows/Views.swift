@@ -788,7 +788,9 @@ struct AppSettingsView: View {
                 }
                 Section {
                     sidebarRow(.outsideAgents)
+                    Divider()
                     sidebarRow(.remote)
+                    Divider()
                     sidebarRow(.permissions)
                     sidebarRow(.sharing)
                     sidebarRow(.updates)
