@@ -1,0 +1,29 @@
+{
+  "pr": 144,
+  "reviewed_head": "c2afee47a61cddd199859c5ca2d991f0dc5b064f",
+  "base": "9e2ecf8",
+  "previous_reviewed_heads": [],
+  "previous_receipt": null,
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus",
+  "scope": "Full diff 9e2ecf8...c2afee4: new msgblast/Core/AgentAccessMenu.swift; OutsideAgentsSettingsView uses it in place of the level Picker; needsAccess and tools/list wording in AgentControl.swift and AgentControlMCP.swift; msgblastTests/AgentAccessMenuTests.swift; pins in AgentControlSendTests and AgentControlMCPTests; regenerated project.pbxproj.",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "minor",
+      "file": "msgblastTests/AgentAccessMenuTests.swift:1",
+      "text": "The window tests never drive the Menu and sleep about 3.5 s each. They guard this row against saving on build, redraw or close, but do not reproduce or confirm the original bug, so the PR is hardening for an unconfirmed cause."
+    },
+    {
+      "severity": "minor",
+      "file": "msgblast/Core/AgentAccessMenu.swift:17",
+      "text": "The Binding setter captures self with a non-Sendable closure and calls a MainActor static. It compiles under existing precedent (PermissionsSettingsView); capturing level and choose as local lets would be slightly safer."
+    },
+    {
+      "severity": "nit",
+      "file": "msgblast/Core/AgentAccessMenu.swift:22",
+      "text": "A Menu of Toggles looks and behaves a little differently from the old Picker (checkmarks; not a popUpButton for accessibility). Confirm visually and pick both levels on a real Mac before release."
+    }
+  ],
+  "notes": "The menu saves only through a user-triggered Toggle setter and ignores a pick of the current level, so it cannot save on build, redraw or close. The wording fix is complete; nothing else in the repo asserts the old strings. project.pbxproj matches scripts/generate_project.py output byte for byte. Small and low risk for a late release fix; describe it as defensive hardening, since six live attempts on #124's build and on main 51fedbe did not reproduce the Read only save.",
+  "tests": "Reviewer: read the full diff, the gate, the alert path and the Settings row; grepped the repo for old and new strings and UI-test references; regenerated the project from a git-archive copy of c2afee4 and diffed it (identical); no Swift build on Linux. Author: Python guardrail suite (169 tests) passes locally at c2afee4; CI and the live VM check at c2afee4 follow and are recorded in the PR."
+}
