@@ -339,12 +339,17 @@ private struct MessagesAccessBanner: View {
     @ObservedObject var guide: MessagesAccessGuide
     init(model: AppModel) { self.model = model; guide = model.accessGuide }
     var body: some View {
-        if !model.databaseAvailable || guide.flow.isActive || guide.flow.stage == .verified {
-            MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable).padding(18).help(model.databaseStatus)
-            if model.permissionGuidePreview {
-                Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
+        Group {
+            if !model.databaseAvailable {
+                MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: false).padding(18).help(model.databaseStatus)
+                if model.permissionGuidePreview {
+                    Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
+        // Like Discover: once access is granted the row goes away, so clear the finished handoff.
+        .onChange(of: guide.flow.stage) { _, stage in if stage == .verified { guide.dismissCompletion() } }
+        .onAppear { if model.databaseAvailable && guide.flow.stage == .verified { guide.dismissCompletion() } }
     }
 }
 
