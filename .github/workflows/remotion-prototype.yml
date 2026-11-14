@@ -1,0 +1,40 @@
+name: Remotion prototype
+
+on:
+  pull_request:
+    paths:
+      - prototypes/remotion-onboarding/**
+      - .github/workflows/remotion-prototype.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remotion-prototype-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Type-check Remotion prototype
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: prototypes/remotion-onboarding
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Show Node and npm
+        run: |
+          node --version
+          npm --version
+
+      - name: Install the pinned lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Type-check (npm run check)
+        run: npm run check

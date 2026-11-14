@@ -11,6 +11,8 @@ An eight-second, 1920 × 1200, 30 fps sequence follows the approved story: **too
 
 Quantity creates the overload; choreography remains orderly. This supersedes every earlier motion direction. All motion is deterministic and frame-driven.
 
+This project also contains `IPhonePromo`, a vertical promo for the iPhone app that shows only features merged on `main`. See [PROMO.md](PROMO.md) for its script and render steps.
+
 ## Preview and render
 
 Node.js 22+ and npm. Prepared images are included, so ordinary playback/rendering needs no Xcode. Remotion downloads its headless browser on the first render. From this folder:
