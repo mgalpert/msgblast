@@ -198,11 +198,8 @@ private struct AgentsSection: View {
                 if gate.refused.contains(client) {
                     Button("Ask Again") { gate.forgetRefusal(client) }
                 } else if gate.approvals[client] != nil {
-                    Picker(client, selection: Binding(get: { gate.approvals[client] ?? .readOnly }, set: { gate.change($0, for: client) })) {
-                        ForEach(AgentControlAccess.allCases, id: \.self) { Text($0.label).tag($0) }
-                    }
-                    .labelsHidden().fixedSize()
-                    .help("Read only can see agents, comparisons and replies. Full access can also send.")
+                    AgentAccessMenu(gate.approvals[client] ?? .readOnly) { gate.change($0, for: client) }
+                        .help("Read only can see agents, comparisons and replies. Full access can also send.")
                 } else if client == AgentControlTailnet.grokBotClient {
                     Button("Set Up…", action: setUpGrokBot).buttonStyle(.borderedProminent)
                 }
