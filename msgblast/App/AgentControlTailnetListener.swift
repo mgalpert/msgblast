@@ -15,6 +15,8 @@ import msgblastCore
     @Published private var grokBotPeer = false
     @Published private var firewall: AgentControlFirewall.State?
     @Published private(set) var lastCalled: Date?
+    /// Set when an agent sent a key msgblast doesn't know since the last accepted Grok Bot call or new key.
+    @Published private(set) var wrongKey = false
 
     private let file: URL
     /// False until the person has saved a Tailscale choice, so the first switch-on can default it on.
@@ -138,7 +140,7 @@ import msgblastCore
         let previousPlain = keys
         guard let issued = store.issue(client) else { return }
         keys[client] = issued
-        if client == AgentControlTailnet.grokBotClient { lastCalled = nil }
+        if client == AgentControlTailnet.grokBotClient { lastCalled = nil; wrongKey = false }
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -149,7 +151,7 @@ import msgblastCore
         let previousPlain = keys
         store.revoke(client)
         keys[client] = nil
-        if client == AgentControlTailnet.grokBotClient { lastCalled = nil }
+        if client == AgentControlTailnet.grokBotClient { lastCalled = nil; wrongKey = false }
         rebuild(previous: previous, previousPlain: previousPlain)
     }
 
@@ -304,6 +306,9 @@ import msgblastCore
         let response = await endpoint.handle(request, peer: caller)
         // The readiness line is about Grok Bot, so only its key counts.
         if let when = await endpoint.lastAuthorizedByClient[AgentControlTailnet.grokBotClient], when != lastCalled { lastCalled = when }
+        let wrong = await endpoint.lastWrongKey
+        let stale = wrong.map { $0 > (lastCalled ?? .distantPast) } ?? false
+        if stale != wrongKey { wrongKey = stale }
         return response
     }
 

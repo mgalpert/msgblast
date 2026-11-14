@@ -19,6 +19,11 @@ enum AgentControlTailnetDNS {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        // Tailscale.app's binary acts as the CLI only when SHLVL is set; an app opened from Finder has none,
+        // and the binary then tries to start the GUI and prints no JSON.
+        var environment = ProcessInfo.processInfo.environment
+        if environment["SHLVL"] == nil { environment["SHLVL"] = "1" }
+        process.environment = environment
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

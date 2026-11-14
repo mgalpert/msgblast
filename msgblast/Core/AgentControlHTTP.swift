@@ -107,6 +107,8 @@ public actor AgentControlHTTPEndpoint {
     public private(set) var lastAuthorized: Date?
     /// The same, by client name.
     public private(set) var lastAuthorizedByClient: [String: Date] = [:]
+    /// When a tailnet peer last sent a key that matches no agent, such as one replaced by New Key. Not saved.
+    public private(set) var lastWrongKey: Date?
 
     /// `hashes` maps a client name to the hex SHA-256 of its token.
     public init(hashes: [String: String], version: String, exchange: @escaping AgentControlMCPServer.Exchange) {
@@ -121,6 +123,9 @@ public actor AgentControlHTTPEndpoint {
         switch credential(request) {
         case .elsewhere: return empty(404)
         case .rejected: return AgentControlHTTPResponse(status: 401, headers: [("WWW-Authenticate", Self.challenge)], body: Data())
+        case .wrongKey:
+            lastWrongKey = Date()
+            return AgentControlHTTPResponse(status: 401, headers: [("WWW-Authenticate", Self.challenge)], body: Data())
         case .accepted(let client):
             lastAuthorized = Date()
             lastAuthorizedByClient[client] = lastAuthorized
@@ -134,7 +139,7 @@ public actor AgentControlHTTPEndpoint {
         }
     }
 
-    private enum Credential { case accepted(String), rejected, elsewhere }
+    private enum Credential { case accepted(String), rejected, wrongKey, elsewhere }
 
     /// Names the problem, so a client that falls back to OAuth after a 401 can still say the key is missing or wrong.
     public static let challenge = #"Bearer error="invalid_token", error_description="msgblast key missing or wrong. Copy it again from msgblast Settings, Outside agents.""#
@@ -154,7 +159,8 @@ public actor AgentControlHTTPEndpoint {
             return .elsewhere
         }
         let given = header != nil ? bearer(header) : pathToken
-        guard let given, let client = client(for: given) else { return .rejected }
+        guard let given else { return .rejected }
+        guard let client = client(for: given) else { return .wrongKey }
         return .accepted(client)
     }
 
