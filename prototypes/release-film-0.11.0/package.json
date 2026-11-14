@@ -6,6 +6,8 @@
     "preview": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts Film renders/msgblast-0.11.0.mp4 --codec h264 --crf 18",
     "render:merged": "remotion render src/index.ts FilmMergedOnly renders/msgblast-0.11.0-merged-only.mp4 --codec h264 --crf 18",
+    "render:vertical": "remotion render src/index.ts Vertical30 renders/msgblast-0.11.0-vertical-30s.mp4 --codec h264 --crf 18 --audio-codec aac",
+    "music": "python3 tools/make_music.py public/audio/music.wav",
     "check": "tsc --noEmit"
   },
   "dependencies": {

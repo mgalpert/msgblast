@@ -1,6 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, Composition, Series} from 'remotion';
 import {C} from './ui';
+import {Vertical, VERTICAL_FRAMES} from './vertical';
 import {AgentsTitle, Alexa, AndMore, Intro, IPhoneShowcase, IPhoneTitle, MCPFlow, OtherDevices, Outro, Pairing, SceneFade, SettingsScene} from './scenes';
 
 /**
@@ -59,6 +60,7 @@ const Film: React.FC<Props> = (p) => (
 
 export const Root: React.FC = () => (
   <>
+    <Composition id="Vertical30" component={Vertical} durationInFrames={VERTICAL_FRAMES} fps={30} width={1080} height={1920} defaultProps={{withAudio: true}} />
     <Composition
       id="Film"
       component={Film}
