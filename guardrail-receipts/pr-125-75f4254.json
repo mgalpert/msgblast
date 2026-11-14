@@ -1,0 +1,42 @@
+{
+    "pr": 125,
+    "reviewed_head": "75f425406b03f08ac427d320811b4eff0f0393f6",
+    "base": "51fedbe2fa4daec0dff208c1150ea280590ab7ce",
+    "previous_reviewed_heads": [
+        "f6f165c",
+        "033e874",
+        "01ad1a4",
+        "d566395",
+        "d13f95def45a3b91ca01cd6ad9be0f1834a29d7c",
+        "b308a4a2963ef236e3f758f257df2e778fdaaa91",
+        "d283b74a13e257086e9b50386abcca27ca2a9c1b"
+    ],
+    "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+    "scope": "Merge-only delta d283b74..75f4254: 75f4254 merges main 51fedbe (#143: MessagesAccessGuide.swift, PermissionsSettingsView.swift, PermissionGuideLifecycleTests.swift). Its tree equals git merge-tree --write-tree of its parents (825cbf98); nothing hand-resolved. PR diff 51fedbe...75f4254 is identical to the reviewed 15828a5...d283b74 (ignoring index lines). #143's files do not touch the Web, AppModel, Remote or project files this PR changes. Full review of the PR code: Full PR diff 15828a5...d283b74 (24 files, +730/-35): Alexa Shopping Web provider (WebProvider, onboarding, artwork, availability, reader in WebPageScript), shared-page turn ownership (WebAgentSession.comparisonTurns with baseline guard) and the persisted sharedTurns cache (merge, prune, debounced save, shutdown flush), AppModel/WebServices pruning hooks, tests. Round 1 at d13f95d found one blocking bug (shutdown flush skipped on the app's quit path); fixed in b308a4a and re-reviewed. d283b74 merges main 15828a5; its tree equals git merge-tree --write-tree of its parents (799aba3c), nothing hand-resolved; the PR diff is identical to the reviewed b308a4a diff.",
+    "verdict": "approve with notes",
+    "findings": [
+        {
+            "severity": "FIXED",
+            "file": "msgblast/Core/WebAgentSession.swift",
+            "text": "Shutdown flush ran only in cancelAndWait after beginShutdown had already cancelled the pending save, so a reply landing <1.5 s before quit could be lost. b308a4a flushes in beginShutdown with an unsaved flag; test uses the app's quit order."
+        },
+        {
+            "severity": "MINOR",
+            "file": "msgblast/Core/WebAgentSession.swift",
+            "text": "rememberSharedTurns can briefly re-add turns of an ended comparison while the live page still shows them; bounded and re-pruned at next launch or conversation end."
+        },
+        {
+            "severity": "MINOR",
+            "file": "msgblast/Core/WebAgentSession.swift",
+            "text": "If a page reload shows fewer messages than an attempt's baseline, an unlanded attempt cannot claim its message (fails safe, no cross-thread attribution). A shrink-after-reload test would help."
+        },
+        {
+            "severity": "NOTE",
+            "file": "msgblast/Core/WebAgentSession.swift",
+            "text": "pruneSharedTurns can cause one redundant save."
+        }
+    ],
+    "notes": "No exhaustive-switch gaps for alexaShopping. Secrets/privacy scan of added lines clean. The reviewer could not run Swift.",
+    "tests": "CI at d283b74: PR scope and linux passed; native, mobile, swift-complexity green or re-running at the previous head; CI at the new head running at receipt time (passed on the 7a3664e merge 0bd8b3f). Live: iPhone Mirroring run 2026-11-13 on a build of a563f97 (d7de844 + #135): new thread starts empty with only Alexa preselected, reply arrives, reopened thread keeps its replies. Final live check 2026-11-14 06:38Z on msg's real iPhone through iPhone Mirroring, Mac copy and iPhone app built from 34b95a5 (contains #125 d283b74, main 15828a5): new thread empty with only Alexa selected; reply with product lines, prices, ratings, amazon.com/dp links and photos (7 downloaded in ~20 s); photo opens full size; reopened thread keeps replies and photos. Evidence commit 401281312bba96c36ee2270a949fd59d751bd3a8 (branch claude/evidence-pr-125-135-34b95a5).",
+    "previous_receipt": "pr-125-d283b74.json"
+}
