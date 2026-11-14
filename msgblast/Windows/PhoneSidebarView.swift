@@ -171,6 +171,7 @@ struct PhoneSidebarPanel: View {
         .onChange(of: wantsOffer) { _, wants in
             if wants { refreshOffer() } else { closeOwnOffer() }
         }
+        .onChange(of: service.endpoints) { _, _ in addressesChanged() }
         .onDisappear(perform: closeOwnOffer)
     }
 
@@ -188,6 +189,8 @@ struct PhoneSidebarPanel: View {
                     Text("Key \(fingerprint)").font(.caption.monospaced())
                         .accessibilityLabel("Mac key fingerprint \(fingerprint). The phone shows the same before pairing.")
                 }
+            } else if pairing.offer == nil, let reason = noAddressReason {
+                Text(reason).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             } else if pairing.offer == nil || !NSApplication.shared.isActive {
                 // Closed elsewhere (Settings › Cancel, Forget), or expired while msgblast is in
                 // the background: wait to be asked again.
@@ -221,6 +224,19 @@ struct PhoneSidebarPanel: View {
     private func refreshOffer() {
         guard wantsOffer, !pairing.isOfferValid else { return }
         if (try? service.showPairingCode()) != nil { ownedCode = pairing.offer?.code }
+    }
+
+    /// Set while no code can be shown because the phone would have no address to reach.
+    private var noAddressReason: String? {
+        guard service.listener != nil, service.endpoints.isEmpty else { return nil }
+        return RemoteNoAddress(listenerError: service.listenerError).errorDescription
+    }
+
+    /// Tailscale or Wi-Fi came up or moved: a code of ours made before lists old addresses,
+    /// so replace it, and show one now if none could be made while there was no address.
+    private func addressesChanged() {
+        if let ownedCode, pairing.offer?.code == ownedCode { pairing.closeOffer(); self.ownedCode = nil }
+        refreshOffer()
     }
 
     private func closeOwnOffer() {

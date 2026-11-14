@@ -390,3 +390,54 @@ final class RemoteListenerPortTests: XCTestCase {
         listener.shutdown()
     }
 }
+
+/// A listener that started with no address (Tailscale or Wi-Fi not up yet, or gone after
+/// sleep) comes back on its own instead of leaving pairing codes with no address.
+@MainActor
+final class RemoteListenerRecoveryTests: XCTestCase {
+    private let tailscale = RemoteInterfaceAddress(interface: "utun4", address: "100.64.0.7", kind: .tailscale)
+    private var available: [RemoteInterfaceAddress] = []
+    private var opened: [FakeBoundListener] = []
+
+    private func listener() -> RemoteListener {
+        RemoteListener(retry: .init(savedPortWindow: .milliseconds(30), savedPortInterval: .milliseconds(10), reclaimInterval: .milliseconds(20),
+                                    randomAttempts: 2, recoverInterval: .milliseconds(20)),
+                       addresses: { [unowned self] _ in self.available }, randomPort: { 61_855 }) { [unowned self] _, port in
+            let bound = FakeBoundListener(port: port)
+            self.opened.append(bound)
+            return [bound]
+        }
+    }
+
+    func testAListenerWithNoAddressListensOnceTailscaleComesUp() async throws {
+        let listener = listener()
+        let port = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertNil(port)
+        XCTAssertTrue(listener.endpoints.isEmpty)
+        XCTAssertNotNil(listener.error)
+        available = [tailscale]
+        for _ in 0..<100 where !listener.isListening { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(listener.endpoints.map(\.host), ["100.64.0.7"])
+        XCTAssertEqual(listener.port, 50_530, "The saved port is kept")
+        XCTAssertNil(listener.error)
+        listener.shutdown()
+    }
+
+    func testShutdownStopsRetrying() async throws {
+        let listener = listener()
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        listener.shutdown()
+        available = [tailscale]
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(listener.isListening)
+        XCTAssertTrue(opened.isEmpty)
+    }
+
+    func testANetworkChangeRebindsWhenAddressesMoveOrComeBack() {
+        let lan = RemoteInterfaceAddress(interface: "en0", address: "192.168.1.4", kind: .lan)
+        XCTAssertTrue(RemoteListener.needsRebind(listening: false, current: [tailscale], bound: []), "Not listening and an address is back")
+        XCTAssertFalse(RemoteListener.needsRebind(listening: false, current: [], bound: []))
+        XCTAssertTrue(RemoteListener.needsRebind(listening: true, current: [lan], bound: [tailscale]))
+        XCTAssertFalse(RemoteListener.needsRebind(listening: true, current: [tailscale], bound: [tailscale]))
+    }
+}

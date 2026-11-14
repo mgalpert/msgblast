@@ -127,6 +127,9 @@ public final class RemoteListener: ObservableObject {
         var savedPortInterval: Duration = .seconds(1)
         var reclaimInterval: Duration = .seconds(5)
         var randomAttempts = 4
+        /// How often a listener that is on but has no address (Tailscale or Wi-Fi not up yet)
+        /// or could not bind tries again.
+        var recoverInterval: Duration = .seconds(5)
     }
     typealias Binder = @MainActor (_ addresses: [RemoteInterfaceAddress], _ port: UInt16) async -> [any RemoteBoundListener]?
 
@@ -145,6 +148,11 @@ public final class RemoteListener: ObservableObject {
     private var bound: [RemoteInterfaceAddress] = []
     private var restart: Task<Void, Never>?
     private var reclaim: Task<Void, Never>?
+    private var recover: Task<Void, Never>?
+    /// Between `start` and `shutdown`: remote control is on, so a failed start is retried.
+    private var active = false
+    /// A start is binding (it can wait up to `savedPortWindow`); network changes wait for it.
+    private var starting = 0
     private var savedPort: UInt16?
     private var shouldReclaim: @MainActor () -> Bool = { true }
     private let retry: Retry
@@ -179,6 +187,9 @@ public final class RemoteListener: ObservableObject {
     @discardableResult
     public func start(policy: RemoteBindPolicy, port requested: UInt16?, reclaimSavedPort: @escaping @MainActor () -> Bool = { true }) async -> UInt16? {
         stop()
+        active = true
+        starting += 1
+        defer { starting -= 1 }
         self.policy = policy
         savedPort = requested
         shouldReclaim = reclaimSavedPort
@@ -186,6 +197,7 @@ public final class RemoteListener: ObservableObject {
         let selected = addresses(policy)
         guard !selected.isEmpty else {
             error = policy == .tailscaleOnly ? "No Tailscale address on this Mac. Start Tailscale or choose another network option." : "No Tailscale or local network address on this Mac."
+            startRecovering()
             return nil
         }
         if let requested {
@@ -211,7 +223,34 @@ public final class RemoteListener: ObservableObject {
             return candidate
         }
         error = "msgblast could not open a port for remote control."
+        startRecovering()
         return nil
+    }
+
+    /// A start that found no address or no free port is not final: Tailscale may connect
+    /// later (after sleep, a network change or a late launch), and nothing else would bring
+    /// the listener back, so the Mac would hand out pairing codes with no address in them.
+    private func startRecovering() {
+        guard recover == nil else { return }
+        recover = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let interval = self?.retry.recoverInterval else { return }
+                try? await Task.sleep(for: interval)
+                guard let self, !Task.isCancelled, self.active, !self.isListening else { return }
+                guard self.starting == 0 else { continue }
+                guard !self.addresses(self.policy).isEmpty else { continue }
+                self.recover = nil
+                Self.logger.notice("Remote control found an address again; listening")
+                await self.start(policy: self.policy, port: self.savedPort, reclaimSavedPort: self.shouldReclaim)
+                return
+            }
+        }
+    }
+
+    /// Whether a network change needs a new bind: the addresses moved, or the listener is on
+    /// but not listening and an address is now available.
+    static func needsRebind(listening: Bool, current: [RemoteInterfaceAddress], bound: [RemoteInterfaceAddress]) -> Bool {
+        listening ? current != bound : !current.isEmpty
     }
 
     private func adopt(_ opened: [any RemoteBoundListener], addresses selected: [RemoteInterfaceAddress], port: UInt16) {
@@ -260,6 +299,8 @@ public final class RemoteListener: ObservableObject {
     }
 
     public func shutdown() {
+        active = false
+        recover?.cancel(); recover = nil
         stop()
         restart?.cancel()
         monitor?.cancel(); monitor = nil
@@ -272,9 +313,10 @@ public final class RemoteListener: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.interfaces = available
-                // Tailscale or Wi-Fi addresses changed: rebind on the same port.
-                guard self.isListening, RemoteInterfaces.select(RemoteInterfaces.current(), policy: self.policy) != self.bound else { return }
+                // Tailscale or Wi-Fi addresses changed, or came back after none: rebind on the same port.
+                guard self.active, self.starting == 0, Self.needsRebind(listening: self.isListening, current: self.addresses(self.policy), bound: self.bound) else { return }
                 self.restart?.cancel()
+                self.recover?.cancel(); self.recover = nil
                 let port = self.savedPort ?? self.port
                 self.restart = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(1))
