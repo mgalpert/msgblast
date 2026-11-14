@@ -50,7 +50,7 @@ its pending request. Completing the reply restores availability. A saved choice
 does not add an agent to a comparison that started without it: its pane and
 follow-ups stay limited to that comparison's members until the user adds it.
 
-Muse, Grok Bot, Wabi, ChatGPT, and Dots use foreground input. An explicit send
+Muse, Grok Bot, Wabi, and Claude use foreground input. An explicit send
 acquires one shared desktop transaction, brings the
 exact app window forward, and holds it through navigation, text entry, and
 submission. Once the outgoing request is observed, it
@@ -59,8 +59,10 @@ background. If submission cannot be confirmed within five seconds, focus still r
 without resending or claiming success. Failures and cancellation also restore
 msgblast before releasing desktop ownership. After focus restoration, the next
 independent app may submit while earlier replies are still being collected.
-ChatGPT/Dots and copies of the same app retain their shared surface until reply
-collection finishes. Claude retains its background path.
+ChatGPT and Dots focus, type, and submit with background input and never
+activate the app to send. Copies of the same app retain their shared surface
+until reply collection finishes.
+When msgblast launches ChatGPT or reopens its closed window, ChatGPT brings itself forward and msgblast hands the front back right away: to msgblast's own window through the accessibility driver, or, when another app was in front, as a best-effort activation that macOS may ignore. A reopen shows one brief flash (about 0.1 s). A launch can show two (about 0.1 s and 0.3 s), because ChatGPT keeps taking the front for about a second and is handed back each time, up to three times. The front is handed back only while ChatGPT and the app that was in front are the only apps to come forward since the open began; switching to any other app in the meantime cancels the hand-back, and a window that appears more than five seconds after the open is not handed back. A running ChatGPT is first unhidden and given a second to report an open window in its accessibility tree; if it does, it stays in the background and is not reopened. A window on another Space is reopened and may flash.
 An explicit Connect or conversation start reopens hidden apps as well as closed
 apps; a running process and a WindowServer entry alone do not prove the app is
 readable. Passive readiness checks never open or activate apps. An unverifiable
@@ -283,6 +285,11 @@ separate saved state from their website accounts. The installed ChatGPT
 26.1013.40934 app (com.openai.codex) contains both ChatGPT and Dots. The older
 com.openai.chat bundle is detected as installed, but its different native UI
 is not yet supported by this adapter. Connection checks refuse unsupported layouts.
+When ChatGPT’s window does not expose its content after a relaunch, msgblast
+asks it to (by setting the macOS accessibility attribute assistive apps use)
+and retries for about ten seconds. It may reconnect by itself; if it still
+reports the version as unsupported, press Reconnect. The attribute stays set on
+that ChatGPT process until it quits.
 
 Starting or explicitly reopening a conversation opens a closed installed app
 once and waits for its main window. Shared Send displays a getting-ready state
@@ -320,7 +327,7 @@ changed dot identity blocks input until the saved context can be verified.
 Dots can publish its sidebar unread badge while the conversation remains stale
 in the background. Before typing, msgblast acknowledges an existing badge by
 clicking the same verified Dot and checks that its identity and history are
-unchanged and the badge clears. This happens within the foreground send transaction;
+unchanged and the badge clears. This happens before typing, with background input;
 it never selects another Dot or dismisses a draft. After verifying this request's outgoing message, msgblast may
 briefly activate that exact ChatGPT window once when the active Dot's unread
 badge changes after submission. An unchanged pre-send badge does not trigger it.

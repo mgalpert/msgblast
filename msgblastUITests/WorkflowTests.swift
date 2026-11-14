@@ -2,6 +2,51 @@ import XCTest
 import AppKit
 final class WorkflowTests: XCTestCase {
     @MainActor
+    func testSettingsNavigationRetainsSharingDraftAndCancelsShortcutRecording() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.textViews["Shared prompt"].waitForExistence(timeout: 10))
+        let settings = openSettings(app)
+        for name in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "remote", "permissions", "sharing", "updates"] {
+            XCTAssertTrue(settings.staticTexts["settings-page-\(name)"].isHittable)
+        }
+        settings.buttons["Record Shortcut"].click()
+        XCTAssertTrue(settings.buttons["Cancel Recording"].exists)
+        settings.staticTexts["settings-page-sharing"].click()
+        let usage = settings.checkBoxes.matching(NSPredicate(format: "label CONTAINS %@", "Share usage statistics")).firstMatch
+        XCTAssertTrue(usage.waitForExistence(timeout: 5))
+        usage.click()
+        let unsavedValue = String(describing: usage.value ?? "")
+        visitConnectionPages(settings)
+        settings.staticTexts["settings-page-outsideAgents"].click()
+        XCTAssertTrue(settings.switches["outside-agents-enabled"].waitForExistence(timeout: 5))
+        settings.staticTexts["settings-page-apps"].click()
+        settings.buttons["Manage permissions"].click()
+        XCTAssertTrue(settings.switches["enable-cua-host-permission"].exists)
+        settings.staticTexts["settings-page-updates"].click()
+        XCTAssertTrue(settings.staticTexts["Software updates"].exists)
+        settings.staticTexts["settings-page-sharing"].click()
+        XCTAssertEqual(String(describing: usage.value ?? ""), unsavedValue, "Sidebar changes must retain unsaved choices")
+        settings.buttons["Save choices"].click()
+        XCTAssertTrue(settings.buttons["Choices saved"].waitForExistence(timeout: 5))
+        settings.staticTexts["settings-page-general"].click()
+        XCTAssertTrue(settings.buttons["Record Shortcut"].exists, "Leaving General cancels recording")
+        XCTAssertFalse(settings.buttons["Cancel Recording"].exists)
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        app.typeKey(",", modifierFlags: .command)
+        settings.staticTexts["settings-page-sharing"].click()
+        XCTAssertEqual(String(describing: usage.value ?? ""), unsavedValue, "Saved choices must survive reopening")
+        for page in ["general", "apps", "websites", "cli", "webhooks", "outsideAgents", "remote", "permissions", "sharing", "updates"] {
+            settings.staticTexts["settings-page-\(page)"].click()
+            XCTAssertTrue(settings.buttons["settings-send-feedback"].isHittable)
+            XCTAssertTrue(settings.buttons["settings-build-feature"].isHittable)
+        }
+        assertFooterOpensWindows(app, settings)
+    }
+
+    @MainActor
     func testGlobalNewBlastShortcutFromAnotherAppAndDisable() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]
@@ -156,47 +201,47 @@ final class WorkflowTests: XCTestCase {
         app.launchArguments = ["--demo", "--isolated-demo", "--permission-guide-preview", "--contacts-access-preview", "--onboarding-permissions-preview"]
         app.launch()
         defer { app.terminate() }
-        app.typeKey(",", modifierFlags: .command)
-        let history = app.switches["enable-messages-history-permission"]
+        let skip = app.buttons["Skip for now"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 5))
+        skip.click()
+        let draft = app.textViews["Shared prompt"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        draft.click(); draft.typeKey("a", modifierFlags: .command); draft.typeText("Retain this permission settings draft")
+        let settings = openSettings(app)
+        app.staticTexts["settings-page-permissions"].click()
+        let history = settings.switches["enable-messages-history-permission"]
         XCTAssertTrue(history.waitForExistence(timeout: 5))
         for id in ["messages-history", "messages-contacts", "messages-automation", "cua-host", "cua-capture"] {
-            XCTAssertTrue(app.switches["enable-\(id)-permission"].exists, "Settings must expose the same five switches as onboarding")
+            XCTAssertTrue(settings.switches["enable-\(id)-permission"].exists, "Settings must expose the same five switches as onboarding")
         }
         XCTAssertFalse(app.buttons["Manage"].exists)
         XCTAssertFalse(app.buttons["Check again"].exists)
-        XCTAssertFalse(app.switches["enable-cua-driver-permission"].exists)
+        XCTAssertFalse(settings.switches["enable-cua-driver-permission"].exists)
         XCTAssertEqual(String(describing: history.value ?? ""), "0")
-        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
-        let chatGPT = settings.switches["enable-app-chatgptApp"]
-        for _ in 0..<12 where !chatGPT.isHittable { settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -180) }
-        XCTAssertTrue(chatGPT.isHittable)
-        if String(describing: chatGPT.value ?? "") != "1" { chatGPT.click() }
-        XCTAssertEqual(String(describing: chatGPT.value ?? ""), "1")
-        let setup = settings.buttons["setup-app-chatgptApp"]
+        let setup = enableChatGPTApp(app, settings)
         XCTAssertFalse(setup.isEnabled, "An enabled app still needs both app permissions before setup")
-        settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 10000)
-        let contacts = app.switches["enable-messages-contacts-permission"]
+        app.buttons["Manage permissions"].click()
+        let contacts = settings.switches["enable-messages-contacts-permission"]
         XCTAssertEqual(String(describing: contacts.value ?? ""), "0")
         contacts.click()
         expectation(for: NSPredicate(format: "value == 1"), evaluatedWith: contacts)
         waitForExpectations(timeout: 5)
         XCTAssertEqual(String(describing: history.value ?? ""), "0")
-        let host = app.switches["enable-cua-host-permission"]
-        host.click()
-        XCTAssertEqual(String(describing: host.value ?? ""), "1")
+        turnOn(settings.switches["enable-cua-host-permission"], from: nil)
+        app.staticTexts["settings-page-apps"].click()
         XCTAssertFalse(setup.isEnabled, "Device Control alone must not allow setup")
-        XCTAssertEqual(String(describing: app.switches["enable-cua-capture-permission"].value ?? ""), "0")
-        app.switches["enable-cua-capture-permission"].click()
-        XCTAssertEqual(String(describing: app.switches["enable-cua-capture-permission"].value ?? ""), "1")
+        app.buttons["Manage permissions"].click()
+        turnOn(settings.switches["enable-cua-capture-permission"])
+        app.staticTexts["settings-page-apps"].click()
         XCTAssertTrue(setup.isEnabled, "Setup must become available when both app permissions are enabled")
+        app.staticTexts["settings-page-permissions"].click()
         XCTAssertEqual(app.sheets.count, 0, "Demo must never request real system access")
-        let screenshot = XCTAttachment(screenshot: app.windows["com_apple_SwiftUI_Settings_window"].screenshot())
-        screenshot.name = "Shared permission switches — simulated independent grants"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        attachScreenshot(settings, "Shared permission switches — simulated independent grants")
         app.windows["com_apple_SwiftUI_Settings_window"].buttons[XCUIIdentifierCloseWindow].click()
-        XCTAssertTrue(app.textViews["Shared prompt"].exists)
-        XCTAssertFalse(app.staticTexts["Allow access"].exists, "Changing access in Settings must not restart onboarding")
+        XCTAssertTrue(app.staticTexts["Allow access"].exists, "Changing access retains the required permission-review checkpoint")
+        app.buttons["Skip for now"].click()
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        XCTAssertEqual(draft.value as? String, "Retain this permission settings draft", "Returning from permission review must retain the workspace")
     }
 
     @MainActor
@@ -211,11 +256,12 @@ final class WorkflowTests: XCTestCase {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        app.staticTexts["settings-page-apps"].click()
         for (provider, name) in [("chatgptApp", "ChatGPT"), ("dotsApp", "Dots"), ("claudeApp", "Claude"), ("museApp", "Muse"), ("grokBotApp", "Grok Bot"), ("wabi", "Wabi")] {
             let enable = settings.switches["enable-app-\(provider)"]
             XCTAssertTrue(enable.exists)
-            settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 10000)
-            for _ in 0..<12 where !enable.isHittable { settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -180) }
+            settings.scrollViews["settings-detail-apps"].scroll(byDeltaX: 0, deltaY: 10000)
+            for _ in 0..<12 where !enable.isHittable { settings.scrollViews["settings-detail-apps"].scroll(byDeltaX: 0, deltaY: -180) }
             XCTAssertTrue(enable.isHittable)
             if String(describing: enable.value ?? "") != "1" { enable.click() }
             settings.buttons["setup-app-\(provider)"].click()
@@ -816,5 +862,72 @@ final class WorkflowTests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
         feedback.buttons[XCUIIdentifierCloseWindow].click()
+    }
+}
+
+@MainActor private extension WorkflowTests {
+    func openSettings(_ app: XCUIApplication) -> XCUIElement {
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        return settings
+    }
+
+    /// Visits each Connections page, enabling Codex CLI and checking the Grok Bot webhook button; ends on Mac apps.
+    func visitConnectionPages(_ settings: XCUIElement) {
+        settings.staticTexts["settings-page-apps"].click()
+        for name in ["websites", "cli", "webhooks", "apps"] {
+            let category = settings.staticTexts["settings-page-\(name)"]
+            XCTAssertTrue(category.isHittable)
+            category.click()
+            if name == "cli" {
+                let codex = settings.switches["Enable Codex CLI"]
+                XCTAssertTrue(codex.isHittable)
+                codex.click()
+                XCTAssertEqual(String(describing: codex.value ?? ""), "1")
+            }
+            if name == "webhooks" { XCTAssertTrue(settings.buttons["Add Grok Bot…"].isHittable) }
+        }
+    }
+
+    /// The sidebar footer opens the existing feedback and feature windows without submitting anything.
+    func assertFooterOpensWindows(_ app: XCUIApplication, _ settings: XCUIElement) {
+        XCTAssertEqual(settings.buttons["settings-send-feedback"].label, "Share Feedback")
+        XCTAssertEqual(settings.buttons["settings-build-feature"].label, "Build A New Feature")
+        settings.buttons["settings-send-feedback"].click()
+        let feedback = app.windows["Send Feedback"]
+        XCTAssertTrue(feedback.waitForExistence(timeout: 5))
+        XCTAssertTrue(feedback.textViews["Feedback note"].exists)
+        feedback.buttons[XCUIIdentifierCloseWindow].click()
+        settings.buttons["settings-build-feature"].click()
+        let feature = app.windows["Build a New Feature"]
+        XCTAssertTrue(feature.waitForExistence(timeout: 5))
+        XCTAssertTrue(feature.textFields["Feature idea, optional"].exists)
+        feature.buttons[XCUIIdentifierCloseWindow].click()
+    }
+
+    /// Turns ChatGPT on under Mac apps and returns its Set up button.
+    func enableChatGPTApp(_ app: XCUIApplication, _ settings: XCUIElement) -> XCUIElement {
+        app.staticTexts["settings-page-apps"].click()
+        let chatGPT = settings.switches["enable-app-chatgptApp"]
+        for _ in 0..<12 where !chatGPT.isHittable { settings.scrollViews["settings-detail-apps"].scroll(byDeltaX: 0, deltaY: -180) }
+        XCTAssertTrue(chatGPT.isHittable)
+        if String(describing: chatGPT.value ?? "") != "1" { chatGPT.click() }
+        XCTAssertEqual(String(describing: chatGPT.value ?? ""), "1")
+        return settings.buttons["setup-app-chatgptApp"]
+    }
+
+    /// Clicks a switch that should start at `from` (nil skips that check) and asserts it is on.
+    func turnOn(_ toggle: XCUIElement, from start: String? = "0", file: StaticString = #filePath, line: UInt = #line) {
+        if let start { XCTAssertEqual(String(describing: toggle.value ?? ""), start, file: file, line: line) }
+        toggle.click()
+        XCTAssertEqual(String(describing: toggle.value ?? ""), "1", file: file, line: line)
+    }
+
+    func attachScreenshot(_ element: XCUIElement, _ name: String) {
+        let screenshot = XCTAttachment(screenshot: element.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }

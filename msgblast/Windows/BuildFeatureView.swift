@@ -137,7 +137,6 @@ struct BuildFeatureView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
                                 .accessibilityIdentifier("Coding agent prompt")
-                                .accessibilityLabel("Coding agent prompt")
                                 .accessibilityValue(renderedPrompt)
                         }
                         .frame(height: 210)

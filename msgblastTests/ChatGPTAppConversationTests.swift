@@ -382,6 +382,53 @@ final class ChatGPTAppDriverTests: XCTestCase {
         }
         XCTAssertTrue(try calls(directory).allSatisfy { ["list_apps", "list_windows"].contains($0) })
     }
+
+    func testWebContentUnavailableRetriesThenSucceeds() async throws {
+        let (directory, executable) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let native = try observation()
+        let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(1), stableDuration: .zero, callTimeout: 3)
+        let readyAsks = LockedCount()
+        let ready = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in native }, exposeWebContent: { _ in _ = readyAsks.next() })
+        try await ready.checkAvailable(kind: .chatgpt)
+        XCTAssertEqual(readyAsks.value, 0)
+        let reads = LockedCount()
+        let asks = LockedCount()
+        let adapter = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in
+            if reads.next() <= 2 { throw ChatGPTObservationError.webContentUnavailable }
+            return native
+        }, exposeWebContent: { _ in _ = asks.next() })
+        try await adapter.checkAvailable(kind: .chatgpt)
+        XCTAssertEqual(reads.value, 3)
+        XCTAssertEqual(asks.value, 2)
+    }
+
+    func testMissingWebContentFailsAfterBoundedReads() async throws {
+        let (directory, executable) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let reads = LockedCount()
+        let asks = LockedCount()
+        let timing = DesktopAppConversation.Timing(pollInterval: .milliseconds(1), stableDuration: .zero, callTimeout: 3)
+        let adapter = ChatGPTAppConversation(executable: executable, timing: timing, readNative: { _ in
+            _ = reads.next()
+            throw ChatGPTObservationError.webContentUnavailable
+        }, exposeWebContent: { _ in _ = asks.next() })
+        do {
+            try await adapter.checkAvailable(kind: .chatgpt)
+            XCTFail("Missing web content must stay unsupported")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "This ChatGPT application version is not supported yet.")
+        }
+        XCTAssertEqual(reads.value, 41)
+        XCTAssertEqual(asks.value, 40)
+    }
+}
+
+private final class LockedCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func next() -> Int { lock.withLock { count += 1; return count } }
+    var value: Int { lock.withLock { count } }
 }
 
 private actor ChatGPTRecordedBindings {
@@ -1396,6 +1443,132 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: f.directory.appendingPathComponent("submitted-draft"), encoding: .utf8), "Follow-up")
     }
     @MainActor
+    func testChatGPTAndDotsSendWithoutTakingTheForeground() async throws {
+        for kind in [ChatGPTAppKind.chatgpt, .dots] {
+            let f = try fixture(kind: kind, followup: true)
+            defer { try? FileManager.default.removeItem(at: f.directory) }
+            let storage = f.directory.appendingPathComponent("workspace.json")
+            var workspace = WebWorkspaceState()
+            workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+            workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+            workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+            try JSONEncoder().encode(workspace).write(to: storage)
+            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in })
+            // A foreground-capable driver: any lease would capture the msgblast window first.
+            let driver = DesktopAppConversation(executable: f.executable, delivery: .foreground, captureHostWindow: {
+                XCTFail("\(kind) sends must not take the foreground"); throw CancellationError()
+            })
+            let session = WebAgentSession(provider: kind == .dots ? .dotsApp : .chatgptApp, storageURL: storage, fixture: false, museApp: .shared,
+                                          desktopApps: client, desktopDriver: driver, chatgptApp: f.adapter())
+            defer { session.beginShutdown() }
+            let attempt = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+            XCTAssertEqual(attempt?.status, .observed, session.error ?? "")
+            XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "bring_to_front" })
+        }
+    }
+
+    @MainActor
+    func testDotsInterstitialBeforeAttemptingIsNotSent() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { Self.addingDotsInterstitial(to: $0) })
+        let storage = f.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Dots.app"), processID: 42) }, open: { _, _ in })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
+                                      desktopApps: client, desktopDriver: .init(executable: f.executable), chatgptApp: adapter)
+        defer { session.beginShutdown() }
+        let result = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+        let attempt = try XCTUnwrap(result)
+        XCTAssertEqual(attempt.status, .notSent)
+        XCTAssertTrue(attempt.detail?.contains("Nothing was sent") ?? false, attempt.detail ?? "")
+    }
+
+    @MainActor
+    func testDotsInterstitialOnFirstReadAfterSendIsUncertain() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let reads = f.directory.appendingPathComponent("first-post-send-read")
+        let adapter = f.adapter(transformNative: { root in
+            guard FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path) else { return root }
+            try "1".write(to: reads, atomically: true, encoding: .utf8)
+            return Self.addingDotsInterstitial(to: root)
+        })
+        let storage = f.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Dots.app"), processID: 42) }, open: { _, _ in })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
+                                      desktopApps: client, desktopDriver: .init(executable: f.executable), chatgptApp: adapter)
+        defer { session.beginShutdown() }
+        let result = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+        let attempt = try XCTUnwrap(result)
+        XCTAssertEqual(try String(contentsOf: reads, encoding: .utf8), "1")
+        XCTAssertEqual(attempt.status, .uncertain)
+        XCTAssertFalse(attempt.detail?.contains("Nothing was sent") ?? false, attempt.detail ?? "")
+    }
+
+    @MainActor
+    func testDotsInterstitialBeforeSendIsNotSentAndNeverUncertain() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let adapter = f.adapter(transformNative: { Self.addingDotsInterstitial(to: $0) })
+        let storage = f.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Dots.app"), processID: 42) }, open: { _, _ in })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
+                                      desktopApps: client, desktopDriver: .init(executable: f.executable), chatgptApp: adapter)
+        defer { session.beginShutdown() }
+        let result = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+        // A failure before anything is typed must stay "not sent": an
+        // uncertain attempt would block every later send of this chat.
+        if let result { XCTAssertEqual(result.status, .notSent, result.detail ?? "") }
+        XCTAssertFalse(session.state.attempts.contains { $0.status == .uncertain }, session.error ?? "")
+        XCTAssertFalse(f.calls().contains { ["type_text", "press_key"].contains($0["tool"] as? String ?? "") })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path))
+    }
+
+    @MainActor
+    func testDotsInterstitialAfterSubmissionDoesNotClaimNothingWasSent() async throws {
+        let f = try fixture(kind: .dots, followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let reads = f.directory.appendingPathComponent("post-submission-reads")
+        let adapter = f.adapter(transformNative: { root in
+            guard FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("submitted-draft").path) else { return root }
+            let read = (Int((try? String(contentsOf: reads, encoding: .utf8)) ?? "0") ?? 0) + 1
+            try String(read).write(to: reads, atomically: true, encoding: .utf8)
+            guard read > 1 else { return Self.hidingAssistantAnswer(root) }
+            return Self.addingDotsInterstitial(to: root)
+        })
+        let storage = f.directory.appendingPathComponent("workspace.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/Dots.app"), processID: 42) }, open: { _, _ in })
+        let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
+                                      desktopApps: client, desktopDriver: .init(executable: f.executable), chatgptApp: adapter)
+        defer { session.beginShutdown() }
+        let result = await session.send("Follow-up", comparisonID: f.binding.comparisonID)
+        let attempt = try XCTUnwrap(result)
+        XCTAssertEqual(try String(contentsOf: reads, encoding: .utf8), "2")
+        XCTAssertNotEqual(attempt.status, .notSent)
+        XCTAssertFalse(attempt.detail?.contains("Nothing was sent") ?? false, attempt.detail ?? "")
+    }
+
+    @MainActor
     func testChatGPTLateRepliesRecoverInitialAndFollowUpWithoutResending() async throws {
         for followup in [false, true] {
             let f = try fixture(followup: followup)
@@ -1439,7 +1612,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
             workspace.attempts = [attempt]
             workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: text)]
             try JSONEncoder().encode(workspace).write(to: storage)
-            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not open an app") })
+            let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not open an app") })
             let session = WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
             session.connect(automaticallyRefresh: false)
             XCTAssertTrue(session.isAutomaticallyWaitingForNativeReply)
@@ -1513,7 +1686,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         ]
         try JSONEncoder().encode(workspace).write(to: storage)
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) },
-                                                   open: { _ in XCTFail("Recovery must not open an app") })
+                                                   open: { _, _ in XCTFail("Recovery must not open an app") })
         let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared,
                                       desktopApps: client, chatgptApp: adapter)
         defer { session.beginShutdown() }
@@ -1605,7 +1778,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let first = try XCTUnwrap(f.binding.firstPrompt)
         let receipt = try ChatGPTReplyReceipt(comparisonID: f.binding.comparisonID, initialTitle: f.binding.dedicatedTitle,
                                               firstPrompt: first, prompt: "Follow-up", baseline: [.init(role: .user, text: first)])
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not open an app") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not open an app") })
         for scenario in ["unconfirmed", "cancelled", "wrong binding", "multiple requests", "missing outgoing", "additional message", "duplicate reply", "wrong comparison", "unsupported version"] {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
@@ -1643,7 +1816,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         let receipt = try DotsReplyReceipt(comparisonID: f.binding.comparisonID, title: "Example Dot", prompt: "Follow-up",
                                        baseline: [.init(role: .user, text: "previous")], initialUnreadCount: nil)
         let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) },
-                                                   open: { _ in XCTFail("Recovery must not open an app") })
+                                                   open: { _, _ in XCTFail("Recovery must not open an app") })
         for scenario in ["unconfirmed", "cancelled", "wrong binding", "multiple requests", "missing outgoing", "additional message", "duplicate reply", "wrong comparison", "unsupported version"] {
             var workspace = WebWorkspaceState()
             workspace.enabled = true; workspace.comparisonID = f.binding.comparisonID
@@ -1709,7 +1882,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
         let storage = f.directory.appendingPathComponent("chatgpt-in-flight.json")
         try JSONEncoder().encode(workspace).write(to: storage)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not launch ChatGPT") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not launch ChatGPT") })
         let session = WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
         session.connect(automaticallyRefresh: false)
         let recovery = Task { await session.reconcileChatGPTReplyOnce() }
@@ -1753,7 +1926,7 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(id: attempt.id.uuidString, role: "user", text: attempt.text)]
         let storage = f.directory.appendingPathComponent("in-flight.json")
         try JSONEncoder().encode(workspace).write(to: storage)
-        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _ in XCTFail("Recovery must not launch ChatGPT") })
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in XCTFail("Recovery must not launch ChatGPT") })
         let session = WebAgentSession(provider: .dotsApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, chatgptApp: adapter)
         session.connect(automaticallyRefresh: false)
         let recovery = Task { await session.reconcileDotsReplyOnce() }
@@ -1852,4 +2025,192 @@ final class ChatGPTAppSubmissionTests: XCTestCase {
         XCTAssertEqual(fixture.calls().filter { $0["tool"] as? String == "click" }.count, 2)
     }
 
+    @MainActor
+    func testWabiSubmitsWhileChatGPTReplyIsStillPending() async throws {
+        let f = try fixture(followup: true)
+        defer { try? FileManager.default.removeItem(at: f.directory) }
+        let visible = f.directory.appendingPathComponent("reply-visible")
+        let chatgpt = try chatgptSession(f, holdingReplyUntil: visible)
+        let wabi = WebAgentSession(provider: .wabi, storageURL: f.directory.appendingPathComponent("wabi.json"), fixture: true)
+        defer { chatgpt.beginShutdown(); wabi.beginShutdown() }
+        wabi.setEnabled(true)
+        wabi.updateState { $0.comparisonID = UUID() }
+        let broadcast = Task { await WebAgents.send("Follow-up", to: [chatgpt, wabi]) }
+        let overlapped = await nextSendStartedWhileWaiting(chatgpt, wabi)
+        try Data().write(to: visible)
+        let results = await broadcast.value
+        XCTAssertTrue(overlapped, "chatgpt=\(String(describing: chatgpt.state.attempts.first?.status)) \(chatgpt.error ?? "") wabi=\(wabi.isSending) \(String(describing: wabi.state.attempts.first?.status)) \(wabi.error ?? "")")
+        XCTAssertEqual(results[chatgpt.id]?.status, .observed, chatgpt.error ?? "")
+        XCTAssertEqual(results[wabi.id]?.status, .observed, wabi.error ?? "")
+        XCTAssertFalse(f.calls().contains { $0["tool"] as? String == "bring_to_front" })
+    }
+
+    @MainActor
+    private func chatgptSession(_ f: Fixture, holdingReplyUntil visible: URL) throws -> WebAgentSession {
+        let submitted = f.directory.appendingPathComponent("submitted-draft")
+        let adapter = f.adapter(timing: .init(pollInterval: .milliseconds(20), stableDuration: .zero, replyTimeout: .seconds(15), callTimeout: 3)) { root in
+            guard FileManager.default.fileExists(atPath: submitted.path), !FileManager.default.fileExists(atPath: visible.path) else { return root }
+            return Self.hidingAssistantAnswer(root)
+        }
+        let storage = f.directory.appendingPathComponent("chatgpt.json")
+        var workspace = WebWorkspaceState()
+        workspace.enabled = true
+        workspace.comparisonID = f.binding.comparisonID
+        workspace.chatgptConversations[f.binding.comparisonID.uuidString] = f.binding
+        workspace.localConversations[f.binding.comparisonID.uuidString] = [.init(role: "user", text: f.binding.firstPrompt!), .init(role: "assistant", text: "Previous answer")]
+        try JSONEncoder().encode(workspace).write(to: storage)
+        let client = DesktopAppInstallationClient(inspect: { _ in .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: 42) }, open: { _, _ in })
+        let driver = DesktopAppConversation(executable: f.executable, delivery: .foreground, captureHostWindow: {
+            XCTFail("ChatGPT must not take the foreground"); throw CancellationError()
+        })
+        return WebAgentSession(provider: .chatgptApp, storageURL: storage, fixture: false, museApp: .shared, desktopApps: client, desktopDriver: driver, chatgptApp: adapter)
+    }
+
+    private static func hidingAssistantAnswer(_ root: ChatGPTAXNode) -> ChatGPTAXNode {
+        var root = root
+        func hide(_ node: inout ChatGPTAXNode) {
+            if node.classes.contains(where: { $0.hasPrefix("_transcriptContent_") }) || node.classes.contains("message-list") { node.children.removeLast() }
+            else { for index in node.children.indices { hide(&node.children[index]) } }
+        }
+        hide(&root)
+        return root
+    }
+
+    private static func addingDotsInterstitial(to root: ChatGPTAXNode) -> ChatGPTAXNode {
+        var root = root
+        func cover(_ node: inout ChatGPTAXNode) -> Bool {
+            if node.role == "AXWebArea" { node.children.append(.init(role: "AXHeading", label: "Contact your dot anywhere")); return true }
+            return node.children.indices.contains { cover(&node.children[$0]) }
+        }
+        _ = cover(&root)
+        return root
+    }
+
+    @MainActor
+    private func nextSendStartedWhileWaiting(_ chatgpt: WebAgentSession, _ next: WebAgentSession) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(12))
+        while ContinuousClock.now < deadline {
+            if chatgpt.state.attempts.first?.status == .waiting, next.isSending || !next.state.attempts.isEmpty { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return false
+    }
+
+}
+
+/// ChatGPT 26.1103.60933 trees, pruned from the native app's accessibility tree. Real nesting, roles and classes; text and names are synthetic.
+final class ChatGPTCurrentLayoutTests: XCTestCase {
+    private static let chat = #"""
+{"role":"AXWindow","label":"Acknowledge background","subrole":"AXStandardWindow","children":[{"role":"AXGroup","label":"Acknowledge background","children":[{"role":"AXGroup","children":[{"role":"AXScrollArea","children":[{"role":"AXWebArea","label":"Acknowledge background","url":"app://-/index.html","children":[{"role":"AXGroup","id":"root","children":[{"role":"AXGroup","children":[{"role":"AXGroup","subrole":"AXLandmarkComplementary","children":[{"role":"AXGroup","id":"app-shell-sidebar","children":[{"role":"AXGroup","label":"Home","subrole":"AXLandmarkNavigation","children":[{"role":"AXGroup","children":[{"role":"AXPopUpButton","label":"Switch mode, current mode: ChatGPT"},{"role":"AXCheckBox","label":"View activity, needs attention","value":"0","subrole":"AXToggleButton"},{"role":"AXPopUpButton","label":"Search"},{"role":"AXButton","label":"New chat","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":131}},{"role":"AXList","subrole":"AXContentList","children":[{"role":"AXGroup","children":[{"role":"AXButton","label":"Example Dot 1 unread message","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":162}}]}]}]}]}]}]},{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":[{"role":"AXGroup","subrole":"AXEmptyGroup"},{"role":"AXGroup","classes":["WorkspaceContent-dnr6uY"],"children":[{"role":"AXGroup","classes":["MainContentViewport-OinMfT"],"children":[{"role":"AXGroup","classes":["MainContentFrame-sss8BP","self-end"],"children":[{"role":"AXGroup","label":"Conversation","subrole":"AXLandmarkRegion","children":[{"role":"AXGroup","classes":["transcriptContent-l_FOQD"],"children":[{"role":"AXGroup","children":[{"role":"AXSplitter","label":"Today 3:11 PM"},{"role":"AXHeading","label":"You said:","value":"4","classes":["sr-only"],"children":[{"role":"AXStaticText","value":"You said:"}]},{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Reply with exactly: ACK background"}]},{"role":"AXButton","label":"Copy message","frame":{"h":26,"w":27,"x":1261,"y":212}},{"role":"AXButton","label":"Share prompt","frame":{"h":30,"w":31,"x":1289,"y":210}},{"role":"AXButton","label":"Edit message","frame":{"h":26,"w":27,"x":1321,"y":212}},{"role":"AXHeading","label":"ChatGPT said:","value":"4","classes":["sr-only"],"children":[{"role":"AXStaticText","value":"ChatGPT said:"}]},{"role":"AXGroup","children":[{"role":"AXStaticText","value":"ACK background"}]},{"role":"AXButton","label":"Copy","frame":{"h":26,"w":27,"x":611,"y":281}},{"role":"AXCheckBox","label":"Read aloud","value":"0","subrole":"AXToggleButton"},{"role":"AXButton","label":"Share","frame":{"h":26,"w":27,"x":667,"y":281}},{"role":"AXPopUpButton","label":"Regenerate response"},{"role":"AXPopUpButton","label":"More actions"}]}]},{"role":"AXGroup","children":[{"role":"AXTextArea","label":"Ask ChatGPT","value":"Ask ChatGPT\n","focused":true,"children":[{"role":"AXGroup","classes":["placeholder"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Ask ChatGPT"}]}]}]}]}]}]}]}]}],"id":"_r_61p_"}]}]}]}]}]}]}]}
+"""#
+    private static let dots = #"""
+{"role":"AXWindow","label":"Example Dot","subrole":"AXStandardWindow","children":[{"role":"AXGroup","label":"Example Dot","children":[{"role":"AXGroup","children":[{"role":"AXScrollArea","children":[{"role":"AXWebArea","label":"Example Dot","url":"app://-/index.html","children":[{"role":"AXGroup","id":"root","children":[{"role":"AXGroup","children":[{"role":"AXGroup","subrole":"AXLandmarkComplementary","children":[{"role":"AXGroup","id":"app-shell-sidebar","children":[{"role":"AXGroup","label":"Home","subrole":"AXLandmarkNavigation","children":[{"role":"AXGroup","children":[{"role":"AXPopUpButton","label":"Switch mode, current mode: ChatGPT"},{"role":"AXCheckBox","label":"View activity, needs attention","value":"0","subrole":"AXToggleButton"},{"role":"AXPopUpButton","label":"Search"},{"role":"AXButton","label":"New chat","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":131}},{"role":"AXList","subrole":"AXContentList","children":[{"role":"AXGroup","children":[{"role":"AXButton","label":"Example Dot 1 unread message","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":162}}]}]}]}]}]}]},{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":[{"role":"AXGroup","subrole":"AXEmptyGroup"},{"role":"AXGroup","classes":["WorkspaceContent-dnr6uY"],"children":[{"role":"AXGroup","classes":["MainContentViewport-OinMfT"],"children":[{"role":"AXGroup","classes":["MainContentFrame-sss8BP","self-end"],"children":[{"role":"AXGroup","children":[{"role":"AXGroup","classes":["self-end"],"children":[{"role":"AXGroup","subrole":"AXLandmarkMain","children":[{"role":"AXGroup","classes":["message-list"],"children":[{"role":"AXGroup","subrole":"AXDocumentArticle","classes":["message-row","self"],"children":[{"role":"AXGroup","classes":["message-bubble-wrap"],"children":[{"role":"AXGroup","classes":["message-bubble-surface"],"children":[{"role":"AXGroup","classes":["message-bubble"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Synthetic prompt from msgblast"}]}]}]}]}]},{"role":"AXGroup","subrole":"AXDocumentArticle","classes":["message-row"],"children":[{"role":"AXGroup","classes":["message-bubble-wrap"],"children":[{"role":"AXGroup","children":[{"role":"AXGroup","classes":["message-bubble-surface"],"children":[{"role":"AXGroup","classes":["message-bubble"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Synthetic Dot answer"},{"role":"AXGroup","subrole":"AXStrongStyleGroup","children":[{"role":"AXStaticText"}]},{"role":"AXStaticText"},{"role":"AXLink","label":"Synthetic notice","url":"https://example.com/notice","children":[{"role":"AXStaticText"}]}]}]}]},{"role":"AXGroup","label":"Message actions","children":[{"role":"AXGroup","children":[{"role":"AXButton","label":"Choose a reaction","frame":{"h":28,"w":29,"x":1259,"y":803}}]},{"role":"AXButton","label":"Reply","frame":{"h":28,"w":29,"x":1287,"y":803}}]}]}]}]}]},{"role":"AXGroup","children":[{"role":"AXTextArea","label":"Message","value":"Send a message\n","focused":true,"children":[{"role":"AXGroup","classes":["placeholder"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Send a message"}]}]}]}]}]}]},{"role":"AXGroup","children":[{"role":"AXPopUpButton","label":"Open Example Dot’s profile"}]}]}]}]}]}],"id":"_r_61p_"}]}]}]}]}]}]}]}
+"""#
+
+    func testChatTranscriptAndComposerAreReadFromTheCurrentLayout() throws {
+        let native = try ChatGPTAppObservation(root: tree(Self.chat))
+        XCTAssertEqual(native.kind, .chatgpt)
+        XCTAssertEqual(native.title, "Acknowledge background")
+        XCTAssertEqual(native.draft, "")
+        XCTAssertEqual(native.messages, [
+            .init(role: .user, text: "Reply with exactly: ACK background"),
+            .init(role: .assistant, text: "ACK background")
+        ])
+    }
+
+    func testDotConversationAndSidebarEntryAreReadFromTheCurrentLayout() throws {
+        let native = try ChatGPTAppObservation(root: tree(Self.dots))
+        XCTAssertEqual(native.kind, .dots)
+        XCTAssertEqual(native.title, "Example Dot")
+        XCTAssertEqual(native.messages.map(\.text), ["Synthetic prompt from msgblast", "Synthetic Dot answer"])
+        XCTAssertEqual(native.messages.map(\.role), [.user, .assistant])
+        XCTAssertEqual(native.unreadDotReplyCount, 1)
+        XCTAssertEqual(try ChatGPTAppNavigation(root: tree(Self.chat)).dotButton().label, "Example Dot 1 unread message")
+    }
+
+    func testCurrentLayoutRequiresExactlyOnePanelAndOneDot() throws {
+        let surface = #"{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-EnuIYE""#
+        let secondSurface = Self.dots.replacingOccurrences(of: surface, with: #"{"role":"AXGroup","subrole":"AXLandmarkMain","classes":["MainContentSurface-Second"]},"# + surface)
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(secondSurface))) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s native conversation panel is unavailable.")
+        }
+        let removedPanel = Self.chat.replacingOccurrences(of: "MainContentSurface-EnuIYE", with: "Other-EnuIYE")
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(removedPanel))) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s native conversation panel is unavailable.")
+        }
+        let dot = #"{"role":"AXButton","label":"Example Dot 1 unread message","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":162}}"#
+        let other = #"{"role":"AXButton","classes":["sidebar-item"],"label":"Other Dot","frame":{"x":0,"y":0,"w":10,"h":10}}"#
+        let secondDot = Self.chat.replacingOccurrences(of: dot, with: dot + "," + other)
+        XCTAssertThrowsError(try ChatGPTAppNavigation(root: tree(secondDot)).dotButton()) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s Dot navigation is unavailable or ambiguous.")
+        }
+        let composer = #"{"role":"AXTextArea","label":"Ask ChatGPT","value":"Ask ChatGPT\n","focused":true,"children":[{"role":"AXGroup","classes":["placeholder"],"children":[{"role":"AXGroup","children":[{"role":"AXStaticText","value":"Ask ChatGPT"}]}]}]}"#
+        let nestedComposer = #"{"role":"AXWebArea","url":"app://-/index.html","children":["# + composer + "]}"
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(Self.chat.replacingOccurrences(of: composer, with: nestedComposer)))) { error in
+            guard case ChatGPTObservationError.composerUnavailable = error else { return XCTFail("\(error)") }
+        }
+        let open = #"classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":["#
+        let nested = Self.chat.replacingOccurrences(of: open, with: open + #"{"role":"AXGroup","id":"x-chat-panel","children":["#)
+            .replacingOccurrences(of: #"],"id":"_r_61p_""#, with: #"]}],"id":"_r_61p_""#)
+        XCTAssertEqual(try ChatGPTAppObservation(root: tree(nested)).messages, try ChatGPTAppObservation(root: tree(Self.chat)).messages)
+        let sibling = Self.chat.replacingOccurrences(of: surface, with: #"{"role":"AXGroup","id":"sibling-chat-panel"},"# + surface)
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(sibling))) {
+            XCTAssertEqual($0.localizedDescription, "ChatGPT’s native conversation panel is unavailable.")
+        }
+    }
+
+    func testCurrentLayoutReadsDotSetupWithoutAComposer() throws {
+        let setup = try replacingSurfaceChildren(Self.dots, with: #"{"role":"AXHeading","label":"Create your dot"}"#)
+        let native = try ChatGPTAppObservation(root: tree(setup))
+        XCTAssertEqual(native.kind, .dots)
+        XCTAssertTrue(native.dotSetup)
+        XCTAssertNil(native.composer)
+    }
+
+    func testCurrentLayoutSidebarWithoutFieldsIsTransient() throws {
+        let newChat = #"{"role":"AXButton","label":"New chat","classes":["sidebar-item"],"frame":{"h":30,"w":391,"x":60,"y":131}}"#
+        let header = newChat + "," + #"{"role":"AXButton","label":"Your dot","classes":["sidebar-item"]}"#
+        let screen = try replacingSurfaceChildren(Self.dots.replacingOccurrences(of: newChat, with: header), with: "")
+        XCTAssertThrowsError(try ChatGPTAppObservation(root: tree(screen))) { error in
+            guard case ChatGPTObservationError.transient = error else { return XCTFail("\(error)") }
+        }
+    }
+
+    private func replacingSurfaceChildren(_ json: String, with children: String) throws -> String {
+        let start = #"classes":["MainContentSurface-EnuIYE","MainContentLeftBorder-IFAvO_"],"children":["#
+        let end = #"],"id":"_r_61p_""#
+        guard let startRange = json.range(of: start), let endRange = json.range(of: end), startRange.upperBound < endRange.lowerBound else {
+            throw NSError(domain: "ChatGPTCurrentLayoutTests", code: 3)
+        }
+        return json.replacingCharacters(in: startRange.upperBound..<endRange.lowerBound, with: children)
+    }
+
+    private func tree(_ json: String) throws -> ChatGPTAXNode {
+        try node(JSONSerialization.jsonObject(with: Data(json.utf8)))
+    }
+
+    private func node(_ raw: Any) throws -> ChatGPTAXNode {
+        guard let object = raw as? [String: Any] else { throw NSError(domain: "ChatGPTCurrentLayoutTests", code: 1) }
+        let frame: DesktopAppSnapshot.Element.Frame?
+        if let box = object["frame"] as? [String: Any] {
+            guard let x = box["x"] as? NSNumber, let y = box["y"] as? NSNumber, let w = box["w"] as? NSNumber, let h = box["h"] as? NSNumber else {
+                throw NSError(domain: "ChatGPTCurrentLayoutTests", code: 2)
+            }
+            frame = .init(x: x.doubleValue, y: y.doubleValue, w: w.doubleValue, h: h.doubleValue)
+        } else {
+            frame = nil
+        }
+        return .init(role: object["role"] as? String ?? "",
+                     label: object["label"] as? String ?? "",
+                     value: object["value"] as? String,
+                     id: object["id"] as? String ?? "",
+                     subrole: object["subrole"] as? String ?? "",
+                     classes: object["classes"] as? [String] ?? [],
+                     url: object["url"] as? String ?? "",
+                     selectedText: object["selectedText"] as? String,
+                     enabled: object["enabled"] as? Bool ?? true,
+                     focused: object["focused"] as? Bool ?? false,
+                     frame: frame,
+                     children: try (object["children"] as? [Any] ?? []).map(node))
+    }
 }

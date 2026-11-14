@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "msgblast": {
+      "command": "/Applications/msgblast.app/Contents/MacOS/msgblast",
+      "args": ["mcp"]
+    }
+  }
+}

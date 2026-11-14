@@ -242,10 +242,7 @@ struct MainView: View {
                 }
             }.listStyle(.sidebar).navigationTitle("msgblast")
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 8) {
-                        UpdateSidebar(updater: updater)
-                        WhatsNewSidebar()
-                    }.padding(12)
+                    SidebarFooter(service: model.remote, updater: updater).padding(12)
                         .background(Color(nsColor: .windowBackgroundColor))
                         .overlay(alignment: .top) { Divider() }
                 }
@@ -269,7 +266,7 @@ struct MainView: View {
                     }.padding(18).background(.bar)
                     }
                 }
-                if model.usesMessages { MessagesAccessBanner(model: model) }
+                StatusBanners(model: model)
                 AgentsWorkspaceView(model: model, web: model.webAgents, showingComparison: $showingComparison, newBlastRequest: model.newBlastRequest, captureLayout: captureLayout)
             }.navigationTitle("")
             }
@@ -328,17 +325,31 @@ struct MainView: View {
     }
 }
 
+/// Banners above the agents workspace.
+private struct StatusBanners: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        if model.usesMessages { MessagesAccessBanner(model: model) }
+        AgentSendsBanner(activity: model.agentSendActivity)
+    }
+}
+
 private struct MessagesAccessBanner: View {
     @ObservedObject var model: AppModel
     @ObservedObject var guide: MessagesAccessGuide
     init(model: AppModel) { self.model = model; guide = model.accessGuide }
     var body: some View {
-        if !model.databaseAvailable || guide.flow.isActive || guide.flow.stage == .verified {
-            MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: model.databaseAvailable).padding(18).help(model.databaseStatus)
-            if model.permissionGuidePreview {
-                Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
+        Group {
+            if !model.databaseAvailable {
+                MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: false).padding(18).help(model.databaseStatus)
+                if model.permissionGuidePreview {
+                    Text("Permission guide preview · simulated history denial").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
+        // Like Discover: once access is granted the row goes away, so clear the finished handoff.
+        .onChange(of: guide.flow.stage) { _, stage in if stage == .verified { guide.dismissCompletion() } }
+        .onAppear { if model.databaseAvailable && guide.flow.stage == .verified { guide.dismissCompletion() } }
     }
 }
 
@@ -363,11 +374,13 @@ struct ConversationView: View {
                 }
                 if !model.databaseAvailable { Text(model.databaseStatus).font(.caption).foregroundStyle(.orange).padding(12) }
                 if let headerControls {
-                    TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
+                    TranscriptView(model: model, comparison: comparison, member: member)
                         .contentShape(Rectangle())
-                        .simultaneousGesture(TapGesture().onEnded { if !model.busy { headerControls.selectConversation() } })
+                        .simultaneousGesture(TapGesture().onEnded {
+                            if comparison.endedAt == nil, !model.busy { headerControls.selectConversation() }
+                        })
                 } else {
-                    TranscriptView(model: model, comparison: comparison, member: member).disabled(comparison.endedAt != nil)
+                    TranscriptView(model: model, comparison: comparison, member: member)
                 }
                 MessageInput(text: privateDraft, attachments: model.attachmentDraft(comparisonID: comparisonID, memberID: memberID), addAttachments: { await model.addAttachments($0, comparisonID: comparisonID, memberID: memberID) }, removeAttachment: { id in model.setAttachmentDraft(model.attachmentDraft(comparisonID: comparisonID, memberID: memberID).filter { $0.id != id }, comparisonID: comparisonID, memberID: memberID) }, placeholder: "Message", accessibilityName: "Private reply to \(member.name)", sendLabel: "Send privately", disabled: comparison.endedAt != nil || model.busy || (model.webBroadcastBusy && !model.webBroadcastInputsFinished) || member.anchor == nil) {
                     Task { await model.followUp(comparisonID, only: memberID) }
@@ -413,6 +426,7 @@ struct TranscriptView: View {
                                     ForEach(message.attachments) { file in AttachmentView(attachment: file) }
                                     if let payload = message.businessPayload {
                                         BusinessChoicesView(model: model, message: message, member: member, payload: payload)
+                                            .disabled(comparison.endedAt != nil)
                                     } else if let preview = message.linkPreview {
                                         if !preview.remainingText.isEmpty {
                                             textBubble(message, text: preview.remainingText, tail: false)
@@ -441,6 +455,9 @@ struct TranscriptView: View {
                     }
                 }.padding(.horizontal, 20).padding(.bottom, 10)
                 Color.clear.frame(height: 1).id(bottomID)
+                }
+                .background(alignment: .topLeading) {
+                    if comparison.endedAt != nil { TranscriptScroller().frame(width: 0, height: 0) }
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in
                     if followingBottom { proxy.scrollTo(bottomID, anchor: .bottom) }
@@ -481,6 +498,20 @@ struct TranscriptView: View {
         if Calendar.current.isDateInToday(date) { return "Today \(time)" }
         if Calendar.current.isDateInYesterday(date) { return "Yesterday \(time)" }
         return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) + " at " + time
+    }
+}
+
+private struct TranscriptScroller: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ScrollerAnchor() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class ScrollerAnchor: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil, let scrollView = enclosingScrollView else { return }
+            scrollView.scrollerStyle = .legacy
+            scrollView.autohidesScrollers = true
+        }
     }
 }
 
@@ -722,49 +753,200 @@ struct RecipientPills: View {
     }
 }
 
+private enum SettingsPage: String, CaseIterable, Identifiable {
+    case general = "General", apps = "Mac apps", websites = "Websites", cli = "CLI tools", webhooks = "Webhooks", outsideAgents = "Outside agents", remote = "Remote", permissions = "Permissions", sharing = "Sharing", updates = "Updates"
+    var id: Self { self }
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .apps: "macwindow"
+        case .websites: "globe"
+        case .cli: "terminal"
+        case .webhooks: "point.3.connected.trianglepath.dotted"
+        case .outsideAgents: "person.badge.key"
+        case .remote: "iphone"
+        case .permissions: "hand.raised"
+        case .sharing: "chart.bar"
+        case .updates: "arrow.down.circle"
+        }
+    }
+}
+
 struct AppSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updater: AppUpdater
     @ObservedObject var shortcut: NewBlastShortcut
+    @State private var page = SettingsPage.general
+
     var body: some View {
-        Form {
-            Section("Quick Access") { NewBlastShortcutSettings(shortcut: shortcut) }
-            Section("Permissions") {
-                PermissionsSettingsView(model: model)
+        NavigationSplitView {
+            List(selection: Binding<SettingsPage?>(get: { page }, set: { if let value = $0 { page = value } })) {
+                sidebarRow(.general)
+                Section("Connections") {
+                    sidebarRow(.apps)
+                    sidebarRow(.websites)
+                    sidebarRow(.cli)
+                    sidebarRow(.webhooks)
+                }
+                Section {
+                    sidebarRow(.outsideAgents)
+                    sidebarRow(.remote)
+                    sidebarRow(.permissions)
+                    sidebarRow(.sharing)
+                    sidebarRow(.updates)
+                }
             }
-            Section("App Agents") {
+            .listStyle(.sidebar)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Divider().padding(.bottom, 6)
+                    Button {
+                        FeedbackWindowController.show(model: model, updater: updater)
+                    } label: {
+                        Label("Share Feedback", systemImage: "bubble.left")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                    }
+                    .accessibilityIdentifier("settings-send-feedback")
+                    Button {
+                        BuildFeatureWindowController.show()
+                    } label: {
+                        Label("Build A New Feature", systemImage: "hammer")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                    }
+                    .accessibilityIdentifier("settings-build-feature")
+                }
+                .buttonStyle(.plain)
+                .font(.callout)
+                .padding(.horizontal, 16).padding(.bottom, 12)
+            }
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+        } detail: {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(page.rawValue).font(.title.bold())
+                    Text(subtitle).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 700, alignment: .leading)
+                .padding(.horizontal, 20).frame(maxWidth: .infinity).padding(.top, 20)
+                if page == .apps {
+                    HStack {
+                        Text("Mac apps use the account selected in that app.").font(.callout).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Manage permissions") { page = .permissions }
+                    }
+                    .frame(maxWidth: 700)
+                    .padding(.horizontal, 20).frame(maxWidth: .infinity)
+                }
+                // Retain each page's local drafts, disclosure state and scroll position.
+                ZStack {
+                    settingsPage(.general) {
+                        Section("Quick Access") { NewBlastShortcutSettings(shortcut: shortcut) }
+                        Section("Conversations") {
+                            Picker("Open conversations in", selection: Binding(get: { model.state.effectiveWindowStyle }, set: { model.setWindowStyle($0) })) {
+                                Text("One window").tag(ComparisonWindowStyle.connected)
+                                Text("Separate windows").tag(ComparisonWindowStyle.separate)
+                            }.pickerStyle(.radioGroup)
+                        }
+                    }
+                    ForEach([SettingsPage.apps, .websites, .cli, .webhooks]) { category in
+                        Form { connectionSettings(category) }
+                            .formStyle(.grouped)
+                            .accessibilityIdentifier("settings-detail-\(category.id)")
+                            .modifier(SettingsPageVisibility(visible: page == category))
+                    }
+                    settingsPage(.outsideAgents) {
+                        OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate, activity: model.agentSendActivity)
+                    }
+                    settingsPage(.remote) {
+                        Section { RemoteSettingsView(service: model.remote) }
+                    }
+                    settingsPage(.permissions) {
+                        Section { PermissionsSettingsView(model: model) }
+                    }
+                    settingsPage(.sharing) {
+                        Section { SharingSettingsView(model: model) }
+                    }
+                    settingsPage(.updates) {
+                        Section("Software updates") {
+                            Text(updater.version).textSelection(.enabled)
+                            if updater.configuration.isEnabled {
+                                Toggle("Automatically check for updates", isOn: Binding(get: { updater.automaticallyChecks }, set: { updater.automaticallyChecks = $0 }))
+                                Toggle("Automatically download and install on quit", isOn: Binding(get: { updater.automaticallyInstalls }, set: { updater.automaticallyInstalls = $0 }))
+                                    .disabled(!updater.automaticallyChecks)
+                                Button("Check for Updates…") { updater.checkForUpdates() }.disabled(!updater.canCheckForUpdates)
+                            } else {
+                                Text(updater.configuration.unavailableReason).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 860, idealWidth: 980, minHeight: 620, idealHeight: 700)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: page) { _, _ in shortcut.cancelRecording() }
+    }
+
+    private func sidebarRow(_ item: SettingsPage) -> some View {
+        Label(item.rawValue, systemImage: item.symbol)
+            .tag(item)
+            .accessibilityIdentifier("settings-page-\(item.id)")
+    }
+
+    private var subtitle: String {
+        switch page {
+        case .general: "Choose how you start blasts and open conversations."
+        case .apps: "Connect the AI apps installed on this Mac."
+        case .websites: "Manage separate website profiles for your accounts."
+        case .cli: "Connect local command-line tools and accounts."
+        case .webhooks: "Connect agents through webhook routines."
+        case .remote: "Pair an iPhone to start and follow blasts on this Mac."
+        case .outsideAgents: "Let agents such as Claude Code and Codex use msgblast, with the access you choose."
+        case .permissions: "Control what msgblast can access on this Mac."
+        case .sharing: "Choose the anonymous statistics you share to improve msgblast."
+        case .updates: "Keep msgblast up to date."
+        }
+    }
+
+    private func settingsPage<Content: View>(_ item: SettingsPage, @ViewBuilder content: () -> Content) -> some View {
+        Form(content: content).formStyle(.grouped)
+            .modifier(SettingsPageVisibility(visible: page == item))
+    }
+
+    @ViewBuilder private func connectionSettings(_ category: SettingsPage) -> some View {
+        switch category {
+        case .apps:
+            Section("Mac apps") {
                 AppAgentsSettingsView(model: model, web: model.webAgents, permissions: model.onboarding.appPermissions)
             }
-            Section("Outside agents") {
-                OutsideAgentsSettingsView(listener: model.agentControl, gate: model.agentControl.gate)
-            }
-            Picker("Conversations", selection: Binding(get: { model.state.effectiveWindowStyle }, set: { model.setWindowStyle($0) })) {
-                Text("One window").tag(ComparisonWindowStyle.connected)
-                Text("Separate windows").tag(ComparisonWindowStyle.separate)
-            }.pickerStyle(.radioGroup)
+        case .websites:
+            Section("Website accounts") { WebAgentSettingsView(model: model, web: model.webAgents) }
+        case .cli:
+            Section { LocalAgentSettingsView(agent: model.personalAgent, web: model.webAgents, busy: model.busy || model.webBroadcastBusy) }
+        case .webhooks:
             Section {
-                LocalAgentSettingsView(agent: model.personalAgent, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
-            }
-            Section("Web agents") {
-                WebAgentSettingsView(model: model, web: model.webAgents)
+                Text("Connect Grok Bot routines using a webhook. These connections are separate from the Grok Bot Mac app.")
+                    .foregroundStyle(.secondary)
             }
             Section("Grok Bot") {
                 GrokBotConnectionsView(model: model, web: model.webAgents, busy: model.busy || model.webBroadcastBusy)
             }
-            Section("Remote") { RemoteSettingsView(service: model.remote) }
-            Section("Updates") {
-                Text(updater.version).foregroundStyle(.secondary)
-                if updater.configuration.isEnabled {
-                    Toggle("Automatically check for updates", isOn: Binding(get: { updater.automaticallyChecks }, set: { updater.automaticallyChecks = $0 }))
-                    Toggle("Automatically download and install on quit", isOn: Binding(get: { updater.automaticallyInstalls }, set: { updater.automaticallyInstalls = $0 }))
-                        .disabled(!updater.automaticallyChecks)
-                    Button("Check for Updates…") { updater.checkForUpdates() }.disabled(!updater.canCheckForUpdates)
-                } else {
-                    Text(updater.configuration.unavailableReason).foregroundStyle(.secondary)
-                }
-            }
-            Section("Sharing") { SharingSettingsView(model: model) }
-        }.formStyle(.grouped).padding(20).frame(width: 640, height: 650)
+        default: EmptyView()
+        }
+    }
+}
+
+private struct SettingsPageVisibility: ViewModifier {
+    let visible: Bool
+    func body(content: Content) -> some View {
+        content.opacity(visible ? 1 : 0)
+            .allowsHitTesting(visible)
+            .disabled(!visible)
+            .accessibilityHidden(!visible)
     }
 }
 
@@ -778,9 +960,9 @@ private struct WebAgentSettingsView: View {
     var body: some View {
         Text("Use separate website profiles for work and personal accounts. Mac app connections use the account selected in that app.")
             .font(.caption).foregroundStyle(.secondary)
-        ForEach(WebProvider.settingsOnlyWebProviders) { provider in
+        ForEach(WebProvider.settingsOnlyWebProviders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { provider in
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(web.sessions.filter { $0.provider == provider }, id: \.id) { session in
+                ForEach(web.sessions.filter { $0.provider == provider }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }, id: \.id) { session in
                     HStack {
                         Toggle(session.name, isOn: Binding(
                             get: { session.isEnabled },

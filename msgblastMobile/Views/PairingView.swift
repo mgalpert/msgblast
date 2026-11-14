@@ -3,8 +3,9 @@ import VisionKit
 import msgblastMobileKit
 import msgblastRemoteProtocol
 
-/// Scan the QR code from msgblast › Settings › Remote on the Mac (or paste its link),
-/// confirm the Mac's name and key fingerprint, then pair.
+/// Scan the QR code from msgblast › Settings › Remote on the Mac (or paste its link).
+/// A camera scan pairs immediately; the Mac's name and key fingerprint stay on screen
+/// while pairing. Paste and an opened link wait for Pair.
 struct PairingView: View {
     @ObservedObject var app: MobileApp
     @Binding var incomingLink: String?
@@ -39,15 +40,15 @@ struct PairingView: View {
         .toolbar {
             if let close { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { close() }.disabled(pairing) } }
         }
-        .sheet(isPresented: $scanning) { ScannerView { code in scanning = false; read(code) } }
+        .sheet(isPresented: $scanning) { ScannerView { code in scanning = false; read(code, from: .scanner) } }
         .onAppear {
             if startPasting { pasting = true }
-            if let incomingLink { read(incomingLink); self.incomingLink = nil }
+            if let incomingLink { read(incomingLink, from: .incomingLink); self.incomingLink = nil }
         }
-        .onChange(of: incomingLink) { _, value in if let value { read(value); incomingLink = nil } }
+        .onChange(of: incomingLink) { _, value in if let value { read(value, from: .incomingLink); incomingLink = nil } }
     }
 
-    /// A read code: the Mac's name and key fingerprint, then Pair.
+    /// A read code: the Mac's name and key fingerprint. A scan is already pairing; paste and a link wait for Pair.
     @ViewBuilder private func offerSections(_ offer: RemotePairingOffer) -> some View {
         Section {
             LabeledContent("Mac", value: offer.macName)
@@ -105,11 +106,11 @@ struct PairingView: View {
                     .lineLimit(1)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .submitLabel(.continue)
-                    .onSubmit { if !link.isEmpty { read(link) } }
+                    .onSubmit { if !link.isEmpty { read(link, from: .paste) } }
             }
             Section {
                 // Same edges as Scan Code above.
-                Button { read(link) } label: { Text("Continue").frame(maxWidth: .infinity) }
+                Button { read(link, from: .paste) } label: { Text("Continue").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     .disabled(link.isEmpty)
                     .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
@@ -130,7 +131,7 @@ struct PairingView: View {
 
     static func minutesLeft(_ expiry: Date, now: Date = Date()) -> Int { max(1, Int((expiry.timeIntervalSince(now) / 60).rounded(.up))) }
 
-    private func read(_ text: String) {
+    private func read(_ text: String, from source: PairingCodeSource) {
         error = nil
         unreachable = false
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)), let parsed = try? RemotePairingOffer(url: url) else {
@@ -139,6 +140,7 @@ struct PairingView: View {
         guard parsed.expiresAt > Date() else { error = "Code expired. Show a new one on your Mac"; return }
         link = url.absoluteString
         offer = parsed
+        if PairingCodeSource.pairsImmediately(source) { pair(parsed) }
     }
 
     private func pair(_ offer: RemotePairingOffer) {

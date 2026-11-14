@@ -74,6 +74,18 @@ final class AgentControlCLITests: XCTestCase {
         XCTAssertEqual(usageError(["status", "--bogus", "x"]), "Unknown option --bogus.")
     }
 
+    func testMCPConfigIsPrettyPrintedStdioJSON() throws {
+        let text = AgentControlCLI.mcpConfig(executable: "/Applications/msgblast.app/Contents/MacOS/msgblast")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        let server = try XCTUnwrap((object["mcpServers"] as? [String: Any])?["msgblast"] as? [String: Any])
+        XCTAssertEqual(server["command"] as? String, "/Applications/msgblast.app/Contents/MacOS/msgblast")
+        XCTAssertEqual(server["args"] as? [String], ["mcp"])
+        XCTAssertTrue(text.contains("\n"))
+        let quoted = AgentControlCLI.mcpConfig(executable: "/path/with \"quote\"")
+        let again = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(quoted.utf8)) as? [String: Any])
+        XCTAssertEqual(((again["mcpServers"] as? [String: Any])?["msgblast"] as? [String: Any])?["command"] as? String, "/path/with \"quote\"")
+    }
+
     func testRepliesMapToOutputAndExitStatus() {
         let ok = AgentControlCLI.render(Data(#"{"id":1,"result":{"b":1,"a":[2]}}"#.utf8), json: true)
         XCTAssertEqual(ok, AgentControlCLI.Output(stdout: "{\"a\":[2],\"b\":1}\n", stderr: "", status: 0))

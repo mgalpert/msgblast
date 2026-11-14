@@ -45,14 +45,15 @@ final class RemoteServerTests: XCTestCase {
     private func state() -> RemoteProjectionState {
         RemoteProjectionState(macStatus: status(), grid: RemoteGrid(visibleAgentIDs: grid), agents: [FakeRemoteHost.agent("claude")], conversations: [], turns: [], attempts: [])
     }
-    private func makeServer() throws -> (RemoteServer, RemoteChangeJournal, FakeRemoteHost) {
+    private func makeServer(pairing existing: RemotePairing? = nil) throws -> (RemoteServer, RemoteChangeJournal, FakeRemoteHost) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-remote-server-\(UUID().uuidString)")
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
         let host = FakeRemoteHost()
         host.agents["claude"] = FakeRemoteHost.agent("claude")
         let journal = RemoteChangeJournal(startingSeq: 500)
         let identity = try RemoteIdentity(signingKey: P256.Signing.PrivateKey(), storage: .sessionOnly)
-        let server = RemoteServer(identity: identity, pairing: RemotePairing(directory: directory), executor: RemoteCommandExecutor(host: host), journal: journal,
+        let pairing = existing ?? RemotePairing(directory: directory)
+        let server = RemoteServer(identity: identity, pairing: pairing, executor: RemoteCommandExecutor(host: host), journal: journal,
                                   variant: .demo, macName: { "Studio" }, isLocked: { [unowned self] in self.locked }, refreshJournal: { [unowned self] in journal.apply(self.state()) })
         objc_setAssociatedObject(server, "host", host, .OBJC_ASSOCIATION_RETAIN)
         return (server, journal, host)
@@ -64,6 +65,55 @@ final class RemoteServerTests: XCTestCase {
     }
     private func settle(_ until: () -> Bool = { false }) async {
         for _ in 0..<100 { if until() { return }; try? await Task.sleep(for: .milliseconds(5)) }
+    }
+
+    func testANewPairingTurnsOnMessagesSendsAndReconnectsAndFailuresLeaveIt() async throws {
+        final class Clock { var date = Date(timeIntervalSince1970: 1_800_000_000) }
+        let clock = Clock()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-remote-pair-sends-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let (server, _, _) = try makeServer(pairing: RemotePairing(directory: directory, now: { clock.date }))
+        var settings = RemoteSettings()
+        var pairedNotifications = 0
+        server.onPaired = { pairedNotifications += 1; settings.allowMessagesSends = true }
+        XCTAssertFalse(settings.allowMessagesSends)
+        var wrong = try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity)
+        wrong.code = "not-the-code"
+        let guess = connect(server, .pair(offer: wrong, deviceName: "Guess", deviceKey: P256.Signing.PrivateKey()))
+        await settle { guess.closed }
+        XCTAssertEqual(guess.errors.first?.code, .pairingFailed)
+        XCTAssertEqual(pairedNotifications, 0)
+        XCTAssertFalse(settings.allowMessagesSends)
+        XCTAssertNil(server.pairing.device)
+        let stale = try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity)
+        clock.date = clock.date.addingTimeInterval(121)
+        let expired = connect(server, .pair(offer: stale, deviceName: "Late", deviceKey: P256.Signing.PrivateKey()))
+        await settle { expired.closed }
+        XCTAssertEqual(expired.errors.first?.code, .pairingClosed)
+        XCTAssertEqual(pairedNotifications, 0)
+        XCTAssertFalse(settings.allowMessagesSends)
+        XCTAssertNil(server.pairing.device)
+        let offer = try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity)
+        let phoneKey = P256.Signing.PrivateKey()
+        let phone = connect(server, .pair(offer: offer, deviceName: "Test iPhone", deviceKey: phoneKey))
+        await settle { phone.paired != nil }
+        let (paired, macKey) = try XCTUnwrap(phone.paired)
+        XCTAssertEqual(pairedNotifications, 1)
+        XCTAssertTrue(settings.allowMessagesSends)
+        XCTAssertEqual(server.pairing.device?.id, paired.deviceID)
+        settings.allowMessagesSends = false
+        phone.connection.close()
+        await settle { server.connectedDeviceID == nil }
+        let resumed = connect(server, .resume(deviceID: paired.deviceID, deviceKey: phoneKey, macIdentityKey: macKey))
+        await settle { resumed.authenticated != nil }
+        XCTAssertEqual(pairedNotifications, 1)
+        XCTAssertFalse(settings.allowMessagesSends, "A reconnect leaves the setting as the user left it")
+        let replacementOffer = try server.pairing.openOffer(macName: "Studio", variant: .demo, endpoints: [], port: 1, identity: server.identity, confirmReplacement: true)
+        let replacement = connect(server, .pair(offer: replacementOffer, deviceName: "New Phone", deviceKey: P256.Signing.PrivateKey()))
+        await settle { replacement.paired != nil }
+        XCTAssertEqual(pairedNotifications, 2)
+        XCTAssertTrue(settings.allowMessagesSends, "Replacing the paired phone turns iMessage sends on again")
+        XCTAssertEqual(server.pairing.device?.name, "New Phone")
     }
 
     func testPairSnapshotEventsCommandsAndResume() async throws {
@@ -338,5 +388,71 @@ final class RemoteListenerPortTests: XCTestCase {
         XCTAssertEqual(listener.port, 61_855)
         XCTAssertEqual(attempts.count, tries, "Without a paired phone the saved port is not retried")
         listener.shutdown()
+    }
+}
+
+/// A listener that started with no address (Tailscale or Wi-Fi not up yet, or gone after
+/// sleep) comes back on its own instead of leaving pairing codes with no address.
+@MainActor
+final class RemoteListenerRecoveryTests: XCTestCase {
+    private let tailscale = RemoteInterfaceAddress(interface: "utun4", address: "100.64.0.7", kind: .tailscale)
+    private var available: [RemoteInterfaceAddress] = []
+    private var opened: [FakeBoundListener] = []
+
+    private func listener() -> RemoteListener {
+        RemoteListener(retry: .init(savedPortWindow: .milliseconds(30), savedPortInterval: .milliseconds(10), reclaimInterval: .milliseconds(20),
+                                    randomAttempts: 2, recoverInterval: .milliseconds(20)),
+                       addresses: { [unowned self] _ in self.available }, randomPort: { 61_855 }) { [unowned self] _, port in
+            let bound = FakeBoundListener(port: port)
+            self.opened.append(bound)
+            return [bound]
+        }
+    }
+
+    func testAListenerWithNoAddressListensOnceTailscaleComesUp() async throws {
+        let listener = listener()
+        let port = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertNil(port)
+        XCTAssertTrue(listener.endpoints.isEmpty)
+        XCTAssertNotNil(listener.error)
+        available = [tailscale]
+        for _ in 0..<100 where !listener.isListening { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(listener.endpoints.map(\.host), ["100.64.0.7"])
+        XCTAssertEqual(listener.port, 50_530, "The saved port is kept")
+        XCTAssertNil(listener.error)
+        listener.shutdown()
+    }
+
+    func testARetryStillRunsAfterAnEarlierStartSucceeded() async throws {
+        let listener = listener()
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        available = [tailscale]
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertTrue(listener.isListening)
+        available = []
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertFalse(listener.isListening)
+        available = [tailscale]
+        for _ in 0..<100 where !listener.isListening { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(listener.isListening, "A second address loss is retried too")
+        listener.shutdown()
+    }
+
+    func testShutdownStopsRetrying() async throws {
+        let listener = listener()
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        listener.shutdown()
+        available = [tailscale]
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(listener.isListening)
+        XCTAssertTrue(opened.isEmpty)
+    }
+
+    func testANetworkChangeRebindsWhenAddressesMoveOrComeBack() {
+        let lan = RemoteInterfaceAddress(interface: "en0", address: "192.168.1.4", kind: .lan)
+        XCTAssertTrue(RemoteListener.needsRebind(listening: false, current: [tailscale], bound: []), "Not listening and an address is back")
+        XCTAssertFalse(RemoteListener.needsRebind(listening: false, current: [], bound: []))
+        XCTAssertTrue(RemoteListener.needsRebind(listening: true, current: [lan], bound: [tailscale]))
+        XCTAssertFalse(RemoteListener.needsRebind(listening: true, current: [tailscale], bound: [tailscale]))
     }
 }

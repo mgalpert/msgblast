@@ -293,6 +293,9 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(block("dots"), .blocked("Allow Accessibility on your Mac"))
         XCTAssertEqual(block("dots")?.warns, true, "Something to fix on the Mac warns")
         XCTAssertEqual(presenter.composeBlock(canSend: false, connectionText: "Reconnecting…", agentIDs: ["muse"], conversation: nil, prepareReasons: [:])?.warns, true)
+        let passing = presenter.composeBlock(canSend: false, connectionText: "Not connected", agentIDs: ["muse"], conversation: nil, prepareReasons: [:], connectionPassing: true)
+        XCTAssertEqual(passing, .waiting("Connecting…"), "A connection coming back waits quietly, with Send still off")
+        XCTAssertEqual(passing?.allowsSend, false)
     }
 
     func testDirectThreadsAreTitledByTheirPromptOrName() {
@@ -315,24 +318,33 @@ final class PresenterTests: XCTestCase {
         XCTAssertNil(ProjectionPresenter(state: state).pinnedPrompt(for: sunday, selection: []), "An older Messages chat has no prompt to pin")
     }
 
-    func testNewConversationStartsWithEveryAgentThatCanTakeASend() {
+    func testNewConversationStartsWithTheMacsSelectedAgentsThatCanTakeASend() {
         var state = ProjectionState()
-        func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, selected: Bool = false) {
-            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: true, selectedForSharedSend: selected,
+        func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, selected: Bool, inGrid: Bool = true) {
+            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: inGrid, selectedForSharedSend: selected,
                 capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: form == .messages, namedCopies: false, endConversation: true, sharesOneConversation: false),
                 readiness: readiness, reasons: [], observedAt: fixedNow, source: .live)
+            if inGrid { state.grid.append(id) }
+            state.agentOrder.append(id)
         }
-        agent("claude", .website, .ready)
-        agent("muse", .macApp, .readyWillLaunch)
-        agent("codex", .cli, .busy(detail: "Working"))
-        agent("dots", .macApp, .blocked)
-        agent("gemini", .macApp, .unavailable)
+        agent("instinct", .macApp, .ready, selected: true)
+        agent("alexa", .website, .readyWillLaunch, selected: true)
+        agent("tiny", .cli, .busy(detail: "Working"), selected: true)
+        agent("blocked", .macApp, .blocked, selected: true)
+        agent("gone", .macApp, .unavailable, selected: true)
+        // Enabled, ready, never connected, and absent from the Mac's grid: still in the strip.
+        agent("rabbit", .website, .ready, selected: false, inGrid: false)
         agent("messages:ana", .messages, .ready, selected: true)
-        agent("messages:bo", .messages, .ready)
-        state.grid = ["claude", "muse", "codex", "dots", "gemini", "messages:ana", "messages:bo"]
-        let chosen = ProjectionPresenter(state: state).defaultNewSelection
-        XCTAssertEqual(Set(chosen), ["claude", "muse", "codex", "messages:ana"], "Ready and busy in; blocked and unavailable out; a contact only when the Mac selected it")
-        XCTAssertEqual(ProjectionPresenter.togglingNew("claude", chosen: chosen).contains("claude"), false, "A tap still removes")
+        agent("messages:bo", .messages, .ready, selected: false)
+        let presenter = ProjectionPresenter(state: state)
+        XCTAssertTrue(presenter.newConversationAgents.agents.contains { $0.agentID == "rabbit" })
+        let chosen = presenter.defaultNewSelection
+        XCTAssertEqual(chosen, ["instinct", "alexa", "tiny", "messages:ana"], "Selected and ready, launching, or busy, in strip order; a contact only when the Mac selected it")
+        XCTAssertFalse(chosen.contains("rabbit"), "A ready website the Mac did not select stays unchecked")
+        XCTAssertFalse(chosen.contains("blocked"), "A selected blocked agent is not checked")
+        XCTAssertFalse(chosen.contains("gone"), "A selected unavailable agent is not checked")
+        XCTAssertFalse(chosen.contains("messages:bo"))
+        XCTAssertEqual(ProjectionPresenter.togglingNew("instinct", chosen: chosen).contains("instinct"), false, "A tap still removes")
     }
 
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
@@ -616,6 +628,42 @@ final class MobileAppTests: XCTestCase {
         let result = Task { try await app.perform(action) { sent.value = $0 } }
         await settle { sent.value.map { command in mac.commands.contains { $0.clientCommandID == command.clientCommandID } } ?? false }
         return (try XCTUnwrap(sent.value).clientCommandID, result)
+    }
+
+    /// A prepare queued behind another on the Mac takes longer in all than the phone's deadline;
+    /// each report (queued, started) restarts that deadline, so its answer still arrives. The
+    /// deadline's clock is the test's: timers never fire on their own, so timing cannot flake.
+    func testAPrepareThatReportsProgressIsNotGivenUpAtTheDeadline() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        _ = try await app.pair(link: mac.offer().url.absoluteString, deviceName: "Phone")
+        await settle { app.store.projection.seq != nil }
+        mac.answerCommands = false
+        let prepare = RemoteAction.prepareConversation(conversationID: nil, agentIDs: ["claude"])
+        let sent = Slot<RemoteCommand>(), timers = Slot<Int>()
+        let neverFires: @Sendable (Duration) async throws -> Void = { _ in
+            await MainActor.run { timers.value = (timers.value ?? 0) + 1 }
+            try await Task.sleep(for: .seconds(3600))
+        }
+        let wait = Task {
+            await PrepareWait.run(timeout: .seconds(30), sleep: neverFires) { progress in
+                try await app.perform(prepare, onSent: { sent.value = $0 }, onProgress: { _ in progress() })
+            }
+        }
+        await settle { sent.value != nil && timers.value == 1 }
+        let id = try XCTUnwrap(sent.value).clientCommandID
+        for (count, message) in [(2, "Waiting for the previous request"), (3, "Started on your Mac")] {
+            mac.sessions.last!.send(.commandResult(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: message)))
+            await settle { timers.value == count }
+            XCTAssertEqual(timers.value, count, "Each report starts the deadline again")
+        }
+        mac.sessions.last!.send(.commandResult(RemoteCommandResult(clientCommandID: id, outcome: .applied)))
+        guard case .result(let result) = await wait.value else { return XCTFail("The Mac's answer ends the wait") }
+        XCTAssertEqual(result.outcome, .applied)
+
+        // A deadline that runs out with no answer and no report gives up.
+        let silent = await PrepareWait.run(timeout: .seconds(30), sleep: { _ in }) { _ in try await app.perform(prepare) }
+        guard case .timedOut = silent else { return XCTFail("No answer and no report must time out") }
     }
 
     func testPairSendAndUnconfirmedWhenTheConnectionDrops() async throws {
@@ -1049,5 +1097,13 @@ final class MobileAppTests: XCTestCase {
         var wrong = mac.offer(); wrong.code = "wrong"
         do { _ = try await app.pairAndWaitForInbox(offer: wrong, deviceName: "Phone"); XCTFail("A wrong code must not pair") } catch {}
         XCTAssertEqual(app.connection.pairedMac, before)
+    }
+}
+
+final class PairingCodeSourceTests: XCTestCase {
+    func testAScannedCodePairsImmediatelyAndPasteOrALinkDoesNot() {
+        XCTAssertTrue(PairingCodeSource.pairsImmediately(.scanner))
+        XCTAssertFalse(PairingCodeSource.pairsImmediately(.paste))
+        XCTAssertFalse(PairingCodeSource.pairsImmediately(.incomingLink))
     }
 }

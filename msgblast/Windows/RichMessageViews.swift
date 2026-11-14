@@ -50,9 +50,19 @@ struct RichLinkView: View {
     @ObservedObject var store: LinkPreviewStore
     let url: URL
     var body: some View {
-        NativeLinkPreview(url: url, metadata: store.metadata[url])
-            .fixedSize(horizontal: false, vertical: true)
-            .task(id: url) { await store.load(url) }
+        let metadata = store.metadata[url]
+        Link(destination: url) {
+            ZStack {
+                NativeLinkPreview(url: url, metadata: metadata)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(metadata?.title ?? url.host ?? url.absoluteString)
+        .fixedSize(horizontal: false, vertical: true)
+        .task(id: url) { await store.load(url) }
     }
 }
 
