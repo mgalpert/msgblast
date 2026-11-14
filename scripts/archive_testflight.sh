@@ -10,17 +10,25 @@ if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! $build =~ ^[1-9][0-9]*$ ]]; th
     exit 1
 fi
 
+signing=('CODE_SIGN_IDENTITY=Apple Development')
+if [[ ${1:-} == --unsigned ]]; then
+    signing=(CODE_SIGNING_ALLOWED=NO)
+    shift
+fi
+
 xcodebuild -project msgblast.xcodeproj -scheme msgblastMobile \
     -configuration Release -destination 'generic/platform=iOS' \
     -archivePath "$archive" DEVELOPMENT_TEAM=C4XLZBEPK8 CODE_SIGN_STYLE=Automatic \
-    'CODE_SIGN_IDENTITY=Apple Development' MARKETING_VERSION="$version" \
+    "${signing[@]}" MARKETING_VERSION="$version" \
     CURRENT_PROJECT_VERSION="$build" "$@" archive
 
 app="$archive/Products/Applications/msgblastMobile.app"
 [[ $(plutil -extract CFBundleIdentifier raw "$app/Info.plist") == com.msgblast.ios ]]
 [[ $(plutil -extract CFBundleShortVersionString raw "$app/Info.plist") == "$version" ]]
 [[ $(plutil -extract CFBundleVersion raw "$app/Info.plist") == "$build" ]]
-codesign --verify --deep --strict "$app"
+if [[ ${signing[0]} != CODE_SIGNING_ALLOWED=NO ]]; then
+    codesign --verify --deep --strict "$app"
+fi
 if strings "$app/msgblastMobile" | grep -E 'MSGBLAST_FIXTURE|Studio Mac'; then
     echo "Release archive includes demo fixture strings" >&2
     exit 1

@@ -226,10 +226,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Archive and upload
+      - name: Archive iPhone app
         env:
           RELEASE_VERSION: ${{ needs.release.outputs.version }}
           RELEASE_BUILD: ${{ needs.release.outputs.build }}
+        run: |
+          bash scripts/archive_testflight.sh "$RELEASE_VERSION" "$RELEASE_BUILD" \
+            "$RUNNER_TEMP/msgblastMobile.xcarchive" --unsigned
+
+      - name: Sign and upload to TestFlight
+        env:
           ASC_PRIVATE_KEY: ${{ secrets.MSGBLAST_TESTFLIGHT_API_KEY }}
           ASC_KEY_ID: ${{ vars.MSGBLAST_TESTFLIGHT_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.MSGBLAST_TESTFLIGHT_ISSUER_ID }}
@@ -245,8 +251,6 @@ jobs:
           unset ASC_PRIVATE_KEY
           signing=(-allowProvisioningUpdates -authenticationKeyPath "$work/key.p8"
             -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
-          bash scripts/archive_testflight.sh "$RELEASE_VERSION" "$RELEASE_BUILD" \
-            "$work/msgblastMobile.xcarchive" "${signing[@]}"
-          xcodebuild -exportArchive -archivePath "$work/msgblastMobile.xcarchive" \
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/msgblastMobile.xcarchive" \
             -exportOptionsPlist scripts/ExportOptions-testflight.plist \
             -exportPath "$work/upload" "${signing[@]}"
