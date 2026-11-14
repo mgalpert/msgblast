@@ -1,0 +1,13 @@
+{
+  "pr": 140,
+  "reviewed_head": "f72c9de88192afca06c87a3abbf18796bab381fb",
+  "base": "51fedbe2fa4daec0dff208c1150ea280590ab7ce",
+  "previous_reviewed_heads": ["b1245dca51da22c7ce0fad848d67c2a459aa3140", "cec2a61"],
+  "previous_receipt": "pr-140-b1245dc.json",
+  "reviewer": "merge-only delta check: f72c9de's tree equals git merge-tree --write-tree of its parents (b1245dc, main 51fedbe), so nothing was hand-resolved; full PR review is pr-140-b1245dc.json by an independent model (Anthropic Claude Sonnet subagent, read-only); commits authored with Claude Opus 5.5 trailers",
+  "scope": "Delta b1245dc..f72c9de brings in only #143's three files (msgblast/Permissions/MessagesAccessGuide.swift, msgblast/Windows/PermissionsSettingsView.swift, msgblastTests/PermissionGuideLifecycleTests.swift), none of them #140's. The PR diff 51fedbe...f72c9de is byte-identical to 15828a5...b1245dc (12 files, +154/-19).",
+  "verdict": "approve (merge-only delta; findings of pr-140-b1245dc.json carry over)",
+  "findings": [],
+  "notes": "No #140 file changed. Privacy: no new added lines in the PR diff.",
+  "tests": "node --test telemetry/worker.test.mjs: 9 of 9 pass at f72c9de. Swift: native CI. Evidence (video at b1245dc) applies unchanged since the PR diff is identical."
+}
