@@ -3,7 +3,7 @@ import SwiftUI
 import msgblastCore
 
 /// Settings → Outside agents, laid out like a System Settings pane: a switch for this Mac, a switch for
-/// Tailscale, and one list of agents. Setup steps and keys live in sheets, explanations in tooltips.
+/// Tailscale, and one list of agents. Setup steps and keys open in small windows, explanations in tooltips.
 struct OutsideAgentsSettingsView: View {
     @ObservedObject var listener: AgentControlListener
     @ObservedObject var gate: AgentControlGate
@@ -155,7 +155,6 @@ private struct AgentsSection: View {
     let tailnetOn: Bool
     /// Turns on outside agents and Tailscale, which Grok Bot needs.
     let turnOnTailnet: () -> Void
-    @State private var sheet: SheetClient?
     @State private var adding = false
     @State private var newKind = AgentControlTailnet.Kind.claudeCode
     @State private var newName = ""
@@ -171,12 +170,13 @@ private struct AgentsSection: View {
             ForEach(names, id: \.self) { row($0) }
             addRow
         }
-        .sheet(item: $sheet) { item in
-            if item.id == AgentControlTailnet.grokBotClient {
-                GrokBotSetupSheet(tailnet: tailnet, gate: gate)
-            } else {
-                KeySheet(tailnet: tailnet, client: item.id)
-            }
+    }
+
+    private func show(_ client: String) {
+        if client == AgentControlTailnet.grokBotClient {
+            SetupWindow.show("Set Up Grok Bot", GrokBotSetupSheet(tailnet: tailnet, gate: gate))
+        } else {
+            SetupWindow.show(client, KeySheet(tailnet: tailnet, client: client))
         }
     }
 
@@ -186,7 +186,7 @@ private struct AgentsSection: View {
         let client = AgentControlTailnet.grokBotClient
         if !tailnetOn { turnOnTailnet() }
         if gate.approvals[client] == nil, tailnet.authorizationValue(for: client) == nil { tailnet.rotateToken(client) }
-        sheet = SheetClient(id: client)
+        show(client)
     }
 
     private func row(_ client: String) -> some View {
@@ -207,7 +207,7 @@ private struct AgentsSection: View {
                     Button(action: setUpGrokBot) { Image(systemName: "info.circle") }
                         .buttonStyle(.borderless).help("Setup and key").accessibilityLabel("Details")
                 } else if client != AgentControlTailnet.grokBotClient, tailnet.clients.contains(client) {
-                    Button { sheet = SheetClient(id: client) } label: { Image(systemName: "info.circle") }
+                    Button { show(client) } label: { Image(systemName: "info.circle") }
                         .buttonStyle(.borderless).help("Setup and key").accessibilityLabel("Details")
                 }
                 if tailnet.clients.contains(client) || gate.approvals[client] != nil || gate.refused.contains(client) {
@@ -260,13 +260,30 @@ private struct AgentsSection: View {
         }
         addError = tailnet.add(typed)
         guard addError == nil else { return }
-        sheet = SheetClient(id: AgentControlTailnet.remoteClientName(typed) ?? typed)
+        show(AgentControlTailnet.remoteClientName(typed) ?? typed)
         newName = ""
         adding = false
     }
 }
 
-private struct SheetClient: Identifiable { let id: String }
+/// Setup and key details open in their own small window, not a sheet: a sheet on the Settings
+/// window stops msgblast from quitting until it is closed. One at a time.
+@MainActor private enum SetupWindow {
+    private static var window: NSWindow?
+
+    static func show(_ title: String, _ content: some View) {
+        window?.close()
+        let next = NSWindow(contentViewController: NSHostingController(rootView: content))
+        next.title = title
+        next.styleMask = [.titled, .closable]
+        next.isReleasedWhenClosed = false
+        next.center()
+        window = next
+        next.makeKeyAndOrderFront(nil)
+    }
+
+    static func close() { window?.close() }
+}
 
 /// Grok Bot's "Add a custom connector" form, field for field, so each value can be copied across.
 private struct GrokBotSetupSheet: View {
@@ -363,14 +380,13 @@ private struct KeySheet: View {
     }
 }
 
-/// A sheet's form with New Key, an optional Open Grok Bot, and Done along the bottom. Esc and Return close it.
+/// A setup window's form with New Key, an optional Open Grok Bot, and Done along the bottom. Esc and Return close it.
 private struct SheetLayout<Content: View>: View {
     let hasKey: Bool
     @Binding var confirming: Bool
     let extra: URL?
     let width: CGFloat
     @ViewBuilder let content: Content
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
@@ -379,12 +395,12 @@ private struct SheetLayout<Content: View>: View {
                 if let extra { Button("Open Grok Bot") { NSWorkspace.shared.open(extra) } }
                 Button(hasKey ? "New Key…" : "Make Key") { confirming = true }
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { SetupWindow.close() }.keyboardShortcut(.defaultAction)
             }
             .padding([.horizontal, .bottom], 20)
         }
         .frame(width: width)
-        .onExitCommand { dismiss() }
+        .onExitCommand { SetupWindow.close() }
     }
 }
 
