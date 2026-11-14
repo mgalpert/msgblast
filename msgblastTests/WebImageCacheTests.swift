@@ -8,10 +8,12 @@ final class WebImageCacheTests: XCTestCase {
         FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-images-\(UUID().uuidString)", isDirectory: true)
     }
 
-    private func cache(in directory: URL, maxBytes: Int = 32, retryAfter: TimeInterval = 180, now: @escaping () -> Date = Date.init) -> WebImageCache {
+    private func cache(in directory: URL, maxBytes: Int = 32, retryAfter: TimeInterval = 180, maxDiskBytes: Int = WebImageCache.maxDiskBytes,
+                       now: @escaping () -> Date = Date.init) -> WebImageCache {
         let config = WebImageCache.makeConfiguration()
         config.protocolClasses = [WebImageProtocol.self]
-        return WebImageCache(directory: directory, session: URLSession(configuration: config), maxBytes: maxBytes, retryAfter: retryAfter, now: now)
+        return WebImageCache(directory: directory, session: URLSession(configuration: config), maxBytes: maxBytes, retryAfter: retryAfter,
+                             maxDiskBytes: maxDiskBytes, now: now)
     }
 
     private func settle(_ ready: @MainActor () -> Bool) async {
@@ -99,6 +101,76 @@ final class WebImageCacheTests: XCTestCase {
         images.prefetch([url])
         try? await Task.sleep(for: .milliseconds(40))
         XCTAssertEqual(WebImageProtocol.hitCount(url), 1)
+    }
+
+    func testReusesAFileFromAnEarlierLaunchWithoutDownloading() async throws {
+        WebImageProtocol.reset()
+        let directory = directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = "https://m.media-amazon.com/images/I/kept.png"
+        WebImageProtocol.replies[url] = WebImageProtocol.Reply(mime: "image/png", body: Data([0x89, 0x50, 0x4E, 0x47]))
+        let first = cache(in: directory)
+        first.prefetch([url])
+        await settle { first.attachment(for: url) != nil }
+        let relaunched = cache(in: directory)
+        relaunched.prefetch([url])
+        await settle { relaunched.attachment(for: url) != nil }
+        let file = try XCTUnwrap(relaunched.attachment(for: url))
+        XCTAssertEqual(file.mimeType, "image/png")
+        XCTAssertEqual(file.byteCount, 4)
+        XCTAssertEqual(WebImageProtocol.hitCount(url), 1, "The file on disk is reused after a relaunch")
+    }
+
+    func testForgetsAFileRemovedFromDiskAndFetchesItAgain() async throws {
+        WebImageProtocol.reset()
+        let directory = directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = "https://m.media-amazon.com/images/I/removed.jpg"
+        WebImageProtocol.replies[url] = WebImageProtocol.Reply()
+        let images = cache(in: directory)
+        images.prefetch([url])
+        await settle { images.attachment(for: url) != nil }
+        let file = try XCTUnwrap(images.attachment(for: url))
+        try FileManager.default.removeItem(atPath: file.path)
+        XCTAssertNil(images.attachment(for: url))
+        XCTAssertTrue(images.attachments(for: [url]).isEmpty)
+        images.prefetch([url])
+        await settle { images.attachment(for: url) != nil }
+        XCTAssertEqual(WebImageProtocol.hitCount(url), 2)
+    }
+
+    func testPrunesOldFilesAndTheOldestPastTheSizeBudget() async throws {
+        WebImageProtocol.reset()
+        let directory = directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let clock = Date()
+        func stored(_ name: String, age: TimeInterval) throws -> String {
+            let path = directory.appendingPathComponent(name).path
+            try Data([1, 2, 3, 4]).write(to: URL(fileURLWithPath: path))
+            try FileManager.default.setAttributes([.modificationDate: clock.addingTimeInterval(-age)], ofItemAtPath: path)
+            return path
+        }
+        let expired = try stored("expired.jpg", age: WebImageCache.maxAge + 60)
+        let oldest = try stored("oldest.jpg", age: 300)
+        let middle = try stored("middle.jpg", age: 200)
+        let newest = try stored("newest.jpg", age: 100)
+        let url = "https://m.media-amazon.com/images/I/fresh.jpg"
+        WebImageProtocol.replies[url] = WebImageProtocol.Reply()
+        // Three 4-byte files fit: the download and the two newest stay.
+        let images = cache(in: directory, maxDiskBytes: 12, now: { clock })
+        images.prefetch([url])
+        await settle { images.attachment(for: url) != nil }
+        await images.waitForPrune()
+        let fetched = try XCTUnwrap(images.attachment(for: url)).path
+        let left = Set(try FileManager.default.contentsOfDirectory(atPath: directory.path).map { directory.appendingPathComponent($0).path })
+        XCTAssertEqual(left, [fetched, middle, newest])
+        XCTAssertFalse(left.contains(expired), "Files past the age limit go")
+        XCTAssertFalse(left.contains(oldest), "The oldest file goes once the folder is over budget")
+        // A pass that removes a cached file makes the cache forget it.
+        XCTAssertEqual(WebImageCache.pruneDirectory(directory, olderThan: Date.distantFuture, maxBytes: 0), [fetched, middle, newest])
+        XCTAssertNil(images.attachment(for: url))
+        XCTAssertEqual(WebImageCache.pruneDirectory(directory.appendingPathComponent("missing"), olderThan: clock, maxBytes: 0), [])
     }
 
     func testAFailedDownloadIsNotRetriedImmediately() async {

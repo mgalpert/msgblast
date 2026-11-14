@@ -74,7 +74,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     /// Ended comparisons keep their turns in their own history; only open ones need a saved copy here.
     public func pruneSharedTurns(keeping open: Set<UUID>) {
         let kept = state.sharedTurns.filter { UUID(uuidString: $0.key).map(open.contains) == true }
-        if kept != state.sharedTurns { updateState { $0.sharedTurns = kept } }
+        guard kept != state.sharedTurns else { return }
+        // This save writes everything, including turns still waiting for their debounced save.
+        sharedTurnsSave?.cancel(); sharedTurnsSave = nil; sharedTurnsUnsaved = false
+        updateState { $0.sharedTurns = kept }
     }
     /// Merges by message. Turns the page still shows for the comparison take their page order, with
     /// the page's text unless it shows less of it; a turn the page no longer shows keeps its place;
@@ -126,7 +129,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         for attempt in sent {
             if let id = attempt.messageID, let index = indexByID[id] { previous = index; continue }
             // Messages already on the page when it was submitted are never its own.
-            let text = normalized(attempt.text), earliest = max(previous + 1, attempt.receiptContext?.baseline.count ?? 0)
+            let text = normalized(attempt.text), earliest = max(previous + 1, indexAfterBaseline(attempt.receiptContext?.baseline ?? [], in: messages))
             guard let index = userIndexes.first(where: { $0 >= earliest && owner[$0] == nil && texts[$0] == text }) else { continue }
             owner[index] = attempt.comparisonID
             previous = index
@@ -137,6 +140,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if let current { turns[current, default: []].append(messages[index]) }
         }
         return turns
+    }
+    /// Where messages sent after the baseline can start. A reload can show fewer messages than the
+    /// baseline had, so the last baseline message still on the page marks the spot. When none is,
+    /// a page at least as long as the baseline keeps its length as the guard; a shorter one shows
+    /// only messages from after it.
+    static func indexAfterBaseline(_ baseline: [WebPageMessage], in messages: [WebPageMessage]) -> Int {
+        guard !baseline.isEmpty else { return 0 }
+        let ids = Set(baseline.map(\.id))
+        if let last = messages.lastIndex(where: { ids.contains($0.id) }) { return last + 1 }
+        return messages.count >= baseline.count ? baseline.count : 0
     }
     public func canArchiveComparison(_ id: UUID) -> Bool {
         let submitted = state.attempts.contains { $0.comparisonID == id && $0.status.confirmsSubmission }
