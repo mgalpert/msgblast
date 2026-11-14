@@ -1,6 +1,12 @@
 import AppKit
 import msgblastCore
 
+/// Where the send running on this task started. Remote hosts set it around a send; the Mac's own
+/// window leaves the default. It travels with the awaited send, so nested send paths need no parameter.
+enum TelemetrySendSource {
+    @TaskLocal static var current: TelemetryProperties.Source = .mac
+}
+
 extension AppModel {
     var needsSharingChoice: Bool {
         reviewingSharingChoice || (state.sharingConsent == nil &&
@@ -91,8 +97,9 @@ extension AppModel {
     func recordMessageSubmission(kind: TelemetryProperties.Kind, recipientCount: Int, started: Date, logicalID: UUID) {
         guard TelemetryCollector.endpoint(demo: demo) != nil, recipientCount > 0 else { return }
         guard state.sharingConsent?.preferences.messageCounts == true || state.sharingConsent?.preferences.activity == true || state.sharingConsent?.preferences.reliability == true || state.sharingConsent?.preferences.performance == true else { return }
-        var properties = TelemetryProperties(); properties.kind = kind; properties.recipientCount = min(100, recipientCount)
-        var outcome = TelemetryProperties(); outcome.operation = .send; outcome.result = .success
+        let source = TelemetrySendSource.current
+        var properties = TelemetryProperties(); properties.kind = kind; properties.recipientCount = min(100, recipientCount); properties.source = source
+        var outcome = TelemetryProperties(); outcome.operation = .send; outcome.result = .success; outcome.source = source
         var timing = TelemetryProperties(); timing.operation = .send; timing.duration = .init(seconds: Date().timeIntervalSince(started))
         let events = [telemetryEvent(.messageSubmitted, properties: properties), telemetryEvent(.appEngaged), telemetryEvent(.operationResult, properties: outcome), telemetryEvent(.operationTiming, properties: timing)].compactMap { $0 }
         if let consent = state.sharingConsent {
@@ -102,8 +109,28 @@ extension AppModel {
     }
     func recordOperation(_ operation: TelemetryProperties.Operation, success: Bool, started: Date) {
         var outcome = TelemetryProperties(); outcome.operation = operation; outcome.result = success ? .success : .failure
+        if operation == .send { outcome.source = TelemetrySendSource.current }
         recordTelemetry(.operationResult, properties: outcome)
         var timing = TelemetryProperties(); timing.operation = operation; timing.duration = .init(seconds: Date().timeIntervalSince(started))
         recordTelemetry(.operationTiming, properties: timing)
+    }
+    /// One event per website, app, CLI or bot agent in a send, so each agent's reliability shows
+    /// separately. Messages contacts are left out: their keys would only say "Messages".
+    func recordAgentSendResults(_ attempts: [(WebProvider, WebSendAttempt?)]) {
+        let source = TelemetrySendSource.current
+        for (provider, attempt) in attempts {
+            var properties = TelemetryProperties(); properties.provider = provider.rawValue; properties.source = source
+            properties.result = attempt.map { $0.status.confirmsSubmission ? .success : $0.status.isUnresolved ? .uncertain : .failure } ?? .failure
+            recordTelemetry(.agentSendResult, properties: properties)
+        }
+    }
+    func recordPhonePaired() { recordTelemetry(.phonePaired) }
+    /// At most once per elapsed cohort day, like `app_active`.
+    func recordPhoneConnected() {
+        guard let start = state.sharingConsent?.cohortStartedAt else { return }
+        let day = max(0, Int(Date().timeIntervalSince(start) / 86_400))
+        guard day != lastTelemetryPhoneDay else { return }
+        lastTelemetryPhoneDay = day
+        recordTelemetry(.phoneConnected)
     }
 }
