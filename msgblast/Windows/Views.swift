@@ -339,7 +339,10 @@ private struct MessagesAccessBanner: View {
     @ObservedObject var guide: MessagesAccessGuide
     init(model: AppModel) { self.model = model; guide = model.accessGuide }
     var body: some View {
-        Group {
+        // A VStack, not a Group: an empty Group has no view for onChange/onAppear to run on,
+        // so once access was granted the finished handoff was never cleared. The parent stack
+        // has zero spacing, so an empty VStack adds nothing to the layout.
+        VStack(spacing: 0) {
             if !model.databaseAvailable {
                 MessagesAccessRow(guide: guide, check: { model.refresh() }, accessAllowed: false).padding(18).help(model.databaseStatus)
                 if model.permissionGuidePreview {
