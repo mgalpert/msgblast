@@ -125,7 +125,8 @@ struct PermissionControlsView: View {
         }
         appGuide.start(appURL: Bundle.main.bundleURL, appName: "msgblast",
                        pane: capture ? "Privacy_ScreenCapture" : "Privacy_Accessibility",
-                       permissionName: capture ? "Screen Recording" : ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility") {
+                       permissionName: capture ? "Screen Recording" : ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility",
+                       returnOnGrant: !capture) {
             await apps.refresh(demo: false)
             return capture ? apps.windowCapture == .allowed : apps.hostAccessibility == .allowed
         }
