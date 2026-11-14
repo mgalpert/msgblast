@@ -118,7 +118,7 @@ final class RemoteCommandExecutorTests: XCTestCase {
         for _ in 0..<100 where host.sends.count < 3 || executor.isSending { try? await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(host.maximumConcurrent, 1, "Mac app requests stay serial across commands")
         XCTAssertEqual(host.sends.map(\.agentIDs), [["chatgptApp"], ["claudeApp"], ["claude"]])
-        XCTAssertEqual(results[commands[2].clientCommandID], [.accepted, .applied])
+        XCTAssertEqual(results[commands[2].clientCommandID], [.accepted, .accepted, .applied], "Queued, then started, then the result")
 
         // The Mac started its own send while a remote one waited: the queued one is refused, not retried later.
         host.sends = []
@@ -226,6 +226,25 @@ final class RemoteCommandExecutorTests: XCTestCase {
         let missing = await executor.execute(RemoteCommand(action: .queryCommand(clientCommandID: unknown)))
         XCTAssertEqual(missing.clientCommandID, unknown); XCTAssertEqual(missing.code, .unknownCommand)
         XCTAssertEqual(host.sends.count, 1)
+    }
+
+    func testANewerPrepareReplacesQueuedOnesAndAQueuedCommandHearsWhenItStarts() async {
+        let host = host()
+        host.sendDelay = .milliseconds(40)
+        let executor = RemoteCommandExecutor(host: host)
+        var replies: [String: [RemoteCommandResult]] = [:]
+        func submit(_ name: String, _ action: RemoteAction) { executor.submit(RemoteCommand(action: action)) { replies[name, default: []].append($0) } }
+        submit("send", .createConversation(text: "One", agentIDs: ["claude"], attachmentIDs: []))
+        // The phone's recipients changed twice while the send ran.
+        submit("first", .prepareConversation(conversationID: nil, agentIDs: ["claude"]))
+        submit("newest", .prepareConversation(conversationID: nil, agentIDs: ["chatgptApp"]))
+        for _ in 0..<100 where replies["newest"]?.last?.outcome != .applied { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(host.prepared, [["chatgptApp"]], "Only the newest queued prepare runs")
+        XCTAssertEqual(replies["first"]?.map(\.outcome), [.accepted, .applied])
+        XCTAssertEqual(replies["first"]?.last?.message, "Replaced by a newer request")
+        XCTAssertEqual(replies["newest"]?.map(\.message), ["Waiting for the previous request", "Started on your Mac", nil],
+                       "A queued prepare reports when its turn comes, so the phone's deadline counts from there")
+        XCTAssertEqual(replies["send"]?.map(\.outcome), [.applied], "A command that never waited hears only its result")
     }
 
     func testASignedOutWebsiteAgentsReasonNamesTheMacNotThePane() async {

@@ -12,6 +12,7 @@ public struct AgentProduct: RemoteOpenValue {
     public static let dots: Self = "dots"
     public static let os3: Self = "os3"
     public static let hark: Self = "hark"
+    public static let alexaShopping: Self = "alexaShopping"
     public static let wabi: Self = "wabi"
     public static let gemini: Self = "gemini"
     public static let messages: Self = "messages"

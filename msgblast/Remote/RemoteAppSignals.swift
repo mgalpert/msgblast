@@ -73,7 +73,7 @@ extension AppModel {
                                                             running: personalAgent.running.contains(comparison.id), error: personalAgent.errors[comparison.id])
             }
         }
-        input.gatherWebState(from: webAgents.sessions)
+        input.gatherWebState(from: webAgents.sessions, imageCache: webImageCache)
         return input
     }
 

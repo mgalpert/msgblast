@@ -156,6 +156,19 @@ ongoing conversation: switching comparisons retains that page, its draft, and
 earlier context. Receipts remain attached to each comparison's own send attempt;
 an already observed message cannot be linked to another attempt.
 
+Alexa Shopping Web opens `https://www.amazon.com/` in its own persistent WebKit
+store. Sign in there; the adapter opens the Alexa panel after Amazon exposes its
+signed-in account controls. A missing panel is reported separately from a missing
+login and does not complete onboarding. The rendered controls still use Rufus
+identifiers. Only Alexa's composer and observed chat text are used for shared
+submissions, with Amazon's 500-character limit checked before entering text.
+Comparisons continue the currently selected Amazon chat, including earlier
+context; they do not create or restore separate Amazon threads. Use Alexa's
+three-dot menu for **New chat** and **Chat history**. Changing comparisons retains
+the live page and draft, and uncertain sends are never automatically retried.
+Amazon's home URL cannot establish chat identity after a reload. An uncertain
+attempt remains unresolved when its original document can no longer be verified.
+
 **Comparison reports** are a separate execution policy. They summarize available
 Messages replies with restricted local adapters; they do not inherit the full
 configured tool access of optional CLI conversations. Keep those policies separate

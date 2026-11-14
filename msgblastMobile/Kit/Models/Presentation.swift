@@ -410,9 +410,10 @@ public struct ProjectionPresenter: Sendable {
     /// Why the compose bar cannot send right now, and whether Send may still be tapped.
     /// Disconnection and the projection's own reasons block Send. A failed
     /// `prepareConversation` only shows its reason: tapping Send prepares again first.
+    /// A connection that is only passing (connecting, briefly reconnecting) waits quietly.
     public func composeBlock(canSend: Bool, connectionText: String, agentIDs: [String], conversation: UUID?,
-                             prepareReasons: [String: String]) -> ComposeBlock? {
-        if !canSend { return .blocked(connectionText) }
+                             prepareReasons: [String: String], connectionPassing: Bool = false) -> ComposeBlock? {
+        if !canSend { return connectionPassing ? .waiting("Connecting…") : .blocked(connectionText) }
         if let line = disabledLine(agentIDs: agentIDs, conversation: conversation) {
             return line.quiet ? .waiting(line.text, detail: line.detail) : .blocked(line.text, detail: line.detail)
         }

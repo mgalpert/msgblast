@@ -132,10 +132,12 @@ extension SideChatModelCheck {
         let claude = model.webAgents.session(for: .claude)!
         try await waitUntil { claude.snapshot.ready }
         await model.remoteAvailabilityProbe(slow: false)
-        // The Mac workspace is on another conversation. The phone's prepareConversation opens
-        // the new chat page (as the Mac composer does) without sending anything.
+        // The Mac workspace is on another conversation. The phone's prepareConversation answers
+        // without sending anything and never moves the Mac to the phone's conversation.
+        model.webAgents.setComparison(first)
         let prepare = await executor.execute(RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["claude"])))
         precondition(prepare.outcome == .applied && claude.state.attempts.isEmpty, "\(prepare)")
+        precondition(model.webAgents.comparisonID == first, "A phone prepare must not switch the Mac's open conversation")
         // Move the Mac back to another conversation, so the send itself must prepare the page:
         // it waits for readiness and then submits exactly once, with no "send again".
         model.webAgents.setComparison(first)

@@ -12,6 +12,8 @@ public final class MobileApp: ObservableObject {
     private let database: LocalDatabase
     private let defaults: UserDefaults
     private var waiting: [UUID: CheckedContinuation<RemoteCommandResult, Error>] = [:]
+    /// Callers of `perform` that want the Mac's `accepted` progress (queued, started).
+    private var progress: [UUID: (RemoteCommandResult) -> Void] = [:]
     private var subscriptions: Set<AnyCancellable> = []
     public var commandTimeout: Duration = .seconds(90)
     /// Waits before asking again about a send the Mac says is still running (a replayed
@@ -100,6 +102,7 @@ public final class MobileApp: ObservableObject {
         }
         store.handle(event)
         if case .commandResult(let result) = event, awaitsResult(result.clientCommandID) || requeries[result.clientCommandID] != nil {
+            if result.outcome == .accepted { progress[result.clientCommandID]?(result) }
             if result.outcome != .accepted {
                 requeries.removeValue(forKey: result.clientCommandID)?.task.cancel()
                 waiting.removeValue(forKey: result.clientCommandID)?.resume(returning: result)
@@ -150,12 +153,16 @@ public final class MobileApp: ObservableObject {
     }
 
     /// Sends and waits for the final result; `onSent` gets the command before the wait, so a
-    /// caller can recognise a late result. A lost connection does not end the wait: the Mac may
+    /// caller can recognise a late result, and `onProgress` each `accepted` the Mac reports
+    /// (waiting its turn, started). A lost connection does not end the wait: the Mac may
     /// still finish it and answers the reconnect's query. Only the timeout gives up, leaving the
     /// command unconfirmed in the store. It is never resent.
-    public func perform(_ action: RemoteAction, onSent: ((RemoteCommand) -> Void)? = nil) async throws -> RemoteCommandResult {
+    public func perform(_ action: RemoteAction, onSent: ((RemoteCommand) -> Void)? = nil,
+                        onProgress: ((RemoteCommandResult) -> Void)? = nil) async throws -> RemoteCommandResult {
         let command = try send(action)
         onSent?(command)
+        progress[command.clientCommandID] = onProgress
+        defer { progress[command.clientCommandID] = nil }
         let timeout = commandTimeout
         return try await withCheckedThrowingContinuation { continuation in
             waiting[command.clientCommandID] = continuation

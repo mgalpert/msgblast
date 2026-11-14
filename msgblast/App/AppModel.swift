@@ -123,6 +123,9 @@ final class AppModel: ObservableObject {
     lazy var agentSends = AgentControlSends(model: self)
     lazy var agentControl = AgentControlListener(directory: local.url.deletingLastPathComponent(), host: self)
     lazy var webAgents = WebAgents(directory: local.url.deletingLastPathComponent(), fixture: demo && Bundle.main.object(forInfoDictionaryKey: "msgblastLiveWebPreview") as? Bool != true, websiteOptInRequired: true)
+    lazy var webImageCache: WebImageCache = WebImageCache(directory: local.url.deletingLastPathComponent().appendingPathComponent("web-images", isDirectory: true), onChange: { [weak self] in
+        self?.objectWillChange.send()
+    })
     var database: MessagesDatabase?
     /// Created on first use. The app starts it at launch; fixtures never touch it.
     lazy var remote = RemoteService(model: self)
@@ -162,6 +165,7 @@ final class AppModel: ObservableObject {
             webAgents.sessions.forEach { $0.updateState { $0.selected = false } }
         }
         persist()
+        if !storageLoadFailed { pruneSharedTurns() }
         accessGuide.checkHistory = { [weak self] in
             guard let self, !self.busy else { return false }
             self.refresh(forMessagesSetup: true)
@@ -682,8 +686,18 @@ final class AppModel: ObservableObject {
         state.comparisons[i].endedWebHistory = Dictionary(uniqueKeysWithValues: previous.resolvedWebAgentIDs.map { agent in
             (agent.id, webAgents.session(for: agent)?.messagesForComparison(id) ?? [])
         })
-        do { try save(); return true }
+        do {
+            try save()
+            pruneSharedTurns()
+            return true
+        }
         catch { state.comparisons[i] = previous; self.error = error.localizedDescription; return false }
+    }
+
+    /// Shared-page agents keep saved turns only for conversations that exist and are still open.
+    private func pruneSharedTurns() {
+        let open = Set(state.comparisons.filter { $0.endedAt == nil }.map(\.id))
+        webAgents.sessions.forEach { $0.pruneSharedTurns(keeping: open) }
     }
 
     /// Names a conversation; an empty name or the prompt's own title returns to the prompt.
