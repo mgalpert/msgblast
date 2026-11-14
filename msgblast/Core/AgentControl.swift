@@ -18,7 +18,7 @@ public enum AgentControlError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .unknownTool(let name): "No msgblast tool is named \(name)."
-        case .needsAccess(let level): "This needs \(level.label) access in msgblast."
+        case .needsAccess(let level): "This needs \(level.label). The person can change it in msgblast → Settings → Outside agents."
         case .invalidArguments(let detail): "Invalid arguments: \(detail)"
         case .notFound(let id): "Nothing in msgblast matches \(id)."
         case .refused(let why): why

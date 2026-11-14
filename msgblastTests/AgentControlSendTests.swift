@@ -50,6 +50,7 @@ import msgblastRemoteProtocol
         let host = Host()
         let refused = await refusal("msgblast_blast_start", #"{"text":"Hi","agents":["web:chatgpt"]}"#, host: host, access: .readOnly)
         XCTAssertEqual(refused, .needsAccess(.full))
+        XCTAssertEqual(refused?.localizedDescription, "This needs Full access. The person can change it in msgblast → Settings → Outside agents.")
         XCTAssertEqual(host.commands, [])
     }
 
