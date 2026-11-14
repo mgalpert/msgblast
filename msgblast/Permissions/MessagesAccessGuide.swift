@@ -22,12 +22,12 @@ final class MessagesAccessGuide: ObservableObject {
     private var permissionName = "Full Disk Access"
     private var checkAccess: (() async -> Bool)?
     private var returnOnGrant = false
-    private let bringForward: (NSWindow?) -> Void
+    private let bringForward: @MainActor (NSWindow?) -> Void
     static let pendingKey = "messagesAccessHandoffPending"
     private let settingsBundleID = "com.apple.systempreferences"
 
     init(defaults: UserDefaults = .standard, pendingKey: String = MessagesAccessGuide.pendingKey,
-         bringForward: @escaping (NSWindow?) -> Void = MessagesAccessGuide.bringAppForward) {
+         bringForward: @escaping @MainActor (NSWindow?) -> Void = MessagesAccessGuide.bringAppForward) {
         self.defaults = defaults
         requestKey = pendingKey
         self.bringForward = bringForward
