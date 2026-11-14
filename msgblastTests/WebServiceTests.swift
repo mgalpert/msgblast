@@ -117,6 +117,47 @@ final class WebServiceTests: XCTestCase {
             "Anker USB C to USB C Cable, 60W (2-Pack, 6 ft) · $9.99 · 4.7★ (91,395) · Braided nylon 6 ft cables rated for 60W charging. · https://www.amazon.com/dp/B0ABCDEFGH",
         ])
         XCTAssertFalse(replies.joined().contains("Purchased"), "Order history badges stay on the Mac")
+        XCTAssertTrue(session.snapshot.messages.allSatisfy { $0.images == nil }, "A relative image src is not an Amazon CDN URL")
+    }
+
+    func testSavedWebPageMessageWithoutImagesStillMatchesAUserReceipt() throws {
+        let saved = try JSONDecoder().decode(WebPageMessage.self, from: Data(#"{"id":"u","role":"user","text":"Suggest a cable"}"#.utf8))
+        XCTAssertNil(saved.images)
+        XCTAssertEqual(saved, WebPageMessage(id: "u", role: "user", text: "Suggest a cable"))
+    }
+
+    func testAlexaShoppingProductCardsCarryAmazonImageURLsOnly() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let html = #"""
+        <div data-csa-c-type="container" data-csa-c-group-id="ok" data-csa-c-content-id="rufus-dsk-section-container-ok"><div aria-label="Example Cable"><img src="https://m.media-amazon.com/images/I/test.jpg"></div><div>Example Cable</div><div>$9.99</div><button data-csa-c-nile-action-id="asin_cards_B000TEST01_open_url_1_2"></button></div>
+        <div data-csa-c-type="container" data-csa-c-group-id="bad" data-csa-c-content-id="rufus-dsk-section-container-bad"><div aria-label="Sample Adapter"><img src="https://evil.example.com/x.jpg"></div><div>Sample Adapter</div></div>
+        <div data-csa-c-type="container" data-csa-c-group-id="plain" data-csa-c-content-id="rufus-dsk-section-container-plain"><div aria-label="Plain Cord"><img src="http://m.media-amazon.com/images/I/plain.jpg"></div><div>Plain Cord</div></div>
+        <div data-csa-c-type="container" data-csa-c-group-id="listed" data-csa-c-content-id="rufus-dsk-section-container-listed"><div aria-label="Listed Cord"><img src="https://images-na.ssl-images-amazon.com/images/I/listed.jpg"></div><div>Listed Cord</div></div>
+        <div data-csa-c-type="container" data-csa-c-group-id="suffix" data-csa-c-content-id="rufus-dsk-section-container-suffix"><div aria-label="Suffix Cord"><img src="https://images.media-amazon.com/images/I/suffix.jpg"></div><div>Suffix Cord</div></div>
+        """#
+        _ = try await session.webView.callAsyncJavaScript("""
+            const user=document.createElement('article');
+            user.className='rufus-customer-text-wrap';
+            user.textContent='Suggest a cable';
+            const container=document.getElementById('rufus-conversation-container');
+            container.append(user);
+            container.insertAdjacentHTML('beforeend', card);
+            """, arguments: ["card": html], in: nil, contentWorld: .page)
+        await session.refresh()
+        func images(_ title: String) -> [String]? { session.snapshot.messages.first { $0.text.hasPrefix(title) }?.images }
+        XCTAssertEqual(session.snapshot.messages.first { $0.text.hasPrefix("Example Cable") }?.text,
+                       "Example Cable · $9.99 · https://www.amazon.com/dp/B000TEST01")
+        XCTAssertEqual(images("Example Cable"), ["https://m.media-amazon.com/images/I/test.jpg"])
+        XCTAssertNil(images("Sample Adapter"))
+        XCTAssertNil(images("Plain Cord"))
+        XCTAssertEqual(images("Listed Cord"), ["https://images-na.ssl-images-amazon.com/images/I/listed.jpg"])
+        XCTAssertEqual(images("Suffix Cord"), ["https://images.media-amazon.com/images/I/suffix.jpg"])
+        XCTAssertTrue(session.snapshot.messages.filter { $0.role == "user" }.allSatisfy { $0.images == nil })
     }
 
     func testSharedConversationPageGivesEachComparisonOnlyItsOwnTurns() {
