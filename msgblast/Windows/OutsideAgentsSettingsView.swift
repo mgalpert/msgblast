@@ -6,31 +6,38 @@ import msgblastCore
 struct OutsideAgentsSettingsView: View {
     @ObservedObject var listener: AgentControlListener
     @ObservedObject var gate: AgentControlGate
+    @ObservedObject var activity: AgentControlActivity
 
     var body: some View {
         Toggle("Let agents on this Mac use msgblast", isOn: Binding(get: { listener.enabled }, set: { listener.enabled = $0 }))
             .accessibilityIdentifier("outside-agents-enabled")
         Text("Agents such as Claude Code and Codex connect through the msgblast command. Each one asks you once, here in msgblast, and gets the level you choose.")
             .font(.caption).foregroundStyle(.secondary)
+        Text("Read only: see agents, comparisons and replies; can't send anything.\nFull access: everything, including sends to your AI agents and Messages contacts.")
+            .font(.caption).foregroundStyle(.secondary)
         if let error = listener.error { Text(error).font(.caption).foregroundStyle(.red) }
         if let error = gate.saveError { Text(error).font(.caption).foregroundStyle(.red) }
         if listener.enabled {
             LabeledContent("Claude Code") { Button("Copy setup command") { copy(Self.setup("claude")) } }
             LabeledContent("Codex") { Button("Copy setup command") { copy(Self.setup("codex")) } }
+            LabeledContent("Cursor, Gemini CLI") {
+                Button("Copy MCP config") { copy(AgentControlCLI.mcpConfig(executable: AgentControlCommand.executable)) }
+            }
             LabeledContent("Terminal") {
                 Button("Copy msgblast command path") { copy(AgentControlCommand.executable) }
             }
-            LabeledContent("MCP server on this Mac") {
+            LabeledContent("Other MCP apps") {
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("Command: msgblast mcp (stdio, no URL)")
+                    Text("msgblast mcp")
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                     Button("Copy MCP command") { copy(Self.mcpCommand()) }
                 }
             }
-            Text("Other MCP apps on this Mac, such as Cursor, add msgblast as a command server with this command. Agents on other devices use the MCP server URL below.")
+            Text("Any other MCP app on this Mac can start msgblast with this command, so it needs no URL. Agents on other devices use the MCP server URL below.")
                 .font(.caption).foregroundStyle(.secondary)
             TailnetControls(tailnet: listener.tailnet)
+            AgentSendsSettings(activity: activity)
         }
         ForEach(gate.approvals.keys.sorted(), id: \.self) { client in
             HStack {

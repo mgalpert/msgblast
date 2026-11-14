@@ -79,6 +79,31 @@ import XCTest
         XCTAssertEqual(weekend.map { $0["title"] as? String }, ["Weekend in Tahoe"])
     }
 
+    func testMentionsReturnsNewestMatchesAsResourceLinks() async throws {
+        let host = Host()
+        host.comparisons = [comparison("Plan a weekend in Big Sur", created: Date(timeIntervalSince1970: 1)),
+                            comparison("Best espresso machine", created: Date(timeIntervalSince1970: 3)),
+                            comparison("Weekend in Tahoe", created: Date(timeIntervalSince1970: 2))]
+        let emptyReply = try await call("msgblast_mentions", #"{"query":""}"#, host: host)
+        let empty = try XCTUnwrap(emptyReply as? [String: Any])
+        let items = try XCTUnwrap(empty["items"] as? [[String: Any]])
+        XCTAssertEqual(items.map { $0["name"] as? String }, ["Best espresso machine", "Weekend in Tahoe", "Plan a weekend in Big Sur"])
+        XCTAssertEqual(items.first?["type"] as? String, "resource_link")
+        XCTAssertEqual(items.first?["mimeType"] as? String, "application/json")
+        XCTAssertEqual(items.first?["uri"] as? String, "msgblast://comparison/\(host.comparisons[1].id.uuidString)")
+        XCTAssertEqual(items.first?["description"] as? String, "1970-01-01T00:00:03Z · 2 agents")
+        XCTAssertLessThanOrEqual((items.first?["name"] as? String ?? "").count, 80)
+        let weekendReply = try await call("msgblast_mentions", #"{"query":"weekend"}"#, host: host)
+        let weekend = try XCTUnwrap(weekendReply as? [String: Any])
+        XCTAssertEqual((weekend["items"] as? [[String: Any]])?.map { $0["name"] as? String }, ["Weekend in Tahoe", "Plan a weekend in Big Sur"])
+        host.comparisons = (0..<21).map { comparison("Item \($0)", created: Date(timeIntervalSince1970: TimeInterval($0))) }
+        let cappedReply = try await call("msgblast_mentions", #"{"query":""}"#, host: host)
+        let capped = try XCTUnwrap(cappedReply as? [String: Any])
+        let cappedItems = try XCTUnwrap(capped["items"] as? [[String: Any]])
+        XCTAssertEqual(cappedItems.count, 20)
+        XCTAssertEqual(cappedItems.first?["name"] as? String, "Item 20")
+    }
+
     func testComparisonReadReturnsSubmissionsAndTurns() async throws {
         let host = Host()
         let saved = comparison("Plan a weekend", created: Date(timeIntervalSince1970: 0))

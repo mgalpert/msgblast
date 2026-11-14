@@ -62,6 +62,19 @@ final class AgentControlHTTPTests: XCTestCase {
         XCTAssertEqual(second.0.body, Data(body.utf8))
     }
 
+    /// The Tailscale link drops each finished request with `removeFirst`, which leaves a slice whose indices don't start at 0.
+    func testParseAKeepAliveBufferAfterRemoveFirst() {
+        var buffer = raw("POST /mcp HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}POST /mcp HTTP/1.1\r\nContent-Length: 3\r\n\r\n[1")
+        guard case .complete(_, let first) = AgentControlHTTPRequest.parse(buffer) else { return XCTFail("first request") }
+        buffer.removeFirst(first)
+        XCTAssertNotEqual(buffer.startIndex, 0)
+        XCTAssertEqual(AgentControlHTTPRequest.parse(buffer), .incomplete)
+        buffer.append(raw("]"))
+        guard case .complete(let second, let size) = AgentControlHTTPRequest.parse(buffer) else { return XCTFail("second request") }
+        XCTAssertEqual(second.body, Data("[1]".utf8))
+        XCTAssertEqual(size, buffer.count)
+    }
+
     func testParseTooLargeAndChunked() {
         let chunked = "POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
         XCTAssertEqual(AgentControlHTTPRequest.parse(raw(chunked)), .invalid)
