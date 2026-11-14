@@ -12,12 +12,12 @@ Grok Bot 0.49 or newer can call msgblast on the person's Mac over a shared Tails
 
 ## Setup
 
-The `msgblast-setup` skill walks through the steps. It cannot add the connector by itself.
+The `msgblast-setup` skill walks through the steps. It cannot add the connector by itself. Once connected, the `msgblast-use` skill lists agents, sends one message or a blast, waits for replies and reads the comparison.
 
 1. In msgblast, turn on Outside agents and the Tailscale toggle.
 2. In Grok Bot, Connect apps → Your plugins → Tailscale → Authenticate.
-3. Ask the person for the Server URL only, from msgblast's "Copy URL" button. Never ask for the key, the header, or the "Copy setup" block in chat.
-4. Guide them to Add a custom connector → Remote HTTPS, with that Server URL, and to paste the header from msgblast's "Copy header" button straight into the connector. The key never goes into chat.
+3. Ask the person for the Server URL only, from the copy button next to Server URL in msgblast. Never ask for the key or the header in chat.
+4. Guide them to Add a custom connector → Remote HTTPS, with that Server URL, and to add an `Authorization` header whose value they copy from Set Up… on msgblast's Grok Bot row. The key never goes into chat.
 5. Call `msgblast_status`. The person approves it in msgblast.
 
 ## License

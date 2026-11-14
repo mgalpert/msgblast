@@ -62,6 +62,19 @@ final class AgentControlHTTPTests: XCTestCase {
         XCTAssertEqual(second.0.body, Data(body.utf8))
     }
 
+    /// The Tailscale link drops each finished request with `removeFirst`, which leaves a slice whose indices don't start at 0.
+    func testParseAKeepAliveBufferAfterRemoveFirst() {
+        var buffer = raw("POST /mcp HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}POST /mcp HTTP/1.1\r\nContent-Length: 3\r\n\r\n[1")
+        guard case .complete(_, let first) = AgentControlHTTPRequest.parse(buffer) else { return XCTFail("first request") }
+        buffer.removeFirst(first)
+        XCTAssertNotEqual(buffer.startIndex, 0)
+        XCTAssertEqual(AgentControlHTTPRequest.parse(buffer), .incomplete)
+        buffer.append(raw("]"))
+        guard case .complete(let second, let size) = AgentControlHTTPRequest.parse(buffer) else { return XCTFail("second request") }
+        XCTAssertEqual(second.body, Data("[1]".utf8))
+        XCTAssertEqual(size, buffer.count)
+    }
+
     func testParseTooLargeAndChunked() {
         let chunked = "POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
         XCTAssertEqual(AgentControlHTTPRequest.parse(raw(chunked)), .invalid)
@@ -99,7 +112,7 @@ final class AgentControlHTTPTests: XCTestCase {
         let endpoint = endpoint("secret-token", socket)
         let denied = await endpoint.handle(try request("POST", "/mcp", "{}"), peer: "100.64.0.1")
         XCTAssertEqual(denied.status, 401)
-        XCTAssertEqual(header(denied, "WWW-Authenticate"), "Bearer")
+        XCTAssertEqual(header(denied, "WWW-Authenticate"), AgentControlHTTPEndpoint.challenge)
         XCTAssertTrue(denied.body.isEmpty)
         let elsewhere = await endpoint.handle(try request("POST", "/status", "{}"), peer: "100.64.0.1")
         XCTAssertEqual(elsewhere.status, 404)
@@ -131,8 +144,10 @@ final class AgentControlHTTPTests: XCTestCase {
         XCTAssertTrue(bearerWins.body.isEmpty)
         XCTAssertFalse(String(decoding: bearerWins.encoded(), as: UTF8.self).contains("nope"))
         XCTAssertFalse(String(decoding: bearerWins.encoded(), as: UTF8.self).contains("secret-token"))
+        let pasted = await endpoint.handle(try request("POST", "/mcp", toolsList, headers: ["Authorization": "Authorization: Bearer secret-token"]), peer: "100.64.0.1")
+        XCTAssertEqual(pasted.status, 200)
         let calls = await socket.lines
-        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls.count, 3)
     }
 
     func testWrongTokenDoesNotAskForApproval() async throws {
@@ -140,7 +155,8 @@ final class AgentControlHTTPTests: XCTestCase {
         let endpoint = endpoint("secret-token", socket)
         let wrong = await endpoint.handle(try request("POST", "/mcp/nope", toolsList), peer: "100.64.0.1")
         XCTAssertEqual(wrong.status, 401)
-        XCTAssertEqual(header(wrong, "WWW-Authenticate"), "Bearer")
+        XCTAssertEqual(header(wrong, "WWW-Authenticate"), AgentControlHTTPEndpoint.challenge)
+        XCTAssertTrue(AgentControlHTTPEndpoint.challenge.hasPrefix("Bearer error=\"invalid_token\""))
         XCTAssertTrue(wrong.body.isEmpty)
         XCTAssertFalse(String(decoding: wrong.encoded(), as: UTF8.self).contains("nope"))
         XCTAssertFalse(String(decoding: wrong.encoded(), as: UTF8.self).contains("secret-token"))

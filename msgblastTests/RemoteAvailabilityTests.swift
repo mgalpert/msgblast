@@ -50,7 +50,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(forms[.macApp], [.museApp, .grokBotApp, .wabi, .geminiApp, .chatgptApp, .dotsApp, .claudeApp])
         XCTAssertEqual(forms[.cli], [.codexCLI, .claudeCode])
         XCTAssertEqual(forms[.webhookBot], [.grokbot])
-        XCTAssertEqual(forms[.website], [.muse, .chatgpt, .claude, .grok, .dots, .os3, .hark])
+        XCTAssertEqual(forms[.website], [.muse, .chatgpt, .claude, .grok, .dots, .os3, .hark, .alexaShopping])
         XCTAssertEqual(Set([WebProvider.chatgpt, .chatgptApp, .codexCLI].map(AvailabilityCalculator.product)), [.chatgpt], "Forms of one product group together")
         XCTAssertEqual(evaluate(signals(.codexCLI)).formLabel, "Codex CLI")
         XCTAssertEqual(evaluate(signals(.chatgptApp)).formLabel, "ChatGPT · Mac app")
@@ -237,7 +237,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         var installation: DesktopAppInstallation
         var opened: [URL] = []
         init(_ installation: DesktopAppInstallation) { self.installation = installation }
-        var client: DesktopAppInstallationClient { .init(inspect: { _ in self.installation }, open: { self.opened.append($0) }) }
+        var client: DesktopAppInstallationClient { .init(inspect: { _ in self.installation }, open: { url, _ in self.opened.append(url) }) }
     }
 
     func testModelReadsFixtureSessionsWithoutConnectingOrLaunching() async throws {

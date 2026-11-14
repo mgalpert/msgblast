@@ -11,7 +11,11 @@ app (`msgblastMobile`) is phase 2 of the
 
 Settings → Remote → **Allow a paired phone to use msgblast on this Mac**. It is
 off by default, and an upgraded Mac opens no port until the user turns it on.
-Turning it off disconnects the phone and closes every listener.
+Turning it off disconnects the phone and closes every listener. The main window's
+sidebar shows the same Remote switch and the pairing QR code in a **Phone** section
+at the bottom, below What's New. Its header row stays put: tapping it slides the
+section up open, and tapping again slides it back down to the header alone. That
+choice is remembered.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
@@ -31,6 +35,13 @@ Turning it off disconnects the phone and closes every listener.
 3. The phone answers an HMAC challenge keyed by the code and bound to the session
    transcript and to its own P-256 key, and signs the transcript with that key.
 4. The Mac stores only the phone's public key, name, and created/last-seen dates.
+
+The sidebar's Phone section shows the same code by itself while it is open,
+Remote is on and no phone is paired. It replaces an expired code only while
+msgblast is the active app. A code cancelled in Settings → Remote stays closed in
+the open section until you click **Show pairing code**. Closing the section closes
+only a code the section opened itself, so a code from Settings → Remote →
+**Pair a phone…** stays up.
 
 One phone per Mac. **Pair a different phone…** asks for confirmation; the new
 phone replaces the old record only after it pairs. **Forget** disconnects and
@@ -54,7 +65,11 @@ temporary port is never saved; Settings → Remote shows the port in use and a
 warning while it is temporary. It never binds loopback (the Grok Bot callback range)
 or a wildcard address, and never uses Tailscale Funnel. Bonjour `_msgblast._tcp`
 is advertised only by LAN listeners, scoped to their interface. Addresses are
-rechecked when the network changes. Both the Mac App Store and standalone
+rechecked when the network changes. If remote control is on but the Mac has no
+address yet (Tailscale still connecting at launch or after sleep, Wi-Fi off), the
+listener tries again every few seconds and on every network change, and the Mac
+shows the reason instead of a pairing code, because a code with no address can
+only fail on the phone with "No address for this Mac." Both the Mac App Store and standalone
 Tailscale apps work, because detection reads interface addresses only; a Mac with
 two Tailscale daemons gets both addresses.
 
@@ -115,17 +130,23 @@ Rules the Mac enforces:
 - Each command has a `clientCommandID`. A replay returns the stored or in-progress
   result and never repeats the action. The ledger is in memory only.
 - Sends run one at a time, so Mac app requests stay serial across commands. A send
-  that waits is answered `accepted`, then re-checked when it starts; if the Mac
-  user started a send meanwhile it is refused (`macBusy`), never retried.
+  that waits is answered `accepted`, then a second `accepted` ("Started on your
+  Mac") when its turn comes, and is re-checked then; if the Mac user started a send
+  meanwhile it is refused (`macBusy`), never retried.
 - Nothing is retried. A phone that loses the connection mid-send must show the
   send as unconfirmed.
 - A remote command never opens a Contacts prompt, never takes or clears the Mac's
   composer draft, and sets aside the Mac's Messages drafts and files for its own
   follow-up. Errors go to the command result, not the Mac's alert.
 - The phone sends `prepareConversation` when it opens a composer or changes
-  recipients. The Mac runs the same prepare paths as its composer (it may open a
-  website chat page, never launches an app, never sends) and answers when the agents
-  are ready, or with each agent's reason (`notReady`). If a send still finds a page
+  recipients. When the Mac has that conversation open, it runs the same prepare paths
+  as its composer (it may open a website chat page, never launches an app, never
+  sends) and answers when the agents are ready, or with each agent's reason
+  (`notReady`). A prepare never switches the Mac to another conversation: when the
+  Mac shows a different one, it answers from availability alone and the send prepares. A newer prepare replaces
+  prepares still waiting in the queue; those are answered `applied` ("Replaced by a
+  newer request"). The phone's own deadline (30 s) restarts on each `accepted`, so a
+  prepare waiting behind another is not given up on. If a send still finds a page
   that had to be prepared, nothing has been submitted; the Mac waits up to 20 seconds
   for readiness without navigating again and then sends once, or answers `notReady`
   with nothing submitted. The phone never has to "send again". `preparedNotSent`
@@ -337,7 +358,7 @@ Record phone reducer fixtures from the Demo Mac with
 | Projection and journal | `msgblast/Core/Remote/RemoteProjection.swift` |
 | Commands | `msgblast/Core/Remote/RemoteCommandExecutor.swift`, `msgblast/Remote/AppRemoteHost.swift`, `msgblast/App/SharedSend.swift` |
 | Sessions, listener | `msgblast/Core/Remote/RemoteServer.swift`, `RemoteListener.swift` |
-| Service and settings UI | `msgblast/Remote/RemoteService.swift`, `RemoteAppSignals.swift`, `msgblast/Windows/RemoteSettingsView.swift` |
+| Service and settings UI | `msgblast/Remote/RemoteService.swift`, `RemoteAppSignals.swift`, `msgblast/Windows/RemoteSettingsView.swift`, `msgblast/Windows/PhoneSidebarView.swift` |
 | Phone logic (iOS and macOS) | `msgblastMobile/Kit/Connection/`, `Store/`, `Models/` (`msgblastMobileKit.framework`) |
 | Phone screens | `msgblastMobile/App/`, `msgblastMobile/Views/` |
 

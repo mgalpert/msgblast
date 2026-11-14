@@ -29,6 +29,9 @@ Local development does not need production release credentials.
   and bundled helper.
 - [Remote control](remote-control.md): pairing one phone, bind policy, security
   model, what the phone can do, Demo behavior, and the command-line client.
+- [Outside agents](outside-agents.md): connecting Claude Code, Codex, Cursor,
+  Gemini CLI and Claude Desktop, approval levels, the tools, @-mentions, and how
+  sends from agents behave.
 - [Grok Bot over Tailscale](grok-bot.md): the tailnet MCP endpoint, setup, and
   readiness checks.
 - [Update recovery](update-recovery.md): preserving state when an older app cannot

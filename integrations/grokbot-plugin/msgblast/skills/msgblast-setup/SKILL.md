@@ -5,7 +5,7 @@ description: Help a person connect Grok Bot to msgblast on their Mac over Tailsc
 
 # msgblast setup for Grok Bot
 
-msgblast runs on the person's Mac and listens for HTTP MCP on that Mac's Tailscale addresses. You cannot add the connector yourself. Guide the person, and ask them to paste only the Server URL.
+msgblast runs on the person's Mac and serves MCP privately on their tailnet. Grok Bot needs its `https://` address, which Tailscale Serve provides. You cannot add the connector yourself. Guide the person, and ask them to paste only the Server URL.
 
 ## Check Tailscale
 
@@ -19,9 +19,11 @@ Do not install Tailscale on the bot computer.
 
 ## Ask for the Server URL only
 
-Ask the person to open msgblast → Settings → Outside agents, turn on Outside agents and "Let agents on other devices use msgblast over Tailscale", then click "Copy URL" and paste only the URL here. It looks like `http://<MagicDNS name>:<port>/mcp`.
+Ask the person to open msgblast → Settings → Outside agents, turn on "Allow agents on other devices" under Tailscale, then click the copy button next to Server URL and paste only the URL here. It should look like `https://<MagicDNS name>:47443/mcp`.
 
-Never ask for the key, and tell the person not to paste the `Authorization` header or the "Copy setup" block from the Grok Bot (Tailscale) row into this chat. The key goes only into the connector's header field. If they paste a key anyway, tell them to click "New key" in msgblast and use the new one in the connector.
+If it starts with `http://`, HTTPS isn't set up yet. Ask them to follow the warning in msgblast's Tailscale section. That means turning on HTTPS Certificates in the Tailscale admin console under DNS, and then running the command from "Copy Command" in Terminal once. Then they copy the URL again.
+
+Never ask for the key, and tell the person not to paste the `Authorization` header or its value into this chat. The key goes only into the connector's header field. If they paste a key anyway, tell them to open Set Up… for Grok Bot in msgblast, click New Key…, and use the new one in the connector.
 
 Use the URL they pasted. Do not invent a host or a port.
 
@@ -29,15 +31,15 @@ Use the URL they pasted. Do not invent a host or a port.
 
 Tell them to add it in Grok Bot. You cannot add it for them.
 
-1. Add a custom connector → Remote HTTPS.
+1. Click Connect apps (three squares and a plus), scroll to the bottom of that page, and click Add a custom connector (or search "custom"). Type: Remote HTTPS. If a msgblast connector already exists, click Manage on it and edit that one instead of adding another.
 2. Server URL: the URL they pasted.
-3. Header: in msgblast click "Copy header" and paste it into the connector's header field (name `Authorization`, value `Bearer <key>`).
+3. Header: name `Authorization`. For the value, in msgblast click Set Up… on the Grok Bot (Tailscale) row, copy Value and paste it (`Bearer <key>`).
 4. They save the connector.
 
-msgblast serves `http://` only. If the form asks for an `https://` address, say that msgblast does not serve HTTPS yet. Turning on tailnet certificates in the Tailscale admin console does not change that.
+Never suggest Tailscale Funnel. It makes the address public.
 
 ## Prove it
 
 After they confirm the connector is saved, call the msgblast tool `msgblast_status`. The person approves that call in msgblast. The prompt names the client "Grok Bot (Tailscale)". Show them the result.
 
-If the call fails, ask them to read the three readiness lines on the msgblast Tailscale card and follow the line that has a warning.
+If the call fails, ask them to follow the warning in msgblast's Tailscale section, if there is one.

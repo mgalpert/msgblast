@@ -8,7 +8,7 @@ final class NativeDesktopStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let client = DesktopAppInstallationClient(inspect: { _ in
             .init(url: URL(fileURLWithPath: "/Fixture/Claude.app"), processID: 42)
-        }, open: { _ in XCTFail("The fixture app is already running") })
+        }, open: { _, _ in XCTFail("The fixture app is already running") })
         for scenario in ["unchanged", "edited", "retyped"] {
             let session = WebAgentSession(provider: .claudeApp, storageURL: directory.appendingPathComponent("\(scenario).json"), fixture: true, museApp: .shared, desktopApps: client)
             defer { session.beginShutdown() }
@@ -34,7 +34,7 @@ final class NativeDesktopStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let client = DesktopAppInstallationClient(inspect: { app in
             .init(url: URL(fileURLWithPath: "/Fixture/\(app.name).app"), processID: 42)
-        }, open: { _ in XCTFail("The installed fixture is already running") })
+        }, open: { _, _ in XCTFail("The installed fixture is already running") })
         for provider in [WebProvider.museApp, .wabi, .claudeApp, .chatgptApp, .dotsApp] {
             let storage = directory.appendingPathComponent(provider.storageFilename)
             let session = WebAgentSession(provider: provider, storageURL: storage, fixture: true, museApp: .shared, desktopApps: client)
@@ -62,7 +62,7 @@ final class NativeDesktopStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let client = DesktopAppInstallationClient(inspect: { _ in
             .init(url: URL(fileURLWithPath: "/Fixture/Claude.app"), processID: 42)
-        }, open: { _ in XCTFail("The fixture is already running") })
+        }, open: { _, _ in XCTFail("The fixture is already running") })
         let session = WebAgentSession(provider: .claudeApp, storageURL: directory.appendingPathComponent("claude.json"), fixture: true, museApp: .shared, desktopApps: client)
         defer { session.beginShutdown() }
         session.setEnabled(true)
@@ -81,7 +81,7 @@ final class NativeDesktopStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let client = DesktopAppInstallationClient(inspect: { _ in
             .init(url: URL(fileURLWithPath: "/Fixture/Claude.app"), processID: 42)
-        }, open: { _ in XCTFail("The fixture is already running") })
+        }, open: { _, _ in XCTFail("The fixture is already running") })
         let storage = directory.appendingPathComponent("claude.json")
         let session = WebAgentSession(provider: .claudeApp, storageURL: storage, fixture: true, museApp: .shared, desktopApps: client)
         defer { session.beginShutdown() }
@@ -101,7 +101,7 @@ final class NativeDesktopStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let client = DesktopAppInstallationClient(inspect: { app in
             .init(url: URL(fileURLWithPath: "/Fixture/\(app.name).app"), processID: 42)
-        }, open: { _ in XCTFail("The installed fixture is already running") })
+        }, open: { _, _ in XCTFail("The installed fixture is already running") })
         for provider in [WebProvider.grokBotApp, .museApp, .wabi, .claudeApp, .chatgptApp, .dotsApp] {
             let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: client)
             defer { session.beginShutdown() }
@@ -777,7 +777,7 @@ final class NativeDesktopStateTests: XCTestCase {
         let reason = "The app could not open its chat window."
         let client = DesktopAppInstallationClient(inspect: { app in
             .init(url: URL(fileURLWithPath: "/Fixture/\(app.name).app"), processID: nil)
-        }, open: { _ in throw NSError(domain: "FixtureLaunch", code: 1, userInfo: [NSLocalizedDescriptionKey: reason]) })
+        }, open: { _, _ in throw NSError(domain: "FixtureLaunch", code: 1, userInfo: [NSLocalizedDescriptionKey: reason]) })
         for provider in WebProvider.desktopProviders {
             let session = WebAgentSession(provider: provider, storageURL: directory.appendingPathComponent(provider.storageFilename), fixture: true, museApp: .shared, desktopApps: client)
             defer { session.beginShutdown() }
@@ -801,7 +801,7 @@ final class NativeDesktopStateTests: XCTestCase {
         let client = DesktopAppInstallationClient(inspect: { app in
             let url = URL(fileURLWithPath: "/Fixture/\(app.name).app")
             return .init(url: url, processID: running.contains(url) ? 42 : nil)
-        }, open: { url in
+        }, open: { url, _ in
             if url.lastPathComponent == "Wabi.app" {
                 throw NSError(domain: "FixtureLaunch", code: 1, userInfo: [NSLocalizedDescriptionKey: "Wabi could not open."])
             }
@@ -845,7 +845,7 @@ final class NativeDesktopStateTests: XCTestCase {
         let client = DesktopAppInstallationClient(inspect: { app in
             let url = URL(fileURLWithPath: "/Fixture/\(app.name).app")
             return .init(url: url, processID: running.contains(url) ? 42 : nil)
-        }, open: { url in
+        }, open: { url, _ in
             if url.lastPathComponent == "Wabi.app" {
                 appBlocked.fulfill()
                 for await _ in gate { break }
@@ -910,7 +910,7 @@ final class NativeDesktopStateTests: XCTestCase {
         let client = DesktopAppInstallationClient(inspect: { app in
             let url = URL(fileURLWithPath: "/Fixture/\(app.name).app")
             return .init(url: url, processID: running.contains(url) ? 42 : nil)
-        }, open: { url in
+        }, open: { url, _ in
             secondBlocked.fulfill()
             for await _ in gate { break }
             running.insert(url)
@@ -968,7 +968,7 @@ final class NativeDesktopStateTests: XCTestCase {
         var running = false
         let client = DesktopAppInstallationClient(inspect: { _ in
             .init(url: URL(fileURLWithPath: "/Fixture/Wabi.app"), processID: running ? 42 : nil)
-        }, open: { _ in
+        }, open: { _, _ in
             appBlocked.fulfill()
             for await _ in gate { break }
             running = true
@@ -1059,7 +1059,7 @@ final class NativeDesktopStateTests: XCTestCase {
         var running = false, launches = 0
         let client = DesktopAppInstallationClient(inspect: { _ in
             .init(url: URL(fileURLWithPath: "/Fixture/ChatGPT.app"), processID: running ? 42 : nil)
-        }, open: { _ in
+        }, open: { _, _ in
             launches += 1
             try await Task.sleep(for: .milliseconds(30))
             running = true
@@ -1089,7 +1089,7 @@ final class NativeDesktopStateTests: XCTestCase {
         let client = DesktopAppInstallationClient(inspect: { app in
             let url = URL(fileURLWithPath: "/Fixture/\(app.name).app")
             return .init(url: url, processID: running.contains(url) ? 42 : nil)
-        }, open: { url in
+        }, open: { url, _ in
             activeLaunches += 1
             maximumLaunches = max(maximumLaunches, activeLaunches)
             try await Task.sleep(for: .milliseconds(30))

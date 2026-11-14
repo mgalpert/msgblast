@@ -8,6 +8,34 @@ public enum AgentControlTailnet {
     public static let grokBotClient = "Grok Bot (Tailscale)"
     public static let maximumClientName = 48
 
+    /// What kind of agent an approved name is, for anonymous agent-usage counts. Names never leave the Mac;
+    /// only `telemetryID` does. Settings offers these when adding an agent; any other name is `other`.
+    public enum Kind: String, CaseIterable, Sendable {
+        case claudeCode, codex, cursor, geminiCLI, chatGPT, claudeDesktop, grokBot, other
+
+        public var label: String {
+            switch self {
+            case .claudeCode: "Claude Code"
+            case .codex: "Codex"
+            case .cursor: "Cursor"
+            case .geminiCLI: "Gemini CLI"
+            case .chatGPT: "ChatGPT"
+            case .claudeDesktop: "Claude Desktop"
+            case .grokBot: "Grok Bot"
+            case .other: "Other"
+            }
+        }
+
+        public var telemetryID: String { "outside" + rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+
+        /// Matches by letters only, so "claude-code", "Claude Code 2 (Tailscale)" and "Claude Code" agree.
+        public init(name: String) {
+            let letters = name.lowercased().replacingOccurrences(of: "(tailscale)", with: "").filter(\.isLetter)
+            let order: [Kind] = [.claudeCode, .claudeDesktop, .codex, .cursor, .geminiCLI, .chatGPT, .grokBot]
+            self = order.first { letters.hasPrefix($0.label.lowercased().filter(\.isLetter)) } ?? .other
+        }
+    }
+
     /// The saved name for an agent the person adds by hand, cleaned exactly as `AgentControlGate.clientName`
     /// cleans approval names (so the key's name and its approval's name always match), with one " (Tailscale)"
     /// suffix. "Grok Bot" becomes `grokBotClient`. Nil when empty or too long.
