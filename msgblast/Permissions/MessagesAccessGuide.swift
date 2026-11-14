@@ -59,8 +59,7 @@ final class MessagesAccessGuide: ObservableObject {
         self.appURL = appURL
         self.appName = appName
         self.permissionName = permissionName
-        self.checkAccess = checkAccess
-        self.returnOnGrant = returnOnGrant
+        self.checkAccess = checkAccess; self.returnOnGrant = returnOnGrant
         message = nil
         defaults.set(true, forKey: requestKey)
         flow.begin()
