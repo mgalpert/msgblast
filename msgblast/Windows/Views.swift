@@ -773,7 +773,7 @@ struct AppSettingsView: View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: Binding<SettingsPage?>(get: { page }, set: { if let value = $0 { history.go(to: value) } })) {
                 sidebarRow(.general)
-                Section("Connections") {
+                Section("Agents") {
                     sidebarRow(.apps)
                     sidebarRow(.websites)
                     sidebarRow(.cli)
@@ -781,7 +781,9 @@ struct AppSettingsView: View {
                 }
                 Section {
                     sidebarRow(.outsideAgents)
+                    Divider()
                     sidebarRow(.remote)
+                    Divider()
                     sidebarRow(.permissions)
                     sidebarRow(.sharing)
                     sidebarRow(.updates)
