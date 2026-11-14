@@ -305,7 +305,8 @@ private struct GrokBotSetupSheet: View {
             } footer: {
                 Text("Copy all the fields into Grok Bot, then click Add plugin.")
             }
-            Section("3. Ask Grok Bot to use msgblast, then click Allow in the alert") {
+            Section("3. Send this to Grok Bot, then click Allow in the alert") {
+                FormField(label: "Message", value: GrokBotApp.firstMessage)
                 if tailnet.wrongKey {
                     Label("Grok Bot sent an old key. Copy the Value again.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -458,5 +459,7 @@ private enum Pasteboard {
 
 /// The Grok Bot desktop app, when it is installed. It has no link to its connector screen, so this only opens it.
 private enum GrokBotApp {
+    /// A first chat message that makes Grok Bot call msgblast, so the approval alert appears.
+    static let firstMessage = "Use msgblast to check its status and list my agents."
     static var url: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anysphere.sand") }
 }
