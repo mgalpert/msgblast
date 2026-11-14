@@ -40,17 +40,7 @@ struct RemoteSettingsView: View {
         if service.settings.enabled {
             pairedPhone
             pairingSection
-            Picker("Network", selection: Binding(get: { service.settings.bindPolicy }, set: { service.setBindPolicy($0) })) {
-                ForEach(RemoteBindPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            Toggle("Keep this Mac awake while the phone is connected and during sends", isOn: Binding(get: { service.settings.keepAwake }, set: { service.setKeepAwake($0) }))
-                .toggleStyle(.switch)
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Send iMessages from the phone", isOn: Binding(get: { service.settings.allowMessagesSends }, set: { service.setAllowMessagesSends($0) }))
-                    .toggleStyle(.switch).accessibilityIdentifier("remote-allow-messages")
-                Text("Turns on when a phone pairs. An iMessage cannot be unsent, and your phone already has Messages.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            RemoteOptionControls(service: service)
             if service.variant == .demo {
                 Toggle("Listen on the network (Demo)", isOn: Binding(get: { service.demoNetworkAllowed }, set: { service.setDemoNetworkAllowed($0) }))
                     .toggleStyle(.switch)
@@ -94,7 +84,9 @@ struct RemoteSettingsView: View {
                     Text("Scan with msgblast on your phone").font(.headline)
                     Text("Expires in \(Int(offer.expiresAt.timeIntervalSince(now)))s · works once").font(.caption).foregroundStyle(.secondary)
                     if let fingerprint = service.identityFingerprint {
-                        Text("Key \(fingerprint)").font(.caption.monospaced()).textSelection(.enabled)
+                        // Not selectable: on macOS 27.2 a selectable Text with its own accessibility label sends
+                        // SwiftUI into endless recursion when an accessibility client reads the label.
+                        Text("Key \(fingerprint)").font(.caption.monospaced())
                             .accessibilityLabel("Mac key fingerprint \(fingerprint). The phone shows the same before pairing.")
                     }
                     Text(offer.endpoints.isEmpty ? "No network address yet" : offer.endpoints.map { "\($0.host) (\($0.kind == .tailscale ? "Tailscale" : "local network"))" }.joined(separator: "\n"))
@@ -130,5 +122,41 @@ struct RemoteSettingsView: View {
         guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)),
               let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
         return NSImage(cgImage: cgImage, size: NSSize(width: output.extent.width, height: output.extent.height))
+    }
+}
+
+/// The network, keep-awake and iMessage options shared by Settings → Remote and the sidebar's
+/// Phone section. `compact` uses short labels, small controls and a tooltip instead of the caption.
+struct RemoteOptionControls: View {
+    @ObservedObject var service: RemoteService
+    var compact = false
+    private static let messagesCaption = "Turns on when a phone pairs. An iMessage cannot be unsent, and your phone already has Messages."
+
+    var body: some View {
+        Group {
+            if compact { network.pickerStyle(.menu) } else { network }
+            Toggle(compact ? "Keep Mac awake" : "Keep this Mac awake while the phone is connected and during sends",
+                   isOn: Binding(get: { service.settings.keepAwake }, set: { service.setKeepAwake($0) }))
+                .toggleStyle(.switch)
+            if compact {
+                Toggle("Send iMessages from the phone", isOn: Binding(get: { service.settings.allowMessagesSends }, set: { service.setAllowMessagesSends($0) }))
+                    .toggleStyle(.switch).accessibilityIdentifier("sidebar-remote-allow-messages")
+                    .help(Self.messagesCaption)
+                    .accessibilityHint(Self.messagesCaption)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Send iMessages from the phone", isOn: Binding(get: { service.settings.allowMessagesSends }, set: { service.setAllowMessagesSends($0) }))
+                        .toggleStyle(.switch).accessibilityIdentifier("remote-allow-messages")
+                    Text(Self.messagesCaption).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .controlSize(compact ? .small : .regular)
+    }
+
+    private var network: some View {
+        Picker("Network", selection: Binding(get: { service.settings.bindPolicy }, set: { service.setBindPolicy($0) })) {
+            ForEach(RemoteBindPolicy.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
     }
 }
