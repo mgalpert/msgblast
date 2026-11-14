@@ -423,6 +423,21 @@ final class RemoteListenerRecoveryTests: XCTestCase {
         listener.shutdown()
     }
 
+    func testARetryStillRunsAfterAnEarlierStartSucceeded() async throws {
+        let listener = listener()
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        available = [tailscale]
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertTrue(listener.isListening)
+        available = []
+        _ = await listener.start(policy: .automatic, port: 50_530)
+        XCTAssertFalse(listener.isListening)
+        available = [tailscale]
+        for _ in 0..<100 where !listener.isListening { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(listener.isListening, "A second address loss is retried too")
+        listener.shutdown()
+    }
+
     func testShutdownStopsRetrying() async throws {
         let listener = listener()
         _ = await listener.start(policy: .automatic, port: 50_530)

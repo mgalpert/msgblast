@@ -187,6 +187,8 @@ public final class RemoteListener: ObservableObject {
     @discardableResult
     public func start(policy: RemoteBindPolicy, port requested: UInt16?, reclaimSavedPort: @escaping @MainActor () -> Bool = { true }) async -> UInt16? {
         stop()
+        // A new start supersedes any pending retry; a failed one schedules a fresh retry.
+        recover?.cancel(); recover = nil
         active = true
         starting += 1
         defer { starting -= 1 }
@@ -207,6 +209,8 @@ public final class RemoteListener: ObservableObject {
             while true {
                 attempt += 1
                 if let opened = await open(selected, port: requested) {
+                    // Remote control was turned off while binding: keep nothing open.
+                    guard active else { opened.forEach { $0.cancel() }; return nil }
                     adopt(opened, addresses: selected, port: requested)
                     if attempt > 1 { Self.logger.info("Remote control is listening on saved port \(requested, privacy: .public) after \(attempt, privacy: .public) attempts") }
                     return requested
@@ -219,6 +223,7 @@ public final class RemoteListener: ObservableObject {
         for _ in 0..<retry.randomAttempts {
             let candidate = randomPort()
             guard let opened = await open(selected, port: candidate) else { continue }
+            guard active else { opened.forEach { $0.cancel() }; return nil }
             adopt(opened, addresses: selected, port: candidate)
             if let requested { waitingForPort = requested; startReclaiming(requested) }
             return candidate
