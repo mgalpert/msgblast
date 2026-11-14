@@ -404,6 +404,8 @@ struct ConversationView: View {
                 if file.isImage {
                     Button { opening = .photo(file) } label: {
                         AttachmentThumbnail(app: app, file: file)
+                            // A website turn is keyed by position; reload when its file changes.
+                            .id(turn.attachments[file.index].id)
                             .frame(width: Space.inlinePhoto, height: Space.inlinePhoto * 3 / 4)
                             .clipShape(RoundedRectangle(cornerRadius: Space.cornerBubble, style: .continuous))
                     }

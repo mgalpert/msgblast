@@ -53,15 +53,25 @@ public enum MacConnectionState: Equatable, Sendable {
     /// After this long, the reconnecting subtitle also says why.
     public static let explainReconnectingAfter: TimeInterval = 20
 
-    /// The navigation subtitle under the inbox and conversation titles, as Mail and Messages
-    /// show theirs; nil when connected. "Mac Locked · 40s ago", "Reconnecting… Mac asleep or offline".
-    public func navigationSubtitle(lastHeard: Date?, reconnectingSince: Date?, now: Date = Date()) -> String? {
+    /// A state that usually passes by itself: connecting (every return to the foreground goes
+    /// through it), stopped in the background, or reconnecting for less than
+    /// `explainReconnectingAfter`. Reading a thread says nothing about it.
+    public func isPassing(reconnectingSince: Date?, now: Date = Date()) -> Bool {
         switch self {
-        case .connected: return nil
+        case .connecting, .stopped: return true
+        case .reconnecting: return reconnectingSince.map { now.timeIntervalSince($0) < Self.explainReconnectingAfter } ?? true
+        default: return false
+        }
+    }
+
+    /// The navigation subtitle under the inbox and conversation titles, as Mail and Messages
+    /// show theirs; nil when connected or the state is passing. "Mac Locked · 40s ago",
+    /// "Reconnecting… Mac asleep or offline".
+    public func navigationSubtitle(lastHeard: Date?, reconnectingSince: Date?, now: Date = Date()) -> String? {
+        if self == .connected || isPassing(reconnectingSince: reconnectingSince, now: now) { return nil }
+        switch self {
         case .macLocked: return lastHeard.map { "\(title) · \(Self.ago($0, now: now))" } ?? title
-        case .reconnecting:
-            if let since = reconnectingSince, now.timeIntervalSince(since) >= Self.explainReconnectingAfter, let detail { return "\(title) \(detail)" }
-            return title
+        case .reconnecting: return detail.map { "\(title) \($0)" } ?? title
         default: return title
         }
     }

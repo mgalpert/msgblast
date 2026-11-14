@@ -212,7 +212,6 @@ struct FeedbackView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("Diagnostic preview")
-                        .accessibilityLabel("Diagnostic preview")
                         .accessibilityValue(session.diagnosticsPreview)
                 }
                 .frame(height: 160)

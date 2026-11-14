@@ -6,7 +6,7 @@ import WebKit
 @MainActor
 public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published public private(set) var state = WebWorkspaceState()
-    @Published public private(set) var snapshot = WebPageSnapshot() { didSet { activePage?.snapshot = snapshot } }
+    @Published public private(set) var snapshot = WebPageSnapshot() { didSet { activePage?.snapshot = snapshot; rememberSharedTurns() } }
     @Published public private(set) var isSending = false
     @Published public private(set) var connected = false
     @Published public private(set) var loading = false { didSet { activePage?.loading = loading } }
@@ -25,6 +25,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = websiteDataStore
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        if provider == .alexaShopping {
+            configuration.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+        }
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         view.navigationDelegate = self; view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
@@ -39,8 +42,101 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return page
     }
     public func messagesForComparison(_ id: UUID) -> [WebPageMessage] {
+        // One account-wide page holds every comparison's turns; each comparison sees only its own.
+        // Desktop apps share a conversation too, but their history is native and kept per comparison.
+        if sharesPage {
+            // The saved copy already merges everything the page has shown for this comparison.
+            return state.sharedTurns[id.uuidString] ?? Self.comparisonTurns(snapshot.messages, attempts: state.attempts)[id] ?? []
+        }
         if state.comparisonID == id { return snapshot.messages }
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
+    }
+    private var sharedTurnsSave: Task<Void, Never>?
+    private var sharedTurnsUnsaved = false
+    private var sharesPage: Bool { (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation }
+    /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
+    /// Saving waits for the page to settle rather than writing on every streamed update.
+    private func rememberSharedTurns() {
+        guard sharesPage, !shuttingDown else { return }
+        let live = Self.comparisonTurns(snapshot.messages, attempts: state.attempts)
+        let kept = Self.keepingSharedTurns(state.sharedTurns, live: live, onPage: Set(snapshot.messages.map(\.id)))
+        guard kept != state.sharedTurns else { return }
+        state.sharedTurns = kept
+        sharedTurnsUnsaved = true
+        sharedTurnsSave?.cancel()
+        sharedTurnsSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled, let self else { return }
+            self.sharedTurnsUnsaved = false
+            self.persist()
+        }
+    }
+    /// Ended comparisons keep their turns in their own history; only open ones need a saved copy here.
+    public func pruneSharedTurns(keeping open: Set<UUID>) {
+        let kept = state.sharedTurns.filter { UUID(uuidString: $0.key).map(open.contains) == true }
+        if kept != state.sharedTurns { updateState { $0.sharedTurns = kept } }
+    }
+    /// Merges by message. Turns the page still shows for the comparison take their page order, with
+    /// the page's text unless it shows less of it; a turn the page no longer shows keeps its place;
+    /// a turn the page now attributes to another comparison leaves this one. A reload can renumber
+    /// a message: the saved turn in the same place with the same role and text is replaced, not repeated.
+    static func keepingSharedTurns(_ saved: [String: [WebPageMessage]], live: [UUID: [WebPageMessage]], onPage: Set<String>) -> [String: [WebPageMessage]] {
+        var kept = saved
+        for key in Set(saved.keys).union(live.keys.map(\.uuidString)) {
+            let current = UUID(uuidString: key).flatMap { live[$0] } ?? []
+            let ownIDs = Set(current.map(\.id))
+            var merged = (saved[key] ?? []).filter { ownIDs.contains($0.id) || !onPage.contains($0.id) }
+            // `next` is where the following page turn belongs; until a turn anchors it, new turns are newest.
+            var next = 0, anchored = false
+            for fresh in current {
+                if let at = merged.firstIndex(where: { $0.id == fresh.id }) {
+                    let turn = fresh.text.count >= merged[at].text.count ? fresh : merged[at]
+                    // A turn saved ahead of an earlier page turn moves back into page order.
+                    if at < next { merged.remove(at: at); merged.insert(turn, at: next - 1) } else { merged[at] = turn; next = at + 1 }
+                    anchored = true
+                    continue
+                }
+                if next < merged.count, !onPage.contains(merged[next].id), merged[next].role == fresh.role, merged[next].text == fresh.text {
+                    merged[next] = fresh
+                } else if anchored {
+                    merged.insert(fresh, at: next)
+                } else {
+                    merged.append(fresh); next = merged.count - 1
+                }
+                anchored = true
+                next += 1
+            }
+            kept[key] = merged
+        }
+        return kept
+    }
+    /// Splits a shared page by request: each request a comparison sent owns its user message and the
+    /// replies up to the next user message. Turns from before any request, or from requests sent
+    /// elsewhere, belong to no comparison; a comparison that has sent nothing has no turns.
+    static func comparisonTurns(_ messages: [WebPageMessage], attempts: [WebSendAttempt]) -> [UUID: [WebPageMessage]] {
+        let userIndexes = messages.indices.filter { messages[$0].role == "user" }
+        let indexByID = Dictionary(userIndexes.map { (messages[$0].id, $0) }, uniquingKeysWith: { first, _ in first })
+        let texts = messages.map { normalized($0.text) }
+        var owner: [Int: UUID] = [:]
+        // Requests that never reached the page cannot own a turn.
+        let sent = attempts.filter { $0.comparisonID != nil && ![.preparing, .notSent].contains($0.status) }.sorted { $0.created < $1.created }
+        for attempt in sent { if let id = attempt.messageID, let index = indexByID[id] { owner[index] = attempt.comparisonID } }
+        // An unattributed request takes the nearest unowned matching message after the previous request.
+        var previous = -1
+        for attempt in sent {
+            if let id = attempt.messageID, let index = indexByID[id] { previous = index; continue }
+            // Messages already on the page when it was submitted are never its own.
+            let text = normalized(attempt.text), earliest = max(previous + 1, attempt.receiptContext?.baseline.count ?? 0)
+            guard let index = userIndexes.first(where: { $0 >= earliest && owner[$0] == nil && texts[$0] == text }) else { continue }
+            owner[index] = attempt.comparisonID
+            previous = index
+        }
+        var turns: [UUID: [WebPageMessage]] = [:], current: UUID?
+        for index in messages.indices {
+            if messages[index].role == "user" { current = owner[index] }
+            if let current { turns[current, default: []].append(messages[index]) }
+        }
+        return turns
     }
     public func canArchiveComparison(_ id: UUID) -> Bool {
         let submitted = state.attempts.contains { $0.comparisonID == id && $0.status.confirmsSubmission }
@@ -113,6 +209,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @Published public private(set) var accountStatus: PersonalAgentAccountStatus = .unknown
     private var installedAgent: InstalledPersonalAgent?
     private var nativeRequest: Task<PersonalAgentReply, Error>?
+    private var desktopSendPressedAttempts: Set<UUID> = []
     private let museApp: MuseAppConversation
     private let claudeApp: ClaudeAppConversation
     private let chatgptApp: ChatGPTAppConversation
@@ -123,6 +220,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private let wabiApp: WabiAppConversation
     private let desktopApps: DesktopAppInstallationClient
     private let desktopDriver: DesktopAppConversation
+    private let handBackHost = DesktopHandBackHost()
     private var grokBotCredentials: GrokBotCredentials?
     private var grokBotConnectionReady: Bool?
     private var grokBotReceiver: GrokBotCallbackReceiver?
@@ -172,7 +270,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public var isReadyForOnboarding: Bool {
         guard isEnabled, connected, !storageFailed, !loading else { return false }
         if provider.usesNativeConversation { return snapshot.ready }
-        return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true
+        return !webView.isLoading && canInspectWebsite && snapshot.signedIn == true && (provider != .alexaShopping || snapshot.draftAvailable == true)
     }
 
     public convenience init(provider: WebProvider, storageURL: URL, fixture: Bool, migrationError: String? = nil, agentID: WebAgentID? = nil, accountID: UUID? = nil, name: String? = nil) {
@@ -184,7 +282,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         self.chatgptApp = chatgptApp
         self.geminiApp = geminiApp
         self.wabiApp = wabiApp
-        self.desktopApps = desktopApps ?? (fixture ? .demo : .system)
+        self.desktopApps = desktopApps ?? (fixture ? .demo : handBackHost.systemClient(driver: desktopDriver))
         self.desktopDriver = desktopDriver
         self.provider = provider
         self.id = agentID ?? WebAgentID(provider: provider)
@@ -314,7 +412,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard state.conversationURLs.isEmpty, state.comparisonID == nil, state.dotsURL == nil else {
             throw WebSessionFailure.notSent("Sign in to the account used by your saved conversations.")
         }
-        let host = provider.homeURL.host!
+        let host = provider.browserCookieHost
         let belongsToProvider: (HTTPCookie) -> Bool = { cookie in
             let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
             return BrowserLoginImporter.matches(domain: domain, websiteHost: host)
@@ -382,7 +480,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if provider == .grokbot && grokBotReplyURL == nil { grokBotConnectionReady = nil }
         if provider.usesNativeConversation { connect(); Task { await refresh() }; return }
         if !connected { connect() }
-        else if fixture { loadComparisonChat() }
+        else if fixture || (provider == .alexaShopping && webView.url == nil) { loadComparisonChat() }
         else { webView.reload() }
     }
 
@@ -459,6 +557,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               let url = provider.canonicalConversationURL(current),
               webView.url.flatMap(provider.canonicalConversationURL) == url,
               (provider == .dots || provider.sharesOneConversation || !state.conversationURLs.contains(where: { $0.key != comparison.uuidString && provider.canonicalConversationURL($0.value) == url })) else { return false }
+        if provider == .alexaShopping,
+           receiptGenerations[attempt.id]?.matches(currentPage()) != true,
+           manualRecoveryScopes[attempt.id]?.page.matches(currentPage()) != true { return false }
         if let saved = state.conversationURLs[comparison.uuidString], provider.canonicalConversationURL(saved) != url { return false }
         if let candidate = attempt.pinnedConversationURL, candidate != url { return false }
         if provider.sharesOneConversation, hasCompetingUnresolvedAttempt(for: attempt) { return false }
@@ -830,7 +931,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
         let generation = page.generation
         do {
-            if (provider == .chatgpt || provider == .dots) && !isSending && provider.isChatURL(url) {
+            if (provider == .chatgpt || provider == .dots || provider == .alexaShopping) && !isSending && provider.isChatURL(url) {
                 _ = try await page.view.callAsyncJavaScript(script.configureInitialLayout, arguments: [:], in: nil, contentWorld: .defaultClient)
                 guard generation == page.generation, !shuttingDown, !flushingDrafts else { return }
             }
@@ -1106,7 +1207,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             }
             let baseline = try JSONDecoder().decode([WebPageMessage].self, from: JSONSerialization.data(withJSONObject: messages))
             let existingPaths = Set(paths)
-            attempt.receiptContext = WebReceiptContext(originalURL: url, baseline: baseline, existingPaths: existingPaths)
+            attempt.receiptContext = WebReceiptContext(originalURL: provider == .alexaShopping ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
             receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
             if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
@@ -1168,7 +1269,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard snapshot.submissionInterrupted != true, let current = URL(string: snapshot.url) else { return invalidate() }
         // Across reloads/restarts only the already pinned candidate can be recovered.
         let pinned = attempt.pinnedConversationURL
-        guard receiptGenerations[attempt.id]?.matches(page) == true || pinned != nil else { return invalidate() }
+        guard receiptGenerations[attempt.id]?.matches(page) == true || (provider != .alexaShopping && pinned != nil) else { return invalidate() }
         if !provider.sharesOneConversation, context.originalURL == provider.newChatURL, current == context.originalURL { return false }
         guard provider.acceptsReceipt(from: context.originalURL, at: current), let url = provider.canonicalConversationURL(current),
               pinned == nil || pinned == url,
@@ -1369,7 +1470,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         guard let url = desktopInstallation.url else { return }
         loading = true
         defer { loading = false }
-        do { try await desktopApps.open(url); refreshDesktopInstallation() }
+        do { try await desktopApps.open(url, true); refreshDesktopInstallation() }
         catch { desktopCheckFailed(error); self.error = error.localizedDescription }
     }
 
@@ -1393,6 +1494,16 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             self.error = error.localizedDescription
             updateNativeSnapshot()
             return false
+        }
+    }
+
+    /// A background open captures msgblast's window first, so ChatGPT's self-activation can be handed back to it.
+    /// `check` runs again after that capture, so a comparison change or shutdown during it opens nothing.
+    private func openDesktopApp(_ url: URL, activates: Bool, check: @escaping () throws -> Void) async throws {
+        guard !activates else { return try await desktopApps.open(url, true) }
+        try await handBackHost.whileOpening {
+            try check()
+            try await desktopApps.open(url, false)
         }
     }
 
@@ -1422,7 +1533,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 } catch is CancellationError { throw CancellationError() }
                 catch { try checkCurrent() }
             }
-            try await desktopApps.open(url)
+            try await openDesktopApp(url, activates: app.requiresForegroundSubmission, check: checkCurrent)
             try checkCurrent()
             let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             repeat {
@@ -1735,7 +1846,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         requestCancelled = true
         nativeRequest?.cancel()
     }
-    public func beginShutdown() { shuttingDown = true; poll?.cancel(); stopNativeRecovery(); cancelNativeRequest(); stopGrokBotConnection() }
+    public func beginShutdown() {
+        shuttingDown = true; poll?.cancel(); stopNativeRecovery(); cancelNativeRequest(); stopGrokBotConnection()
+        // A reply that arrived just before quitting is still waiting for its debounced save.
+        sharedTurnsSave?.cancel(); sharedTurnsSave = nil
+        if sharedTurnsUnsaved { sharedTurnsUnsaved = false; persist() }
+    }
     public func cancelAndWait() async {
         if !shuttingDown { try? await saveBrowserDrafts() }
         beginShutdown()
@@ -1760,6 +1876,10 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         }
     }
 
+    /// Without a foreground lease, confirmed submission is what frees the next app in a blast.
+    @MainActor private static func handOffAfterSubmission(leased: Bool, _ handoff: @MainActor @Sendable () -> Void) {
+        if !leased { handoff() }
+    }
     private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void, plannedAttemptID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
@@ -1849,11 +1969,11 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                 geminiBinding = try state.geminiBinding(for: id) ?? GeminiConversationBinding(comparisonID: id, mode: geminiPreferences.mode)
             }
             let sendFocus = foreground
-            let submitAction: @Sendable () async -> Void = { await sendFocus?.restoreAfterSubmission() }
             let outgoingID = attempt.id
+            let submitAction: @Sendable () async -> Void = { [weak self] in await self?.recordDesktopSendPressed(outgoingID); await sendFocus?.restoreAfterSubmission() }
             let submitted: @Sendable () async throws -> Void = { [weak self] in
                 guard let self else { throw CancellationError() }
-                try await self.recordDesktopSubmission(attemptID: outgoingID)
+                try await self.recordDesktopSubmission(attemptID: outgoingID); await Self.handOffAfterSubmission(leased: sendFocus != nil, onSubmissionFinished)
                 await onConfirmedSubmission()
             }
             let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
@@ -2003,18 +2123,30 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             if provider == .geminiApp, let problem = error as? GeminiSelectionError {
                 geminiOptions = problem.options; geminiConfigurationError = problem.localizedDescription; desktopReady = false
             }
+            let submitted = desktopSendPressedAttempts.contains(attempt.id) || [.waiting, .observed].contains(state.attempts.first { $0.id == attempt.id }?.status)
             attempt.status = provider == .geminiApp && error is GeminiSelectionError ? .notSent : started ? .uncertain : .notSent
-            let detail = error is CancellationError
-                ? started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
-                : error.localizedDescription
+            let detail = Self.failureDetail(for: error, started: started, submitted: submitted, provider: provider)
             attempt.detail = detail
             self.error = detail
             do { try store(attempt) } catch { self.error = "Could not save this request. Repair storage before sending again." }
         }
         do { try await foreground?.restore() }
         catch { self.error = error.localizedDescription }
-        updateNativeSnapshot()
+        desktopSendPressedAttempts.remove(attempt.id); updateNativeSnapshot()
         return attempt
+    }
+
+    private static func failureDetail(for error: Error, started: Bool, submitted: Bool, provider: WebProvider) -> String {
+        if error is CancellationError {
+            return started ? "Stopped waiting for a reply. Check \(provider.name) before sending again." : "Stopped before sending. Your draft is saved."
+        }
+        // After Send was pressed the message may have gone out, so never say nothing was sent.
+        guard case let .interstitial(app, prompt) = error as? DesktopAppError, submitted else { return error.localizedDescription }
+        return "\(app) needs you: it is showing \(prompt). Finish or dismiss it in \(app)."
+    }
+
+    private func recordDesktopSendPressed(_ attemptID: UUID) {
+        desktopSendPressedAttempts.insert(attemptID)
     }
 
     private func recordDesktopSubmission(attemptID: UUID) throws {

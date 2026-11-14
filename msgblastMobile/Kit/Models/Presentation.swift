@@ -338,15 +338,16 @@ public struct ProjectionPresenter: Sendable {
         return next.isEmpty || next == Set(members) ? [] : next
     }
 
-    /// What New Conversation starts with checked: every agent that can take a send now or by
-    /// queueing (ready, opens its app, or busy), never a blocked or unavailable one; a Messages
-    /// contact only when the Mac has it selected. In the strip's order.
+    /// What New Conversation starts with checked: agents the Mac selected for a shared send
+    /// whose readiness accepts a send now or by queueing (ready, opens its app, or busy),
+    /// never a blocked or unavailable one. Both lists, in the strip's order.
     public var defaultNewSelection: [String] {
         let list = newConversationAgents
-        let agents = list.agents.filter {
-            switch $0.readiness { case .ready, .readyWillLaunch, .busy: true; case .blocked, .unavailable: false }
+        func chosen(_ agent: AgentAvailability) -> Bool {
+            guard agent.selectedForSharedSend else { return false }
+            switch agent.readiness { case .ready, .readyWillLaunch, .busy: return true; case .blocked, .unavailable: return false }
         }
-        return agents.map(\.agentID) + list.messages.filter(\.selectedForSharedSend).map(\.agentID)
+        return list.agents.filter(chosen).map(\.agentID) + list.messages.filter(chosen).map(\.agentID)
     }
 
     /// New Conversation's check: an empty choice is no one (never everyone). A tap adds the
@@ -409,9 +410,10 @@ public struct ProjectionPresenter: Sendable {
     /// Why the compose bar cannot send right now, and whether Send may still be tapped.
     /// Disconnection and the projection's own reasons block Send. A failed
     /// `prepareConversation` only shows its reason: tapping Send prepares again first.
+    /// A connection that is only passing (connecting, briefly reconnecting) waits quietly.
     public func composeBlock(canSend: Bool, connectionText: String, agentIDs: [String], conversation: UUID?,
-                             prepareReasons: [String: String]) -> ComposeBlock? {
-        if !canSend { return .blocked(connectionText) }
+                             prepareReasons: [String: String], connectionPassing: Bool = false) -> ComposeBlock? {
+        if !canSend { return connectionPassing ? .waiting("Connecting…") : .blocked(connectionText) }
         if let line = disabledLine(agentIDs: agentIDs, conversation: conversation) {
             return line.quiet ? .waiting(line.text, detail: line.detail) : .blocked(line.text, detail: line.detail)
         }
