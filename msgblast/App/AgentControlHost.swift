@@ -24,9 +24,16 @@ extension AppModel: AgentControlHost {
                 kind = provider?.desktopApp != nil ? "app" : provider?.personalAgentProvider != nil ? "cli" : provider == .grokbot ? "bot" : "website"
             }
             let selected = session?.state.selected ?? state.selection.contains(entry.agent.id)
-            return AgentControlAgent(id: entry.id.id, name: session?.name ?? entry.name, kind: kind, visible: visible.contains(entry.id),
+            return AgentControlAgent(id: controlID(entry), name: session?.name ?? entry.name, kind: kind, visible: visible.contains(entry.id),
                                      selected: selected, busy: session.map { webAgents.isBusyForSelection($0) } ?? false)
         }
+    }
+
+    /// A featured Messages agent (Instinct, Fo, szn) is listed by its contact's `messages:` id, the id the send
+    /// tools take, once it resolves to a saved contact. Until then it keeps its `featured:` id and can't be sent to.
+    private func controlID(_ entry: AgentGridEntry) -> String {
+        guard case .featuredMessages = entry.id, state.agents.contains(where: { $0.id == entry.agent.id }) else { return entry.id.id }
+        return RemoteAgentIDs.messages(entry.agent.id)
     }
 
     func controlComparisons() -> [Comparison] { state.comparisons }

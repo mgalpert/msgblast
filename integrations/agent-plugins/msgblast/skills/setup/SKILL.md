@@ -13,7 +13,7 @@ Check that `/Applications/msgblast.app` exists. If it does not, tell the person 
 
 ## Turn on Outside agents
 
-Ask them to open msgblast → Settings → Outside agents and turn on "Let agents on this Mac use msgblast".
+Ask them to open msgblast → Settings → Outside agents and turn on "Allow agents on this Mac".
 
 ## Call msgblast
 

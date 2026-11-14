@@ -84,6 +84,7 @@ import msgblastRemoteProtocol
         XCTAssertEqual(status["outcome"] as? String, "done")
         let unknown = try await call("msgblast_request_status", #"{"requestId":"never"}"#, host: host, access: .readOnly)
         XCTAssertEqual(unknown["outcome"] as? String, "unknown")
+        XCTAssertEqual(unknown["message"] as? String, AgentControlSend.unknownMessage, "not the phone's wording")
     }
 
     func testFollowUpPrivateMessageAndEndBuildTheirCommands() async throws {
@@ -126,7 +127,7 @@ import msgblastRemoteProtocol
     func testBadArgumentsAreRefusedBeforeAnythingRuns() async {
         let host = Host()
         let cases: [(String, String, String)] = [
-            ("msgblast_blast_start", #"{"text":"Hi","agents":["featured:fo"]}"#, "featured:fo is not an agent msgblast can send to. Use ids from msgblast_agents_list."),
+            ("msgblast_blast_start", #"{"text":"Hi","agents":["featured:fo"]}"#, "featured:fo isn't connected to a Messages contact yet. Connect it in msgblast, then use its messages: id from msgblast_agents_list."),
             ("msgblast_blast_start", #"{"text":"  ","agents":["web:chatgpt"]}"#, "text is required"),
             ("msgblast_blast_start", #"{"text":"Hi","agents":[]}"#, "agents is required"),
             ("msgblast_blast_follow_up", #"{"comparisonId":"nope","text":"Hi"}"#, "comparisonId is not a comparison id"),
