@@ -1,0 +1,17 @@
+{
+  "pr": 145,
+  "reviewed_head": "f1e3d8d2954d1f7325ecb4c48a0e5028b1a55d79",
+  "base": "51fedbe",
+  "previous_reviewed_heads": [],
+  "previous_receipt": null,
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this code); commits authored with Claude Opus 5.5 trailers",
+  "scope": "Full PR diff 51fedbe..f1e3d8d: msgblast/Windows/Views.swift MessagesAccessBanner shows MessagesAccessRow only while !model.databaseAvailable (was also while the guide was active or verified) and calls guide.dismissCompletion() on .verified / on appear when access is already granted, matching DiscoverAccessView. Read with MessagesAccessGuide, AppModel.usesMessages/refresh, OnboardingController and FeedbackFacts. Secrets and privacy scan of added lines.",
+  "verdict": "approve with notes",
+  "findings": [
+    {"severity": "MINOR", "file": "msgblast/Windows/Views.swift:340-352", "text": "onChange/onAppear sit on a Group whose content is empty once access is granted; onAppear on empty content may not fire. Same pattern as DiscoverAccessView; the row hides on databaseAvailable regardless, so this only affects clearing the finished handoff."},
+    {"severity": "NOTE", "file": "msgblast/App/FeedbackFacts.swift:35", "text": "After a grant, feedback reports permissionStage idle instead of verified, as Discover already does."},
+    {"severity": "NOTE", "file": "msgblast/Windows/Views.swift", "text": "Guiding/waiting stages only occur while history is unavailable, so the row still shows during the guide; #143's bring-forward runs before the row is removed."}
+  ],
+  "notes": "Row still shows while access is missing and during the guide; Restart & check access lives in onboarding/Settings and is unaffected; dismissCompletion only on .verified so it cannot cancel a guide; onboarding and Discover share the guide safely. v0.10.3 had the identical banner code, so this is pre-existing behaviour, not a 0.11 regression. No secrets. The reviewer could not run Swift.",
+  "tests": "CI and the Mac/VM run at f1e3d8d pending at receipt time."
+}
