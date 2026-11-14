@@ -265,6 +265,8 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(session.messagesForComparison(thread).map(\.text), ["Need a bottle", "Try this bottle"], "The page dropped the turns; the saved copy remains")
         XCTAssertEqual(session.messagesForComparison(other), [])
         // Quitting right after a reply keeps it: the pending save is flushed, and a relaunch reads it.
+        // The app's quit path begins shutdown before waiting, so flush there too.
+        session.beginShutdown()
         await session.cancelAndWait()
         let relaunched = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
         defer { relaunched.beginShutdown() }

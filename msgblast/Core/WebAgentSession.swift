@@ -52,6 +52,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return pages[id.uuidString]?.snapshot.messages ?? state.localConversations[id.uuidString] ?? []
     }
     private var sharedTurnsSave: Task<Void, Never>?
+    private var sharedTurnsUnsaved = false
     private var sharesPage: Bool { (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation }
     /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
     /// Saving waits for the page to settle rather than writing on every streamed update.
@@ -61,11 +62,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let kept = Self.keepingSharedTurns(state.sharedTurns, live: live, onPage: Set(snapshot.messages.map(\.id)))
         guard kept != state.sharedTurns else { return }
         state.sharedTurns = kept
+        sharedTurnsUnsaved = true
         sharedTurnsSave?.cancel()
         sharedTurnsSave = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
-            self?.persist()
+            guard !Task.isCancelled, let self else { return }
+            self.sharedTurnsUnsaved = false
+            self.persist()
         }
     }
     /// Ended comparisons keep their turns in their own history; only open ones need a saved copy here.
@@ -1835,12 +1838,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
     public func beginShutdown() {
         shuttingDown = true; poll?.cancel(); stopNativeRecovery(); cancelNativeRequest(); stopGrokBotConnection()
+        // A reply that arrived just before quitting is still waiting for its debounced save.
         sharedTurnsSave?.cancel(); sharedTurnsSave = nil
+        if sharedTurnsUnsaved { sharedTurnsUnsaved = false; persist() }
     }
     public func cancelAndWait() async {
         if !shuttingDown { try? await saveBrowserDrafts() }
-        // A reply that arrived just before quitting is still waiting for its debounced save.
-        if sharedTurnsSave != nil, !shuttingDown { persist() }
         beginShutdown()
         while provider.usesNativeConversation && isSending { try? await Task.sleep(for: .milliseconds(20)) }
     }
