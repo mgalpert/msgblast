@@ -301,8 +301,10 @@ final class WebServiceTests: XCTestCase {
         // The older identical request on the reloaded page is still not this one's.
         let reloaded = [message("d2:u0", "user", "hi"), message("a0", "assistant", "Old answer"), message("d2:u2", "user", "hi"), message("a2", "assistant", "New answer")]
         XCTAssertEqual(turns(reloaded), ["d2:u2", "a2"])
-        // A page renumbered whole and as long as the baseline keeps the length guard.
+        // With no baseline message left to place it, the length guard stays: a renumbered page,
+        // even a short one holding an older identical request, gives this request nothing.
         XCTAssertEqual(turns(baseline.map { message("d3:" + $0.id, $0.role, $0.text) }), [])
+        XCTAssertEqual(turns([message("d4:u0", "user", "hi"), message("d4:a0", "assistant", "Old answer")]), [])
         // The saved copy follows the renumbered request instead of repeating it.
         var saved = WebAgentSession.keepingSharedTurns([:], live: WebAgentSession.comparisonTurns(sent, attempts: [attempt]), onPage: Set(sent.map(\.id)))
         saved = WebAgentSession.keepingSharedTurns(saved, live: WebAgentSession.comparisonTurns(window, attempts: [attempt]), onPage: Set(window.map(\.id)))

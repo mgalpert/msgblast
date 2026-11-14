@@ -167,7 +167,7 @@ final class WebImageCacheTests: XCTestCase {
         XCTAssertEqual(left, [fetched, middle, newest])
         XCTAssertFalse(left.contains(expired), "Files past the age limit go")
         XCTAssertFalse(left.contains(oldest), "The oldest file goes once the folder is over budget")
-        // A pass that removes a cached file makes the cache forget it.
+        // Once its file is gone, the cache no longer offers it.
         XCTAssertEqual(WebImageCache.pruneDirectory(directory, olderThan: Date.distantFuture, maxBytes: 0), [fetched, middle, newest])
         XCTAssertNil(images.attachment(for: url))
         XCTAssertEqual(WebImageCache.pruneDirectory(directory.appendingPathComponent("missing"), olderThan: clock, maxBytes: 0), [])

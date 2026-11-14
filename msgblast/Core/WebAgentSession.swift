@@ -142,14 +142,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         return turns
     }
     /// Where messages sent after the baseline can start. A reload can show fewer messages than the
-    /// baseline had, so the last baseline message still on the page marks the spot. When none is,
-    /// a page at least as long as the baseline keeps its length as the guard; a shorter one shows
-    /// only messages from after it.
+    /// baseline had, so the last baseline message still on the page marks the spot (Alexa's replies
+    /// keep their ids across a reload). When none is on the page, the ids cannot be trusted to place
+    /// it, so the baseline's length stays the guard: the request claims nothing rather than an older
+    /// identical one, and its saved turns are kept by `keepingSharedTurns`.
     static func indexAfterBaseline(_ baseline: [WebPageMessage], in messages: [WebPageMessage]) -> Int {
-        guard !baseline.isEmpty else { return 0 }
         let ids = Set(baseline.map(\.id))
         if let last = messages.lastIndex(where: { ids.contains($0.id) }) { return last + 1 }
-        return messages.count >= baseline.count ? baseline.count : 0
+        return baseline.count
     }
     public func canArchiveComparison(_ id: UUID) -> Bool {
         let submitted = state.attempts.contains { $0.comparisonID == id && $0.status.confirmsSubmission }

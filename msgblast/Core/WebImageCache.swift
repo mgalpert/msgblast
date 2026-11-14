@@ -87,7 +87,7 @@ public final class WebImageCache {
     }
 
     private func shouldStart(_ url: String) -> Bool {
-        if files[url] != nil || inflight.contains(url) || WebImageURL.allowed(url) == nil || isCoolingDown(url) { return false }
+        if attachment(for: url) != nil || inflight.contains(url) || WebImageURL.allowed(url) == nil || isCoolingDown(url) { return false }
         return true
     }
 
