@@ -342,7 +342,7 @@ need that Linux installer command. See [Cloud agents](cloud-agent.md).
 
 - **Linux:** installer/dependency setup, Python tooling tests, feedback/crash intake tests, download Worker
   tests, and Wrangler dry-run.
-- **Native (`xcode-27`):** core tests, crash consent/retry controller fixtures, and isolated Sparkle update fixtures. It checks
+- **Native (`xcode-27`, or a Mac Studio when `MSGBLAST_STUDIO_RUNNER` is on; see [studio-runner.md](studio-runner.md)):** core tests, crash consent/retry controller fixtures, and isolated Sparkle update fixtures. It checks
   out the PR branch head and retains test logs/results for 14 days.
 - **Preview:** same-repository `cursor/*` PR branches or manual dispatch build
   signed Dev/Demo ZIPs and a manifest; artifacts last 14 days. Ordinary fork PRs
