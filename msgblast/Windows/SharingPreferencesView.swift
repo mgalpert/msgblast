@@ -176,7 +176,7 @@ private struct SharingInformationView: View {
             }
             Divider()
             HStack {
-                Link("View source code", destination: URL(string: "https://github.com/mgalpert/msgblast")!)
+                Link("View source code", destination: URL(string: "https://github.com/contains-studio/msgblast")!)
                 Spacer()
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)

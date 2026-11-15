@@ -53,10 +53,10 @@ struct BuildFeatureView: View {
     private enum CopyStatus { case idle, copied, failed }
     @State private var idea = ""
     @State private var copyStatus = CopyStatus.idle
-    private let repository = URL(string: "https://github.com/mgalpert/msgblast")!
-    private let fork = URL(string: "https://github.com/mgalpert/msgblast/fork")!
-    private let download = URL(string: "https://github.com/mgalpert/msgblast/archive/refs/heads/main.zip")!
-    private let guide = URL(string: "https://github.com/mgalpert/msgblast/blob/main/docs/build-from-source.md")!
+    private let repository = URL(string: "https://github.com/contains-studio/msgblast")!
+    private let fork = URL(string: "https://github.com/contains-studio/msgblast/fork")!
+    private let download = URL(string: "https://github.com/contains-studio/msgblast/archive/refs/heads/main.zip")!
+    private let guide = URL(string: "https://github.com/contains-studio/msgblast/blob/main/docs/build-from-source.md")!
 
     private var prompt: String {
         let feature = idea.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -68,7 +68,7 @@ struct BuildFeatureView: View {
 
         My feature idea: \(feature.isEmpty ? "[Describe the problem and the behavior you want.]" : feature)
 
-        Use https://github.com/mgalpert/msgblast. Help me fork and clone it locally, or work in my existing clone. Downloading the source ZIP is also an option for personal use; use a Git clone of my fork to contribute.
+        Use https://github.com/contains-studio/msgblast. Help me fork and clone it locally, or work in my existing clone. Downloading the source ZIP is also an option for personal use; use a Git clone of my fork to contribute.
 
         Read AGENTS.md, CONTRIBUTING.md, docs/build-from-source.md, docs/architecture.md, and docs/testing.md before making changes. Start from current upstream main for new work, preserve existing edits, and record the base SHA.
 
@@ -97,7 +97,7 @@ struct BuildFeatureView: View {
                     Divider()
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Public GitHub repository").font(.headline)
-                        Link("github.com/mgalpert/msgblast ↗", destination: repository)
+                        Link("github.com/contains-studio/msgblast ↗", destination: repository)
                         HStack(spacing: 16) {
                             Link("Fork on GitHub ↗", destination: fork)
                             Link("Download source ZIP", destination: download)
