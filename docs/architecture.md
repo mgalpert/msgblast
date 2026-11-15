@@ -310,6 +310,19 @@ Explicit saved recipient choices, drafts, and existing comparison membership
 are retained. A failed native conversation preparation preserves the prompt and
 shows its error with a Reconnect action, including for an empty first chat.
 
+## Messages ranges
+
+A Messages chat is one stream per contact, so a conversation holds only part of it.
+For each Messages member it shows the chat from its own sent prompt up to the next
+msgblast conversation's send to that contact. A send whose row is not identified
+yet counts from the row after its saved baseline, so an older conversation never
+takes its replies. Inside that range the conversation lets go of the contact when
+you message them outside msgblast, or when they write after a full day with
+nothing in the chat; a later msgblast message in the conversation takes the chat
+back. Messages it has let go of are not shown in any conversation and remain in
+Messages. Business chats keep every sent row, because their choices are sent by
+Messages itself.
+
 ## Closing conversations
 
 Closing an active conversation window asks whether to end it or keep collecting

@@ -714,9 +714,7 @@ final class AppModel: ObservableObject {
     func comparison(_ id: UUID) -> Comparison? { state.comparisons.first { $0.id == id } }
     func index(_ id: UUID) -> Int? { state.comparisons.firstIndex { $0.id == id } }
     func transcript(_ comparison: Comparison, member: Member) -> [Message] {
-        guard let anchor = member.anchor else { return [] }
-        let history = messages[member.chat.id] ?? []
-        return ComparisonRange.messages(comparison.endedAt == nil ? history : history.filter { comparison.includes($0) }, anchor: anchor, next: ComparisonRange.nextAnchor(for: comparison, member: member, comparisons: state.comparisons))
+        ComparisonRange.transcript(messages[member.chat.id] ?? [], comparison: comparison, member: member, comparisons: state.comparisons)
     }
     func latest(_ chat: Chat) throws -> [Message] {
         if demo { return messages[chat.id] ?? [] }

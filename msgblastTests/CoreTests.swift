@@ -422,6 +422,58 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(ChatResolver.normalize("+1 (415) 555-0123"), "+14155550123")
         XCTAssertEqual(ChatResolver.normalize("A@EXAMPLE.COM"), "a@example.com")
     }
+    private func heldConversation(prompt: String = "Prompt", chat: Chat = Chat(id: "A", handle: "a@example.com", lastActivity: 0)) -> Comparison {
+        var comparison = Comparison(prompt: prompt, members: [Member(agentID: UUID(), name: "Fo", chat: chat)])
+        comparison.members[0].submission = .submitted
+        comparison.members[0].baseline = 9
+        comparison.members[0].anchor = Anchor(rowID: 10, guid: "anchor")
+        return comparison
+    }
+    private func row(_ id: Int64, _ text: String, outgoing: Bool = false, hours: Double) -> Message {
+        Message(id: id, guid: "g\(id)", chatID: "A", text: text, outgoing: outgoing, date: Date(timeIntervalSince1970: hours * 3600))
+    }
+    func testConversationLetsGoWhenYouMessageTheContactOutsideMsgblast() {
+        let comparison = heldConversation()
+        let history = [Message(id: 10, guid: "anchor", chatID: "A", text: "Prompt", outgoing: true, date: Date(timeIntervalSince1970: 0)),
+                       row(11, "Answer", hours: 0.1), row(20, "Typed in Messages", outgoing: true, hours: 1), row(21, "Answer to that", hours: 1.1)]
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: comparison, member: comparison.members[0], comparisons: [comparison]).map(\.id), [10, 11])
+    }
+    func testConversationLetsGoAfterAQuietDayAndItsOwnFollowUpTakesTheChatBack() {
+        var comparison = heldConversation()
+        let anchor = Message(id: 10, guid: "anchor", chatID: "A", text: "Prompt", outgoing: true, date: Date(timeIntervalSince1970: 0))
+        var history = [anchor, row(11, "Answer", hours: 23), row(12, "More", hours: 46), row(13, "Weeks later", hours: 500), row(14, "And again", hours: 500.1)]
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: comparison, member: comparison.members[0], comparisons: [comparison]).map(\.id), [10, 11, 12])
+        var followUp = FollowUp(text: "Follow-up", memberIDs: [comparison.members[0].id])
+        followUp.states[comparison.members[0].id.uuidString] = .submitted
+        comparison.followUps = [followUp]
+        history += [row(15, "Follow-up", outgoing: true, hours: 600), row(16, "Reply", hours: 600.1)]
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: comparison, member: comparison.members[0], comparisons: [comparison]).map(\.id), [10, 11, 12, 15, 16])
+    }
+    func testUnidentifiedSendKeepsEverySentRowUntilItResolves() {
+        var comparison = heldConversation()
+        var followUp = FollowUp(text: "Photo", memberIDs: [comparison.members[0].id])
+        followUp.states[comparison.members[0].id.uuidString] = .uncertain
+        comparison.followUps = [followUp]
+        let history = [Message(id: 10, guid: "anchor", chatID: "A", text: "Prompt", outgoing: true, date: Date(timeIntervalSince1970: 0)),
+                       row(11, "", outgoing: true, hours: 0.1), row(12, "Nice photo", hours: 0.2)]
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: comparison, member: comparison.members[0], comparisons: [comparison]).map(\.id), [10, 11, 12])
+    }
+    func testNewConversationWithoutAnAnchorTakesItsRepliesFromTheOlderOne() {
+        let old = heldConversation()
+        var newer = heldConversation(prompt: "Sent by an outside agent")
+        newer.members[0].anchor = nil
+        newer.members[0].baseline = 30
+        let history = [Message(id: 10, guid: "anchor", chatID: "A", text: "Prompt", outgoing: true, date: Date(timeIntervalSince1970: 0)),
+                       row(11, "Old answer", hours: 0.1), row(31, "Text Messages changed", outgoing: true, hours: 1), row(32, "New answer", hours: 1.1)]
+        let all = [newer, old]
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: old, member: old.members[0], comparisons: all).map(\.id), [10, 11])
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: newer, member: newer.members[0], comparisons: all).map(\.id), [31, 32])
+        XCTAssertEqual(ComparisonRange.nextAnchor(for: old, member: old.members[0], comparisons: all), 31)
+        // A send that never left the Mac claims nothing.
+        newer.members[0].submission = .failed
+        XCTAssertNil(ComparisonRange.nextAnchor(for: old, member: old.members[0], comparisons: [newer, old]))
+        XCTAssertTrue(ComparisonRange.transcript(history, comparison: newer, member: newer.members[0], comparisons: [newer, old]).isEmpty)
+    }
     func testKnownUnsubmittedErrorsCanRetryButUnknownPostSendErrorsCannot() {
         XCTAssertEqual(Submission.failure(afterAttempt: true, error: SendFailure.notSubmitted("Automation denied")), .failed)
         XCTAssertEqual(Submission.failure(afterAttempt: true, error: SendFailure.ambiguous("Timeout")), .uncertain)

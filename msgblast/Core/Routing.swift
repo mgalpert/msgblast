@@ -75,20 +75,75 @@ public enum ComparisonRange {
         }
         return candidates.count == 1 ? candidates.first : nil
     }
-    public static func messages(_ messages: [Message], anchor: Anchor, next: Int64?) -> [Message] {
+    /// A day with nothing in the chat ends a conversation's hold on a contact.
+    public static let quietPeriod: TimeInterval = 86_400
+    /// The rows a conversation shows for one member: from its start to the next conversation's
+    /// send in that chat. With `own`, it also lets go when you message the contact outside
+    /// msgblast, or when they write after `quiet` seconds of silence; a later send of its own
+    /// takes the chat back. Inline replies to rows it holds always stay.
+    public static func messages(_ messages: [Message], anchor: Anchor, next: Int64?, own: OwnSends? = nil, quiet: TimeInterval = quietPeriod) -> [Message] {
         var related: Set<String> = [anchor.guid]
         var selected: [Message] = []
+        var holding = true
+        var last: Date?
         for message in messages.sorted(by: { $0.id < $1.id }) {
-            let inRange = message.id >= anchor.rowID && (next == nil || message.id < next!)
+            var inRange = message.id >= anchor.rowID && (next == nil || message.id < next!)
+            if inRange, let own {
+                if message.outgoing { holding = own.includes(message) }
+                else if holding, let last, message.date.timeIntervalSince(last) > quiet { holding = false }
+                inRange = holding
+            }
             let linked = message.replyTo.map { related.contains($0) } ?? false
             if inRange || linked { selected.append(message); related.insert(message.guid) }
+            if inRange { last = message.date }
         }
         return selected
     }
-    public static func nextAnchor(for comparison: Comparison, member: Member, comparisons: [Comparison]) -> Int64? {
-        guard let anchor = member.anchor else { return nil }
-        return comparisons.filter { $0.id != comparison.id }.flatMap(\.members).filter { $0.chat.id == member.chat.id }.compactMap(\.anchor?.rowID).filter { $0 > anchor.rowID }.min()
+    /// Where a member's rows begin: its anchor, or the row after its baseline while a send
+    /// Messages may have accepted has no anchor yet.
+    public static func start(of member: Member) -> Anchor? {
+        if let anchor = member.anchor { return anchor }
+        guard [.submitted, .uncertain].contains(member.submission), let baseline = member.baseline else { return nil }
+        return Anchor(rowID: baseline + 1, guid: "")
     }
+    public static func transcript(_ history: [Message], comparison: Comparison, member: Member, comparisons: [Comparison]) -> [Message] {
+        guard let start = start(of: member) else { return [] }
+        return messages(comparison.endedAt == nil ? history : history.filter { comparison.includes($0) }, anchor: start,
+                        next: nextAnchor(for: comparison, member: member, comparisons: comparisons), own: OwnSends(comparison: comparison, member: member))
+    }
+    /// The first row of the next conversation with this contact. A send with no anchor yet
+    /// counts from its baseline, so the older conversation never takes its replies.
+    public static func nextAnchor(for comparison: Comparison, member: Member, comparisons: [Comparison]) -> Int64? {
+        guard let anchor = start(of: member) else { return nil }
+        return comparisons.filter { $0.id != comparison.id }.flatMap(\.members).filter { $0.chat.id == member.chat.id }
+            .compactMap { $0.anchor?.rowID ?? ($0.submission.mayHaveBeenSent ? $0.baseline.map { $0 + 1 } : nil) }.filter { $0 > anchor.rowID }.min()
+    }
+}
+/// What msgblast sent one member of a conversation, to tell its rows from ones you sent in Messages.
+public struct OwnSends: Sendable {
+    var guids: Set<String> = []
+    var texts: Set<String> = []
+    /// A send whose row is not identified yet, or a Business chat (its choices are sent by
+    /// Messages itself): no sent row is treated as coming from outside msgblast.
+    var unresolved = false
+    public init(comparison: Comparison, member: Member) {
+        let key = member.id.uuidString
+        var payloads = [member.payload].compactMap { $0 }
+        texts.insert(comparison.prompt)
+        if let anchor = member.anchor { guids.insert(anchor.guid) }
+        unresolved = member.chat.businessConversation == true || (member.anchor == nil && member.submission.mayHaveBeenSent)
+        for followUp in comparison.followUps where followUp.memberIDs.contains(member.id) {
+            texts.insert(followUp.text)
+            if let payload = followUp.payloads?[key] { payloads.append(payload) }
+            if let state = followUp.states[key], state == .sending || state == .uncertain { unresolved = true }
+        }
+        for part in payloads.flatMap(\.parts) {
+            if let anchor = part.anchor { guids.insert(anchor.guid) }
+            else if part.state.mayHaveBeenSent { unresolved = true }
+        }
+        texts.remove("")
+    }
+    func includes(_ message: Message) -> Bool { unresolved || guids.contains(message.guid) || texts.contains(message.text) }
 }
 public enum RecipientSet {
     public static func validate(_ members: [Member]) throws {
