@@ -1,8 +1,8 @@
-"""Original 30 s upbeat bed for the msgblast 0.11 vertical cut. 120 BPM, C major, I-V-vi-IV.
+"""Original 32 s upbeat bed for the msgblast 0.11 vertical cut. 120 BPM, C major, I-V-vi-IV.
 Writes public/audio/music.wav. Pure numpy synthesis, no samples."""
 import numpy as np, wave, sys
 SR = 48000
-DUR = 30.0
+DUR = 32.0
 BPM = 120
 BEAT = 60 / BPM
 N = int(SR * DUR)
@@ -95,7 +95,7 @@ CH = [[60, 64, 67, 72], [59, 62, 67, 71], [57, 60, 64, 69], [57, 60, 65, 69]]
 ROOT = [36, 43, 45, 41]
 bars = int(DUR / (4 * BEAT))
 
-DROP1, BREAK, DROP2, END = 2.0, 22.0, 23.0, 28.0
+DROP1, BREAK, DROP2, END = 0.0, 26.5, 28.0, 31.5
 for b in range(bars):
     t0 = b * 4 * BEAT
     ci = b % 4
@@ -126,8 +126,7 @@ for b in range(bars):
             add(stab([m + 12 for m in CH[ci][:3]], BEAT / 2.5), tb + (BEAT / 2 if beat == 1 else 0), gain=0.5)
 
 # risers into each drop
-add(riser(DROP1 - 0.2), 0.2, gain=0.45)
-add(riser(1.0), DROP2 - 1.0, gain=0.55)
+add(riser(1.4), DROP2 - 1.4, gain=0.55)
 # final hit and ring out
 add(kick(), END, gain=1.1)
 add(clap(), END, gain=0.8)

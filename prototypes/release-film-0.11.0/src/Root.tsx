@@ -60,7 +60,8 @@ const Film: React.FC<Props> = (p) => (
 
 export const Root: React.FC = () => (
   <>
-    <Composition id="Vertical30" component={Vertical} durationInFrames={VERTICAL_FRAMES} fps={30} width={1080} height={1920} defaultProps={{withAudio: true}} />
+    <Composition id="Vertical30" component={Vertical} durationInFrames={VERTICAL_FRAMES} fps={30} width={1080} height={1920} defaultProps={{withAudio: true, voice: 'female' as const}} />
+    <Composition id="Vertical30Male" component={Vertical} durationInFrames={VERTICAL_FRAMES} fps={30} width={1080} height={1920} defaultProps={{withAudio: true, voice: 'male' as const}} />
     <Composition
       id="Film"
       component={Film}

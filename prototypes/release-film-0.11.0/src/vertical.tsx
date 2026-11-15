@@ -7,15 +7,156 @@ import {AgentIcon, AppIcon, C, Check, FONT, Headline, MacWindow, Phone, Reveal, 
  * VO starts at VO_START; scene lengths follow its word timings (see README).
  */
 export const FPS = 30;
-export const VO_START = 12; // frames (0.4 s)
+export const VO_START = 3; // frames (0.1 s): the voice starts right away
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'} as const;
 
-const Punch: React.FC<{children: React.ReactNode; fadeOut?: number}> = ({children, fadeOut = 5}) => {
+const Punch: React.FC<{children: React.ReactNode; fadeOut?: number; noIn?: boolean}> = ({children, fadeOut = 5, noIn}) => {
   const frame = useCurrentFrame();
   const {durationInFrames} = useVideoConfig();
-  const inP = interpolate(frame, [0, 6], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
+  const inP = noIn ? 1 : interpolate(frame, [0, 6], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
   const outO = fadeOut ? interpolate(frame, [durationInFrames - fadeOut, durationInFrames], [1, 0], clamp) : 1;
   return <AbsoluteFill style={{opacity: Math.min(inP, outO), transform: `scale(${1.04 - 0.04 * inP})`}}>{children}</AbsoluteFill>;
+};
+
+
+/* Hook: frame 0 is already the full 0.11 feature list, so it stops the scroll. */
+const IconTile: React.FC<{children: React.ReactNode; bg?: string}> = ({children, bg = '#fff'}) => (
+  <div
+    style={{
+      width: 112,
+      height: 112,
+      borderRadius: 28,
+      background: bg,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      boxShadow: '0 8px 20px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.05)',
+      flexShrink: 0,
+    }}
+  >
+    {children}
+  </div>
+);
+
+const HOOK_ROWS: {title: string; sub: string; icon: React.ReactNode}[] = [
+  {
+    title: 'msgblast on iPhone',
+    sub: 'Every reply, every agent, anywhere',
+    icon: (
+      <IconTile bg="#1d1d1f">
+        <div style={{width: 46, height: 80, borderRadius: 12, border: '5px solid #fff'}} />
+      </IconTile>
+    ),
+  },
+  {
+    title: 'Outside agents control it with MCP',
+    sub: 'Claude Code, Codex, Cursor and more',
+    icon: (
+      <IconTile bg="linear-gradient(135deg,#0a84ff,#5e5ce6 50%,#28cd41)">
+        <div style={{fontFamily: FONT, fontWeight: 800, fontSize: 40, color: '#fff', letterSpacing: -1}}>MCP</div>
+      </IconTile>
+    ),
+  },
+  {
+    title: 'Grok Bot over Tailscale',
+    sub: 'Message any agent, on any device',
+    icon: (
+      <IconTile>
+        <Img src={staticFile('img/grokbot.png')} style={{width: 124, height: 124}} />
+      </IconTile>
+    ),
+  },
+  {
+    title: 'Shop Amazon with Alexa',
+    sub: 'Product picks with photos and prices',
+    icon: (
+      <IconTile>
+        <Img src={staticFile('img/alexa.png')} style={{width: 112, height: 112, objectFit: 'cover'}} />
+      </IconTile>
+    ),
+  },
+  {
+    title: 'Pair from the sidebar',
+    sub: 'One scan, encrypted',
+    icon: (
+      <IconTile>
+        <AppIcon size={112} style={{filter: 'none'}} />
+      </IconTile>
+    ),
+  },
+  {
+    title: 'Settings, redesigned',
+    sub: 'Everything in one sidebar',
+    icon: (
+      <IconTile bg="#8e8e93">
+        <svg width="64" height="64" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3.2" fill="none" stroke="#fff" strokeWidth="2" />
+          {Array.from({length: 8}).map((_, i) => (
+            <rect key={i} x="11" y="1.5" width="2" height="4" rx="1" fill="#fff" transform={`rotate(${i * 45} 12 12)`} />
+          ))}
+          <circle cx="12" cy="12" r="7" fill="none" stroke="#fff" strokeWidth="2" />
+        </svg>
+      </IconTile>
+    ),
+  },
+  {
+    title: 'ChatGPT and Dots fixed',
+    sub: 'Sends stay in the background',
+    icon: (
+      <IconTile>
+        <Img src={staticFile('img/chatgpt.jpg')} style={{width: 112, height: 112, objectFit: 'cover'}} />
+      </IconTile>
+    ),
+  },
+];
+
+const VHook: React.FC = () => {
+  const frame = useCurrentFrame();
+  const {durationInFrames} = useVideoConfig();
+  const zoom = interpolate(frame, [0, durationInFrames], [1, 1.05], clamp);
+  const active = Math.floor(frame / 9) % HOOK_ROWS.length;
+  return (
+    <Stage glow="rgba(60,220,80,0.14)">
+      <AbsoluteFill style={{transform: `scale(${zoom})`}}>
+        <div style={{position: 'absolute', top: 150, left: 80, right: 80, display: 'flex', alignItems: 'center', gap: 30}}>
+          <AppIcon size={130} />
+          <div>
+            <div style={{fontFamily: FONT, fontWeight: 800, fontSize: 96, letterSpacing: -3, color: C.ink, lineHeight: 1}}>
+              msgblast <span style={{color: C.green}}>0.11</span>
+            </div>
+            <div style={{fontFamily: FONT, fontWeight: 600, fontSize: 40, color: C.sub, marginTop: 8}}>Everything new.</div>
+          </div>
+        </div>
+        <div style={{position: 'absolute', top: 400, left: 64, right: 64, display: 'flex', flexDirection: 'column', gap: 22}}>
+          {HOOK_ROWS.map((r, i) => {
+            const on = i === active;
+            return (
+              <div
+                key={r.title}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 30,
+                  padding: '22px 28px',
+                  borderRadius: 36,
+                  background: on ? '#fff' : 'rgba(255,255,255,0.55)',
+                  boxShadow: on ? '0 20px 50px rgba(0,0,0,0.12), 0 0 0 3px ' + C.blue : '0 0 0 1px rgba(0,0,0,0.04)',
+                  transform: `scale(${on ? 1.03 : 1})`,
+                }}
+              >
+                {r.icon}
+                <div>
+                  <div style={{fontFamily: FONT, fontWeight: 700, fontSize: 48, letterSpacing: -1, color: C.ink, lineHeight: 1.1}}>{r.title}</div>
+                  <div style={{fontFamily: TEXT_FONT, fontSize: 32, color: C.sub, marginTop: 6}}>{r.sub}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </AbsoluteFill>
+    </Stage>
+  );
 };
 
 /* Intro: icon and version */
@@ -42,13 +183,13 @@ const VIntro: React.FC = () => {
 const VIPhone: React.FC = () => {
   const frame = useCurrentFrame();
   const ph = useSpring(4, 16, 30);
-  const push = interpolate(frame, [52, 66], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
-  const drift = interpolate(frame, [0, 152], [0, -40]);
+  const push = interpolate(frame, [70, 84], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
+  const drift = interpolate(frame, [0, 162], [0, -40]);
   return (
     <Stage glow="rgba(10,132,255,0.08)">
       <div style={{position: 'absolute', top: 170, width: '100%'}}>
         <WordReveal text="Now on iPhone." size={140} stagger={4} />
-        <Reveal delay={30}>
+        <Reveal delay={40}>
           <Sub size={48} style={{textAlign: 'center', marginTop: 26}}>
             Read every reply. Message every agent.
           </Sub>
@@ -110,32 +251,37 @@ const Spinner: React.FC<{size: number}> = ({size}) => {
 };
 
 const VMCP: React.FC = () => {
-  const frame = useCurrentFrame();
-  const slam = useSpring(0, 10, 18);
-  const up = interpolate(frame, [20, 32], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
-  const card = useSpring(76, 16, 24);
-  const seg = interpolate(frame, [96, 104], [0, 1], clamp);
-  const banner = useSpring(116, 14, 20);
-  const mcpSize = 520 - 200 * up;
+  const lead = useSpring(0, 14, 20);
+  const slam = useSpring(118, 9, 16); // lands on the spoken "MCP"
+  const banner = useSpring(136, 14, 20);
   return (
-    <Stage>
+    <Stage glow="rgba(94,92,230,0.07)">
+      <div style={{position: 'absolute', top: 300, left: 70, right: 70, textAlign: 'center', opacity: lead, transform: `translateY(${(1 - lead) * 40}px)`}}>
+        <Headline size={92}>
+          Have outside agents
+          <br />
+          control msgblast with
+        </Headline>
+      </div>
       <div
         style={{
           position: 'absolute',
           width: '100%',
-          top: interpolate(up, [0, 1], [640, 150]),
+          top: 580,
           textAlign: 'center',
-          transform: `scale(${2.2 - 1.2 * slam})`,
+          transform: `scale(${1.25 - 0.25 * slam})`,
           opacity: slam,
         }}
       >
         <div
           style={{
+            display: 'inline-block',
             fontFamily: FONT,
             fontWeight: 800,
-            fontSize: mcpSize,
-            letterSpacing: -mcpSize * 0.04,
+            fontSize: 420,
+            letterSpacing: -14,
             lineHeight: 1,
+            padding: '0 30px',
             background: 'linear-gradient(135deg,#0a84ff 0%,#5e5ce6 45%,#28cd41 100%)',
             WebkitBackgroundClip: 'text',
             backgroundClip: 'text',
@@ -144,80 +290,19 @@ const VMCP: React.FC = () => {
         >
           MCP
         </div>
-        <div style={{opacity: up}}>
-          <Sub size={50} style={{color: C.ink, fontWeight: 600, marginTop: 10}}>
-            Your agents can use msgblast, too.
-          </Sub>
-        </div>
       </div>
-      <div style={{position: 'absolute', top: 620, width: '100%', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 22, padding: '0 60px'}}>
-        <Pill at={22}>Claude Code</Pill>
-        <Pill at={30}>Codex</Pill>
-        <Pill at={38}>Cursor</Pill>
-        <Pill at={46}>Any MCP app</Pill>
+      <div style={{position: 'absolute', top: 1110, width: '100%', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 22, padding: '0 60px'}}>
+        <Pill at={36}>Claude Code</Pill>
+        <Pill at={54}>Codex</Pill>
+        <Pill at={68}>Cursor</Pill>
+        <Pill at={82}>And more</Pill>
       </div>
-      {/* approval */}
-      <div
-        style={{
-          position: 'absolute',
-          left: 140,
-          top: 930,
-          width: 800,
-          borderRadius: 40,
-          background: '#fff',
-          boxShadow: '0 40px 100px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.05)',
-          padding: 48,
-          fontFamily: TEXT_FONT,
-          opacity: card,
-          transform: `translateY(${(1 - card) * 120}px) scale(${0.92 + 0.08 * card})`,
-        }}
-      >
-        <div style={{display: 'flex', alignItems: 'center', gap: 26}}>
-          <AppIcon size={110} style={{filter: 'none'}} />
-          <div style={{fontWeight: 700, fontSize: 40, color: C.ink, lineHeight: 1.2}}>Claude Code wants to use msgblast</div>
-        </div>
-        <div style={{display: 'flex', background: '#ececf0', borderRadius: 22, padding: 6, marginTop: 36, position: 'relative'}}>
-          <div
-            style={{
-              position: 'absolute',
-              top: 6,
-              bottom: 6,
-              width: 'calc(50% - 6px)',
-              left: `calc(6px + ${seg * 50}% - ${seg * 6}px)`,
-              background: '#fff',
-              borderRadius: 18,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-            }}
-          />
-          {['Read only', 'Full access'].map((t) => (
-            <div key={t} style={{flex: 1, textAlign: 'center', padding: '22px 0', fontSize: 36, fontWeight: 600, position: 'relative', color: C.ink}}>
-              {t}
-            </div>
-          ))}
-        </div>
-        <div
-          style={{
-            marginTop: 26,
-            textAlign: 'center',
-            padding: '24px 0',
-            borderRadius: 22,
-            background: C.blue,
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 36,
-            transform: `scale(${frame > 108 && frame < 114 ? 0.96 : 1})`,
-          }}
-        >
-          Allow
-        </div>
-      </div>
-      {/* banner */}
       <div
         style={{
           position: 'absolute',
           left: 60,
           right: 60,
-          top: 1560,
+          top: 1480,
           borderRadius: 30,
           background: '#fff',
           boxShadow: '0 20px 60px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.05)',
@@ -273,16 +358,16 @@ const Op: React.FC<{at: number; children: React.ReactNode}> = ({at, children}) =
 
 const VEquation: React.FC = () => {
   const frame = useCurrentFrame();
-  const res = useSpring(100, 13, 26);
+  const res = useSpring(96, 13, 26);
   const T = 220;
-  const glow = interpolate(frame, [100, 140], [0, 1], clamp);
+  const glow = interpolate(frame, [96, 132], [0, 1], clamp);
   return (
     <Stage glow={`rgba(10,132,255,${0.08 * glow})`}>
       <div style={{position: 'absolute', top: 470, width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 26}}>
         <Tile at={2} label="Grok Bot">
           <Img src={staticFile('img/grokbot.png')} style={{width: T, height: T, filter: 'drop-shadow(0 14px 24px rgba(0,0,0,0.18))'}} />
         </Tile>
-        <Op at={28}>+</Op>
+        <Op at={26}>+</Op>
         <Tile at={30} label="Tailscale">
           <div
             style={{
@@ -300,8 +385,8 @@ const VEquation: React.FC = () => {
             <TailscaleMark size={T * 0.5} />
           </div>
         </Tile>
-        <Op at={64}>+</Op>
-        <Tile at={66} label="msgblast">
+        <Op at={54}>+</Op>
+        <Tile at={58} label="msgblast">
           <AppIcon size={T} />
         </Tile>
       </div>
@@ -332,7 +417,7 @@ const Bottle: React.FC<{hue: number; cap: string}> = ({hue, cap}) => (
 const VAlexa: React.FC = () => {
   const frame = useCurrentFrame();
   const ph = useSpring(0, 14, 16);
-  const scroll = interpolate(frame, [4, 33], [0, -260], clamp);
+  const scroll = interpolate(frame, [6, 100], [0, -300], clamp);
   const products = [
     {name: '32 oz Wide Mouth Bottle', price: '$16.25 · 4.8★', hue: 200, cap: '#1d1d1f'},
     {name: 'Insulated Steel Bottle', price: '$29.95 · 4.7★', hue: 150, cap: '#8e8e93'},
@@ -341,9 +426,13 @@ const VAlexa: React.FC = () => {
   return (
     <Stage glow="rgba(0,168,225,0.08)">
       <div style={{position: 'absolute', top: 170, width: '100%', textAlign: 'center'}}>
-        <Headline size={130}>Shop with Alexa.</Headline>
+        <Headline size={104}>
+          Shop Amazon with
+          <br />
+          Alexa Shopping Agent.
+        </Headline>
       </div>
-      <div style={{position: 'absolute', left: '50%', top: 470, transform: `translateX(-50%) translateY(${(1 - ph) * 500}px)`}}>
+      <div style={{position: 'absolute', left: '50%', top: 560, transform: `translateX(-50%) translateY(${(1 - ph) * 500}px)`}}>
         <Phone height={1300}>
           <div style={{position: 'absolute', inset: 0, background: '#fff', fontFamily: TEXT_FONT}}>
             <div style={{position: 'absolute', top: 0, left: 0, right: 0, height: 260, background: 'rgba(255,255,255,0.97)', zIndex: 2, textAlign: 'center', paddingTop: 90}}>
@@ -481,11 +570,11 @@ const Whoosh: React.FC<{at: number; from: number; children: React.ReactNode}> = 
 const VOutro: React.FC = () => {
   const frame = useCurrentFrame();
   const s = useSpring(0, 12, 26);
-  const badge = useSpring(44, 9, 20);
-  const shine = interpolate(frame, [40, 70], [-120, 220], clamp);
+  const badge = useSpring(48, 9, 20);
+  const shine = interpolate(frame, [44, 74], [-120, 220], clamp);
   return (
     <Stage glow="rgba(60,220,80,0.14)">
-      <AbsoluteFill style={{alignItems: 'center', justifyContent: 'center', transform: `scale(${interpolate(frame, [40, 245], [1, 1.06], clamp)})`}}>
+      <AbsoluteFill style={{alignItems: 'center', justifyContent: 'center', transform: `scale(${interpolate(frame, [40, 141], [1, 1.06], clamp)})`}}>
         <div style={{transform: `scale(${0.7 + 0.3 * s})`, opacity: s, position: 'relative'}}>
           <AppIcon size={320} />
           <div
@@ -514,7 +603,7 @@ const VOutro: React.FC = () => {
           </Headline>
         </Reveal>
         <div style={{height: 60}} />
-        <Whoosh at={30} from={1300}>
+        <Whoosh at={34} from={1300}>
           <div style={{position: 'relative', overflow: 'hidden'}}>
             <Headline size={96} style={{textAlign: 'center'}}>
               Available now
@@ -531,57 +620,74 @@ const VOutro: React.FC = () => {
             />
           </div>
         </Whoosh>
-        <Whoosh at={36} from={-1300}>
+        <Whoosh at={40} from={-1300}>
           <Headline size={96} color={C.blue} style={{textAlign: 'center', marginTop: 8}}>
             for Mac and iPhone.
           </Headline>
         </Whoosh>
+        <div style={{height: 70}} />
+        <Reveal delay={58} rise={30}>
+          <div
+            style={{
+              fontFamily: FONT,
+              fontWeight: 700,
+              fontSize: 64,
+              letterSpacing: -1,
+              color: '#fff',
+              background: C.ink,
+              borderRadius: 999,
+              padding: '26px 64px',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+            }}
+          >
+            msgblast.app
+          </div>
+        </Reveal>
       </AbsoluteFill>
     </Stage>
   );
 };
 
-/* Timeline. Lengths come from the VO word timings (+0.4 s offset). */
-const SCENES: {id: string; frames: number; el: React.ReactNode}[] = [
-  {id: 'intro', frames: 80, el: <VIntro />},
-  {id: 'iphone', frames: 152, el: <VIPhone />},
-  {id: 'mcp', frames: 153, el: <VMCP />},
-  {id: 'grok-tailscale', frames: 150, el: <VEquation />},
-  {id: 'alexa', frames: 33, el: <VAlexa />},
-  {id: 'settings', frames: 40, el: <VSettings />},
-  {id: 'more', frames: 47, el: <VMore />},
-  {id: 'outro', frames: 245, el: <VOutro />},
-];
-export const VERTICAL_FRAMES = SCENES.reduce((n, s) => n + s.frames, 0);
-const OUTRO_START = VERTICAL_FRAMES - 245;
+/* Timeline. Scene lengths come from each voice's word timings (ElevenLabs transcript), VO starts at 0.1 s. */
+type Voice = 'female' | 'male';
+// Script v3 (msg, 2026-11-14 20:15Z). Cuts land on sentence starts: "Now on iPhone", "Local coding agents",
+// "Connecting your Grok Bot", "That includes", "We have lots more", "like a redesigned Settings", "Message Blast. Download now".
+export const VERTICAL_FRAMES = 960; // 32 s: the script is ~30 s of speech, plus a hold on msgblast.app
+const FRAMES: Record<Voice, number[]> = {
+  // hook, iphone, mcp, grok-tailscale, alexa, more, settings, outro
+  female: [101, 130, 162, 184, 121, 47, 56, 159],
+  male: [99, 130, 163, 194, 127, 46, 55, 146],
+};
+const VO_FILE: Record<Voice, string> = {female: 'audio/vo.wav', male: 'audio/vo-male.wav'};
+const VO_SECONDS: Record<Voice, number> = {female: 29.92, male: 30.64};
+const ELEMENTS = [<VHook />, <VIPhone />, <VMCP />, <VEquation />, <VAlexa />, <VMore />, <VSettings />, <VOutro />];
+const IDS = ['hook', 'iphone', 'mcp', 'grok-tailscale', 'alexa', 'more', 'settings', 'outro'];
 
 /** Music sits back while the voice speaks and comes up around it. */
-const musicVolume = (f: number) => {
+const musicVolume = (voice: Voice) => (f: number) => {
   const voFrom = VO_START;
-  const voTo = VO_START + 25 * FPS;
+  const voTo = VO_START + Math.round(VO_SECONDS[voice] * FPS);
   const ducked = 0.13;
   const open = 0.45;
-  const inV = interpolate(f, [voFrom - 6, voFrom, voTo, voTo + 15], [open, ducked, ducked, open], clamp);
-  const fadeIn = interpolate(f, [0, 6], [0, 1], clamp);
-  return inV * fadeIn;
+  return interpolate(f, [voFrom - 6, voFrom, voTo, voTo + 15], [open, ducked, ducked, open], clamp);
 };
 
-export const Vertical: React.FC<{withAudio?: boolean}> = ({withAudio = true}) => (
+export const Vertical: React.FC<{withAudio?: boolean; voice?: Voice}> = ({withAudio = true, voice = 'female'}) => (
   <AbsoluteFill style={{background: C.bg}}>
     <Series>
-      {SCENES.map((s, i) => (
-        <Series.Sequence key={s.id} durationInFrames={s.frames} name={s.id}>
-          <Punch fadeOut={i === SCENES.length - 1 ? 18 : 4}>{s.el}</Punch>
+      {FRAMES[voice].map((frames, i) => (
+        <Series.Sequence key={IDS[i]} durationInFrames={frames} name={IDS[i]}>
+          <Punch noIn={i === 0} fadeOut={i === IDS.length - 1 ? 18 : 4}>{ELEMENTS[i]}</Punch>
         </Series.Sequence>
       ))}
     </Series>
     {withAudio ? (
       <>
-        <Audio src={staticFile('audio/music.wav')} volume={musicVolume} />
+        <Audio src={staticFile('audio/music.wav')} volume={musicVolume(voice)} />
         <Sequence from={VO_START}>
-          <Audio src={staticFile('audio/vo.wav')} volume={1} />
+          <Audio src={staticFile(VO_FILE[voice])} volume={1} />
         </Sequence>
-        <Sequence from={OUTRO_START + 30 - 22}>
+        <Sequence from={VERTICAL_FRAMES - FRAMES[voice][7] + 34 - 22}>
           <Audio src={staticFile('audio/whoosh.mp3')} volume={0.7} />
         </Sequence>
       </>
