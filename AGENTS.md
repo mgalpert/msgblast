@@ -58,6 +58,23 @@ publishing is a separate, explicitly requested maintainer operation.
   boundary. Label fixtures and timing edits, refresh stale evidence, and preserve
   human review responsibility. Follow [the evidence rules](docs/agent-runbooks.md#pull-request-evidence).
 
+## Owner rules
+
+Standing rules from the owner's reviews of agent work. Reasons and details are in
+[owner working rules](docs/agent-runbooks.md#owner-working-rules).
+
+- Quality over speed: build it right the first time, finished and polished for
+  any user on their own Mac. Never ship setup that only works on one machine.
+- Verify before asking the owner. Run it, look at it, and show real screenshots;
+  never report a check you did not run.
+- A build for the owner merges current `main` first, has a unique app name, uses
+  `scripts/build_test_app.py` signing, and names the `main` commit it includes.
+- Do not disturb the owner's Mac: foreground tests run in a test VM, and app
+  agents work in the background without taking focus or switching desktops.
+- Agents do not merge, post review statuses, or cut releases unless the owner
+  says so. This repository is public: evidence never shows IPs, tailnet names,
+  usernames, keys, or emails.
+
 ## Task-specific safeguards
 
 Read the relevant [agent runbook](docs/agent-runbooks.md) before icon changes,
