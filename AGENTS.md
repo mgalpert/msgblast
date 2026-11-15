@@ -67,6 +67,12 @@ Standing rules from the owner's reviews of agent work. Reasons and details are i
   any user on their own Mac. Never ship setup that only works on one machine.
 - Verify before asking the owner. Run it, look at it, and show real screenshots;
   never report a check you did not run.
+- Find the answer before asking the owner. Search the web, the repo, project
+  memory and earlier threads first. Ask only for a decision or a fact only the
+  owner has, and say what you already checked.
+- Never put a bare question to the owner. Each decision says why it came up,
+  the pros and cons of every option, and your recommendation, so the owner can
+  decide from that message alone.
 - A build for the owner merges current `main` first, has a unique app name, uses
   `scripts/build_test_app.py` signing, and names the `main` commit it includes.
 - Do not disturb the owner's Mac: foreground tests run in a test VM, and app

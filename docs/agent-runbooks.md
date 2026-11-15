@@ -235,6 +235,22 @@ this section in the same PR so the next agent does not repeat the old rule.
   accept a claim of "it works" without them.
 - Report exactly what ran and what did not. A check you did not run is reported
   as not run, never as passing.
+- Look it up before you ask. An unfamiliar name, model, tool or term gets a web
+  search first. A question about the code, a past decision or a setup gets a
+  search of the repo, project memory and earlier threads. Asking the owner
+  something one search would answer wastes their time; the owner called it lazy
+  when an agent asked what a well-known AI model was.
+- Ask only for what the owner alone can give: a decision, a preference, an
+  approval, or a fact that is not written anywhere you can reach. If a lookup
+  leaves two plausible readings, start on the likelier one and say which you
+  chose.
+- When you do ask, say what you checked and what you found, so the owner fills
+  the gap instead of repeating your search.
+- Never pose a question or decision without context. Say what prompted it and
+  what is at stake, give each option with its pros and cons, and recommend one
+  with the reason. The owner should be able to decide from that one message,
+  often on a phone, without opening another thread or asking what an option
+  means.
 
 ### Builds handed to the owner
 
