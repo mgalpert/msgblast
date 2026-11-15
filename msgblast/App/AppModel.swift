@@ -308,7 +308,7 @@ final class AppModel: ObservableObject {
             if databaseStatus != "Messages history available · read-only" { databaseStatus = "Messages history available · read-only" }
             let members = state.comparisons.flatMap(\.members)
             for chatID in Set(members.map(\.chat.id)) {
-                let start = members.filter { $0.chat.id == chatID }.compactMap(\.anchor?.rowID).min() ?? 0
+                let start = members.filter { $0.chat.id == chatID }.compactMap { ComparisonRange.start(of: $0)?.rowID }.min() ?? 0
                 let fresh = try database.messages(chatID: chatID, after: start)
                 if messages[chatID] != fresh { messages[chatID] = fresh }
             }
