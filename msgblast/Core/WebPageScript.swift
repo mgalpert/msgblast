@@ -67,6 +67,8 @@ struct WebPageScript {
             const r=e.getBoundingClientRect(),bounds=pane.getBoundingClientRect();
             return r.right>bounds.left && r.left<bounds.right && r.bottom>bounds.top && r.top<bounds.bottom;
         };
+        // Drawn and not hidden, even when scrolled out of Alexa's panel (long replies leave their buttons below the fold).
+        const rendered = e => !!e && e.getClientRects().length>0 && getComputedStyle(e).visibility!=='hidden';
         const all = selector => [...document.querySelectorAll(selector)].filter(visible);
         const unique = selector => { const es=all(selector); return es.length===1 ? es[0] : null; };
         const editor = () => unique(config.editor);
@@ -127,7 +129,7 @@ struct WebPageScript {
             const root=config.provider==='alexaShopping' ? document.getElementById('rufus-conversation-container') : null;
             if (!root) return [];
             const mine=[...root.querySelectorAll('.rufus-customer-text-wrap')].pop();
-            const chips=[...root.querySelectorAll('button,[role="button"]')].filter(b=>visible(b) && !b.disabled && b.getAttribute('aria-disabled')!=='true'
+            const chips=[...root.querySelectorAll('button,[role="button"]')].filter(b=>rendered(b) && !b.disabled && b.getAttribute('aria-disabled')!=='true'
                 && !b.parentElement?.closest('button,[role="button"],[role="link"],.rufus-customer-text-wrap,[data-csa-c-content-id^="rufus-dsk-section-container-"]')
                 && (!mine || (mine.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)))
                 .map(b=>({element:b,label:normalized(b.innerText||'')})).filter(c=>c.label.length>1 && c.label.length<=200);
@@ -342,7 +344,7 @@ struct WebPageScript {
         if (!current.ready || current.url!==expectedURL || current.draft.trim() || observation.interrupted)
             return {clicked:false,reason:`${config.name} changed before the choice was made. Nothing was clicked.`};
         if (!chip) return {clicked:false,reason:`${config.name} no longer offers that choice.`};
-        chip.click(); return {clicked:true};
+        chip.scrollIntoView({block:'nearest'}); chip.click(); return {clicked:true};
         """#
     }
 

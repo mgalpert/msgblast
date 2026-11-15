@@ -147,6 +147,24 @@ final class WebServiceTests: XCTestCase {
         try await waitFor { session.actionsForComparison(comparison)?.messageID == session.messagesForComparison(comparison).last?.id }
     }
 
+    func testAlexaShoppingButtonsBelowThePanelsFoldAreStillOffered() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        // A long reply leaves its buttons below the panel's visible area until someone scrolls.
+        _ = try await session.webView.callAsyncJavaScript("const s=document.createElement('style');s.textContent='#rufus-conversation-container{height:120px;overflow:auto} #rufus-conversation-container button{margin-top:3000px}';document.head.append(s);",
+                                                          arguments: [:], in: nil, contentWorld: .page)
+        let comparison = UUID()
+        _ = await session.send("Celery for soup", comparisonID: comparison)
+        try await waitFor { session.actionsForComparison(comparison) != nil }
+        XCTAssertEqual(session.actionsForComparison(comparison)?.labels, ["Add the first one", "Show more options"])
+        let chosen = await session.send("Show more options", comparisonID: comparison, action: true)
+        XCTAssertEqual(chosen?.status, .observed, chosen?.detail ?? "Missing receipt")
+    }
+
     func testAlexaShoppingSuggestionMayShowYourTurnInOtherWords() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
