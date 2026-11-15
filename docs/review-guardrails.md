@@ -35,8 +35,13 @@ success only when every rule holds:
   only clean merges of the base branch since then.
 
 Otherwise it posts nothing, so the check stays missing and blocks the merge. It
-never posts a failing or pending status, so it cannot replace a status the owner
-posted by hand. Other receipt fields (`scope`, `notes`, `tests`) stay free text.
+posts only when the head has no status of that name yet, so it never replaces
+one the owner set, including a failure or pending posted to block a head. Other
+receipt fields (`scope`, `notes`, `tests`) stay free text.
+
+The receipt is self-attested: the status proves a receipt with these fields is
+on a branch of this repository, not who wrote it. Anyone with write access can
+push one, so keep write access to people and agents that follow this process.
 
 **Clean merges of the base carry a review and evidence over.** A review of
 commit R still covers head H when every commit on H's first-parent chain back

@@ -13,8 +13,9 @@ See docs/review-guardrails.md for the full format.
 The status is posted on the head only when the receipt covers it: the receipt
 reviewed the head itself, or the head adds nothing but clean merges of the
 base branch (scripts/review_carry_over.py). Otherwise nothing is posted, so a
-missing review still blocks the merge. This script never posts a failing or
-pending status, so it cannot overwrite a status the owner posted by hand.
+missing review still blocks the merge. It posts only when the head has no
+status of this name yet, so it never replaces one the owner set by hand,
+including a failure or pending posted to block a head.
 """
 import argparse
 import json
@@ -96,12 +97,13 @@ def api(token, method, url, payload=None):
         return json.load(response)
 
 
-def already_passing(token, repository, head):
+def existing_review_status(token, repository, head):
+    """Return the newest review status on this head, or None when there is none."""
     statuses = api(token, "GET", f"https://api.github.com/repos/{repository}/commits/{head}/statuses?per_page=100")
     for status in statuses:  # newest first
         if status.get("context") == CONTEXT:
-            return status.get("state") == "success"
-    return False
+            return status
+    return None
 
 
 def decide(repo, event, base_ref):
@@ -152,8 +154,11 @@ def main():
     token = os.environ[args.token_env]
     repository = event["repository"]["full_name"]
     head = event["pull_request"]["head"]["sha"]
-    if already_passing(token, repository, head):
-        print("A passing review status is already on this head; nothing posted.")
+    existing = existing_review_status(token, repository, head)
+    if existing is not None:
+        # Never replace a status someone already set on this head, above all a
+        # failure or pending the owner posted to block it.
+        print(f"A '{CONTEXT}' status ({existing.get('state')}) is already on this head; nothing posted.")
         return 0
     api(token, "POST", f"https://api.github.com/repos/{repository}/statuses/{head}", payload)
     print(f"Posted '{CONTEXT}' success on {head}.")

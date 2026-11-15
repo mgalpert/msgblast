@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -81,6 +82,25 @@ class CarryOverTests(unittest.TestCase):
         self.repo.commit('side work', {'side.txt': 'x\n'})
         self.repo.git('checkout', '-q', 'feature')
         self.repo.git('merge', '-q', '--no-edit', 'side')
+        self.assertFalse(self.covered(self.repo.git('rev-parse', 'HEAD'))[0])
+
+    def test_octopus_merge_does_not(self):
+        self.repo.git('checkout', '-qb', 'side', 'main')
+        self.repo.commit('side', {'side.txt': 'x\n'})
+        self.repo.git('checkout', '-q', 'feature')
+        self.repo.git('merge', '-q', '--no-edit', 'main', 'side')
+        self.assertFalse(self.covered(self.repo.git('rev-parse', 'HEAD'))[0])
+
+    def test_branch_built_on_main_but_not_merged_does_not(self):
+        self.repo.git('checkout', '-qb', 'ahead', 'main')
+        self.repo.commit('not on main yet', {'ahead.txt': 'x\n'})
+        self.repo.git('checkout', '-q', 'feature')
+        self.repo.git('merge', '-q', '--no-edit', 'ahead')
+        self.assertFalse(self.covered(self.repo.git('rev-parse', 'HEAD'))[0])
+
+    def test_reviewed_only_as_second_parent_does_not(self):
+        self.repo.git('checkout', '-qb', 'flipped', 'main')
+        self.repo.git('merge', '-q', '--no-edit', 'feature')
         self.assertFalse(self.covered(self.repo.git('rev-parse', 'HEAD'))[0])
 
     def test_rewritten_history_does_not(self):
@@ -206,6 +226,39 @@ class DecideTests(unittest.TestCase):
         self.assertIsNone(self.decide(self.head, body='no receipt')[0])
         self.assertIsNone(self.decide(self.head, body='Review-receipt: receipts:r/none.json')[0])
         self.assertIsNone(self.decide(self.head, body='Review-receipt: nobranch:r/pr-7.json')[0])
+
+
+class PostingTests(unittest.TestCase):
+    """main() with the GitHub API replaced: it must never replace an existing review status."""
+
+    def run_main(self, existing):
+        calls = []
+
+        def fake_api(token, method, url, payload=None):
+            calls.append((method, url, payload))
+            return existing if method == 'GET' else {}
+
+        payload = {'state': 'success', 'context': 'Independent model review', 'description': 'd', 'target_url': 'u'}
+        event = {'pull_request': {'number': 7, 'head': {'sha': 'b' * 40}}, 'repository': {'full_name': 'o/r'}}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'event.json'
+            path.write_text(json.dumps(event))
+            with mock.patch.object(post_review_status, 'decide', return_value=(payload, 'ok')), \
+                 mock.patch.object(post_review_status, 'api', side_effect=fake_api), \
+                 mock.patch.dict('os.environ', {'GH_TOKEN': 't'}), \
+                 mock.patch.object(sys, 'argv', ['x', '--event-file', str(path), '--base-ref', 'origin/main']):
+                self.assertEqual(post_review_status.main(), 0)
+        return [c for c in calls if c[0] == 'POST']
+
+    def test_posts_when_head_has_no_review_status(self):
+        posts = self.run_main([{'context': 'linux', 'state': 'success'}])
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(posts[0][1].endswith('/statuses/' + 'b' * 40))
+
+    def test_never_replaces_an_existing_review_status(self):
+        for state in ['failure', 'error', 'pending', 'success']:
+            with self.subTest(state):
+                self.assertEqual(self.run_main([{'context': 'Independent model review', 'state': state}]), [])
 
 
 class WorkflowTests(unittest.TestCase):
