@@ -227,6 +227,11 @@ Contents/Resources/icon.icns, respectively. Artwork and trademarks remain
 their respective owners' property and are not covered by msgblast's GPL license.
 
 
+Alexa Shopping: user-requested ImageGen adaptation of Amazon's Alexa for
+shopping wordmark, rearranged for a circular avatar. The gradient follows the
+official Alexa_For_Shopping_Header.svg. Amazon retains its names and trademarks;
+the adaptation is not unmodified official artwork.
+
 CuaDriver off-Space accessibility window lookup
 https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs
 The bounded remote-token lookup is adapted in DesktopNativeWindowLookup.swift

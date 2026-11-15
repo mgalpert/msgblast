@@ -91,6 +91,8 @@ extension AppModel {
         let telemetryStarted = Date()
         let result = await broadcastShared(request, broadcast: broadcast, comparisonID: comparisonID, progressiveNative: progressiveNative,
                                            prepared: prepared, plannedAttempts: planned, followUpID: followUpID)
+        // Every agent asked to send gets a result; one whose send returned nothing counts as a failure.
+        recordAgentSendResults(sessions.map { ($0.provider, result.web[$0.id]) })
         recordSharedSendTelemetry(result, comparisonID: comparisonID, existingID: existingID, recipients: recipients, followUpID: followUpID, started: telemetryStarted)
         recordSharedContext(result, request: request, comparisonID: comparisonID, trimmed: trimmed, allRecipients: allRecipients, followUpID: followUpID)
         return .sent(comparisonID: comparisonID, result: result)
@@ -286,6 +288,7 @@ extension AppModel {
         prepared()
         let telemetryStarted = Date()
         let attempt = await session.send(text, comparisonID: id)
+        recordAgentSendResults([(session.provider, attempt)])
         if let attempt, attempt.status.confirmsSubmission {
             recordMessageSubmission(kind: .private, recipientCount: 1, started: telemetryStarted, logicalID: attempt.id)
         } else { recordOperation(.send, success: false, started: telemetryStarted) }

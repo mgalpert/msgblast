@@ -132,10 +132,12 @@ extension SideChatModelCheck {
         let claude = model.webAgents.session(for: .claude)!
         try await waitUntil { claude.snapshot.ready }
         await model.remoteAvailabilityProbe(slow: false)
-        // The Mac workspace is on another conversation. The phone's prepareConversation opens
-        // the new chat page (as the Mac composer does) without sending anything.
+        // The Mac workspace is on another conversation. The phone's prepareConversation answers
+        // without sending anything and never moves the Mac to the phone's conversation.
+        model.webAgents.setComparison(first)
         let prepare = await executor.execute(RemoteCommand(action: .prepareConversation(conversationID: nil, agentIDs: ["claude"])))
         precondition(prepare.outcome == .applied && claude.state.attempts.isEmpty, "\(prepare)")
+        precondition(model.webAgents.comparisonID == first, "A phone prepare must not switch the Mac's open conversation")
         // Move the Mac back to another conversation, so the send itself must prepare the page:
         // it waits for readiness and then submits exactly once, with no "send again".
         model.webAgents.setComparison(first)
@@ -186,11 +188,13 @@ extension SideChatModelCheck {
         precondition(service.keepAwake.held == false, "Keep-awake waits for the phone's request")
         connection.send(try driver.frame(.command(RemoteCommand(action: .setKeepAwake(enabled: true)))))
         try await waitUntil { service.keepAwake.held }
+        precondition(service.settings.allowMessagesSends, "A new pairing turns iMessage sends on")
+        service.setAllowMessagesSends(false)
         let before = events.count
         connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
         try await waitUntil { events.dropFirst(before).contains { if case .commandResult(let r) = $0 { r.outcome == .rejected } else { false } } }
         let refused = events.dropFirst(before).compactMap { if case .commandResult(let r) = $0 { r } else { nil } }.last!
-        precondition(refused.code == .messagesSendsOff, "The saved setting keeps iMessage sends off: \(refused)")
+        precondition(refused.code == .messagesSendsOff, "Turned off on the Mac, iMessage sends stay off: \(refused)")
         service.setAllowMessagesSends(true)
         connection.send(try driver.frame(.command(RemoteCommand(action: .createConversation(text: "From the in-memory phone", agentIDs: [RemoteAgentIDs.messages(model.state.agents[2].id)], attachmentIDs: [])))))
         try await waitUntil { events.contains { if case .events(let list, _) = $0 { list.contains { if case .turnUpsert(let t) = $0.change { t.text == "From the in-memory phone" } else { false } } } else { false } } }

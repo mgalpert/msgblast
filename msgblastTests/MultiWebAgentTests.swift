@@ -1506,7 +1506,7 @@ final class MultiWebAgentTests: XCTestCase {
         XCTAssertEqual(web.availableSessions[0].state.sessionID, id)
         XCTAssertEqual(web.availableSessions[0].state.draft, "Legacy draft")
         XCTAssertEqual(web.comparisonID, comparison)
-        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, 7)
+        XCTAssertEqual(Set(web.availableSessions.map { $0.state.sessionID }).count, 8)
         for session in web.availableSessions where session.provider.personalAgentProvider == nil { XCTAssertEqual(session.webView.configuration.websiteDataStore.identifier, session.state.sessionID) }
         web.toggle(web.availableSessions[2])
         let reopened = WebAgents(directory: directory, fixture: false)

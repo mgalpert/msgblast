@@ -2,6 +2,36 @@ import XCTest
 
 final class WebServiceWorkflowTests: XCTestCase {
     @MainActor
+    func testAlexaShoppingFixtureSendsAndKeepsNewChatAndHistoryAvailable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--isolated-demo"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["Edit agents"].waitForExistence(timeout: 10))
+        for name in ["Cedar", "Lumen", "Orbit", "Maple", "Echo", "Flint"] {
+            app.buttons[name].click()
+        }
+        app.buttons["Edit agents"].click()
+        app.scrollViews["Agent grid scroll area"].scroll(byDeltaX: 0, deltaY: -1000)
+        let add = app.buttons["Add Alexa Shopping Web"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.click()
+        app.buttons["Done editing agents"].click()
+        app.buttons["Alexa Shopping Web"].click()
+        capture(app, name: "Alexa Shopping added — local fixture")
+        let editor = app.textViews["Shared prompt"]
+        editor.click(); editor.typeKey("a", modifierFlags: .command); editor.typeText("Compare reusable water bottle materials")
+        app.buttons["Send & compare"].click()
+        let answer = reply(app, containing: "Simulated Alexa reply: Compare reusable water bottle materials")
+        XCTAssertTrue(answer.waitForExistence(timeout: 20))
+        capture(app, name: "Alexa Shopping reply — local fixture")
+        app.buttons["Alexa overflow menu"].click()
+        XCTAssertTrue(app.buttons["New chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Chat history"].exists)
+        capture(app, name: "Alexa New chat and Chat history — local fixture")
+    }
+
+    @MainActor
     func testAddNamedAccountFromSettingsAndOpenSeparateSignIn() {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--isolated-demo"]
@@ -12,7 +42,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         let add = app.buttons["add-account-chatgpt"]
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        settings.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -1200)
+        app.staticTexts["settings-page-websites"].click()
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.click()
         let name = app.textFields["Agent name"]
@@ -36,6 +66,7 @@ final class WebServiceWorkflowTests: XCTestCase {
     private func selectWebFixtureRecipients(_ app: XCUIApplication) {
         // New profiles explicitly enable website alternatives in Settings.
         app.typeKey(",", modifierFlags: .command)
+        app.staticTexts["settings-page-websites"].click()
         for provider in ["muse", "chatgpt", "claude", "grok"] {
             let toggle = app.switches["enable-web-\(provider)"]
             XCTAssertTrue(toggle.waitForExistence(timeout: 5))
@@ -179,13 +210,10 @@ final class WebServiceWorkflowTests: XCTestCase {
         selectWebFixtureRecipients(app)
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["Muse"].waitForExistence(timeout: 5))
-        app.typeKey(",", modifierFlags: .command)
-        let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        for (index, name) in ["Codex CLI", "Claude Code"].enumerated() {
+        let settings = openSettingsPage(app, "cli")
+        for name in ["Codex CLI", "Claude Code"] {
             XCTAssertTrue(settings.staticTexts["Enable \(name)"].waitForExistence(timeout: 5))
-            // macOS exposes these two switch controls without the adjacent label.
-            let toggle = settings.switches.element(boundBy: index)
+            let toggle = settings.switches["Enable \(name)"]
             XCTAssertTrue(toggle.waitForExistence(timeout: 5))
             toggle.click()
             if String(describing: toggle.value ?? "") == "0" { toggle.click() }
@@ -246,9 +274,7 @@ final class WebServiceWorkflowTests: XCTestCase {
         XCTAssertFalse(app.buttons["Claude Code"].exists)
         XCTAssertFalse(app.staticTexts["Your local accounts (simulated)"].exists)
         capture(app, name: "Featured grid with optional CLI setup — isolated fixture")
-        app.typeKey(",", modifierFlags: .command)
-        let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        let settings = openSettingsPage(app, "cli")
         for name in ["Codex CLI", "Claude Code"] {
             let toggle = settings.switches["Enable \(name)"]
             XCTAssertTrue(toggle.waitForExistence(timeout: 5))
@@ -436,6 +462,16 @@ final class WebServiceWorkflowTests: XCTestCase {
         app.menuItems["Open chat"].click()
         XCTAssertFalse(app.staticTexts["Appeared in Muse"].exists)
         XCTAssertFalse(app.buttons["Check Muse connection"].exists)
+    }
+
+    /// Opens Settings and selects a sidebar page.
+    @MainActor
+    private func openSettingsPage(_ app: XCUIApplication, _ page: String) -> XCUIElement {
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows.matching(identifier: "com_apple_SwiftUI_Settings_window").firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        app.staticTexts["settings-page-\(page)"].click()
+        return settings
     }
 
     @MainActor
