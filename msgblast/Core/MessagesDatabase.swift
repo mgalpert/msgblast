@@ -248,7 +248,7 @@ enum AttributedBody {
         let header = [UInt8]("\u{0B}streamtyped".utf8)
         guard bytes.count > header.count, Array(bytes[1...header.count]) == header,
               let owner = end(of: "AttributedString", in: bytes, from: header.count + 1),
-              let name = [end(of: "NSString", in: bytes, from: owner), end(of: "NSMutableString", in: bytes, from: owner)].compactMap({ $0 }).min(),
+              let name = end(of: "NSString", in: bytes, from: owner),
               let start = end(of: [0x84, 0x01, 0x2B], in: bytes, from: name), start - name <= 16,
               let (count, offset) = typedLength(in: bytes, at: start), count > 0, offset + count <= bytes.count else { return nil }
         return String(bytes: bytes[offset..<offset + count], encoding: .utf8)
