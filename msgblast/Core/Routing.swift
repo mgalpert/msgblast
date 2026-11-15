@@ -108,15 +108,52 @@ public enum ComparisonRange {
     }
     public static func transcript(_ history: [Message], comparison: Comparison, member: Member, comparisons: [Comparison]) -> [Message] {
         guard let start = start(of: member) else { return [] }
-        return messages(comparison.endedAt == nil ? history : history.filter { comparison.includes($0) }, anchor: start,
+        let visible = comparison.endedAt == nil ? history : history.filter { comparison.includes($0) }
+        if comparison.direct == true {
+            let taken = held(history, chatID: member.chat.id, comparisons: comparisons)
+            return visible.filter { $0.id >= start.rowID && !taken.contains($0.id) }.sorted { $0.id < $1.id }
+        }
+        return messages(visible, anchor: start,
                         next: nextAnchor(for: comparison, member: member, comparisons: comparisons), own: OwnSends(comparison: comparison, member: member))
     }
     /// The first row of the next conversation with this contact. A send with no anchor yet
     /// counts from its baseline, so the older conversation never takes its replies.
     public static func nextAnchor(for comparison: Comparison, member: Member, comparisons: [Comparison]) -> Int64? {
-        guard let anchor = start(of: member) else { return nil }
-        return comparisons.filter { $0.id != comparison.id }.flatMap(\.members).filter { $0.chat.id == member.chat.id }
+        guard comparison.direct != true, let anchor = start(of: member) else { return nil }
+        return comparisons.filter { $0.id != comparison.id && $0.direct != true }.flatMap(\.members).filter { $0.chat.id == member.chat.id }
             .compactMap { $0.anchor?.rowID ?? ($0.submission.mayHaveBeenSent ? $0.baseline.map { $0 + 1 } : nil) }.filter { $0 > anchor.rowID }.min()
+    }
+    /// The rows of one chat that a conversation with a prompt holds.
+    static func held(_ history: [Message], chatID: String, comparisons: [Comparison]) -> Set<Int64> {
+        var rows: Set<Int64> = []
+        for comparison in comparisons where comparison.direct != true {
+            for member in comparison.members where member.chat.id == chatID {
+                rows.formUnion(transcript(history, comparison: comparison, member: member, comparisons: comparisons).map(\.id))
+            }
+        }
+        return rows
+    }
+    /// How far back a message may be and still start a direct thread, so old history never turns into threads.
+    public static let directWindow: TimeInterval = 7 * 86_400
+    /// A new direct thread for a contact who has written when no conversation holds the message.
+    /// Nil while the contact's open direct thread exists (it takes the message) or a send is in flight.
+    public static func directThread(chatID: String, history: [Message], comparisons: [Comparison], now: Date = Date()) -> Comparison? {
+        let all = comparisons.flatMap { comparison in comparison.members.filter { $0.chat.id == chatID }.map { (comparison: comparison, member: $0) } }
+        let threads = all.filter { $0.comparison.direct == true }.map { $0.comparison }
+        guard !threads.contains(where: { $0.endedAt == nil }), !all.contains(where: { $0.member.submission == .sending }),
+              let contact = all.first(where: { $0.comparison.direct != true })?.member,
+              let first = all.compactMap({ start(of: $0.member)?.rowID }).min() else { return nil }
+        let after = max(first, threads.compactMap { $0.endMessageRows?[chatID] }.max() ?? 0)
+        let taken = held(history, chatID: chatID, comparisons: comparisons)
+        let free = history.filter { $0.id > after && !taken.contains($0.id) && now.timeIntervalSince($0.date) <= directWindow }.sorted { $0.id < $1.id }
+        guard let opening = free.first, free.contains(where: { !$0.outgoing }) else { return nil }
+        var member = Member(agentID: contact.agentID, name: contact.name, chat: contact.chat)
+        member.submission = .submitted
+        member.anchor = Anchor(rowID: opening.id, guid: opening.guid)
+        var thread = Comparison(prompt: "", members: [member])
+        thread.direct = true
+        thread.created = opening.date
+        return thread
     }
 }
 /// What msgblast sent one member of a conversation, to tell its rows from ones you sent in Messages.

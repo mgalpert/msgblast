@@ -291,7 +291,9 @@ public struct Comparison: Codable, Identifiable, Sendable {
     /// Optional, so older saved conversations decode unchanged.
     public var customTitle: String?
     public var derivedTitle: String { String((prompt.isEmpty ? attachments?.map(\.filename).joined(separator: ", ") ?? "Attachment" : prompt).prefix(65)) }
-    public var title: String { customTitle ?? derivedTitle }
+    /// The one thread for a Messages contact's messages that no conversation holds. It has no prompt.
+    public var direct: Bool?
+    public var title: String { customTitle ?? (direct == true ? members.first?.name : nil) ?? derivedTitle }
     /// The longest name a conversation can be given.
     public static let maximumTitleLength = 80
 }

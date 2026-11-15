@@ -313,6 +313,7 @@ final class AppModel: ObservableObject {
                 if messages[chatID] != fresh { messages[chatID] = fresh }
             }
             try reconcile()
+            try startDirectThreads()
             lastDataVersion = version
         } catch { databaseAvailable = false; databaseStatus = error.localizedDescription; database = nil }
     }
@@ -602,7 +603,7 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription; return nil }
     }
     func joinWebAgent(_ session: WebAgentSession, comparisonID: UUID) async -> Bool {
-        guard comparison(comparisonID)?.endedAt == nil, !busy, session.isEnabled, session.provider.supportsSharedSubmissions else { return false }
+        guard let joined = comparison(comparisonID), joined.endedAt == nil, joined.direct != true, !busy, session.isEnabled, session.provider.supportsSharedSubmissions else { return false }
         if comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) == true { return true }
         do {
             try freezeSharedContext(comparisonID)
@@ -634,7 +635,7 @@ final class AppModel: ObservableObject {
         try save()
     }
     func addAgent(_ agent: Agent, to id: UUID) async {
-        guard let i = index(id), state.comparisons[i].endedAt == nil, !busy, !state.comparisons[i].members.contains(where: { $0.id == agent.id }) else { return }
+        guard let i = index(id), state.comparisons[i].endedAt == nil, state.comparisons[i].direct != true, !busy, !state.comparisons[i].members.contains(where: { $0.id == agent.id }) else { return }
         do {
             try freezeSharedContext(id)
             var member = try validateMembers(prompt: state.comparisons[i].prompt, selectedIDs: [agent.id])[0]
@@ -787,6 +788,14 @@ final class AppModel: ObservableObject {
             if submitted > 0 { recordMessageSubmission(kind: .shared, recipientCount: submitted, started: telemetryStarted, logicalID: id) }
             else { recordOperation(.send, success: false, started: telemetryStarted) }
         }
+    }
+    /// A contact's message that no conversation holds starts that contact's direct thread.
+    private func startDirectThreads() throws {
+        let chatIDs = Set(state.comparisons.flatMap(\.members).map(\.chat.id)).sorted()
+        let threads = chatIDs.compactMap { ComparisonRange.directThread(chatID: $0, history: messages[$0] ?? [], comparisons: state.comparisons) }
+        guard !threads.isEmpty else { return }
+        state.comparisons.insert(contentsOf: threads, at: 0)
+        do { try save() } catch { state.comparisons.removeAll { thread in threads.contains { $0.id == thread.id } }; throw error }
     }
     func reconcile() throws {
         var changed = false

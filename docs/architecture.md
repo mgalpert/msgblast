@@ -319,9 +319,20 @@ yet counts from the row after its saved baseline, so an older conversation never
 takes its replies. Inside that range the conversation lets go of the contact when
 you message them outside msgblast, or when they write after a full day with
 nothing in the chat; a later msgblast message in the conversation takes the chat
-back. Messages it has let go of are not shown in any conversation and remain in
-Messages. Business chats keep every sent row, because their choices are sent by
+back. Business chats keep every sent row, because their choices are sent by
 Messages itself.
+
+A message from the contact that no conversation holds goes to that contact's
+direct thread: a conversation with no prompt, named after the contact, with one
+Messages member (`Comparison.direct`). msgblast starts it by itself during a
+refresh (`ComparisonRange.directThread`) and never asks where a message belongs.
+There is one open direct thread per contact; it shows every row from its first
+one that no conversation holds, including messages you sent from Messages, and
+you can reply from it like any conversation. Only a message from the last seven
+days starts one, and only for a contact msgblast already has a conversation
+with, so older history stays in Messages. Ending the thread keeps what it
+showed; the contact's next unheld message starts a new one. Website and app
+agents cannot join a direct thread, and outside agents cannot list or read one.
 
 ## Closing conversations
 

@@ -474,6 +474,50 @@ final class CoreTests: XCTestCase {
         XCTAssertNil(ComparisonRange.nextAnchor(for: old, member: old.members[0], comparisons: [newer, old]))
         XCTAssertTrue(ComparisonRange.transcript(history, comparison: newer, member: newer.members[0], comparisons: [newer, old]).isEmpty)
     }
+    private func letGoHistory() -> [Message] {
+        [Message(id: 10, guid: "anchor", chatID: "A", text: "Prompt", outgoing: true, date: Date(timeIntervalSince1970: 0)),
+         row(11, "Answer", hours: 0.1), row(20, "Typed in Messages", outgoing: true, hours: 100), row(21, "Weeks later", hours: 100.1)]
+    }
+    func testAMessageNoConversationHoldsStartsTheContactsDirectThread() throws {
+        let old = heldConversation()
+        var history = letGoHistory()
+        let now = Date(timeIntervalSince1970: 101 * 3600)
+        let thread = try XCTUnwrap(ComparisonRange.directThread(chatID: "A", history: history, comparisons: [old], now: now))
+        XCTAssertEqual(thread.title, "Fo"); XCTAssertEqual(thread.prompt, ""); XCTAssertEqual(thread.members[0].anchor?.rowID, 20)
+        XCTAssertEqual(thread.members[0].agentID, old.members[0].agentID); XCTAssertEqual(thread.created, history[2].date)
+        var all = [thread, old]
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: thread, member: thread.members[0], comparisons: all).map(\.id), [20, 21])
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: old, member: old.members[0], comparisons: all).map(\.id), [10, 11])
+        XCTAssertNil(ComparisonRange.nextAnchor(for: old, member: old.members[0], comparisons: all), "A direct thread never blocks a follow-up in the conversation")
+        XCTAssertNil(ComparisonRange.directThread(chatID: "A", history: history, comparisons: all, now: now), "One open direct thread per contact")
+        // A new conversation holds its own rows; the same thread takes what comes after it lets go.
+        var newer = heldConversation(prompt: "Newer")
+        newer.members[0].baseline = 29
+        newer.members[0].anchor = Anchor(rowID: 30, guid: "g30")
+        history += [row(30, "Newer", outgoing: true, hours: 100.2), row(31, "Newer answer", hours: 100.3), row(32, "A day later", hours: 130)]
+        all = [newer, thread, old]
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: newer, member: newer.members[0], comparisons: all).map(\.id), [30, 31])
+        XCTAssertEqual(ComparisonRange.transcript(history, comparison: thread, member: thread.members[0], comparisons: all).map(\.id), [20, 21, 32])
+    }
+    func testDirectThreadsStartOnlyForRecentMessagesFromTheContact() throws {
+        let old = heldConversation()
+        let history = letGoHistory()
+        XCTAssertNil(ComparisonRange.directThread(chatID: "A", history: history, comparisons: [old], now: Date(timeIntervalSince1970: 1000 * 3600)), "Old history is left in Messages")
+        XCTAssertNil(ComparisonRange.directThread(chatID: "A", history: Array(history.prefix(3)), comparisons: [old], now: Date(timeIntervalSince1970: 101 * 3600)), "Your own message alone starts nothing")
+        XCTAssertNil(ComparisonRange.directThread(chatID: "B", history: history, comparisons: [old], now: Date(timeIntervalSince1970: 101 * 3600)), "Only contacts msgblast has a conversation with")
+        var sending = heldConversation(prompt: "In flight")
+        sending.members[0].anchor = nil; sending.members[0].submission = .sending; sending.members[0].baseline = 21
+        XCTAssertNil(ComparisonRange.directThread(chatID: "A", history: history, comparisons: [sending, old], now: Date(timeIntervalSince1970: 101 * 3600)))
+        // Ending the thread keeps what it showed; the next message starts a new one after it.
+        var ended = try XCTUnwrap(ComparisonRange.directThread(chatID: "A", history: history, comparisons: [old], now: Date(timeIntervalSince1970: 101 * 3600)))
+        ended.endedAt = Date(timeIntervalSince1970: 102 * 3600); ended.endMessageRows = ["A": 21]
+        let later = history + [row(40, "Hello again", hours: 103)]
+        let next = try XCTUnwrap(ComparisonRange.directThread(chatID: "A", history: later, comparisons: [ended, old], now: Date(timeIntervalSince1970: 104 * 3600)))
+        XCTAssertEqual(next.members[0].anchor?.rowID, 40)
+        XCTAssertEqual(ComparisonRange.transcript(later, comparison: ended, member: ended.members[0], comparisons: [next, ended, old]).map(\.id), [20, 21])
+        let decoded = try JSONDecoder().decode(Comparison.self, from: JSONEncoder().encode(old))
+        XCTAssertNil(decoded.direct, "Saved conversations decode unchanged")
+    }
     func testKnownUnsubmittedErrorsCanRetryButUnknownPostSendErrorsCannot() {
         XCTAssertEqual(Submission.failure(afterAttempt: true, error: SendFailure.notSubmitted("Automation denied")), .failed)
         XCTAssertEqual(Submission.failure(afterAttempt: true, error: SendFailure.ambiguous("Timeout")), .uncertain)

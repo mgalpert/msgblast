@@ -138,6 +138,26 @@ final class RemoteProjectionTests: XCTestCase {
         XCTAssertNil(RemoteProjectionBuilder.attachmentFiles(from: input)[turnID])
     }
 
+    func testADirectThreadProjectsTheChatWithoutAPrompt() throws {
+        let member = Member(agentID: UUID(), name: "Cedar", chat: Chat(id: "demo-0", handle: "cedar@example.com", lastActivity: 0))
+        var thread = Comparison(prompt: "", members: [member])
+        thread.direct = true; thread.created = date
+        thread.members[0].submission = .submitted; thread.members[0].anchor = Anchor(rowID: 1, guid: "out-1")
+        var followUp = FollowUp(text: "From msgblast", memberIDs: [member.id]); followUp.created = date.addingTimeInterval(20); followUp.states[member.id.uuidString] = .submitted
+        thread.followUps = [followUp]
+        var input = RemoteProjectionInput(macStatus: status(), gridAgentIDs: [], agents: [], comparisons: [thread])
+        input.messagesTranscripts = [thread.id: [member.id: [
+            Message(id: 1, guid: "out-1", chatID: "demo-0", text: "Typed in Messages", outgoing: true, date: date),
+            Message(id: 2, guid: "in-2", chatID: "demo-0", text: "Reply", outgoing: false, date: date.addingTimeInterval(9)),
+            Message(id: 3, guid: "out-3", chatID: "demo-0", text: "From msgblast", outgoing: true, date: date.addingTimeInterval(21))]]]
+        let state = RemoteProjectionBuilder.state(from: input)
+        let conversation = try XCTUnwrap(state.conversations.first)
+        XCTAssertEqual(conversation.title, "Cedar"); XCTAssertEqual(conversation.agentIDs, ["messages:\(member.id.uuidString)"])
+        XCTAssertEqual(state.turns.map(\.id).sorted(), ["f:\(followUp.id.uuidString)", "m:in-2", "m:out-1"], "No prompt turn, and a message sent from msgblast is its follow-up turn only")
+        let yours = try XCTUnwrap(state.turns.first { $0.id == "m:out-1" })
+        XCTAssertEqual(yours.role, .user); XCTAssertEqual(yours.origin, .messagesHistory); XCTAssertEqual(yours.text, "Typed in Messages")
+        XCTAssertEqual(state.attempts.map(\.id), ["fa:\(followUp.id.uuidString):\(member.id.uuidString)"], "There was no first send to report on")
+    }
     func testARenamedConversationProjectsItsName() throws {
         var (input, comparison, _) = fixture()
         XCTAssertEqual(RemoteProjectionBuilder.state(from: input).conversations.first?.title, "Compare approaches")
