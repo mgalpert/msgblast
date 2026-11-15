@@ -317,7 +317,7 @@ For each Messages member it shows the chat from its own sent prompt up to the ne
 msgblast conversation's send to that contact. A send whose row is not identified
 yet counts from the row after its saved baseline, so an older conversation never
 takes its replies. Inside that range the conversation lets go of the contact when
-you message them outside msgblast, or when they write after a full day with
+you message them outside msgblast, or when they write after half an hour with
 nothing in the chat; a later msgblast message in the conversation takes the chat
 back. Business chats keep every sent row, because their choices are sent by
 Messages itself.

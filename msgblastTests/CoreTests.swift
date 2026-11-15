@@ -438,10 +438,10 @@ final class CoreTests: XCTestCase {
                        row(11, "Answer", hours: 0.1), row(20, "Typed in Messages", outgoing: true, hours: 1), row(21, "Answer to that", hours: 1.1)]
         XCTAssertEqual(ComparisonRange.transcript(history, comparison: comparison, member: comparison.members[0], comparisons: [comparison]).map(\.id), [10, 11])
     }
-    func testConversationLetsGoAfterAQuietDayAndItsOwnFollowUpTakesTheChatBack() {
+    func testConversationLetsGoAfterAQuietHalfHourAndItsOwnFollowUpTakesTheChatBack() {
         var comparison = heldConversation()
         let anchor = Message(id: 10, guid: "anchor", chatID: "A", text: "Prompt", outgoing: true, date: Date(timeIntervalSince1970: 0))
-        var history = [anchor, row(11, "Answer", hours: 23), row(12, "More", hours: 46), row(13, "Weeks later", hours: 500), row(14, "And again", hours: 500.1)]
+        var history = [anchor, row(11, "Answer", hours: 0.4), row(12, "More", hours: 0.8), row(13, "Weeks later", hours: 500), row(14, "And again", hours: 500.1)]
         XCTAssertEqual(ComparisonRange.transcript(history, comparison: comparison, member: comparison.members[0], comparisons: [comparison]).map(\.id), [10, 11, 12])
         var followUp = FollowUp(text: "Follow-up", memberIDs: [comparison.members[0].id])
         followUp.states[comparison.members[0].id.uuidString] = .submitted
@@ -494,7 +494,7 @@ final class CoreTests: XCTestCase {
         var newer = heldConversation(prompt: "Newer")
         newer.members[0].baseline = 29
         newer.members[0].anchor = Anchor(rowID: 30, guid: "g30")
-        history += [row(30, "Newer", outgoing: true, hours: 100.2), row(31, "Newer answer", hours: 100.3), row(32, "A day later", hours: 130)]
+        history += [row(30, "Newer", outgoing: true, hours: 100.2), row(31, "Newer answer", hours: 100.3), row(32, "An hour later", hours: 101.3)]
         all = [newer, thread, old]
         XCTAssertEqual(ComparisonRange.transcript(history, comparison: newer, member: newer.members[0], comparisons: all).map(\.id), [30, 31])
         XCTAssertEqual(ComparisonRange.transcript(history, comparison: thread, member: thread.members[0], comparisons: all).map(\.id), [20, 21, 32])
