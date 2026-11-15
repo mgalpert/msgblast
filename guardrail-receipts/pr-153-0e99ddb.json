@@ -1,0 +1,30 @@
+{
+  "pr": 153,
+  "reviewed_head": "0e99ddb48537215ceed4077e0f60025dedc2bcf9",
+  "base": "d4a45ae",
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this text); commits authored with Claude Opus trailers",
+  "reviewer_model": "claude-sonnet",
+  "author_models": [
+    "claude-opus"
+  ],
+  "scope": "Full PR diff against PR 142 head (AGENTS.md, docs/agent-runbooks.md; 22 added lines).",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "MINOR",
+      "file": "AGENTS.md",
+      "text": "AGENTS.md is 5748 of 6144 bytes; little room left for more rules."
+    },
+    {
+      "severity": "MINOR",
+      "file": "docs/agent-runbooks.md:241",
+      "text": "Anecdote about the owner could be dropped to save space."
+    },
+    {
+      "severity": "NOTE",
+      "file": "-",
+      "text": "No secrets, IPs, tailnet names, usernames or emails."
+    }
+  ],
+  "tests": "check_context_budget.py --head 0e99ddb: 2 files, 5759/24576 bytes, 0 failures. Consistent with existing rules."
+}
