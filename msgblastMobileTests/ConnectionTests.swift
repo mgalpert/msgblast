@@ -41,6 +41,7 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(saved(), paired)
         XCTAssertEqual(paired.fingerprint.split(separator: " ").count, 6)
         XCTAssertEqual(connection.connectedVia, "192.168.1.2:4000", "The winning route is recorded")
+        XCTAssertEqual(connection.connectedNetwork, .lan)
         XCTAssertNotNil(connection.lastConnectSeconds)
         await settle { !mac.commands.isEmpty }
         XCTAssertEqual(mac.commands.first?.action, .setKeepAwake(enabled: true), "The phone asks for keep-awake on connect")
@@ -158,6 +159,18 @@ final class ConnectionTests: XCTestCase {
         _ = try await app.pair(offer: mac.offer(), deviceName: "Phone")
         XCTAssertNotEqual(keys.storedPublicKey, key)
         XCTAssertEqual(app.store.draft("new|all"), "", "Drafts for the previous Mac are dropped only on success")
+    }
+
+    func testATailscaleRouteIsShownAsTailscale() async throws {
+        let mac = FakeMac()
+        mac.reachable = ["100.64.0.1:4000"]
+        let (connection, _, _) = make(mac)
+        connection.pair(offer: mac.offer(), deviceName: "Phone") { _ in }
+        await settle { connection.state == .connected }
+        XCTAssertEqual(connection.connectedNetwork, .tailscale)
+        connection.reconnectNow()
+        await settle { connection.state == .connected }
+        XCTAssertEqual(connection.connectedNetwork, .tailscale, "A saved pairing keeps the address kinds")
     }
 
     func testPairingGivesUpOnSilentAddressesAtTheRaceDeadline() async throws {

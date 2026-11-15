@@ -49,16 +49,16 @@ extension AppModel {
         }
     }
 
-    func remoteMacStatus(settings: RemoteSettings, power: MacPowerState, keepAwake: RemoteKeepAwake) -> MacStatus {
+    func remoteMacStatus(settings: RemoteSettings, power: MacPowerState, keepAwake: RemoteKeepAwake, tailnet: String? = nil) -> MacStatus {
         let variant: MacVariant = demo ? .demo : Bundle.main.bundleIdentifier == AppBundleIdentity.production ? .production : .development
         return MacStatus(macName: RemoteMacName.value, variant: variant, locked: power.locked, awake: power.awake,
                          databaseAvailable: databaseAvailable, databaseStatus: databaseStatus, messagesBusy: busy, broadcastBusy: webBroadcastBusy,
                          sendingAgentIDs: webAgents.sessions.filter(\.isSending).map(\.id.id), keepAwakeEnabled: settings.keepAwake,
-                         keepAwakeHeld: keepAwake.held, messagesSendsAllowed: settings.allowMessagesSends, observedAt: Date())
+                         keepAwakeHeld: keepAwake.held, messagesSendsAllowed: settings.allowMessagesSends, tailnet: tailnet, observedAt: Date())
     }
 
-    func remoteProjectionInput(settings: RemoteSettings, power: MacPowerState, keepAwake: RemoteKeepAwake, agents: [AgentAvailability]) -> RemoteProjectionInput {
-        var input = RemoteProjectionInput(macStatus: remoteMacStatus(settings: settings, power: power, keepAwake: keepAwake), gridAgentIDs: remoteGridAgentIDs,
+    func remoteProjectionInput(settings: RemoteSettings, power: MacPowerState, keepAwake: RemoteKeepAwake, agents: [AgentAvailability], tailnet: String? = nil) -> RemoteProjectionInput {
+        var input = RemoteProjectionInput(macStatus: remoteMacStatus(settings: settings, power: power, keepAwake: keepAwake, tailnet: tailnet), gridAgentIDs: remoteGridAgentIDs,
                                           agents: agents, comparisons: state.comparisons)
         for comparison in state.comparisons {
             var transcripts: [UUID: [Message]] = [:]

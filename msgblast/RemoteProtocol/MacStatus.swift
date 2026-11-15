@@ -23,12 +23,14 @@ public struct MacStatus: Codable, Hashable, Sendable {
     public var keepAwakeEnabled: Bool
     public var keepAwakeHeld: Bool
     public var messagesSendsAllowed: Bool
+    /// The Mac's Tailscale network name, nil when Tailscale isn't running or couldn't be asked. Older Macs never send it.
+    public var tailnet: String?
     public var observedAt: Date
-    public init(macName: String, variant: MacVariant, running: Bool = true, locked: Bool, awake: Bool, databaseAvailable: Bool, databaseStatus: String, messagesBusy: Bool, broadcastBusy: Bool, sendingAgentIDs: [String], keepAwakeEnabled: Bool, keepAwakeHeld: Bool, messagesSendsAllowed: Bool, observedAt: Date) {
+    public init(macName: String, variant: MacVariant, running: Bool = true, locked: Bool, awake: Bool, databaseAvailable: Bool, databaseStatus: String, messagesBusy: Bool, broadcastBusy: Bool, sendingAgentIDs: [String], keepAwakeEnabled: Bool, keepAwakeHeld: Bool, messagesSendsAllowed: Bool, tailnet: String? = nil, observedAt: Date) {
         self.macName = macName; self.variant = variant; self.running = running; self.locked = locked; self.awake = awake
         self.databaseAvailable = databaseAvailable; self.databaseStatus = databaseStatus; self.messagesBusy = messagesBusy
         self.broadcastBusy = broadcastBusy; self.sendingAgentIDs = sendingAgentIDs; self.keepAwakeEnabled = keepAwakeEnabled
-        self.keepAwakeHeld = keepAwakeHeld; self.messagesSendsAllowed = messagesSendsAllowed; self.observedAt = observedAt
+        self.keepAwakeHeld = keepAwakeHeld; self.messagesSendsAllowed = messagesSendsAllowed; self.tailnet = tailnet; self.observedAt = observedAt
     }
     public var anySendInFlight: Bool { messagesBusy || broadcastBusy || !sendingAgentIDs.isEmpty }
     public func sameContent(as other: MacStatus) -> Bool {

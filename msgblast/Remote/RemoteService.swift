@@ -29,6 +29,7 @@ final class RemoteService: ObservableObject {
     private unowned let model: AppModel
     private let directory: URL
     private var subscriptions: Set<AnyCancellable> = []
+    private var tailnetRefresh: Task<Void, Never>?
 
     init(model: AppModel) {
         self.model = model
@@ -59,7 +60,7 @@ final class RemoteService: ObservableObject {
         if settings.enabled { Task { await start() } }
     }
 
-    private final class SettingsReader { var value = RemoteSettings() }
+    private final class SettingsReader { var value = RemoteSettings(); var tailnet: String? }
     private let settingsReader: SettingsReader
 
     var macName: String { RemoteMacName.value }
@@ -117,7 +118,7 @@ final class RemoteService: ObservableObject {
                 model.webAgents.objectWillChange.map { _ in }.eraseToAnyPublisher(), model.personalAgent.objectWillChange.map { _ in }.eraseToAnyPublisher(),
                 availability.objectWillChange.map { _ in }.eraseToAnyPublisher(), power.objectWillChange.map { _ in }.eraseToAnyPublisher()]
             let projection = RemoteProjection(journal: journal, triggers: triggers) {
-                RemoteProjectionBuilder.state(from: model.remoteProjectionInput(settings: reader.value, power: power, keepAwake: keepAwake, agents: availability.recompute()))
+                RemoteProjectionBuilder.state(from: model.remoteProjectionInput(settings: reader.value, power: power, keepAwake: keepAwake, agents: availability.recompute(), tailnet: reader.tailnet))
             }
             let server = RemoteServer(identity: identity, pairing: pairing, executor: executor, journal: journal, variant: variant,
                                       macName: { [weak self] in self?.macName ?? "Mac" }, isLocked: { power.locked }, refreshJournal: { projection.refreshNow() })
@@ -151,6 +152,9 @@ final class RemoteService: ObservableObject {
     private func makeListener(identity: RemoteIdentity, server: RemoteServer) -> RemoteListener {
         let listener = RemoteListener(identity: identity, serviceName: "msgblast on \(macName)") { [weak server] in server?.accept($0) }
         listener.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        listener.$endpoints.removeDuplicates().sink { [weak self] endpoints in
+            Task { @MainActor in self?.refreshTailnet(endpoints) }
+        }.store(in: &subscriptions)
         // Only a first port is saved, including one bound later when Tailscale or Wi-Fi comes up.
         // A temporary port after the saved one stayed busy is never saved: the paired phone
         // knows only the saved port, which is reclaimed.
@@ -161,6 +165,23 @@ final class RemoteService: ObservableObject {
             }
         }.store(in: &subscriptions)
         return listener
+    }
+
+    /// Asks Tailscale for the tailnet name off the main thread, so the phone can show which tailnet it reaches this Mac on.
+    private func refreshTailnet(_ endpoints: [RemoteEndpoint]) {
+        tailnetRefresh?.cancel()
+        guard endpoints.contains(where: { $0.kind == .tailscale }) else { setTailnet(nil); return }
+        tailnetRefresh = Task { [weak self] in
+            let name = await Task.detached { AgentControlTailnetDNS.tailnetName() }.value
+            guard !Task.isCancelled else { return }
+            self?.setTailnet(name)
+        }
+    }
+
+    private func setTailnet(_ name: String?) {
+        guard settingsReader.tailnet != name else { return }
+        settingsReader.tailnet = name
+        projection?.schedule()
     }
 
     func stop() {
@@ -179,6 +200,7 @@ final class RemoteService: ObservableObject {
         keepAwake.setClient(connected: connected)
         if connected {
             model.recordPhoneConnected()
+            refreshTailnet(endpoints)
             projection?.start()
             availability.start()
         } else {

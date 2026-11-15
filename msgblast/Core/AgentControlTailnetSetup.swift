@@ -62,6 +62,14 @@ public enum AgentControlTailnetStatus {
         return (magicName(root["Self"]), httpsEnabled(root["CertDomains"]), grokBotPeer(root["Peer"]))
     }
 
+    /// The tailnet's name (`CurrentTailnet.Name`, else its `MagicDNSSuffix`), for the phone's Settings. Nil when signed out.
+    public static func tailnetName(_ data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["BackendState"] as? String == "Running", let tailnet = root["CurrentTailnet"] as? [String: Any] else { return nil }
+        let name = [tailnet["Name"], tailnet["MagicDNSSuffix"]].compactMap { $0 as? String }.first { !$0.isEmpty }
+        return name.map { $0.hasSuffix(".") ? String($0.dropLast()) : $0 }
+    }
+
     private static func magicName(_ value: Any?) -> String? {
         guard let node = value as? [String: Any], var name = node["DNSName"] as? String else { return nil }
         if name.hasSuffix(".") { name.removeLast() }

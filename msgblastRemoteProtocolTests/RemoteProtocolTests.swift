@@ -21,6 +21,15 @@ final class RemoteProtocolCodingTests: XCTestCase {
                   broadcastBusy: true, sendingAgentIDs: ["claude"], keepAwakeEnabled: true, keepAwakeHeld: true, messagesSendsAllowed: false, observedAt: date)
     }
 
+    func testTailnetIsOptionalForOlderMacs() throws {
+        var named = status()
+        named.tailnet = "example.ts.net"
+        try roundTrip(named)
+        let older = try RemoteProtocol.encoder().encode(status())
+        XCTAssertFalse(String(decoding: older, as: UTF8.self).contains("tailnet"), "A Mac without a tailnet sends no key, like a Mac from before this field")
+        XCTAssertNil(try RemoteProtocol.decoder().decode(MacStatus.self, from: older).tailnet)
+    }
+
     func testEveryReadinessStateRoundTrips() throws {
         for readiness in [AgentReadiness.ready, .readyWillLaunch, .busy(detail: "Sending"), .blocked, .unavailable] {
             try roundTrip(availability(readiness))
