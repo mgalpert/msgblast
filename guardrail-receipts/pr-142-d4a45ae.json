@@ -1,0 +1,30 @@
+{
+  "pr": 142,
+  "reviewed_head": "d4a45aeb87d9e5d0e6c7287957c76abd051dd95a",
+  "base": "39d1622",
+  "reviewer": "independent model (Anthropic Claude Sonnet subagent, read-only, wrote none of this text); commits authored with Claude Opus trailers",
+  "reviewer_model": "claude-sonnet",
+  "author_models": [
+    "claude-opus"
+  ],
+  "scope": "Full PR diff (AGENTS.md, CLAUDE.md, docs/agent-runbooks.md; 124 added lines). Links, anchors, referenced files, conflicts with existing rules, privacy scan, context budget.",
+  "verdict": "approve with notes",
+  "findings": [
+    {
+      "severity": "MINOR",
+      "file": "docs/agent-runbooks.md:224",
+      "text": "'include it even if few clients support it yet' is in mild tension with 'Add no unrequested features'; suggest 'when it is part of the requested work'."
+    },
+    {
+      "severity": "NOTE",
+      "file": "docs/agent-runbooks.md",
+      "text": "Only placeholder paths (/Users/<name>, <mac>.<tailnet>.ts.net); no secrets, IPs, tailnet names, usernames or emails."
+    },
+    {
+      "severity": "NOTE",
+      "file": "-",
+      "text": "Branch base is 39d1622; main is 5c0f513. Merges cleanly."
+    }
+  ],
+  "tests": "check_context_budget.py --head d4a45ae: 2 files, 5366/24576 bytes, 0 failures. Anchors #owner-working-rules and #pull-request-evidence resolve; referenced files exist."
+}
