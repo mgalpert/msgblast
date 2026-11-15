@@ -1,0 +1,46 @@
+name: Review receipt
+
+# Posts the required "Independent model review" status from a review receipt,
+# so the owner no longer posts it by hand for each pull request. It runs the
+# base branch's copy of the script and reads the pull request only as Git data.
+# It posts success only when the receipt covers the head: the reviewed commit
+# itself, or that commit plus clean merges of the base branch. It never posts a
+# failing or pending status. After pushing a receipt, edit the description's
+# Review-receipt line (or any text) to run it again.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: review-receipt-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  receipt:
+    name: review-receipt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Only the trusted base supplies executable code. Head is fetched as data.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Post the review status when a receipt covers the head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/pull/$PR_NUMBER/head:refs/review/head" \
+            "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          test "$(git rev-parse refs/review/head)" = "$HEAD_SHA"
+          python3 -I scripts/post_review_status.py --event-file "$GITHUB_EVENT_PATH" \
+            --base-ref "origin/$BASE_REF"

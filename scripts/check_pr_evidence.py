@@ -19,6 +19,9 @@ import json
 import re
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from review_carry_over import carried_over  # noqa: E402
+
 
 HEADING = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
 IMAGE = re.compile(r"!\[[^\]]*\]\((https://[^)\s]+)\)|<img\b[^>]*\bsrc=[\"'](https://[^\"']+)[\"']", re.IGNORECASE)
@@ -72,7 +75,7 @@ def playable_video(text):
     return False
 
 
-def problems(body, head_sha, require_preview=False):
+def problems(body, head_sha, require_preview=False, repo_dir=None, base_ref=None):
     errors = []
     if not isinstance(body, str) or not body.strip():
         return ["Pull request description is empty."]
@@ -97,7 +100,13 @@ def problems(body, head_sha, require_preview=False):
     if not found:
         errors.append("Description must contain 'Evidence-SHA: <40-character commit>'.")
     elif head_sha and found.group(1) != head_sha:
-        errors.append(f"Evidence-SHA {found.group(1)} does not match the reviewed commit {head_sha}.")
+        covered, reason = (False, "no base branch to compare with")
+        if repo_dir and base_ref:
+            covered, reason = carried_over(repo_dir, found.group(1), head_sha, base_ref)
+        if covered:
+            print(f"Evidence of {found.group(1)[:7]} carries over to {head_sha[:7]}: {reason}.")
+        else:
+            errors.append(f"Evidence-SHA {found.group(1)} does not match the reviewed commit {head_sha} ({reason}).")
     if require_preview:
         if "msgblast Dev" not in body or "msgblast Demo" not in body:
             errors.append("Cursor branch previews must name both msgblast Dev and msgblast Demo.")
@@ -130,6 +139,8 @@ def main():
     parser.add_argument("--event-file")
     parser.add_argument("--head", required=True)
     parser.add_argument("--require-preview", action="store_true")
+    parser.add_argument("--repo-dir", default=".")
+    parser.add_argument("--base-ref", help="Accept evidence of an earlier commit when the head only adds clean merges of this ref")
     args = parser.parse_args()
     if args.event_file:
         body = body_from_event(args.event_file)
@@ -137,7 +148,8 @@ def main():
         body = Path(args.body_file).read_text()
     else:
         parser.error("Provide --body-file or --event-file")
-    errors = problems(body, args.head, require_preview=args.require_preview)
+    errors = problems(body, args.head, require_preview=args.require_preview,
+                      repo_dir=args.repo_dir, base_ref=args.base_ref)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
