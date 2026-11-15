@@ -3,8 +3,10 @@
 # Install a copy outside the repository and point ACTIONS_RUNNER_HOOK_JOB_STARTED
 # at it (see docs/studio-runner.md). A pull request can edit a workflow's runs-on,
 # but it cannot edit this installed copy, so this is the real guard.
-# It allows only pushes to main, manual runs, and pull requests whose branch is
-# in this repository. Everything else fails before any step runs.
+# It allows only pushes to main, manual runs, merge queue runs for main, and pull
+# requests whose branch is in this repository. Everything else fails before any
+# step runs. Set MSGBLAST_STUDIO_REPOSITORY in the runner's .env if the
+# repository moves (for example to an organization).
 set -euo pipefail
 exec /usr/bin/python3 -I - "${MSGBLAST_STUDIO_REPOSITORY:-mgalpert/msgblast}" <<'PY'
 import json
@@ -29,6 +31,11 @@ if event_name == "push":
         refuse("pushes run here only for main, not " + repr(ref))
 elif event_name == "workflow_dispatch":
     pass
+elif event_name == "merge_group":
+    # Only someone with write access can add a pull request to the queue, after
+    # its review and required checks pass.
+    if not ref.startswith("refs/heads/gh-readonly-queue/main/"):
+        refuse("merge queue runs here only for main, not " + repr(ref))
 elif event_name == "pull_request":
     try:
         with open(os.environ["GITHUB_EVENT_PATH"]) as handle:

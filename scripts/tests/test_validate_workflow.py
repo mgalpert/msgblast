@@ -77,9 +77,10 @@ class ValidateWorkflowTests(unittest.TestCase):
 
     def test_studio_runner_is_opt_in_and_never_runs_fork_code(self):
         text = WORKFLOW.read_text()
-        studio = ("${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && "
+        studio = ("${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.runner == 'studio') || "
+                  "(inputs.runner != 'hosted' && vars.MSGBLAST_STUDIO_RUNNER == 'true' && "
                   "(github.event_name != 'pull_request' || "
-                  "github.event.pull_request.head.repo.full_name == github.repository) && "
+                  "github.event.pull_request.head.repo.full_name == github.repository))) && "
                   "'[\"self-hosted\",\"macOS\",\"ARM64\",\"msgblast-studio\"]' || '\"xcode-27\"') }}")
         native = text.split("\n  native:\n", 1)[1].split("\n  preview:\n", 1)[0]
         preview = text.split("\n  preview:\n", 1)[1]
@@ -90,6 +91,8 @@ class ValidateWorkflowTests(unittest.TestCase):
         self.assertIn('$HOME/Library/Caches/msgblast-ci/$RUNNER_NAME/DerivedData', native)
         self.assertIn('derived="$PWD/build/updater-validation"', native)
         self.assertIn("scripts/ci/studio-job-started.sh", native)
+        self.assertIn("options: [auto, hosted, studio]", text)
+        self.assertIn("default: auto", text)
         docs = (ROOT / "docs/studio-runner.md").read_text()
         self.assertIn("ACTIONS_RUNNER_HOOK_JOB_STARTED", docs)
         self.assertLess(native.index("MSGBLAST_DERIVED_DATA=$derived"), native.index("xcodebuild -project"))

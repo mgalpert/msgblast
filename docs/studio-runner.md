@@ -18,8 +18,8 @@ off the Studio:
 
 1. **The job-started hook (the real guard).** The runner runs
    `scripts/ci/studio-job-started.sh` from a copy installed outside the
-   repository before every job. It allows only pushes to `main`, manual runs,
-   and pull requests whose branch is in this repository, and fails anything
+   repository before every job. It allows only pushes to `main`, manual runs, merge
+   queue runs for `main`, and pull requests whose branch is in this repository, and fails anything
    else before a single step runs. A pull request cannot change the installed copy.
 2. **Approval for outside contributors.** GitHub will not start any workflow
    from an outside contributor's fork until you approve it. Before approving,
@@ -34,12 +34,19 @@ cache, so give write access only to people you trust with that machine.
 
 ## One-time setup on the Studio
 
-1. Create a separate standard macOS user for the runner (System Settings,
-   Users & Groups). Branch code runs as this user, so it should not be able
-   to read your own home folder, keychain, or SSH keys.
-2. Log in as that user once and leave the session logged in (use fast user
-   switching to go back to your own account). The tests launch the app, which
-   needs a logged-in session. In Energy settings, stop the Mac from sleeping.
+Use a Mac nobody works on. The app tests move windows and need keyboard
+focus, so they fail at random when they share a screen with a person or with
+another runner. The first Studio runner ran in a person's everyday session
+and failed different focus and timing tests on each run.
+
+1. Create a separate Standard (not admin) macOS user for the runner (System
+   Settings, Users & Groups). Branch code runs as this user, so it should not
+   be able to read your own home folder, keychain, or SSH keys.
+2. Make that user the automatic login user, log out every other user, and
+   restart, so the runner user owns the screen. In Energy settings, stop the
+   Mac from sleeping, and turn off the screen saver and screen lock for that
+   user. Do not use fast user switching to keep another person's session in
+   front.
 3. As that user, install Xcode 27 at `/Applications/Xcode_27.0.app`, which is
    the path the workflow sets in `DEVELOPER_DIR`. If Xcode is already installed
    elsewhere, an admin can link it:
@@ -83,12 +90,30 @@ cache, so give write access only to people you trust with that machine.
 7. In Settings, Secrets and variables, Actions, Variables, add the repository
    variable `MSGBLAST_STUDIO_RUNNER` with the value `true`.
 
+## Trying it before turning it on
+
+From Actions, Validate msgblast, Run workflow, pick `studio` as the runner.
+That run uses the Studio even while the variable is off, and `hosted` forces
+GitHub's runner. Turn the variable on only after five such runs in a row pass
+with no re-runs. If a test fails on the Studio and passes on `xcode-27`, fix
+the test or the machine. Do not add retries or skip it.
+
 ## Running more than one PR at a time
 
-A runner takes one job at a time. To check two PRs at once, configure a second
-runner in another folder with `--name studio-2` and the same label. Each
-runner keeps its own derived data in
+A runner takes one job at a time, and two runners on the same screen break
+each other's focus, so use one runner per Mac (or per virtual machine). To
+check two PRs at once, add a second Mac set up the same way, with its own
+`--name`. Each runner keeps its own derived data in
 `~/Library/Caches/msgblast-ci/<runner name>/DerivedData`.
+
+## If the repository moves to an organization
+
+Register runners at the organization, in a runner group limited to this
+repository and to the `validate.yml` workflow. Runner groups refuse public
+repositories by default, so an organization owner has to allow public
+repositories on that group. Write the new name in each runner's `.env` as
+`MSGBLAST_STUDIO_REPOSITORY=owner/msgblast` and restart it; until then the hook
+refuses every job.
 
 ## Turning it off
 

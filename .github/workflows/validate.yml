@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Where the Mac jobs run. auto follows the MSGBLAST_STUDIO_RUNNER variable.
+        type: choice
+        options: [auto, hosted, studio]
+        default: auto
 
 permissions:
   contents: read
@@ -49,8 +55,9 @@ jobs:
     # requests from forks use the GitHub-hosted xcode-27 runner. A pull request
     # can edit this line, so the Studio's own job-started hook
     # (scripts/ci/studio-job-started.sh) is what refuses fork code there.
-    # Unset the variable to fall back.
-    runs-on: ${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
+    # Unset the variable to fall back. A manual run can pick the runner with the
+    # runner input: studio (for test runs before the variable is on) or hosted.
+    runs-on: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.runner == 'studio') || (inputs.runner != 'hosted' && vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
@@ -224,8 +231,9 @@ jobs:
     # requests from forks use the GitHub-hosted xcode-27 runner. A pull request
     # can edit this line, so the Studio's own job-started hook
     # (scripts/ci/studio-job-started.sh) is what refuses fork code there.
-    # Unset the variable to fall back.
-    runs-on: ${{ fromJSON(vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
+    # Unset the variable to fall back. A manual run can pick the runner with the
+    # runner input: studio (for test runs before the variable is on) or hosted.
+    runs-on: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.runner == 'studio') || (inputs.runner != 'hosted' && vars.MSGBLAST_STUDIO_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))) && '["self-hosted","macOS","ARM64","msgblast-studio"]' || '"xcode-27"') }}
     timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
