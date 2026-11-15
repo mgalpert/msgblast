@@ -7,7 +7,7 @@ import msgblastRemoteProtocol
 /// readiness), runs one at a time, and is never retried. A `requestId` makes a call safe to
 /// repeat while msgblast runs: the same id returns the first result instead of sending again.
 public enum AgentControlSend {
-    public static let names: Set<String> = ["msgblast_blast_start", "msgblast_blast_follow_up", "msgblast_agent_message", "msgblast_comparison_end"]
+    public static let names: Set<String> = ["msgblast_blast_start", "msgblast_blast_follow_up", "msgblast_agent_message", "msgblast_agent_choose", "msgblast_comparison_end"]
     public static let maximumTextLength = 50_000
 
     static let afterSummary = "Pass the result's after to msgblast_blast_wait so it also returns replies that arrived before the wait began. A repeat of a known requestId leaves after out: wait with after 0 and the comparisonId instead."
@@ -23,6 +23,9 @@ public enum AgentControlSend {
         AgentControlTool(name: "msgblast_agent_message", title: "Message one agent",
                          summary: "Sends a private message to one agent, inside a comparison when comparisonId is given or as a new one-agent comparison. \(afterSummary) \(requestIDSummary)",
                          access: .full, inputSchema: #"{"type":"object","properties":{"agent":{"type":"string"},"text":{"type":"string","minLength":1},"comparisonId":{"type":"string"},"requestId":{"type":"string","maxLength":200}},"required":["agent","text"]}"#),
+        AgentControlTool(name: "msgblast_agent_choose", title: "Choose a suggestion",
+                         summary: "Taps one of an agent's suggestion buttons in a comparison, as a person would on its page: action is a label from the actions on that agent's newest reply in msgblast_comparison_read (Alexa Shopping offers them, such as \"Add the organic celery hearts\"). The agent gets whatever the button sends, which can be more than its label. Refused when the agent no longer offers that choice. \(afterSummary) \(requestIDSummary)",
+                         access: .full, inputSchema: #"{"type":"object","properties":{"comparisonId":{"type":"string"},"agent":{"type":"string"},"action":{"type":"string","minLength":1},"requestId":{"type":"string","maxLength":200}},"required":["comparisonId","agent","action"]}"#),
         AgentControlTool(name: "msgblast_comparison_end", title: "End a comparison",
                          summary: "Ends a comparison so nothing more is sent in it. \(requestIDSummary)",
                          access: .full, inputSchema: #"{"type":"object","properties":{"comparisonId":{"type":"string"},"requestId":{"type":"string","maxLength":200}},"required":["comparisonId"]}"#),
@@ -59,9 +62,9 @@ public enum AgentControlSend {
     }
 
     public struct Input: Equatable, Sendable {
-        public var text: String?, agents: [String]?, agent: String?, comparisonID: String?
-        public init(text: String? = nil, agents: [String]? = nil, agent: String? = nil, comparisonID: String? = nil) {
-            self.text = text; self.agents = agents; self.agent = agent; self.comparisonID = comparisonID
+        public var text: String?, agents: [String]?, agent: String?, comparisonID: String?, action: String?
+        public init(text: String? = nil, agents: [String]? = nil, agent: String? = nil, comparisonID: String? = nil, action: String? = nil) {
+            self.text = text; self.agents = agents; self.agent = agent; self.comparisonID = comparisonID; self.action = action
         }
     }
 
@@ -78,6 +81,10 @@ public enum AgentControlSend {
             guard let one = input.agent else { throw AgentControlError.invalidArguments("agent is required") }
             let conversation = try input.comparisonID.map { _ in try comparison(input) }
             action = .sendPrivate(conversationID: conversation, agentID: try sendable(one), text: try text(input), attachmentIDs: [])
+        case "msgblast_agent_choose":
+            guard let one = input.agent else { throw AgentControlError.invalidArguments("agent is required") }
+            guard let label = input.action, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AgentControlError.invalidArguments("action is required") }
+            action = .chooseAction(conversationID: try comparison(input), agentID: try sendable(one), label: label)
         case "msgblast_comparison_end":
             action = .endConversation(conversationID: try comparison(input))
         default:

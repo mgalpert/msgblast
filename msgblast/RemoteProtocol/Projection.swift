@@ -114,11 +114,16 @@ public struct RemoteTurn: Codable, Hashable, Sendable, Identifiable {
     /// Messages tapbacks on this turn, in the order they were made. Optional and omitted when
     /// empty, so older phones ignore it; a change is an ordinary turn update.
     public var reactions: [RemoteReaction]?
+    /// Suggestion buttons the agent offers under this reply (Alexa's choices), by label. Only the
+    /// newest reply of an open conversation has them, while the Mac could tap one; choose one with
+    /// `RemoteAction.chooseAction`. Optional and omitted when empty, so older phones ignore it.
+    public var actions: [String]?
     public init(id: String, conversationID: UUID, agentID: String?, role: RemoteTurnRole, origin: RemoteTurnOrigin, text: String, created: Date?, ordinal: Int,
-                attachments: [RemoteAttachmentRef] = [], contentHash: String, reactions: [RemoteReaction]? = nil) {
+                attachments: [RemoteAttachmentRef] = [], contentHash: String, reactions: [RemoteReaction]? = nil, actions: [String]? = nil) {
         self.id = id; self.conversationID = conversationID; self.agentID = agentID; self.role = role; self.origin = origin
         self.text = text; self.created = created; self.ordinal = ordinal; self.attachments = attachments; self.contentHash = contentHash
         self.reactions = reactions?.isEmpty == true ? nil : reactions
+        self.actions = actions?.isEmpty == true ? nil : actions
     }
 
     /// Keeps the start of a reply too large for one frame, marked; the whole text stays on the Mac.

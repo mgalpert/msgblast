@@ -51,8 +51,12 @@ public struct AgentControlStatus: Codable, Equatable, Sendable {
 public struct AgentControlTurn: Codable, Equatable, Sendable {
     /// Nil for website and app turns, whose pages do not show a time.
     public var agent: String, outgoing: Bool, text: String, date: Date?
-    public init(agent: String, outgoing: Bool, text: String, date: Date?) {
+    /// Suggestion buttons under this reply (Alexa's choices), by label. Only the agent's newest
+    /// reply has them, while msgblast could tap one; pick one with msgblast_agent_choose.
+    public var actions: [String]?
+    public init(agent: String, outgoing: Bool, text: String, date: Date?, actions: [String]? = nil) {
         self.agent = agent; self.outgoing = outgoing; self.text = text; self.date = date
+        self.actions = actions?.isEmpty == true ? nil : actions
     }
 }
 
@@ -104,7 +108,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
                          summary: "Comparisons whose name or prompt matches query, as resource links for @-mentions. query may be empty.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#),
         AgentControlTool(name: "msgblast_comparison_read", title: "Read a comparison",
-                         summary: "A comparison's prompt, each agent's submission state, and the conversation so far.",
+                         summary: "A comparison's prompt, each agent's submission state, and the conversation so far. An agent's newest reply may list actions: its suggestion buttons, which msgblast_agent_choose taps.",
                          access: .readOnly, inputSchema: #"{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}"#),
         AgentControlTool(name: "msgblast_blast_wait", title: "Wait for replies",
                          summary: "Waits up to timeoutSeconds for events after cursor `after` (a reply arrived, a send finished, an agent turned busy or ready). Returns them with `next`. Empty events: nothing happened yet; end your turn or call again with `next`.",
@@ -142,7 +146,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
     private struct Arguments: Decodable {
         var includeHidden: Bool?, query: String?, limit: Int?, id: String?
         var after: Int?, comparisonId: String?, timeoutSeconds: Int?
-        var text: String?, agents: [String]?, agent: String?, requestId: String?
+        var text: String?, agents: [String]?, agent: String?, requestId: String?, action: String?
     }
 
     /// `msgblast_request_status`: the stored result, or `unknown`. Never runs anything.
@@ -163,7 +167,7 @@ public struct AgentControlWaitResult: Codable, Equatable, Sendable {
         if name == "msgblast_request_status" { return try status(input.requestId, client: client, host: host) }
         let request = try input.requestId.map(requestID) ?? UUID().uuidString
         let id = AgentControlSend.commandID(client: client, requestID: request)
-        let fields = AgentControlSend.Input(text: input.text, agents: input.agents, agent: input.agent, comparisonID: input.comparisonId)
+        let fields = AgentControlSend.Input(text: input.text, agents: input.agents, agent: input.agent, comparisonID: input.comparisonId, action: input.action)
         let command = try AgentControlSend.command(name, fields, id: id)
         if host.controlSendStatus(id).code == .unknownCommand, !sendLimit.allow(client) {
             throw AgentControlError.refused("Too many sends from \(client) in a short time. Wait a minute, then try again. Nothing was sent (tooManySends).")

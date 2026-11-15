@@ -118,6 +118,51 @@ final class WebServiceTests: XCTestCase {
         ])
         XCTAssertFalse(replies.joined().contains("Purchased"), "Order history badges stay on the Mac")
         XCTAssertTrue(session.snapshot.messages.allSatisfy { $0.images == nil }, "A relative image src is not an Amazon CDN URL")
+        XCTAssertNil(session.snapshot.actions, "Add to cart and see more are not suggestions")
+    }
+
+    func testAlexaShoppingSuggestionButtonsAreOfferedAndTappedOnThePage() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let comparison = UUID()
+        let sent = await session.send("Celery for soup", comparisonID: comparison)
+        XCTAssertEqual(sent?.status, .observed, sent?.detail ?? "Missing receipt")
+        try await waitFor { session.actionsForComparison(comparison) != nil }
+        let reply = try XCTUnwrap(session.messagesForComparison(comparison).last)
+        XCTAssertEqual(session.actionsForComparison(comparison), WebPageActions(messageID: reply.id, labels: ["Add the first one", "Show more options"]))
+        XCTAssertNil(session.actionsForComparison(UUID()), "Another comparison's reply offers nothing")
+
+        let refused = await session.send("Buy everything", comparisonID: comparison, action: true)
+        XCTAssertEqual(refused?.status, .notSent)
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.count, 1, "A choice the page doesn't offer clicks nothing")
+
+        let chosen = await session.send("Show more options", comparisonID: comparison, action: true)
+        XCTAssertEqual(chosen?.status, .observed, chosen?.detail ?? "Missing receipt")
+        try await waitFor { session.messagesForComparison(comparison).last?.text == "Simulated Alexa reply: Show more options" }
+        XCTAssertEqual(session.messagesForComparison(comparison).filter { $0.role == "user" }.map(\.text), ["Celery for soup", "Show more options"])
+        try await waitFor { session.actionsForComparison(comparison)?.messageID == session.messagesForComparison(comparison).last?.id }
+    }
+
+    func testAlexaShoppingSuggestionMayShowYourTurnInOtherWords() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = WebAgentSession(provider: .alexaShopping, storageURL: directory.appendingPathComponent("alexa.json"), fixture: true)
+        defer { session.beginShutdown() }
+        session.connect()
+        try await waitFor { session.snapshot.ready }
+        let comparison = UUID()
+        _ = await session.send("Celery for soup", comparisonID: comparison)
+        try await waitFor { session.actionsForComparison(comparison) != nil }
+        // Some buttons send their hidden request as your turn instead of their label.
+        _ = try await session.webView.callAsyncJavaScript("transcript.onclick=event=>{const chip=event.target.closest('button[data-utterance]');if(chip)ask(chip.dataset.utterance);};",
+                                                          arguments: [:], in: nil, contentWorld: .page)
+        let chosen = await session.send("Add the first one", comparisonID: comparison, action: true)
+        XCTAssertEqual(chosen?.status, .observed, chosen?.detail ?? "Missing receipt")
+        XCTAssertEqual(session.messagesForComparison(comparison).filter { $0.role == "user" }.map(\.text), ["Celery for soup", "add item 1 to cart"])
     }
 
     func testSavedWebPageMessageWithoutImagesStillMatchesAUserReceipt() throws {

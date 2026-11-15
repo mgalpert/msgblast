@@ -11,6 +11,8 @@ struct ConversationView: View {
     /// All, one agent is that agent's private thread, several are their union.
     @State private var selection: Set<String> = []
     @State private var actionError: String?
+    /// The suggestion just tapped, so it can't be tapped twice while the Mac clicks it.
+    @State private var choosing: String?
     @State private var showingDetails = false
     /// The pinned prompt row: whether the prompt's own bubble is visible, and expanded text.
     @State private var pinnedFrame: CGRect?
@@ -114,7 +116,7 @@ struct ConversationView: View {
             .sharedBackgroundVisibility(.hidden)
         }
         .sharedContentPresentation(app, opening: $opening)
-        .sheet(isPresented: $showingDetails) { ThreadDetailsSheet(app: app, conversationID: conversationID, selection: $selection, run: run) }
+        .sheet(isPresented: $showingDetails) { ThreadDetailsSheet(app: app, conversationID: conversationID, selection: $selection, run: { run($0) }) }
         .sheet(item: $details) { summary in RequestDetailsSheet(summary: summary, name: presenter.name(summary.agentID)) }
     }
 
@@ -300,6 +302,10 @@ struct ConversationView: View {
             }
             if mine {
                 statusRow(turn, isLatest: isLatest)
+            } else if let actions = turn.actions, let agent = turn.agentID, conversation?.endedAt == nil {
+                actionStack(actions, agent: agent)
+                    .padding(.leading, avatarColumn)
+                    .padding(.top, Space.tight)
             }
         }
         .padding(.leading, showsAvatar ? Space.threadAvatarEdge : Space.screen)
@@ -420,6 +426,25 @@ struct ConversationView: View {
         }
     }
 
+    /// The agent's suggestion buttons under its reply, as on its own page. A tap makes the Mac
+    /// click that same button, so the agent gets exactly what the button sends.
+    private func actionStack(_ actions: [String], agent: String) -> some View {
+        VStack(alignment: .leading, spacing: Space.tight) {
+            ForEach(actions, id: \.self) { label in
+                Button {
+                    choosing = label
+                    run(.chooseAction(conversationID: conversationID, agentID: agent, label: label)) { choosing = nil }
+                } label: {
+                    Text(label).font(.subheadline.weight(.medium)).multilineTextAlignment(.leading)
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .disabled(choosing != nil)
+                .accessibilityHint("Sends this choice to \(presenter.shortName(agent))")
+            }
+        }
+    }
+
     /// Your message's send status, when any of it is showing.
     @ViewBuilder private func statusRow(_ turn: RemoteTurn, isLatest: Bool) -> some View {
         let visible = presenter.visibleChips(for: turn, selection: selection, isLatest: isLatest, expanded: expanded.contains(turn.id))
@@ -470,9 +495,10 @@ struct ConversationView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: Space.cornerCard, style: .continuous))
     }
 
-    private func run(_ action: RemoteAction) {
+    private func run(_ action: RemoteAction, finished: @escaping () -> Void = {}) {
         actionError = nil
         Task {
+            defer { finished() }
             do {
                 let result = try await app.perform(action)
                 if result.outcome == .rejected { actionError = result.message }

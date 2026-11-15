@@ -121,6 +121,23 @@ struct WebPageScript {
             const image=product ? alexaImage(e.querySelector('img')?.currentSrc||e.querySelector('img')?.src||'') : '';
             return {id:id||(config.provider==='alexaShopping'?observation.documentID+':':'')+observation.ids.get(e),role:role||'unknown',text:product??normalized(copy.textContent||''),...(image?{images:[image]}:{})};
         });
+        // Alexa's suggestion buttons under its newest reply: worded buttons after the last thing you sent,
+        // outside product cards. Each label must be unique so a choice names exactly one button.
+        const alexaChips = () => {
+            const root=config.provider==='alexaShopping' ? document.getElementById('rufus-conversation-container') : null;
+            if (!root) return [];
+            const mine=[...root.querySelectorAll('.rufus-customer-text-wrap')].pop();
+            const chips=[...root.querySelectorAll('button,[role="button"]')].filter(b=>visible(b) && !b.disabled && b.getAttribute('aria-disabled')!=='true'
+                && !b.parentElement?.closest('button,[role="button"],[role="link"],.rufus-customer-text-wrap,[data-csa-c-content-id^="rufus-dsk-section-container-"]')
+                && (!mine || (mine.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)))
+                .map(b=>({element:b,label:normalized(b.innerText||'')})).filter(c=>c.label.length>1 && c.label.length<=200);
+            return chips.filter(c=>chips.filter(o=>o.label===c.label).length===1);
+        };
+        const alexaActions = () => {
+            const all=messages(),last=all[all.length-1],labels=alexaChips().map(c=>c.label).slice(0,8);
+            return last && last.role==='assistant' && labels.length ? {messageID:last.id,labels} : null;
+        };
+        const alexaChip = label => { const found=alexaChips().filter(c=>c.label===normalized(label||'')); return found.length===1 ? found[0].element : null; };
         const conversationLocation = () => {
             const url=new URL(location.href),params=[...url.searchParams];
             if (config.provider==='alexaShopping' && pathAllowed()) return url.origin+'/';
@@ -161,7 +178,8 @@ struct WebPageScript {
             const ready=!!send && !send.disabled && send.getAttribute('aria-disabled')!=='true' && !send.classList.contains('rufus-submit-button--disabled');
             return {ready,retryable:candidates.length<2,reason:`${config.name}’s Send control is unavailable. Review the prepared draft.`};
         };
-        const inspect = () => ({...status(),messages:pathAllowed()?messages():[],submissionInterrupted:observation.interrupted});
+        const inspect = () => ({...status(),messages:pathAllowed()?messages():[],submissionInterrupted:observation.interrupted,
+            ...(config.provider==='alexaShopping' && pathAllowed() ? {actions:alexaActions()} : {})});
         """#
     }
     var signInStatus: String { helpers + "\nreturn {...status(),messages:[]};" }
@@ -304,6 +322,30 @@ struct WebPageScript {
         """#
     }
 
+    /// Checks that Alexa still offers `label` and takes the baseline, like `prepare` without typing anything.
+    var prepareAction: String {
+        helpers + #"""
+        const before=status();
+        if (!before.ready) return {ok:false,reason:before.reason};
+        if (before.draft.trim()) return {ok:false,reason:`${config.name} already has a draft. Send or clear it in the page first.`};
+        if (!alexaChip(label)) return {ok:false,reason:`${config.name} no longer offers that choice.`};
+        const baseline=messages();
+        const existingConversationPaths=[...document.querySelectorAll('a[href]')].map(a=>new URL(a.href,location.href)).filter(u=>u.origin===location.origin).map(u=>u.pathname);
+        observation.interrupted=false;
+        return {ok:true,messageIDs:baseline.map(m=>m.id),messages:baseline,existingConversationPaths};
+        """#
+    }
+    /// Clicks the page's own suggestion button, so Alexa gets whatever that button sends, not just its words.
+    var clickAction: String {
+        helpers + #"""
+        const current=status(),chip=alexaChip(label);
+        if (!current.ready || current.url!==expectedURL || current.draft.trim() || observation.interrupted)
+            return {clicked:false,reason:`${config.name} changed before the choice was made. Nothing was clicked.`};
+        if (!chip) return {clicked:false,reason:`${config.name} no longer offers that choice.`};
+        chip.click(); return {clicked:true};
+        """#
+    }
+
     private var alexaShoppingFixture: String {
         #"""
         <!doctype html><html><head><style>
@@ -351,12 +393,19 @@ struct WebPageScript {
             },250);
         };
         input.oninput=()=>send.classList.toggle('rufus-submit-button--disabled',!input.value.trim());
+        // Suggestion buttons send a hidden request, as Amazon's do; the visible label becomes your message.
+        const ask=text=>{
+            current||='conversationThread-'+crypto.randomUUID();
+            const user=document.createElement('article');user.className='rufus-customer-text-wrap';user.textContent=text;transcript.append(user);save();
+            setTimeout(()=>{const reply=document.createElement('article'),id='markdownSection-'+crypto.randomUUID();reply.setAttribute('data-csa-c-content-id','rufus-dsk-section-'+id);reply.setAttribute('data-csa-c-group-id',id);reply.textContent='Simulated Alexa reply: '+text;transcript.append(reply);
+                const chips=document.createElement('div');chips.setAttribute('data-csa-c-content-id','rufus-dsk-section-suggestions-'+crypto.randomUUID());
+                for(const [label,utterance] of [['Add the first one','add item 1 to cart'],['Show more options','show more like these']]){const b=document.createElement('button');b.textContent=label;b.dataset.utterance=utterance;chips.append(b);}
+                transcript.append(chips);save();},350);
+        };
+        transcript.onclick=event=>{const chip=event.target.closest('button[data-utterance]');if(chip)ask(chip.textContent);};
         send.onclick=()=>{
             if(send.classList.contains('rufus-submit-button--disabled'))return;
-            current||='conversationThread-'+crypto.randomUUID();
-            const text=input.value,user=document.createElement('article');user.className='rufus-customer-text-wrap';user.textContent=text;transcript.append(user);
-            input.value='';input.oninput();save();
-            setTimeout(()=>{const reply=document.createElement('article'),id='markdownSection-'+crypto.randomUUID();reply.setAttribute('data-csa-c-content-id','rufus-dsk-section-'+id);reply.setAttribute('data-csa-c-group-id',id);reply.textContent='Simulated Alexa reply: '+text;transcript.append(reply);save();},350);
+            const text=input.value;input.value='';input.oninput();ask(text);
         };
         </script></body></html>
         """#

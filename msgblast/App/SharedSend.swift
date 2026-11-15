@@ -268,7 +268,7 @@ extension AppModel {
     /// for a private reply while a shared send's replies are still arriving (`independent`).
     /// `prepared` runs once the conversation exists (the pane uses it to show the comparison).
     func sendDirect(_ text: String, to session: WebAgentSession, existingID: UUID?, interactive: Bool = true, independent: Bool = false,
-                    prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
+                    action: Bool = false, prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
         defer {
             if independent { finishIndependentNativeReply() }
             else { webBroadcastBusy = false }
@@ -287,7 +287,7 @@ extension AppModel {
         do { try save() } catch { self.error = error.localizedDescription; return (id, nil) }
         prepared()
         let telemetryStarted = Date()
-        let attempt = await session.send(text, comparisonID: id)
+        let attempt = await session.send(text, comparisonID: id, action: action)
         recordAgentSendResults([(session.provider, attempt)])
         if let attempt, attempt.status.confirmsSubmission {
             recordMessageSubmission(kind: .private, recipientCount: 1, started: telemetryStarted, logicalID: attempt.id)

@@ -16,6 +16,10 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     /// One agent only. A nil conversation starts a new one-agent conversation.
     case sendPrivate(conversationID: UUID?, agentID: String, text: String, attachmentIDs: [String])
     case endConversation(conversationID: UUID)
+    /// Taps one of an agent's suggestion buttons (Alexa's choices under its newest reply) by its
+    /// label, as listed in the turn's `actions`. A send: the Mac clicks the page's own button.
+    /// Older Macs answer `unsupported`.
+    case chooseAction(conversationID: UUID, agentID: String, label: String)
     /// "Stop waiting" / acknowledge an unresolved native request. Never resends.
     case acknowledgeIncomplete(agentID: String, attemptID: String?)
     /// Cancels the local wait for a native request; the other app is not stopped.
@@ -54,6 +58,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .sendShared: "sendShared"
         case .sendPrivate: "sendPrivate"
         case .endConversation: "endConversation"
+        case .chooseAction: "chooseAction"
         case .acknowledgeIncomplete: "acknowledgeIncomplete"
         case .cancelNative: "cancelNative"
         default: transferKind
@@ -78,7 +83,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case .renameConversation: "renameConversation"
         case .fetchAttachment: "fetchAttachment"
         case .unknown(let kind): kind
-        case .createConversation, .sendShared, .sendPrivate, .endConversation, .acknowledgeIncomplete, .cancelNative,
+        case .createConversation, .sendShared, .sendPrivate, .endConversation, .chooseAction, .acknowledgeIncomplete, .cancelNative,
              .setKeepAwake, .uploadAttachmentChunk, .attachStaged, .requestReport, .prepareConversation: kind
         }
     }
@@ -89,7 +94,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     }
     /// Actions that can deliver text to an agent.
     public var isSend: Bool {
-        switch self { case .createConversation, .sendShared, .sendPrivate: true; default: false }
+        switch self { case .createConversation, .sendShared, .sendPrivate, .chooseAction: true; default: false }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -120,6 +125,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         case "sendPrivate":
             return .sendPrivate(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID), text: try c.decode(String.self, forKey: .text), attachmentIDs: try ids(.attachmentIDs))
         case "endConversation": return .endConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID))
+        case "chooseAction":
+            return .chooseAction(conversationID: try c.decode(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID), label: try c.decode(String.self, forKey: .text))
         case "acknowledgeIncomplete": return .acknowledgeIncomplete(agentID: try c.decode(String.self, forKey: .agentID), attemptID: try c.decodeIfPresent(String.self, forKey: .attemptID))
         case "cancelNative": return .cancelNative(agentID: try c.decode(String.self, forKey: .agentID))
         default: return nil
@@ -152,7 +159,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(kind, forKey: .kind)
         switch self {
-        case .createConversation, .sendShared, .sendPrivate, .endConversation, .acknowledgeIncomplete, .cancelNative:
+        case .createConversation, .sendShared, .sendPrivate, .endConversation, .chooseAction, .acknowledgeIncomplete, .cancelNative:
             try encodeMessageFields(into: &c)
         case .setKeepAwake, .uploadAttachmentChunk, .attachStaged, .requestReport, .prepareConversation:
             try encodeTransferFields(into: &c)
@@ -171,6 +178,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
             try c.encodeIfPresent(conversationID, forKey: .conversationID); try c.encode(agentID, forKey: .agentID)
             try c.encode(text, forKey: .text); try c.encode(attachmentIDs, forKey: .attachmentIDs)
         case .endConversation(let id): try c.encode(id, forKey: .conversationID)
+        case .chooseAction(let id, let agentID, let label): try c.encode(id, forKey: .conversationID); try c.encode(agentID, forKey: .agentID); try c.encode(label, forKey: .text)
         case .acknowledgeIncomplete(let agentID, let attemptID): try c.encode(agentID, forKey: .agentID); try c.encodeIfPresent(attemptID, forKey: .attemptID)
         case .cancelNative(let agentID): try c.encode(agentID, forKey: .agentID)
         default: break

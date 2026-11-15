@@ -54,6 +54,18 @@ import msgblastRemoteProtocol
         XCTAssertEqual(host.commands, [])
     }
 
+    func testChooseTapsALabelInAComparison() async throws {
+        let host = Host()
+        let comparison = UUID()
+        _ = try await call("msgblast_agent_choose", #"{"comparisonId":"\#(comparison.uuidString)","agent":"web:chatgpt","action":"Show more grocery items","requestId":"c1"}"#, host: host)
+        XCTAssertEqual(host.commands.map(\.action), [.chooseAction(conversationID: comparison, agentID: "chatgpt", label: "Show more grocery items")])
+        let missing = await refusal("msgblast_agent_choose", #"{"comparisonId":"\#(comparison.uuidString)","agent":"web:chatgpt","action":" "}"#, host: host)
+        XCTAssertEqual(missing, .invalidArguments("action is required"))
+        let noComparison = await refusal("msgblast_agent_choose", #"{"agent":"web:chatgpt","action":"Add it"}"#, host: host)
+        XCTAssertEqual(noComparison, .invalidArguments("comparisonId is required"))
+        XCTAssertEqual(host.commands.count, 1)
+    }
+
     func testStartBecomesOneExecutorCommandWithAgentIDsTranslated() async throws {
         let host = Host()
         let comparison = UUID()

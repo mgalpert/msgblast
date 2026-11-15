@@ -173,6 +173,20 @@ final class RemoteCommandExecutorTests: XCTestCase {
         do { let result = await run(.sendPrivate(conversationID: nil, agentID: "os3", text: "Only you", attachmentIDs: [])); XCTAssertEqual(result.code, .agentUnavailable) }
     }
 
+    func testChoosingASuggestionIsAPrivateSendToAMemberThatTapsTheButton() async {
+        let host = host()
+        let executor = RemoteCommandExecutor(host: host)
+        func run(_ action: RemoteAction) async -> RemoteCommandResult { await executor.execute(RemoteCommand(action: action)) }
+        let active = UUID(), ended = UUID()
+        host.conversations = [active: .active(members: ["claude"]), ended: .ended]
+        do { let result = await run(.chooseAction(conversationID: active, agentID: "claudeApp", label: "Add it")); XCTAssertEqual(result.code, .invalidCommand, "Only a member's own buttons") }
+        do { let result = await run(.chooseAction(conversationID: ended, agentID: "claude", label: "Add it")); XCTAssertEqual(result.code, .conversationEnded) }
+        do { let result = await run(.chooseAction(conversationID: active, agentID: "claude", label: "  ")); XCTAssertEqual(result.code, .invalidCommand) }
+        XCTAssertTrue(host.sends.isEmpty)
+        do { let result = await run(.chooseAction(conversationID: active, agentID: "claude", label: "Add the organic celery hearts")); XCTAssertEqual(result.outcome, .applied) }
+        XCTAssertEqual(host.sends, [RemoteSendPlan(kind: .privateMessage, conversationID: active, text: "Add the organic celery hearts", agentIDs: ["claude"], attachmentIDs: [], isAction: true)])
+    }
+
     func testUploadsStageOnlyVerifiedFilesForMessagesAgents() async {
         let host = host()
         host.messagesSendsAllowed = true

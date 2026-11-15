@@ -53,6 +53,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
     private var sharedTurnsSave: Task<Void, Never>?
     private var sharedTurnsUnsaved = false
+    /// Alexa's suggestion buttons, while its newest reply is this comparison's last turn and the page could take a tap.
+    public func actionsForComparison(_ id: UUID) -> WebPageActions? {
+        guard provider == .alexaShopping, let actions = snapshot.actions, !actions.labels.isEmpty, snapshot.ready, !loading, !isSending,
+              messagesForComparison(id).last?.id == actions.messageID else { return nil }
+        return actions
+    }
     private var sharesPage: Bool { (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation }
     /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
     /// Saving waits for the page to settle rather than writing on every streamed update.
@@ -1150,8 +1156,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func send(_ text: String, comparisonID: UUID? = nil,
                      onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {},
                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
-                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true) async -> WebSendAttempt? {
+                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true, action: Bool = false) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
+        guard !action || provider == .alexaShopping else { return nil }
         guard plannedAttemptID == nil || provider.desktopApp != nil else { return nil }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft) }
@@ -1163,6 +1170,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         isSending = true
         defer { isSending = false }
         var attempt = WebSendAttempt(text: text)
+        if action { attempt.action = true }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         attempt.comparisonID = id
         var submissionWasPossible = false
@@ -1192,7 +1200,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let expectedURL = snapshot.url
             let preparation: [String: Any]?
             do {
-                preparation = try await webView.callAsyncJavaScript(script.prepare, arguments: ["text": text], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                preparation = try await webView.callAsyncJavaScript(action ? script.prepareAction : script.prepare, arguments: action ? ["label": text] : ["text": text],
+                                                                    in: nil, contentWorld: .defaultClient) as? [String: Any]
             } catch {
                 guard generation == navigationGeneration, !loading else {
                     throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.")
@@ -1211,12 +1220,14 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
             if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
-            else { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
+            else if !action { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
             guard generation == navigationGeneration, !loading else { throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.") }
             attempt.status = .attempting
             try store(attempt) // The possible external side effect is durably recorded first.
             submissionWasPossible = true
-            let result = try await webView.callAsyncJavaScript(script.clickSend, arguments: ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
+            let result = try await webView.callAsyncJavaScript(action ? script.clickAction : script.clickSend,
+                                                               arguments: action ? ["label": text, "expectedURL": expectedURL] : ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL],
+                                                               in: nil, contentWorld: .defaultClient) as? [String: Any]
             if result?["clicked"] as? Bool == false {
                 submissionWasPossible = false
                 throw WebSessionFailure.notSent(result?["reason"] as? String ?? "\(provider.name)’s Send control was not clicked.")
@@ -1281,7 +1292,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let before = Set(context.baseline.map(\.id))
         let text = Self.normalized(attempt.text)
         let claimed = claimedMessageIDs(excluding: attempt)
-        let matches = snapshot.messages.filter { !before.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == text }
+        // A suggestion button may put its own words in your turn, so a tap takes the one new turn of yours.
+        let matches = snapshot.messages.filter { !before.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && (attempt.action == true || Self.normalized($0.text) == text) }
         guard matches.count <= 1 else { return invalidate() }
         guard let match = matches.first, let comparison = attempt.comparisonID else { return false }
         attempt.status = .observed
