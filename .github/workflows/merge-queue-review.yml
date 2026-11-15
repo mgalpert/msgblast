@@ -24,7 +24,7 @@ jobs:
       # Run main's copy of the script; the queued commit is not trusted code here.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.event.merge_group.base_sha }}
+          ref: ${{ github.event.merge_group.base_ref }}
           persist-credentials: false
       - name: Read the review status on the pull request head
         env:
