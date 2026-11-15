@@ -338,7 +338,7 @@ need that Linux installer command. See [Cloud agents](cloud-agent.md).
 
 ## What GitHub Actions checks
 
-`.github/workflows/validate.yml` runs on PRs, pushes to main, and manual dispatch:
+`.github/workflows/validate.yml` runs on PRs, merge queue runs, pushes to main, and manual dispatch. PR scope, swift-complexity and evidence skip queued commits, since a PR enters the queue only after they passed on its head. `merge-queue-review.yml` reports Independent model review on a queued commit only after reading a passing review status on that PR's head:
 
 - **Linux:** installer/dependency setup, Python tooling tests, feedback/crash intake tests, download Worker
   tests, and Wrangler dry-run.

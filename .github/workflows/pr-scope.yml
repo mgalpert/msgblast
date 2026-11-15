@@ -3,6 +3,8 @@ name: Check pull request scope
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, ready_for_review]
+  # See the job's if: the queue reuses the result from the pull request.
+  merge_group:
 # No pull_request_review trigger: that event runs the workflow file from the
 # PR's own merge ref, so a PR could replace this job. After a Size-exception
 # review, re-run this job; the re-run uses the base workflow and reads reviews live.
@@ -12,12 +14,15 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-scope-${{ github.event.pull_request.number }}
+  group: pr-scope-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   scope:
     name: PR scope
+    # A pull request enters the merge queue only after this passed on its head.
+    # On the queued commit the job is skipped, which GitHub counts as passing.
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
