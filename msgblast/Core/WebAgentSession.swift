@@ -2675,6 +2675,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private static func normalized(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
     private func store(_ attempt: WebSendAttempt) throws {
         if let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) { state.attempts[index] = attempt }
+        // A receipt can name a turn the page already shows, in words other than the request's.
+        if attempt.messageID != nil { rememberSharedTurns() }
         try save()
     }
     private func save() throws {
