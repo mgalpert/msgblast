@@ -30,7 +30,10 @@ off the Studio:
 Signing, release, and `pull_request_target` workflows never use the Studio.
 Anyone with write access can still run code there, including code that edits
 the runner's `.env` to drop the hook for later jobs, and runs share one build
-cache, so give write access only to people you trust with that machine.
+cache, so give write access only to people you trust with that machine. The
+shared cache also means a branch can leave build products that a later `main`
+run reuses, which is one more reason write access must stay with trusted
+people.
 
 ## One-time setup on the Studio
 
@@ -58,7 +61,7 @@ and failed different focus and timing tests on each run.
    asks for:
 
    ```
-   ./config.sh --url https://github.com/mgalpert/msgblast --token <token from that page> \
+   ./config.sh --url https://github.com/contains-studio/msgblast --token <token from that page> \
      --name studio-1 --labels msgblast-studio --unattended
    ./svc.sh install
    ./svc.sh start
@@ -106,14 +109,17 @@ check two PRs at once, add a second Mac set up the same way, with its own
 `--name`. Each runner keeps its own derived data in
 `~/Library/Caches/msgblast-ci/<runner name>/DerivedData`.
 
-## If the repository moves to an organization
+## Organization runners
 
-Register runners at the organization, in a runner group limited to this
-repository and to the `validate.yml` workflow. Runner groups refuse public
-repositories by default, so an organization owner has to allow public
-repositories on that group. Write the new name in each runner's `.env` as
-`MSGBLAST_STUDIO_REPOSITORY=owner/msgblast` and restart it; until then the hook
-refuses every job.
+The repository belongs to the contains-studio organization. Register runners at
+the organization, in a runner group limited to this repository and to the
+`validate.yml` workflow. Runner groups refuse public repositories by default,
+so an organization owner has to allow public repositories on that group.
+Runners registered before the move run an older hook that expects
+`mgalpert/msgblast`, so they refuse every job: reinstall the hook from `main`
+(step 5), or write `MSGBLAST_STUDIO_REPOSITORY=contains-studio/msgblast` in the
+runner's `.env` and restart it. If the repository moves again, set that line to
+the new name.
 
 ## Turning it off
 

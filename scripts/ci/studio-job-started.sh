@@ -5,10 +5,10 @@
 # but it cannot edit this installed copy, so this is the real guard.
 # It allows only pushes to main, manual runs, merge queue runs for main, and pull
 # requests whose branch is in this repository. Everything else fails before any
-# step runs. Set MSGBLAST_STUDIO_REPOSITORY in the runner's .env if the
-# repository moves (for example to an organization).
+# step runs. The repository is contains-studio/msgblast; set
+# MSGBLAST_STUDIO_REPOSITORY in the runner's .env only if it moves again.
 set -euo pipefail
-exec /usr/bin/python3 -I - "${MSGBLAST_STUDIO_REPOSITORY:-mgalpert/msgblast}" <<'PY'
+exec /usr/bin/python3 -I - "${MSGBLAST_STUDIO_REPOSITORY:-contains-studio/msgblast}" <<'PY'
 import json
 import os
 import sys
