@@ -205,7 +205,7 @@ button:focus-visible { outline: 2px solid var(--color-ring-primary); outline-off
     setTitle("Replies");
     showBack(true);
     var main = document.getElementById("main"), events = Array.isArray(item.events) ? item.events : [];
-    var names = { replyArrived: "Reply arrived", agentBusy: "Agent busy", agentReady: "Agent ready", sendResult: "Send finished", messageReceived: "Message received", reportReady: "Report ready" };
+    var names = { replyArrived: "Reply arrived", agentBusy: "Agent busy", agentReady: "Agent ready", sendResult: "Send finished", messageReceived: "Message received", reportReady: "Report ready", actionsOffered: "Choices offered" };
     clear(main);
     if (!events.length) { main.appendChild(el("p", "empty", "No comparisons yet.")); return; }
     var list = el("ul", "list");

@@ -202,6 +202,29 @@ import XCTest
         XCTAssertEqual(feed.cursor, 5, "the first look after a reset only records")
     }
 
+    func testButtonsDrawnAfterAReplyAreAnnouncedOncePerNewSet() {
+        let feed = AgentControlEvents()
+        let alexa = AgentControlSnapshot.Key(comparisonID: UUID(), agent: "Alexa Shopping")
+        var look = AgentControlSnapshot()
+        look.replies = [alexa: 1]
+        feed.observe(look)
+        look.replies[alexa] = 2
+        feed.observe(look)
+        XCTAssertEqual(feed.events.map(\.kind), [.replyArrived], "the reply comes before its buttons")
+        look.actions[alexa] = ["Add the first one", "Show more options"]
+        feed.observe(look)
+        feed.observe(look)
+        XCTAssertEqual(feed.events.map(\.kind), [.replyArrived, .actionsOffered], "unchanged buttons are announced once")
+        XCTAssertEqual(feed.events.last?.detail, "Add the first one\nShow more options")
+        look.actions[alexa] = nil
+        feed.observe(look)
+        XCTAssertEqual(feed.cursor, 2, "buttons going away is not an event")
+        look.actions[alexa] = ["Show fresh leeks"]
+        feed.observe(look)
+        XCTAssertEqual(feed.events.last?.kind, .actionsOffered)
+        XCTAssertEqual(feed.cursor, 3)
+    }
+
     func testAComparisonThatJoinsTheWatchedSetIsRecordedButANewOneIsAnnounced() {
         let feed = AgentControlEvents()
         let start = Date(timeIntervalSince1970: 1_000_000)

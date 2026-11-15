@@ -69,6 +69,7 @@ extension AppModel: AgentControlHost {
                 guard let session = webAgents.sessions.first(where: { $0.id == id }) else { continue }
                 let key = AgentControlSnapshot.Key(comparisonID: comparison.id, agent: session.name)
                 snapshot.replies[key] = session.messagesForComparison(comparison.id).filter { $0.role != "user" }.count
+                if let offered = session.actionsForComparison(comparison.id) { snapshot.actions[key] = offered.labels }
                 if busy.contains(where: { $0.id == id }) { snapshot.settling.insert(key) }
             }
         }
