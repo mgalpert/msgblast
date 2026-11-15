@@ -86,14 +86,14 @@ public final class MessagesDatabase {
         """
         let records = try rows(sql, values: [chatID, String(after)])
         let files = try attachments(chatID: chatID, after: after)
-        let business = try businessPayloads(chatID: chatID, after: after)
+        let business = try businessPayloads(chatID: chatID, after: after), bodies = try attributedBodies(chatID: chatID, after: after)
         var messages = records.compactMap { row -> Message? in
             let type = Int(row["reaction_type"] ?? "0") ?? 0
             guard !(2000...3999).contains(type) else { return nil }
             guard let id = Int64(row["rowid"] ?? ""), let guid = row["guid"] else { return nil }
             let reply = row["reply"].flatMap { $0.isEmpty ? nil : $0 }
             let attachments = files[id] ?? []
-            let body = row["text"]?.replacingOccurrences(of: "\u{FFFC}", with: "")
+            let body = (bodies[id] ?? row["text"])?.replacingOccurrences(of: "\u{FFFC}", with: "")
             let payload = business[id]
             let text: String
             if let payload, body == nil || body?.isEmpty == true { text = payload.title }
@@ -181,6 +181,34 @@ public final class MessagesDatabase {
         }
     }
 
+    /// Text of rows whose `text` column is empty, read from `attributedBody`.
+    private func attributedBodies(chatID: String, after: Int64) throws -> [Int64: String] {
+        guard columns.contains("attributedBody") else { return [:] }
+        let sql = """
+        SELECT m.ROWID,m.attributedBody
+        FROM message m JOIN chat_message_join cm ON cm.message_id=m.ROWID JOIN chat c ON c.ROWID=cm.chat_id
+        WHERE c.guid=? AND m.ROWID>=? AND (m.text IS NULL OR m.text='') AND m.attributedBody IS NOT NULL
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw AppFailure.blocked("Messages history query failed: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        defer { sqlite3_finalize(statement) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, chatID, -1, transient)
+        sqlite3_bind_int64(statement, 2, after)
+        var result: [Int64: String] = [:]
+        while true {
+            let code = sqlite3_step(statement)
+            if code == SQLITE_DONE { return result }
+            guard code == SQLITE_ROW else { throw AppFailure.blocked("Messages history is busy or unavailable. Refresh to try again.") }
+            let bytes = sqlite3_column_blob(statement, 1)
+            let count = Int(sqlite3_column_bytes(statement, 1))
+            guard let bytes, count > 0, count <= 1_048_576 else { continue }
+            result[sqlite3_column_int64(statement, 0)] = AttributedBody.text(Data(bytes: bytes, count: count))
+        }
+    }
+
     private func attachments(chatID: String, after: Int64) throws -> [Int64: [MessageAttachment]] {
         guard hasAttachmentJoin, attachmentColumns.contains("filename") else { return [:] }
         func column(_ name: String) -> String { attachmentColumns.contains(name) ? "a.\(name)" : "NULL" }
@@ -209,4 +237,39 @@ public final class MessagesDatabase {
         return version
     }
     public var supportsReplyRelationships: Bool { columns.contains("thread_originator_guid") }
+}
+
+/// Reads the plain text of a Messages `attributedBody` typedstream as bytes.
+/// The blob holds other people's messages, so it is never handed to NSUnarchiver,
+/// which trusts its input and raises exceptions Swift cannot catch.
+enum AttributedBody {
+    static func text(_ blob: Data) -> String? {
+        let bytes = [UInt8](blob)
+        let header = [UInt8]("\u{0B}streamtyped".utf8)
+        guard bytes.count > header.count, Array(bytes[1...header.count]) == header,
+              let owner = end(of: "AttributedString", in: bytes, from: header.count + 1),
+              let name = [end(of: "NSString", in: bytes, from: owner), end(of: "NSMutableString", in: bytes, from: owner)].compactMap({ $0 }).min(),
+              let start = end(of: [0x84, 0x01, 0x2B], in: bytes, from: name), start - name <= 16,
+              let (count, offset) = typedLength(in: bytes, at: start), count > 0, offset + count <= bytes.count else { return nil }
+        return String(bytes: bytes[offset..<offset + count], encoding: .utf8)
+    }
+    /// A typedstream length: one byte below 0x80, or 0x81/0x82 then 2 or 4 little-endian bytes.
+    private static func typedLength(in bytes: [UInt8], at index: Int) -> (Int, Int)? {
+        guard index < bytes.count else { return nil }
+        let first = Int(bytes[index])
+        if first < 0x80 { return (first, index + 1) }
+        guard first == 0x81 || first == 0x82 else { return nil }
+        let width = first == 0x81 ? 2 : 4
+        guard index + 1 + width <= bytes.count else { return nil }
+        let value = (0..<width).reduce(0) { $0 | Int(bytes[index + 1 + $1]) << (8 * $1) }
+        return (value, index + 1 + width)
+    }
+    private static func end(of text: String, in bytes: [UInt8], from start: Int) -> Int? { end(of: Array(text.utf8), in: bytes, from: start) }
+    private static func end(of needle: [UInt8], in bytes: [UInt8], from start: Int) -> Int? {
+        guard start >= 0, bytes.count - needle.count >= start else { return nil }
+        for index in start...(bytes.count - needle.count) where bytes[index..<index + needle.count].elementsEqual(needle) {
+            return index + needle.count
+        }
+        return nil
+    }
 }
