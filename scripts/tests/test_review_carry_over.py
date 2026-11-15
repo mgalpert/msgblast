@@ -255,6 +255,28 @@ class PostingTests(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertTrue(posts[0][1].endswith('/statuses/' + 'b' * 40))
 
+    def test_api_sends_json(self):
+        seen = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{}'
+
+        def fake_urlopen(request, timeout):
+            seen['type'] = request.get_header('Content-type')
+            seen['body'] = json.loads(request.data)
+            return Response()
+
+        with mock.patch('urllib.request.urlopen', side_effect=fake_urlopen):
+            post_review_status.api('t', 'POST', 'https://api.github.com/x', {'state': 'success'})
+        self.assertEqual(seen, {'type': 'application/json', 'body': {'state': 'success'}})
+
     def test_never_replaces_an_existing_review_status(self):
         for state in ['failure', 'error', 'pending', 'success']:
             with self.subTest(state):
