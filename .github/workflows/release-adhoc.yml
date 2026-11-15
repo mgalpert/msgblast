@@ -211,10 +211,33 @@ jobs:
           MSGBLAST_ED_KEY_FILE: ${{ runner.temp }}/msgblast-sparkle-private-key
         run: rm -f -- "$MSGBLAST_ED_KEY_FILE"
 
-  testflight:
-    name: Upload iPhone build to TestFlight
+  testflight_changes:
+    name: Check for iPhone changes
     needs: release
     if: vars.MSGBLAST_TESTFLIGHT_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: read
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare against the last TestFlight upload
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTFLIGHT_BASE_SHA: ${{ vars.MSGBLAST_TESTFLIGHT_BASE_SHA }}
+        run: bash scripts/testflight_changes.sh
+
+  testflight:
+    name: Upload iPhone build to TestFlight
+    needs: [release, testflight_changes]
+    if: needs.testflight_changes.outputs.changed == 'true'
     runs-on: xcode-27
     timeout-minutes: 30
     environment: testflight

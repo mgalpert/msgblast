@@ -51,11 +51,16 @@ TestFlight credentials separate from Mac notarization.
 
 Set the environment secret `MSGBLAST_TESTFLIGHT_API_KEY` to the contents of the
 downloaded `.p8`. Set environment variables `MSGBLAST_TESTFLIGHT_KEY_ID` and
-`MSGBLAST_TESTFLIGHT_ISSUER_ID` from App Store Connect. Once those are in place,
-set the repository variable `MSGBLAST_TESTFLIGHT_ENABLED` to `true`.
+`MSGBLAST_TESTFLIGHT_ISSUER_ID` from App Store Connect. Set the repository
+variable `MSGBLAST_TESTFLIGHT_BASE_SHA` to the full source SHA of the last manual
+TestFlight upload. Then set `MSGBLAST_TESTFLIGHT_ENABLED` to `true`.
 
-After the Mac release succeeds, the iPhone job uses its source revision,
-marketing version, and allocated build number. Keep manual uploads below the
+After the Mac release succeeds, the workflow compares its source to the last
+successful deployment in the `testflight` environment. It uses the manual
+baseline until the first automated upload succeeds. Changes to iPhone sources,
+shared protocol, app icon, or build inputs trigger an upload using the same
+marketing version and allocated build number as the Mac release. A failed or
+skipped upload leaves the baseline in place. Keep manual uploads below the
 next release counter value so they do not collide with automation. If the
 upload job fails after sending the build, check App Store Connect before
 rerunning it. Follow the [TestFlight checklist](testflight-checklist.md) for
