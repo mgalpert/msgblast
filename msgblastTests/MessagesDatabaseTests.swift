@@ -195,6 +195,28 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
         return url
     }
+    func testNewestMessageServiceDecidesWhichChatsAreIMessage() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+        let sql = """
+        ALTER TABLE chat ADD COLUMN service_name TEXT;
+        ALTER TABLE message ADD COLUMN service TEXT;
+        UPDATE chat SET service_name='SMS' WHERE guid IN ('A','sms');
+        UPDATE message SET service='SMS' WHERE guid='anchor';
+        UPDATE message SET service='iMessage' WHERE guid IN ('reply','reaction');
+        INSERT INTO chat VALUES('green','iMessage');
+        INSERT INTO handle VALUES('green@example.com','iMessage');
+        INSERT INTO chat_handle_join VALUES(5,5);
+        INSERT INTO message(guid,text,date,is_from_me,service) VALUES('green-latest','now SMS',810000005000000000,0,'SMS');
+        INSERT INTO chat_message_join VALUES(5,5);
+        """
+        XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(db)
+        let chats = try MessagesDatabase(path: url.path).chats()
+        XCTAssertEqual(chats.map(\.id), ["A"], "A chat that started as SMS but now uses iMessage is listed; one now on SMS is not; with no message service, service_name decides")
+        XCTAssertEqual(chats.first?.service, "iMessage")
+    }
     func testReadOnlyAdapterRoutesAndReadsWithoutMutatingDatabase() throws {
         let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
         let before = try Data(contentsOf: url)

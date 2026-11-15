@@ -49,7 +49,11 @@ public final class MessagesDatabase {
     }
     public func chats() throws -> [Chat] {
         let title = chatColumns.contains("display_name") ? "c.display_name" : "NULL"
-        let service = chatColumns.contains("service_name") ? "COALESCE(NULLIF(c.service_name,''),h.service,'')" : "COALESCE(h.service,'')"
+        // chat.service_name keeps the service a chat started on; its newest message says how it is used now.
+        let recent = columns.contains("service")
+            ? "(SELECT m2.service FROM chat_message_join cm2 JOIN message m2 ON m2.ROWID=cm2.message_id WHERE cm2.chat_id=c.ROWID AND COALESCE(m2.service,'')<>'' ORDER BY m2.date DESC,m2.ROWID DESC LIMIT 1),"
+            : ""
+        let service = chatColumns.contains("service_name") ? "COALESCE(\(recent)NULLIF(c.service_name,''),h.service,'')" : "COALESCE(\(recent)h.service,'')"
         // Positive Business evidence only; names and phone numbers are not identities.
         let business = columns.contains("balloon_bundle_id")
             ? "MAX(CASE WHEN m.balloon_bundle_id='com.apple.icloud.apps.messages.business.extension' OR m.balloon_bundle_id LIKE '%:com.apple.icloud.apps.messages.business.extension' THEN 1 ELSE 0 END)"
