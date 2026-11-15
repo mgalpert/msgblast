@@ -246,6 +246,11 @@ this section in the same PR so the next agent does not repeat the old rule.
   chose.
 - When you do ask, say what you checked and what you found, so the owner fills
   the gap instead of repeating your search.
+- Never pose a question or decision without context. Say what prompted it and
+  what is at stake, give each option with its pros and cons, and recommend one
+  with the reason. The owner should be able to decide from that one message,
+  often on a phone, without opening another thread or asking what an option
+  means.
 
 ### Builds handed to the owner
 
