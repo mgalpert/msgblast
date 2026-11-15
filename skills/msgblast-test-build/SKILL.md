@@ -8,7 +8,7 @@ description: Publish a signed, notarized msgblast Dev feature build for testers 
 Locate the intended msgblast checkout from the current chat or repository remote;
 do not rely on a saved worktree path. Read its `AGENTS.md` and
 `docs/testing-builds.md`. That runbook is the source for workflow inputs, approval,
-verification, and failure handling. Use `mgalpert/msgblast` unless the user has
+verification, and failure handling. Use `contains-studio/msgblast` unless the user has
 explicitly selected another configured repository. This skill publishes Dev
 prereleases, not production updates or simulated Demo recordings.
 

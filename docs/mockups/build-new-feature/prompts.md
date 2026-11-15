@@ -45,7 +45,7 @@ Content from top to bottom:
 - Standard title bar text "Build a New Feature".
 - A small 48px genuine msgblast green app icon beside a large warm headline, verbatim "Excited to see what you build."
 - Secondary sentence verbatim "Make msgblast work the way you want. Build it for yourself, then share it with everyone."
-- Compact repository row with GitHub symbol, label "Public GitHub repository", and blue clickable-looking text "github.com/mgalpert/msgblast ↗".
+- Compact repository row with GitHub symbol, label "Public GitHub repository", and blue clickable-looking text "github.com/contains-studio/msgblast ↗".
 - Form label "What would you like to build?" and an empty rounded two-line text input with muted placeholder "e.g. Pin my favorite comparisons". A subtle "Optional — you can add your idea in your coding agent." hint beneath it.
 - A compact horizontal three-step row: "1  Fork the repo" / "2  Build for yourself" / "3  Share a pull request". Use restrained outlined numbered circles and no large cards.
 - Label "Prompt for your coding agent". Below it, a large inset selectable text preview with these exact paragraphs in small but comfortably readable monospaced text:
@@ -53,7 +53,7 @@ Content from top to bottom:
 
 My idea: [Describe your feature here]
 
-Fork https://github.com/mgalpert/msgblast and clone my fork locally. Read AGENTS.md and the build guide. Implement my idea and help me run my own build.
+Fork https://github.com/contains-studio/msgblast and clone my fork locally. Read AGENTS.md and the build guide. Implement my idea and help me run my own build.
 
 Use the Demo app with sample data to test and record the feature. Prepare a pull request with a clear description, screenshots, and a short video."
 - Under the preview a small secondary link "Build guide ↗" and adjacent gray text "Mac + Xcode required to run the app."

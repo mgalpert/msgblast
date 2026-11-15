@@ -444,7 +444,7 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(preview.exists)
         let emptyPrompt = try XCTUnwrap(preview.value as? String)
         XCTAssertTrue(emptyPrompt.contains("[Describe the problem and the behavior you want.]"))
-        XCTAssertTrue(emptyPrompt.contains("https://github.com/mgalpert/msgblast"))
+        XCTAssertTrue(emptyPrompt.contains("https://github.com/contains-studio/msgblast"))
         XCTAssertTrue(emptyPrompt.contains("AGENTS.md"))
         XCTAssertTrue(emptyPrompt.contains("Screenshots"))
         XCTAssertTrue(emptyPrompt.contains("Video"))

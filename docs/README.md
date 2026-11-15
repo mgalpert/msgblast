@@ -1,7 +1,7 @@
 # msgblast documentation
 
 Start here to build your own feature, understand the app, or maintain its services.
-The public source repository is [mgalpert/msgblast](https://github.com/mgalpert/msgblast).
+The public source repository is [contains-studio/msgblast](https://github.com/contains-studio/msgblast).
 
 ## Build and contribute
 

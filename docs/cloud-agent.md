@@ -12,7 +12,7 @@ Do not commit `.cursor/environment.json` to switch this repo onto a repository-m
 
 ## Starting revision and fresh source
 
-Cursor personal defaults are `mgalpert/msgblast` and base branch `main`. The saved
+Cursor personal defaults are `contains-studio/msgblast` and base branch `main`. The saved
 msgblast environment has **Update Stale Builds** enabled and **Staleness Threshold**
 set to `0`, so default-branch runs pull fresh source at startup. Select a different
 pushed branch explicitly in the launch picker when the task needs it. API launches
@@ -85,8 +85,8 @@ UI regressions live in `msgblastUITests/WorkflowTests.swift`. Select the fixture
 Watch the run for the proposed revision before merge:
 
 ```sh
-gh run list -R mgalpert/msgblast --workflow validate.yml --limit 5
-gh run view RUN_ID -R mgalpert/msgblast --json status,conclusion,headSha,url,event
+gh run list -R contains-studio/msgblast --workflow validate.yml --limit 5
+gh run view RUN_ID -R contains-studio/msgblast --json status,conclusion,headSha,url,event
 ```
 
 Confirm `headSha` is the revision under review. On a pull request, `github.sha` is the temporary merge commit. Both the native test job and the preview job check out `pull_request.head.sha` and record that branch head. Do not dispatch `release-adhoc.yml` as a test.
@@ -187,7 +187,7 @@ access as proof of a contributor's access.
 Published baseline checked October 6, 2026:
 
 - Version 0.2.2, build 7, source `f86cce472649d5468792d04a86dd05a7b763774a`
-- Actions run `37424723747` (`https://github.com/mgalpert/msgblast/actions/runs/37424723747`), conclusion success
+- Actions run `37424723747` (`https://github.com/contains-studio/msgblast/actions/runs/37424723747`), conclusion success
 - Manifest `https://updates.msgblast.app/releases/0.2.2-7.json`
 - `https://updates.msgblast.app/latest.zip` returned a no-store 302 to `https://updates.msgblast.app/downloads/msgblast-0.2.2-7.zip`
 

@@ -58,9 +58,9 @@ current instructions when implementing the invitation's copied prompt.
 
 ## Links
 
-- Public repository: https://github.com/mgalpert/msgblast
-- Fork page: https://github.com/mgalpert/msgblast/fork
-- Build guide: https://github.com/mgalpert/msgblast/blob/main/docs/build-from-source.md
+- Public repository: https://github.com/contains-studio/msgblast
+- Fork page: https://github.com/contains-studio/msgblast/fork
+- Build guide: https://github.com/contains-studio/msgblast/blob/main/docs/build-from-source.md
 
 GitHub reported the repository as PUBLIC during this design session.
 
@@ -71,7 +71,7 @@ I'm using msgblast and want to build a new feature.
 
 My idea: [Describe your feature here]
 
-Fork https://github.com/mgalpert/msgblast and clone my fork locally. Read AGENTS.md and the build guide. Implement my idea and help me run my own build.
+Fork https://github.com/contains-studio/msgblast and clone my fork locally. Read AGENTS.md and the build guide. Implement my idea and help me run my own build.
 
 Use the Demo app with sample data to test and record the feature. Prepare a pull request with a clear description, screenshots, and a short video.
 ```
