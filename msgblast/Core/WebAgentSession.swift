@@ -53,6 +53,13 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
     private var sharedTurnsSave: Task<Void, Never>?
     private var sharedTurnsUnsaved = false
+    /// Alexa's suggestion buttons, while its newest reply is this comparison's last turn and the page could take a tap.
+    public func actionsForComparison(_ id: UUID) -> WebPageActions? {
+        guard provider == .alexaShopping, let actions = snapshot.actions, !actions.labels.isEmpty, snapshot.ready, !loading, !isSending,
+              !state.attempts.contains(where: { $0.comparisonID == id && [.attempting, .uncertain].contains($0.status) }),
+              messagesForComparison(id).last?.id == actions.messageID else { return nil }
+        return actions
+    }
     private var sharesPage: Bool { (provider == .dots || provider.sharesOneConversation) && !provider.usesNativeConversation }
     /// The shared page can reload without earlier comparisons' turns, so keep what it has shown.
     /// Saving waits for the page to settle rather than writing on every streamed update.
@@ -1150,9 +1157,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func send(_ text: String, comparisonID: UUID? = nil,
                      onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {},
                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
-                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true) async -> WebSendAttempt? {
+                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true, action: String? = nil) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
-        guard plannedAttemptID == nil || provider.desktopApp != nil else { return nil }
+        guard plannedAttemptID == nil || provider.desktopApp != nil, action == nil || provider == .alexaShopping else { return nil }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft) }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -1163,6 +1170,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         isSending = true
         defer { isSending = false }
         var attempt = WebSendAttempt(text: text)
+        attempt.action = action.map { _ in true }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         attempt.comparisonID = id
         var submissionWasPossible = false
@@ -1192,7 +1200,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let expectedURL = snapshot.url
             let preparation: [String: Any]?
             do {
-                preparation = try await webView.callAsyncJavaScript(script.prepare, arguments: ["text": text], in: nil, contentWorld: .defaultClient) as? [String: Any]
+                preparation = try await runPrepare(text, action: action)
             } catch {
                 guard generation == navigationGeneration, !loading else {
                     throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.")
@@ -1210,13 +1218,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.receiptContext = WebReceiptContext(originalURL: provider == .alexaShopping ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
             receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
-            if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
-            else { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
+            try await waitBeforeClick(preparedDraft, expectedURL: expectedURL, generation: generation, action: action)
             guard generation == navigationGeneration, !loading else { throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.") }
             attempt.status = .attempting
             try store(attempt) // The possible external side effect is durably recorded first.
             submissionWasPossible = true
-            let result = try await webView.callAsyncJavaScript(script.clickSend, arguments: ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL], in: nil, contentWorld: .defaultClient) as? [String: Any]
+            let result = try await runClick(text, preparedDraft: preparedDraft, expectedURL: expectedURL, action: action)
             if result?["clicked"] as? Bool == false {
                 submissionWasPossible = false
                 throw WebSessionFailure.notSent(result?["reason"] as? String ?? "\(provider.name)’s Send control was not clicked.")
@@ -1281,7 +1288,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         let before = Set(context.baseline.map(\.id))
         let text = Self.normalized(attempt.text)
         let claimed = claimedMessageIDs(excluding: attempt)
-        let matches = snapshot.messages.filter { !before.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && Self.normalized($0.text) == text }
+        // A suggestion button may put its own words in your turn, so a tap takes the one new turn of yours.
+        let matches = snapshot.messages.filter { !before.contains($0.id) && !claimed.contains($0.id) && $0.role == "user" && (attempt.action == true || Self.normalized($0.text) == text) }
         guard matches.count <= 1 else { return invalidate() }
         guard let match = matches.first, let comparison = attempt.comparisonID else { return false }
         attempt.status = .observed
@@ -2631,6 +2639,25 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         try save()
     }
 
+    /// Fills the composer, or for a suggestion checks the page still offers that button.
+    private func runPrepare(_ text: String, action offer: String?) async throws -> [String: Any]? {
+        try await webView.callAsyncJavaScript(offer == nil ? script.prepare : script.prepareAction, arguments: offer.map { ["label": text, "messageID": $0] } ?? ["text": text],
+                                              in: nil, contentWorld: .defaultClient) as? [String: Any]
+    }
+
+    /// Clicks Send, or the suggestion button itself, so the page sends whatever that button sends.
+    private func runClick(_ text: String, preparedDraft: String, expectedURL: String, action offer: String?) async throws -> [String: Any]? {
+        try await webView.callAsyncJavaScript(offer == nil ? script.clickSend : script.clickAction,
+                                              arguments: offer.map { ["label": text, "messageID": $0, "expectedURL": expectedURL] } ?? ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL],
+                                              in: nil, contentWorld: .defaultClient) as? [String: Any]
+    }
+
+    /// A suggestion has no composer, so there is no Send control to wait for.
+    private func waitBeforeClick(_ preparedDraft: String, expectedURL: String, generation: Int, action: String?) async throws {
+        if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
+        else if action == nil { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
+    }
+
     private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
@@ -2663,6 +2690,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     private static func normalized(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
     private func store(_ attempt: WebSendAttempt) throws {
         if let index = state.attempts.firstIndex(where: { $0.id == attempt.id }) { state.attempts[index] = attempt }
+        // A receipt can name a turn the page already shows, in words other than the request's.
+        if attempt.messageID != nil { rememberSharedTurns() }
         try save()
     }
     private func save() throws {

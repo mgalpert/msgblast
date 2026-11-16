@@ -117,6 +117,7 @@ duplicate-send and unresolved-attempt guard applies:
 | New conversation | `AppModel.sendShared` (websites, apps, CLIs, bots, Messages) or `startBlast` (Messages only) |
 | Shared follow-up | `AppModel.sendShared` with the existing conversation |
 | Private message | `AppModel.sendDirect`, a Messages private follow-up, or a one-agent `startBlast` |
+| Choose a suggestion | `AppModel.sendDirect` with `action`: Alexa's page clicks its own button with that label (a turn's `actions`), only while the reply named by the command's `offerID` (the turn's `actionsID`) is still the newest, so Alexa gets what the button sends |
 | End conversation | `AppModel.endConversation`, only when every website history is loaded (`historyNotLoaded` otherwise) |
 | Rename | `AppModel.renameConversation` sets the comparison's name (trimmed, 1 to 80 characters); the prompt stays as it was |
 | Acknowledge / stop waiting | `acknowledgeIncompleteRequest`, `cancelNativeRequest` (the other app is not stopped) |
