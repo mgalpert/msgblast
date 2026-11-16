@@ -632,7 +632,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         attempt.comparisonID = comparisonID
         attempt.detail = reason
         state.attempts.insert(attempt, at: 0)
-        do { try save(); objectWillChange.send(); return attempt }
+        do {
+            try save()
+            objectWillChange.send()
+            beginSubmissionObservation?(comparisonID, id)?(attempt.id, .notSent, nil)
+            return attempt
+        }
         catch { self.error = "Could not save the unsent request: \(error.localizedDescription)"; return nil }
     }
 
@@ -654,7 +659,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
               state.attempts[index].status == .preparing else { return nil }
         state.attempts[index].status = .notSent
         state.attempts[index].detail = reason
-        do { try save(); objectWillChange.send(); return state.attempts[index] }
+        do {
+            try save()
+            objectWillChange.send()
+            let attempt = state.attempts[index]
+            if let comparisonID = attempt.comparisonID {
+                beginSubmissionObservation?(comparisonID, id)?(attempt.id, .notSent, nil)
+            }
+            return attempt
+        }
         catch { self.error = "Could not save the unsent request: \(error.localizedDescription)"; return nil }
     }
 
@@ -1153,32 +1166,36 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                      plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true) async -> WebSendAttempt? {
         let finish = comparisonID.flatMap { beginSubmissionObservation?($0, id) }
         let started = ContinuousClock.now
-        var confirmedAt: ContinuousClock.Instant?
-        let attempt = await performSend(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: {
-            if confirmedAt == nil { confirmedAt = .now }
-            onConfirmedSubmission()
-        }, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft)
+        let onObserved: @MainActor @Sendable (UUID) -> Void = { attemptID in
+            finish?(attemptID, .waiting, started.duration(to: .now))
+        }
+        let attempt = await performSend(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished,
+                                        onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID,
+                                        consumePrivateDraft: consumePrivateDraft, onObserved: finish == nil ? nil : onObserved)
         if let attempt, let finish {
-            let duration: Duration? = if let confirmedAt {
-                started.duration(to: confirmedAt)
-            } else if (provider.personalAgentProvider == nil && provider.desktopApp == nil) || attempt.status == .notSent {
-                started.duration(to: .now)
-            } else { nil }
-            finish(attempt.id, confirmedAt == nil ? attempt.status : .waiting, duration)
+            let canTimeResult = (provider.personalAgentProvider == nil && provider.desktopApp == nil) || attempt.status == .notSent
+            finish(attempt.id, attempt.status, canTimeResult ? started.duration(to: .now) : nil)
         }
         return attempt
     }
 
     var beginSubmissionObservation: WebAgents.SubmissionObserver?
 
-    private func performSend(_ text: String, comparisonID: UUID? = nil,
-                     onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {},
-                     onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
-                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true) async -> WebSendAttempt? {
+    private func performSend(_ text: String, comparisonID: UUID?,
+                             onSubmissionFinished: @escaping @MainActor @Sendable () -> Void,
+                             onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void,
+                             plannedAttemptID: UUID?, consumePrivateDraft: Bool,
+                             onObserved: (@MainActor @Sendable (UUID) -> Void)?) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
         guard plannedAttemptID == nil || provider.desktopApp != nil else { return nil }
-        if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
-        if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft) }
+        if provider == .grokbot {
+            return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft, onObserved: onObserved)
+        }
+        if provider.personalAgentProvider != nil || provider.desktopApp != nil {
+            return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished,
+                                    onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID,
+                                    consumePrivateDraft: consumePrivateDraft, onObserved: onObserved)
+        }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard !storageFailed else { error = "Repair web session storage before sending."; return nil }
         await refresh()
@@ -1894,7 +1911,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     @MainActor private static func handOffAfterSubmission(leased: Bool, _ handoff: @MainActor @Sendable () -> Void) {
         if !leased { handoff() }
     }
-    private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void, plannedAttemptID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
+    private func sendNative(_ text: String, comparisonID: UUID?, onSubmissionFinished: @escaping @MainActor @Sendable () -> Void, onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void, plannedAttemptID: UUID?, consumePrivateDraft: Bool, onObserved: (@MainActor @Sendable (UUID) -> Void)?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard provider.desktopApp == nil || !loading else { error = "Wait for the app connection check to finish before sending."; return nil }
         let id = comparisonID ?? state.comparisonID ?? UUID()
@@ -1987,7 +2004,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let submitAction: @Sendable () async -> Void = { [weak self] in await self?.recordDesktopSendPressed(outgoingID); await sendFocus?.restoreAfterSubmission() }
             let submitted: @Sendable () async throws -> Void = { [weak self] in
                 guard let self else { throw CancellationError() }
-                try await self.recordDesktopSubmission(attemptID: outgoingID); await Self.handOffAfterSubmission(leased: sendFocus != nil, onSubmissionFinished)
+                try await self.recordDesktopSubmission(attemptID: outgoingID)
+                await onObserved?(outgoingID)
+                await Self.handOffAfterSubmission(leased: sendFocus != nil, onSubmissionFinished)
                 await onConfirmedSubmission()
             }
             let request = Task { [fixture, provider, installedAgent, museApp, wabiApp, desktopDriver, geminiApp, claudeApp, chatgptApp] in
@@ -2012,6 +2031,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         saved.title = saved.dedicatedTitle
                         try self.recordGeminiSubmission(saved)
                     }
+                    if provider.desktopApp != nil { try await submitted() }
                     return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
                 }
                 let refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)?
@@ -2952,7 +2972,7 @@ extension WebAgentSession {
             throw error
         }
     }
-    private func sendGrokBot(_ text: String, comparisonID: UUID?, consumePrivateDraft: Bool) async -> WebSendAttempt? {
+    private func sendGrokBot(_ text: String, comparisonID: UUID?, consumePrivateDraft: Bool, onObserved: (@MainActor @Sendable (UUID) -> Void)?) async -> WebSendAttempt? {
         guard isEnabled, !shuttingDown, !isSending, !configuringGrokBot, !storageFailed, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let comparisonID = comparisonID ?? state.comparisonID ?? UUID()
         guard !hasIncompleteNativeRequest(for: comparisonID) else { error = "Wait for Grok Bot's previous reply or stop waiting before sending another request."; return nil }
@@ -2978,6 +2998,7 @@ extension WebAgentSession {
             grokBotReceiver?.register(id: attempt.id, tokenHash: attempt.callbackHash!)
             submitted = true
             if !fixture { try await GrokBotService.submit(grokBotCredentials!, body: body) }
+            onObserved?(attempt.id)
             if let saved = state.attempts.first(where: { $0.id == attempt.id && $0.status != .attempting }) { attempt = saved }
             else {
                 attempt.status = fixture || grokBotReplyURL == baseURL ? .waiting : .uncertain

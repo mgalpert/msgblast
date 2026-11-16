@@ -737,6 +737,7 @@ final class AppModel: ObservableObject {
     func submit(_ id: UUID, retry: Bool, only memberID: UUID? = nil, telemetryManagedExternally: Bool = false) async {
         guard let i = index(id), state.comparisons[i].endedAt == nil, !busy else { return }
         let telemetryStarted = Date()
+        let statsRevision = localStats.recordingRevision
         let previouslySubmitted = Set(state.comparisons[i].members.filter { $0.submission == .submitted }.map(\.id))
         do { try RecipientSet.validate(state.comparisons[i].members) } catch { self.error = error.localizedDescription; return }
         busy = true; defer { busy = false; refresh() }
@@ -745,7 +746,7 @@ final class AppModel: ObservableObject {
             guard memberID == nil || member.id == memberID else { continue }
             guard retry ? member.submission.canRetry : member.submission == .ready else { continue }
             let targets = !retry && memberID != nil ? [member.id.uuidString] : statsTargets(for: state.comparisons[i])
-            let finishStats = localStats.begin(comparisonID: id, member: member, targetIDs: targets)
+            let finishStats = localStats.begin(comparisonID: id, member: member, targetIDs: targets, recordingRevision: statsRevision)
             defer { finishStats?(state.comparisons[i].members[j].submission) }
             if let payload = member.payload {
                 _ = await deliver(payload, to: member.chat, simulateFailure: demo && demoFailureOnce && j == state.comparisons[i].members.count - 1) { updated in
@@ -846,6 +847,7 @@ final class AppModel: ObservableObject {
                   supplied: (text: String, attachments: [MessageAttachment])? = nil) async {
         guard let i = index(id), state.comparisons[i].endedAt == nil, !busy,
               memberID == nil || !webBroadcastBusy || webBroadcastInputsFinished else { return }
+        let statsRevision = localStats.recordingRevision
         do { try freezeSharedContext(id) } catch { self.error = error.localizedDescription; return }
         let comparison = state.comparisons[i]
         let selected = recipientIDs.map(Set.init)
@@ -862,7 +864,7 @@ final class AppModel: ObservableObject {
             let previouslySubmitted = Set(state.comparisons[i].followUps[k].states.filter { $0.value == .submitted }.map(\.key))
             busy = true
             for member in prepared.targets where state.comparisons[i].followUps[k].memberIDs.contains(member.id) {
-                await sendFollowUp(id, at: i, attempt: k, to: member)
+                await sendFollowUp(id, at: i, attempt: k, to: member, statsRevision: statsRevision)
             }
             try save()
             let completed = state.comparisons[i].followUps[k]
@@ -901,13 +903,13 @@ final class AppModel: ObservableObject {
         return (k, targets)
     }
     /// Sends follow-up `k` of comparison `i` to one member that is ready or failed; failures are recorded on the follow-up.
-    private func sendFollowUp(_ id: UUID, at i: Int, attempt k: Int, to member: Member) async {
+    private func sendFollowUp(_ id: UUID, at i: Int, attempt k: Int, to member: Member, statsRevision: UUID?) async {
         let key = member.id.uuidString
         let status = state.comparisons[i].followUps[k].states[key]
         guard status == .ready || status == .failed else { return }
         let followUp = state.comparisons[i].followUps[k]
         let finishStats = localStats.begin(comparisonID: id, followUp: followUp, member: member,
-                                           targetIDs: followUp.memberIDs.map(\.uuidString))
+                                           targetIDs: followUp.memberIDs.map(\.uuidString), recordingRevision: statsRevision)
         defer { finishStats?(state.comparisons[i].followUps[k].states[key]) }
         if let payload = state.comparisons[i].followUps[k].payloads?[key] {
             _ = await deliver(payload, to: member.chat) { updated in

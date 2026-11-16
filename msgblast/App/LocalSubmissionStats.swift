@@ -4,11 +4,11 @@ import msgblastCore
 
 @MainActor
 final class LocalSubmissionStats: ObservableObject {
-    enum Outcome: String, Codable {
+    enum Outcome: String, Codable, Sendable {
         case submitted, failed, uncertain
     }
 
-    struct Attempt: Codable, Identifiable {
+    struct Attempt: Codable, Identifiable, Sendable {
         var id: UUID
         var comparisonID: UUID
         var turnID: UUID
@@ -20,9 +20,10 @@ final class LocalSubmissionStats: ObservableObject {
     }
 
     struct Turn: Sendable {
-        let id: UUID
+        let id: UUID?
         let isFollowUp: Bool
         let targetIDs: [String]
+        let recordingRevision: UUID?
 
         @TaskLocal static var current: Turn?
     }
@@ -40,6 +41,7 @@ final class LocalSubmissionStats: ObservableObject {
 
     var enabled: Bool { saved.enabled }
     var attempts: [Attempt] { saved.attempts }
+    var recordingRevision: UUID? { enabled && readable && error == nil ? revision : nil }
 
     init(directory: URL) {
         url = directory.appendingPathComponent("My Stats", isDirectory: true).appendingPathComponent("submissions.json")
@@ -71,9 +73,8 @@ final class LocalSubmissionStats: ObservableObject {
         save(Saved(enabled: saved.enabled))
     }
 
-    private func begin() -> ((Attempt) -> Void)? {
-        guard enabled, readable, error == nil else { return nil }
-        let revision = self.revision
+    private func begin(recordingRevision: UUID?) -> (@MainActor @Sendable (Attempt) -> Void)? {
+        guard let revision = recordingRevision, revision == self.recordingRevision else { return nil }
         var finished = false
         return { [weak self] attempt in
             guard !finished, let self, self.revision == revision, self.enabled, self.error == nil else { return }
@@ -84,9 +85,10 @@ final class LocalSubmissionStats: ObservableObject {
         }
     }
 
-    func beginWeb(comparisonID: UUID, recipient: WebAgentID) -> (@MainActor (UUID, WebSendStatus, Duration?) -> Void)? {
-        guard let record = begin() else { return nil }
+    func beginWeb(comparisonID: UUID, recipient: WebAgentID) -> WebAgents.SubmissionResultObserver? {
         let turn = Turn.current
+        let capture = if let turn { turn.recordingRevision } else { recordingRevision }
+        guard let record = begin(recordingRevision: capture) else { return nil }
         return { attemptID, status, duration in
             let outcome: Outcome
             switch status {
@@ -95,7 +97,7 @@ final class LocalSubmissionStats: ObservableObject {
             case .uncertain: outcome = .uncertain
             default: return
             }
-            record(Attempt(id: attemptID, comparisonID: comparisonID, turnID: turn?.id ?? attemptID,
+            record(Attempt(id: attemptID, comparisonID: comparisonID, turnID: turn?.id ?? (turn?.isFollowUp == false ? comparisonID : attemptID),
                            isFollowUp: turn?.isFollowUp ?? true, recipientID: recipient.id,
                            targetIDs: turn?.targetIDs ?? [recipient.id], outcome: outcome, seconds: duration.map(Self.seconds)))
         }
@@ -106,8 +108,9 @@ final class LocalSubmissionStats: ObservableObject {
         return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
     }
 
-    func begin(comparisonID: UUID, followUp: FollowUp? = nil, member: Member, targetIDs: [String]) -> ((Submission?) -> Void)? {
-        guard let record = begin() else { return nil }
+    func begin(comparisonID: UUID, followUp: FollowUp? = nil, member: Member, targetIDs: [String], recordingRevision: UUID?) -> ((Submission?) -> Void)? {
+        let capture = if let turn = Turn.current { turn.recordingRevision } else { recordingRevision }
+        guard let record = begin(recordingRevision: capture) else { return nil }
         let turnID = followUp?.id ?? comparisonID
         let targets = Turn.current?.targetIDs ?? attempts.first { $0.turnID == turnID && $0.recipientID == member.id.uuidString }?.targetIDs ?? targetIDs.sorted()
         let attemptID = UUID()

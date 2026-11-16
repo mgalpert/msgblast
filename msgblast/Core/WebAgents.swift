@@ -31,7 +31,8 @@ public final class WebAgents: ObservableObject {
             (hasBothSavedChats && archivedAgents.contains($0.id) && [.chatgptApp, .dotsApp].contains($0.provider)) }
     }
     public var comparisonID: UUID? { workspaceSession.state.comparisonID }
-    public typealias SubmissionObserver = @MainActor (UUID, WebAgentID) -> (@MainActor (UUID, WebSendStatus, Duration?) -> Void)?
+    public typealias SubmissionResultObserver = @MainActor @Sendable (UUID, WebSendStatus, Duration?) -> Void
+    public typealias SubmissionObserver = @MainActor (UUID, WebAgentID) -> SubmissionResultObserver?
     private let submissionObserver: SubmissionObserver?
 
     public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false, submissionObserver: SubmissionObserver? = nil) {
