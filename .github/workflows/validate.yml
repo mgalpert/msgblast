@@ -101,6 +101,7 @@ jobs:
             -destination 'platform=macOS,arch=arm64' \
             -resultBundlePath "$PWD/build/native-tests.xcresult" \
             ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
+            -parallel-testing-enabled YES \
             -only-testing:msgblastTests -only-testing:msgblastRemoteProtocolTests \
             test 2>&1 | tee build/native-tests.log
 
