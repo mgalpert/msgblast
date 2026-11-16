@@ -52,6 +52,20 @@ final class DesktopAccessibilityTests: XCTestCase {
         XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXStaticText", label: "Message Attach file Dictate a message Send"), app: .muse))
     }
 
+    func testMuseSideChatListOnlyBlocksWhenItReachesTheComposer() throws {
+        func observed(listX: Double) throws -> MuseAppObservation {
+            try MuseAppProfile.parse(.init(role: "AXWindow", children: [
+                .init(role: "AXWebArea", url: MuseSideChatBinding.newURL, children: [
+                    .init(role: "AXButton", label: "New side chat", frame: .init(x: listX, y: 120, w: 22, h: 23)),
+                    .init(role: "AXGroup", label: "Chat messages"),
+                    .init(role: "AXButton", label: "Message Attach file\nSend", frame: .init(x: 300, y: 1200, w: 670, h: 52), editorText: "")
+                ])
+            ]))
+        }
+        XCTAssertFalse(try observed(listX: 250).sidebarOpen, "A list docked beside the chat leaves the composer usable")
+        XCTAssertTrue(try observed(listX: 400).sidebarOpen, "A list over the composer must still be closed first")
+    }
+
     func testMuseReplyReaderDoesNotDependOnComposerOrInputFocus() throws {
         let url = URL(string: "https://muse.ai/thread/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
         let messages = DesktopAccessibilityNode(role: "AXGroup", label: "Chat messages", children: [

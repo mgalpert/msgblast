@@ -226,9 +226,16 @@ enum MuseAppProfile {
         }
         let header = nodes.first { $0.role == "AXButton" && $0.label.contains("Open chat and side chats") }?.label
         let title = header.map { $0.components(separatedBy: " Unread chats").first ?? $0 } ?? "Muse side chat"
+        // Muse 12.1 docks the side-chat list beside the chat. Only a list that
+        // reaches the composer has to be closed before typing.
+        let list = nodes.first { $0.role == "AXButton" && $0.label == "New side chat" }
+        let listCoversComposer = list.map { list in
+            guard let listFrame = list.frame, let composerFrame = composer?.frame else { return true }
+            return listFrame.x + listFrame.w > composerFrame.x
+        } ?? false
         return .init(url: url, draft: repliesOnly ? "" : composer!.editorText!, composerFocused: !repliesOnly && composer?.focused == true,
                      messages: try MuseTranscript.messages(in: convert(transcripts[0])), composerIdentity: composer?.identity,
-                     sidebarOpen: nodes.contains { $0.role == "AXButton" && $0.label == "New side chat" },
+                     sidebarOpen: listCoversComposer,
                      windowBounds: root.frame.map { .init(x: $0.x, y: $0.y, width: $0.w, height: $0.h) },
                      generating: nodes.contains { $0.role == "AXButton" && ($0.label == "Stop" || DesktopAccessibility.museComposerAction($0.label) == "Stop") }, title: title)
     }
