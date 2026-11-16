@@ -65,7 +65,7 @@ import msgblastRemoteProtocol
         XCTAssertEqual(noOffer, .invalidArguments("actionsId is required"))
         let readOnly = await refusal("msgblast_agent_choose", #"{"comparisonId":"\#(comparison.uuidString)","agent":"web:chatgpt","action":"Add it","actionsId":"reply-3"}"#, host: host, access: .readOnly)
         XCTAssertEqual(readOnly, .needsAccess(.full), "Read only agents can see choices but not make them")
-        let noComparison = await refusal("msgblast_agent_choose", #"{"agent":"web:chatgpt","action":"Add it"}"#, host: host)
+        let noComparison = await refusal("msgblast_agent_choose", #"{"agent":"web:chatgpt","action":"Add it","actionsId":"reply-3"}"#, host: host)
         XCTAssertEqual(noComparison, .invalidArguments("comparisonId is required"))
         XCTAssertEqual(host.commands.count, 1)
     }
