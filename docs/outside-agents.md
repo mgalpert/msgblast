@@ -63,7 +63,7 @@ this Mac under your account, and remove names you no longer use.
 | `msgblast_blast_start` | Full access | One message to several agents, as a new comparison |
 | `msgblast_blast_follow_up` | Full access | A follow-up in a comparison |
 | `msgblast_agent_message` | Full access | A private message to one agent |
-| `msgblast_agent_choose` | Full access | Taps one of an agent's suggestion buttons (Alexa Shopping's choices), listed as `actions` on its newest reply in `msgblast_comparison_read` |
+| `msgblast_agent_choose` | Full access | Taps one of an agent's suggestion buttons (Alexa Shopping's choices), listed as `actions` on its newest reply in `msgblast_comparison_read`; `actionsId` names that reply, so a choice is refused once a newer reply replaces it |
 | `msgblast_comparison_end` | Full access | Ends a comparison |
 
 ## Comparison view and mentions

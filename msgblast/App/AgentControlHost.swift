@@ -46,7 +46,8 @@ extension AppModel: AgentControlHost {
             guard let session = webAgents.sessions.first(where: { $0.id == id }) else { return [] }
             let offered = comparison.endedAt == nil ? session.actionsForComparison(comparison.id) : nil
             return session.messagesForComparison(comparison.id).map {
-                AgentControlTurn(agent: session.name, outgoing: $0.role == "user", text: $0.text, date: nil, actions: offered?.messageID == $0.id ? offered?.labels : nil)
+                AgentControlTurn(agent: session.name, outgoing: $0.role == "user", text: $0.text, date: nil, actions: offered?.messageID == $0.id ? offered?.labels : nil,
+                                 actionsId: offered?.messageID == $0.id ? offered?.messageID : nil)
             }
         }
         return messages + web
@@ -69,7 +70,7 @@ extension AppModel: AgentControlHost {
                 guard let session = webAgents.sessions.first(where: { $0.id == id }) else { continue }
                 let key = AgentControlSnapshot.Key(comparisonID: comparison.id, agent: session.name)
                 snapshot.replies[key] = session.messagesForComparison(comparison.id).filter { $0.role != "user" }.count
-                if let offered = session.actionsForComparison(comparison.id) { snapshot.actions[key] = offered.labels }
+                if let offered = session.actionsForComparison(comparison.id) { snapshot.actions[key] = offered }
                 if busy.contains(where: { $0.id == id }) { snapshot.settling.insert(key) }
             }
         }

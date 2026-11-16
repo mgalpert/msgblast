@@ -31,7 +31,7 @@ public enum CommandLedger {
         case .createConversation(let t, let a, _): text = t; agents = a
         case .sendShared(let id, let t, let a, _): conversation = id; text = t; agents = a
         case .sendPrivate(let id, let agent, let t, _): conversation = id; text = t; agents = [agent]
-        case .chooseAction(let id, let agent, let label): conversation = id; text = label; agents = [agent]
+        case .chooseAction(let id, let agent, let label, _): conversation = id; text = label; agents = [agent]
         case .endConversation(let id), .requestReport(let id): conversation = id
         case .acknowledgeIncomplete(let agent, _), .cancelNative(let agent): agents = [agent]
         case .prepareConversation(let id, let a): conversation = id; agents = a

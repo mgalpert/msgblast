@@ -302,8 +302,8 @@ struct ConversationView: View {
             }
             if mine {
                 statusRow(turn, isLatest: isLatest)
-            } else if let actions = turn.actions, let agent = turn.agentID, conversation?.endedAt == nil {
-                actionStack(actions, agent: agent)
+            } else if let actions = turn.actions, let offer = turn.actionsID, let agent = turn.agentID, conversation?.endedAt == nil {
+                actionStack(actions, offer: offer, agent: agent)
                     .padding(.leading, avatarColumn)
                     .padding(.top, Space.tight)
             }
@@ -428,12 +428,12 @@ struct ConversationView: View {
 
     /// The agent's suggestion buttons under its reply, as on its own page. A tap makes the Mac
     /// click that same button, so the agent gets exactly what the button sends.
-    private func actionStack(_ actions: [String], agent: String) -> some View {
+    private func actionStack(_ actions: [String], offer: String, agent: String) -> some View {
         VStack(alignment: .leading, spacing: Space.tight) {
             ForEach(actions, id: \.self) { label in
                 Button {
                     choosing = label
-                    run(.chooseAction(conversationID: conversationID, agentID: agent, label: label)) { choosing = nil }
+                    run(.chooseAction(conversationID: conversationID, agentID: agent, label: label, offerID: offer)) { choosing = nil }
                 } label: {
                     Text(label).font(.subheadline.weight(.medium)).multilineTextAlignment(.leading)
                 }

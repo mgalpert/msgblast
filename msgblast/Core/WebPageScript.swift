@@ -139,7 +139,11 @@ struct WebPageScript {
             const all=messages(),last=all[all.length-1],labels=alexaChips().map(c=>c.label).slice(0,8);
             return last && last.role==='assistant' && labels.length ? {messageID:last.id,labels} : null;
         };
-        const alexaChip = label => { const found=alexaChips().filter(c=>c.label===normalized(label||'')); return found.length===1 ? found[0].element : null; };
+        // The button named `label` under the reply `messageID`, only while that reply is still the newest.
+        const alexaChip = (label,messageID) => {
+            if (alexaActions()?.messageID!==messageID) return null;
+            const found=alexaChips().filter(c=>c.label===normalized(label||'')); return found.length===1 ? found[0].element : null;
+        };
         const conversationLocation = () => {
             const url=new URL(location.href),params=[...url.searchParams];
             if (config.provider==='alexaShopping' && pathAllowed()) return url.origin+'/';
@@ -330,7 +334,7 @@ struct WebPageScript {
         const before=status();
         if (!before.ready) return {ok:false,reason:before.reason};
         if (before.draft.trim()) return {ok:false,reason:`${config.name} already has a draft. Send or clear it in the page first.`};
-        if (!alexaChip(label)) return {ok:false,reason:`${config.name} no longer offers that choice.`};
+        if (!alexaChip(label,messageID)) return {ok:false,reason:`${config.name} no longer offers that choice.`};
         const baseline=messages();
         const existingConversationPaths=[...document.querySelectorAll('a[href]')].map(a=>new URL(a.href,location.href)).filter(u=>u.origin===location.origin).map(u=>u.pathname);
         observation.interrupted=false;
@@ -340,7 +344,7 @@ struct WebPageScript {
     /// Clicks the page's own suggestion button, so Alexa gets whatever that button sends, not just its words.
     var clickAction: String {
         helpers + #"""
-        const current=status(),chip=alexaChip(label);
+        const current=status(),chip=alexaChip(label,messageID);
         if (!current.ready || current.url!==expectedURL || current.draft.trim() || observation.interrupted)
             return {clicked:false,reason:`${config.name} changed before the choice was made. Nothing was clicked.`};
         if (!chip) return {clicked:false,reason:`${config.name} no longer offers that choice.`};

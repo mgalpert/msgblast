@@ -268,7 +268,7 @@ extension AppModel {
     /// for a private reply while a shared send's replies are still arriving (`independent`).
     /// `prepared` runs once the conversation exists (the pane uses it to show the comparison).
     func sendDirect(_ text: String, to session: WebAgentSession, existingID: UUID?, interactive: Bool = true, independent: Bool = false,
-                    action: Bool = false, prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
+                    action: String? = nil, prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
         defer {
             if independent { finishIndependentNativeReply() }
             else { webBroadcastBusy = false }

@@ -108,8 +108,8 @@ public struct AgentControlSnapshot: Equatable, Sendable {
     public var busy: Set<String> = []
     /// When each watched comparison was created.
     public var created: [UUID: Date] = [:]
-    /// Suggestion buttons under each agent's newest reply, by label.
-    public var actions: [Key: [String]] = [:]
+    /// Suggestion buttons under each agent's newest reply. A new reply is a new offer even with the same labels.
+    public var actions: [Key: WebPageActions] = [:]
 
     public init() {}
 
@@ -136,8 +136,8 @@ public struct AgentControlSnapshot: Equatable, Sendable {
             changes.append(Change(kind: .sendResult, comparisonID: key.comparisonID, agent: key.agent, detail: state))
         }
         for key in actions.keys.sorted(by: Self.order) {
-            guard let labels = actions[key], !labels.isEmpty, labels != old.actions[key] else { continue }
-            changes.append(Change(kind: .actionsOffered, comparisonID: key.comparisonID, agent: key.agent, detail: labels.joined(separator: "\n")))
+            guard let offer = actions[key], !offer.labels.isEmpty, offer != old.actions[key] else { continue }
+            changes.append(Change(kind: .actionsOffered, comparisonID: key.comparisonID, agent: key.agent, detail: offer.labels.joined(separator: "\n")))
         }
         for name in busy.subtracting(old.busy).sorted() { changes.append(Change(kind: .agentBusy, comparisonID: nil, agent: name, detail: nil)) }
         for name in old.busy.subtracting(busy).sorted() { changes.append(Change(kind: .agentReady, comparisonID: nil, agent: name, detail: nil)) }

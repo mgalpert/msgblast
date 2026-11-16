@@ -118,12 +118,15 @@ public struct RemoteTurn: Codable, Hashable, Sendable, Identifiable {
     /// newest reply of an open conversation has them, while the Mac could tap one; choose one with
     /// `RemoteAction.chooseAction`. Optional and omitted when empty, so older phones ignore it.
     public var actions: [String]?
+    /// Which offer `actions` belong to; a choice sends it back as `offerID`.
+    public var actionsID: String?
     public init(id: String, conversationID: UUID, agentID: String?, role: RemoteTurnRole, origin: RemoteTurnOrigin, text: String, created: Date?, ordinal: Int,
-                attachments: [RemoteAttachmentRef] = [], contentHash: String, reactions: [RemoteReaction]? = nil, actions: [String]? = nil) {
+                attachments: [RemoteAttachmentRef] = [], contentHash: String, reactions: [RemoteReaction]? = nil, actions: [String]? = nil, actionsID: String? = nil) {
         self.id = id; self.conversationID = conversationID; self.agentID = agentID; self.role = role; self.origin = origin
         self.text = text; self.created = created; self.ordinal = ordinal; self.attachments = attachments; self.contentHash = contentHash
         self.reactions = reactions?.isEmpty == true ? nil : reactions
         self.actions = actions?.isEmpty == true ? nil : actions
+        self.actionsID = self.actions == nil ? nil : actionsID
     }
 
     /// Keeps the start of a reply too large for one frame, marked; the whole text stays on the Mac.

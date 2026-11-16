@@ -17,9 +17,10 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     case sendPrivate(conversationID: UUID?, agentID: String, text: String, attachmentIDs: [String])
     case endConversation(conversationID: UUID)
     /// Taps one of an agent's suggestion buttons (Alexa's choices under its newest reply) by its
-    /// label, as listed in the turn's `actions`. A send: the Mac clicks the page's own button.
-    /// Older Macs answer `unsupported`.
-    case chooseAction(conversationID: UUID, agentID: String, label: String)
+    /// label, as listed in the turn's `actions`. `offerID` is that turn's `actionsID`, so a choice
+    /// made under one reply is never clicked under a newer one. A send: the Mac clicks the page's
+    /// own button. Older Macs answer `unsupported`.
+    case chooseAction(conversationID: UUID, agentID: String, label: String, offerID: String)
     /// "Stop waiting" / acknowledge an unresolved native request. Never resends.
     case acknowledgeIncomplete(agentID: String, attemptID: String?)
     /// Cancels the local wait for a native request; the other app is not stopped.
@@ -98,7 +99,7 @@ public enum RemoteAction: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID, ref, title, turnID, maxBytes
+        case kind, text, agentIDs, attachmentIDs, conversationID, agentID, attemptID, enabled, uploadID, filename, index, count, data, sha256, clientCommandID, ref, title, turnID, maxBytes, offerID
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -126,7 +127,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
             return .sendPrivate(conversationID: try c.decodeIfPresent(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID), text: try c.decode(String.self, forKey: .text), attachmentIDs: try ids(.attachmentIDs))
         case "endConversation": return .endConversation(conversationID: try c.decode(UUID.self, forKey: .conversationID))
         case "chooseAction":
-            return .chooseAction(conversationID: try c.decode(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID), label: try c.decode(String.self, forKey: .text))
+            return .chooseAction(conversationID: try c.decode(UUID.self, forKey: .conversationID), agentID: try c.decode(String.self, forKey: .agentID),
+                                 label: try c.decode(String.self, forKey: .text), offerID: try c.decode(String.self, forKey: .offerID))
         case "acknowledgeIncomplete": return .acknowledgeIncomplete(agentID: try c.decode(String.self, forKey: .agentID), attemptID: try c.decodeIfPresent(String.self, forKey: .attemptID))
         case "cancelNative": return .cancelNative(agentID: try c.decode(String.self, forKey: .agentID))
         default: return nil
@@ -178,7 +180,8 @@ public enum RemoteAction: Codable, Hashable, Sendable {
             try c.encodeIfPresent(conversationID, forKey: .conversationID); try c.encode(agentID, forKey: .agentID)
             try c.encode(text, forKey: .text); try c.encode(attachmentIDs, forKey: .attachmentIDs)
         case .endConversation(let id): try c.encode(id, forKey: .conversationID)
-        case .chooseAction(let id, let agentID, let label): try c.encode(id, forKey: .conversationID); try c.encode(agentID, forKey: .agentID); try c.encode(label, forKey: .text)
+        case .chooseAction(let id, let agentID, let label, let offerID):
+            try c.encode(id, forKey: .conversationID); try c.encode(agentID, forKey: .agentID); try c.encode(label, forKey: .text); try c.encode(offerID, forKey: .offerID)
         case .acknowledgeIncomplete(let agentID, let attemptID): try c.encode(agentID, forKey: .agentID); try c.encodeIfPresent(attemptID, forKey: .attemptID)
         case .cancelNative(let agentID): try c.encode(agentID, forKey: .agentID)
         default: break

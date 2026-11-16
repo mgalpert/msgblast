@@ -182,9 +182,10 @@ public enum RemoteProjectionBuilder {
             for (ordinal, message) in (input.webHistories[cid]?[agent] ?? []).enumerated() {
                 let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
                 let images = downloadedImages(message, input: input)
-                let offered = input.webActions[cid]?[agent].flatMap { $0.messageID == message.id ? $0.labels : nil }
+                let offered = input.webActions[cid]?[agent].flatMap { $0.messageID == message.id ? $0 : nil }
                 turns.append(RemoteTurn(id: "w:\(agent.id):\(cid.uuidString):\(key)", conversationID: cid, agentID: agent.id, role: role(message.role), origin: .agentTranscript,
-                                        text: message.text, created: nil, ordinal: ordinal, attachments: refs(images), contentHash: hash(message.text), actions: offered))
+                                        text: message.text, created: nil, ordinal: ordinal, attachments: refs(images), contentHash: hash(message.text),
+                                        actions: offered?.labels, actionsID: offered?.messageID))
             }
             for attempt in input.webAttempts[cid]?[agent] ?? [] {
                 conversationAttempts.append(RemoteAttempt(id: "wa:\(attempt.id.uuidString)", conversationID: cid, agentID: agent.id, text: attempt.text,

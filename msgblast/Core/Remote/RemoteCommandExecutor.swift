@@ -10,8 +10,10 @@ public struct RemoteSendPlan: Sendable, Equatable {
     public var text: String
     public var agentIDs: [String]
     public var attachmentIDs: [String]
-    /// A tap on a suggestion button: `text` is its label, and the agent's page clicks that button.
-    public var isAction = false
+    /// A tap on a suggestion button: `text` is its label, this is the offer it was shown in, and
+    /// the agent's page clicks that button only while it still shows that offer.
+    public var offerID: String?
+    public var isAction: Bool { offerID != nil }
 }
 
 public struct RemoteHostResult: Sendable, Equatable {
@@ -271,7 +273,7 @@ public final class RemoteCommandExecutor {
         case .createConversation(let text, let agents, let files): RemoteSendPlan(kind: .newConversation, conversationID: nil, text: text, agentIDs: agents, attachmentIDs: files)
         case .sendShared(let id, let text, let agents, let files): RemoteSendPlan(kind: .sharedFollowUp, conversationID: id, text: text, agentIDs: agents, attachmentIDs: files)
         case .sendPrivate(let id, let agent, let text, let files): RemoteSendPlan(kind: .privateMessage, conversationID: id, text: text, agentIDs: [agent], attachmentIDs: files)
-        case .chooseAction(let id, let agent, let label): RemoteSendPlan(kind: .privateMessage, conversationID: id, text: label, agentIDs: [agent], attachmentIDs: [], isAction: true)
+        case .chooseAction(let id, let agent, let label, let offer): RemoteSendPlan(kind: .privateMessage, conversationID: id, text: label, agentIDs: [agent], attachmentIDs: [], offerID: offer)
         default: nil
         }
     }

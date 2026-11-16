@@ -136,15 +136,21 @@ final class WebServiceTests: XCTestCase {
         XCTAssertEqual(session.actionsForComparison(comparison), WebPageActions(messageID: reply.id, labels: ["Add the first one", "Show more options"]))
         XCTAssertNil(session.actionsForComparison(UUID()), "Another comparison's reply offers nothing")
 
-        let refused = await session.send("Buy everything", comparisonID: comparison, action: true)
+        let refused = await session.send("Buy everything", comparisonID: comparison, action: reply.id)
         XCTAssertEqual(refused?.status, .notSent)
         XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.count, 1, "A choice the page doesn't offer clicks nothing")
 
-        let chosen = await session.send("Show more options", comparisonID: comparison, action: true)
+        let chosen = await session.send("Show more options", comparisonID: comparison, action: reply.id)
         XCTAssertEqual(chosen?.status, .observed, chosen?.detail ?? "Missing receipt")
         try await waitFor { session.messagesForComparison(comparison).last?.text == "Simulated Alexa reply: Show more options" }
         XCTAssertEqual(session.messagesForComparison(comparison).filter { $0.role == "user" }.map(\.text), ["Celery for soup", "Show more options"])
         try await waitFor { session.actionsForComparison(comparison)?.messageID == session.messagesForComparison(comparison).last?.id }
+
+        // The newer reply offers the same labels; a choice made under the older one clicks nothing.
+        XCTAssertEqual(session.actionsForComparison(comparison)?.labels, ["Add the first one", "Show more options"])
+        let stale = await session.send("Add the first one", comparisonID: comparison, action: reply.id)
+        XCTAssertEqual(stale?.status, .notSent)
+        XCTAssertEqual(session.snapshot.messages.filter { $0.role == "user" }.count, 2, "A choice from an older reply is not clicked under a newer one")
     }
 
     func testAlexaShoppingButtonsBelowThePanelsFoldAreStillOffered() async throws {
@@ -160,8 +166,9 @@ final class WebServiceTests: XCTestCase {
         let comparison = UUID()
         _ = await session.send("Celery for soup", comparisonID: comparison)
         try await waitFor { session.actionsForComparison(comparison) != nil }
-        XCTAssertEqual(session.actionsForComparison(comparison)?.labels, ["Add the first one", "Show more options"])
-        let chosen = await session.send("Show more options", comparisonID: comparison, action: true)
+        let offer = try XCTUnwrap(session.actionsForComparison(comparison))
+        XCTAssertEqual(offer.labels, ["Add the first one", "Show more options"])
+        let chosen = await session.send("Show more options", comparisonID: comparison, action: offer.messageID)
         XCTAssertEqual(chosen?.status, .observed, chosen?.detail ?? "Missing receipt")
     }
 
@@ -175,10 +182,11 @@ final class WebServiceTests: XCTestCase {
         let comparison = UUID()
         _ = await session.send("Celery for soup", comparisonID: comparison)
         try await waitFor { session.actionsForComparison(comparison) != nil }
+        let offer = try XCTUnwrap(session.actionsForComparison(comparison)?.messageID)
         // Some buttons send their hidden request as your turn instead of their label.
         _ = try await session.webView.callAsyncJavaScript("transcript.onclick=event=>{const chip=event.target.closest('button[data-utterance]');if(chip)ask(chip.dataset.utterance);};",
                                                           arguments: [:], in: nil, contentWorld: .page)
-        let chosen = await session.send("Add the first one", comparisonID: comparison, action: true)
+        let chosen = await session.send("Add the first one", comparisonID: comparison, action: offer)
         XCTAssertEqual(chosen?.status, .observed, chosen?.detail ?? "Missing receipt")
         XCTAssertEqual(session.messagesForComparison(comparison).filter { $0.role == "user" }.map(\.text), ["Celery for soup", "add item 1 to cart"])
     }

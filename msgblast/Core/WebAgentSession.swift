@@ -56,6 +56,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     /// Alexa's suggestion buttons, while its newest reply is this comparison's last turn and the page could take a tap.
     public func actionsForComparison(_ id: UUID) -> WebPageActions? {
         guard provider == .alexaShopping, let actions = snapshot.actions, !actions.labels.isEmpty, snapshot.ready, !loading, !isSending,
+              !state.attempts.contains(where: { $0.comparisonID == id && [.attempting, .uncertain].contains($0.status) }),
               messagesForComparison(id).last?.id == actions.messageID else { return nil }
         return actions
     }
@@ -1156,9 +1157,9 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     public func send(_ text: String, comparisonID: UUID? = nil,
                      onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {},
                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
-                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true, action: Bool = false) async -> WebSendAttempt? {
+                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true, action: String? = nil) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
-        guard plannedAttemptID == nil || provider.desktopApp != nil, !action || provider == .alexaShopping else { return nil }
+        guard plannedAttemptID == nil || provider.desktopApp != nil, action == nil || provider == .alexaShopping else { return nil }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft) }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -1169,7 +1170,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         isSending = true
         defer { isSending = false }
         var attempt = WebSendAttempt(text: text)
-        attempt.action = action ? true : nil
+        attempt.action = action.map { _ in true }
         let id = comparisonID ?? state.comparisonID ?? UUID()
         attempt.comparisonID = id
         var submissionWasPossible = false
@@ -2639,22 +2640,22 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     /// Fills the composer, or for a suggestion checks the page still offers that button.
-    private func runPrepare(_ text: String, action: Bool) async throws -> [String: Any]? {
-        try await webView.callAsyncJavaScript(action ? script.prepareAction : script.prepare, arguments: action ? ["label": text] : ["text": text],
+    private func runPrepare(_ text: String, action offer: String?) async throws -> [String: Any]? {
+        try await webView.callAsyncJavaScript(offer == nil ? script.prepare : script.prepareAction, arguments: offer.map { ["label": text, "messageID": $0] } ?? ["text": text],
                                               in: nil, contentWorld: .defaultClient) as? [String: Any]
     }
 
     /// Clicks Send, or the suggestion button itself, so the page sends whatever that button sends.
-    private func runClick(_ text: String, preparedDraft: String, expectedURL: String, action: Bool) async throws -> [String: Any]? {
-        try await webView.callAsyncJavaScript(action ? script.clickAction : script.clickSend,
-                                              arguments: action ? ["label": text, "expectedURL": expectedURL] : ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL],
+    private func runClick(_ text: String, preparedDraft: String, expectedURL: String, action offer: String?) async throws -> [String: Any]? {
+        try await webView.callAsyncJavaScript(offer == nil ? script.clickSend : script.clickAction,
+                                              arguments: offer.map { ["label": text, "messageID": $0, "expectedURL": expectedURL] } ?? ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL],
                                               in: nil, contentWorld: .defaultClient) as? [String: Any]
     }
 
     /// A suggestion has no composer, so there is no Send control to wait for.
-    private func waitBeforeClick(_ preparedDraft: String, expectedURL: String, generation: Int, action: Bool) async throws {
+    private func waitBeforeClick(_ preparedDraft: String, expectedURL: String, generation: Int, action: String?) async throws {
         if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
-        else if !action { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
+        else if action == nil { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
     }
 
     private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int) async throws {

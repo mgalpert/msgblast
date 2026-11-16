@@ -179,12 +179,12 @@ final class RemoteCommandExecutorTests: XCTestCase {
         func run(_ action: RemoteAction) async -> RemoteCommandResult { await executor.execute(RemoteCommand(action: action)) }
         let active = UUID(), ended = UUID()
         host.conversations = [active: .active(members: ["claude"]), ended: .ended]
-        do { let result = await run(.chooseAction(conversationID: active, agentID: "claudeApp", label: "Add it")); XCTAssertEqual(result.code, .invalidCommand, "Only a member's own buttons") }
-        do { let result = await run(.chooseAction(conversationID: ended, agentID: "claude", label: "Add it")); XCTAssertEqual(result.code, .conversationEnded) }
-        do { let result = await run(.chooseAction(conversationID: active, agentID: "claude", label: "  ")); XCTAssertEqual(result.code, .invalidCommand) }
+        do { let result = await run(.chooseAction(conversationID: active, agentID: "claudeApp", label: "Add it", offerID: "r1")); XCTAssertEqual(result.code, .invalidCommand, "Only a member's own buttons") }
+        do { let result = await run(.chooseAction(conversationID: ended, agentID: "claude", label: "Add it", offerID: "r1")); XCTAssertEqual(result.code, .conversationEnded) }
+        do { let result = await run(.chooseAction(conversationID: active, agentID: "claude", label: "  ", offerID: "r1")); XCTAssertEqual(result.code, .invalidCommand) }
         XCTAssertTrue(host.sends.isEmpty)
-        do { let result = await run(.chooseAction(conversationID: active, agentID: "claude", label: "Add the organic celery hearts")); XCTAssertEqual(result.outcome, .applied) }
-        XCTAssertEqual(host.sends, [RemoteSendPlan(kind: .privateMessage, conversationID: active, text: "Add the organic celery hearts", agentIDs: ["claude"], attachmentIDs: [], isAction: true)])
+        do { let result = await run(.chooseAction(conversationID: active, agentID: "claude", label: "Add the organic celery hearts", offerID: "r1")); XCTAssertEqual(result.outcome, .applied) }
+        XCTAssertEqual(host.sends, [RemoteSendPlan(kind: .privateMessage, conversationID: active, text: "Add the organic celery hearts", agentIDs: ["claude"], attachmentIDs: [], offerID: "r1")])
     }
 
     func testUploadsStageOnlyVerifiedFilesForMessagesAgents() async {

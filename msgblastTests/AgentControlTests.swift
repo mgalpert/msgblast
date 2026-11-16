@@ -211,7 +211,7 @@ import XCTest
         look.replies[alexa] = 2
         feed.observe(look)
         XCTAssertEqual(feed.events.map(\.kind), [.replyArrived], "the reply comes before its buttons")
-        look.actions[alexa] = ["Add the first one", "Show more options"]
+        look.actions[alexa] = WebPageActions(messageID: "r2", labels: ["Add the first one", "Show more options"])
         feed.observe(look)
         feed.observe(look)
         XCTAssertEqual(feed.events.map(\.kind), [.replyArrived, .actionsOffered], "unchanged buttons are announced once")
@@ -219,10 +219,13 @@ import XCTest
         look.actions[alexa] = nil
         feed.observe(look)
         XCTAssertEqual(feed.cursor, 2, "buttons going away is not an event")
-        look.actions[alexa] = ["Show fresh leeks"]
+        look.actions[alexa] = WebPageActions(messageID: "r3", labels: ["Show fresh leeks"])
         feed.observe(look)
         XCTAssertEqual(feed.events.last?.kind, .actionsOffered)
         XCTAssertEqual(feed.cursor, 3)
+        look.actions[alexa] = WebPageActions(messageID: "r4", labels: ["Show fresh leeks"])
+        feed.observe(look)
+        XCTAssertEqual(feed.cursor, 4, "a newer reply with the same labels is a new offer")
     }
 
     func testAComparisonThatJoinsTheWatchedSetIsRecordedButANewOneIsAnnounced() {

@@ -46,7 +46,8 @@ final class RemoteProtocolCodingTests: XCTestCase {
     func testEventsCommandsAndMessagesRoundTrip() throws {
         let conversation = UUID()
         let turn = RemoteTurn(id: "w:claude:\(conversation):0", conversationID: conversation, agentID: "claude", role: .assistant, origin: .agentTranscript,
-                              text: "Hello", created: date, ordinal: 0, attachments: [RemoteAttachmentRef(id: "a", filename: "a.png", mimeType: "image/png", byteCount: 3)], contentHash: "abc")
+                              text: "Hello", created: date, ordinal: 0, attachments: [RemoteAttachmentRef(id: "a", filename: "a.png", mimeType: "image/png", byteCount: 3)], contentHash: "abc",
+                              actions: ["Show more options"], actionsID: "reply-7")
         let attempt = RemoteAttempt(id: "wa:1", conversationID: conversation, agentID: "claude", text: "Hi", status: .waiting, detail: nil, created: date)
         let changes: [RemoteChange] = [.macStatus(status()), .grid(RemoteGrid(visibleAgentIDs: ["claude", "messages:x"])), .agentUpsert(availability(.ready)),
             .agentRemove(id: "claude"), .conversationUpsert(RemoteConversation(id: conversation, title: "T", prompt: "P", created: date, endedAt: nil, agentIDs: ["claude"], canEnd: false, unresolvedAttemptCount: 1, lastActivity: date,
@@ -62,9 +63,10 @@ final class RemoteProtocolCodingTests: XCTestCase {
             .uploadAttachmentChunk(uploadID: UUID(), filename: "a.txt", index: 0, count: 2, data: Data([1, 2, 3])),
             .attachStaged(uploadID: UUID(), sha256: Data(SHA256.hash(data: Data([1])))), .requestReport(conversationID: conversation),
             .prepareConversation(conversationID: nil, agentIDs: ["claude"]), .prepareConversation(conversationID: conversation, agentIDs: []), .queryCommand(clientCommandID: UUID()), .fetchAvatar(ref: "sha256:00ff"),
-            .renameConversation(conversationID: conversation, title: "Pesto"), .fetchAttachment(turnID: "m:guid-1", index: 1, maxBytes: 200_000)]
+            .renameConversation(conversationID: conversation, title: "Pesto"), .fetchAttachment(turnID: "m:guid-1", index: 1, maxBytes: 200_000),
+            .chooseAction(conversationID: conversation, agentID: "alexaShopping", label: "Show more options", offerID: "reply-7")]
         for action in actions { try roundTrip(RemoteCommand(action: action)) }
-        XCTAssertEqual(actions.filter(\.isSend).count, 3)
+        XCTAssertEqual(actions.filter(\.isSend).count, 4)
 
         let snapshot = RemoteSnapshot(seq: 9, macStatus: status(), grid: RemoteGrid(visibleAgentIDs: []), agents: [availability(.blocked)], conversations: [], turns: [turn], attempts: [attempt])
         let messages: [RemoteMessage] = [.pairChallenge(RemotePairChallenge(challenge: Data(repeating: 1, count: 32), expiresAt: date)),
