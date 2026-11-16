@@ -1,0 +1,75 @@
+msgblast outside-agent sequence, Alexa Shopping suggestion buttons
+Build: msgblast Dev test build of 400293e0bd4b6510153a43cbfc014f9fce063e70, in a macOS test VM signed in to Amazon (live Alexa, not a fixture).
+Client: msgblast CLI (same tools as the MCP server), agent name "Chips Test", Full access. Comparison id shortened to <celery comparison> in commands.
+Only questions and product-search buttons were used; nothing was added to a cart or bought.
+
+$ msgblast call msgblast_agent_message {"agent":"web:alexaShopping","comparisonId":"<celery comparison>","text":"Which spices go well in celery soup?"} --client "Chips Test"
+{
+  "after" : 0,
+  "agents" : [
+    {
+      "id" : "web:alexaShopping",
+      "name" : "Alexa Shopping Web",
+      "status" : "observed"
+    }
+  ],
+  "comparisonId" : "2F07C330-0389-4A4D-80EC-7A32FC4D99F4",
+  "outcome" : "done",
+  "replayed" : false,
+  "requestId" : "chips-r5-msg"
+}
+
+$ msgblast call msgblast_blast_wait {"comparisonId":"<celery comparison>","after":<cursor>} --client "Chips Test"   (repeated until actionsOffered)
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:06:37Z", "kind": "replyArrived", "seq": 1}
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:06:41Z", "detail": "Show organic ground coriander and cumin\nFind celery seed and thyme\nBest immersion blenders for soup\nSuggest a vegan celery soup recipe", "kind": "actionsOffered", "seq": 2}
+
+$ msgblast call msgblast_comparison_read {"id":"<celery comparison>"} --client "Chips Test"   (newest reply only)
+{
+  "agent": "Alexa Shopping Web",
+  "outgoing": false,
+  "text": "Celery has a mild, slightly bitter flavor, so it pairs well with warm, earthy spices and a few classic herbs. These are the ones that work well in celery soup:  …",
+  "actions": [
+    "Show organic ground coriander and cumin",
+    "Find celery seed and thyme",
+    "Best immersion blenders for soup",
+    "Suggest a vegan celery soup recipe"
+  ]
+}
+
+(phone tap) last outgoing turn now: "Suggest a vegan celery soup recipe"
+
+$ msgblast call msgblast_agent_choose {"comparisonId":"<celery comparison>","agent":"web:alexaShopping","action":"Best immersion blenders for soup"} --client "Chips Test"
+{
+  "after" : 6,
+  "agents" : [
+    {
+      "id" : "web:alexaShopping",
+      "name" : "Alexa Shopping Web",
+      "status" : "observed"
+    }
+  ],
+  "comparisonId" : "2F07C330-0389-4A4D-80EC-7A32FC4D99F4",
+  "outcome" : "done",
+  "replayed" : false,
+  "requestId" : "chips-r5-choose"
+}
+
+$ msgblast call msgblast_blast_wait ... (repeated until actionsOffered)
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:08:23Z", "kind": "replyArrived", "seq": 9}
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:08:24Z", "kind": "replyArrived", "seq": 10}
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:08:25Z", "kind": "replyArrived", "seq": 11}
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:08:26Z", "kind": "replyArrived", "seq": 12}
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:08:27Z", "kind": "replyArrived", "seq": 13}
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:08:28Z", "kind": "replyArrived", "seq": 14}
+{"agent": "Alexa Shopping Web", "comparisonID": "2F07C330-0389-4A4D-80EC-7A32FC4D99F4", "date": "2026-11-15T20:08:29Z", "detail": "Compare Vitamix and KitchenAid immersion blenders\nShow immersion blenders with whisk attachments\nBest soup pots for immersion blending\nShow organic vegetable broth", "kind": "actionsOffered", "seq": 15}
+
+$ msgblast call msgblast_comparison_read {"id":"<celery comparison>"} --client "Chips Test"   (last outgoing turn and newest reply)
+{
+  "last outgoing": "Best immersion blenders for soup",
+  "newest reply actions": [
+    "Compare Vitamix and KitchenAid immersion blenders",
+    "Show immersion blenders with whisk attachments",
+    "Best soup pots for immersion blending",
+    "Show organic vegetable broth"
+  ]
+}
