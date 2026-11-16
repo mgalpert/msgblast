@@ -9,6 +9,11 @@ final class FeedbackSubmissionTests: XCTestCase {
         facts.lastError = "secret token /Users/private/chat.db"
         facts.supportFolder = "/Users/private"
         facts.updatesReason = "sk-secret"
+        facts.nativeAppVersions = [
+            .claude: .init(version: "4.16336.0", build: "16336"),
+            .muse: .init(version: "12.0", build: "2\n"),
+            .wabi: .init(version: "/Applications/Private.app", build: "unknown")
+        ]
         var request = DiagnosticRequest(kind: .bug, note: "  Cannot save\n", contact: " ada@example.com ", facts: facts)
         let excluded = try object(FeedbackSubmission.encodeRequest(request, id: id))
         XCTAssertEqual(Set(excluded.keys), ["id", "kind", "note", "contact"])
@@ -20,6 +25,11 @@ final class FeedbackSubmissionTests: XCTestCase {
         let included = try object(FeedbackSubmission.encodeRequest(request, id: id))
         let preview = try XCTUnwrap(included["diagnostics"] as? String)
         XCTAssertEqual(preview, DiagnosticReport.diagnosticsJSON(facts))
+        let diagnostics = try object(Data(preview.utf8))
+        XCTAssertEqual(diagnostics["nativeAppVersions"] as? [String: [String: String]], [
+            "claude": ["version": "4.16336.0", "build": "16336"],
+            "muse": ["version": "12.0", "build": "unknown"]
+        ])
         XCTAssertFalse(preview.contains("secret"))
         XCTAssertFalse(preview.contains("/Users/"))
         XCTAssertNil(included["archive"])

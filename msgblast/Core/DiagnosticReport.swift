@@ -8,7 +8,7 @@ public enum DiagnosticReport {
     public static let packageNames = ["README.txt", "feedback.txt", "diagnostics.json", "crash.json"]
     public static let diagnosticKeys = [
         "agentCount", "attachmentCount", "buildNumber", "bundleIdentifier", "comparisonCount",
-        "fixtureMode", "hasDraft", "lastErrorCategory", "messagesStatus", "operatingSystem",
+        "fixtureMode", "hasDraft", "lastErrorCategory", "messagesStatus", "nativeAppVersions", "operatingSystem",
         "permissionStage", "personalAgent", "stateFileBytes", "stateFilePresent", "supportFolder",
         "updatesEnabled", "updatesReason", "variant", "version", "webProviderCounts", "windowStyle"
     ]
@@ -130,6 +130,16 @@ public struct DiagnosticRequest: Sendable, Equatable {
 }
 
 public struct DiagnosticFacts: Sendable, Equatable {
+    public struct NativeAppVersion: Codable, Equatable, Sendable {
+        public let version: String
+        public let build: String
+
+        public init(version: String, build: String) {
+            self.version = version
+            self.build = build
+        }
+    }
+
     public var version: String
     public var buildNumber: String
     public var bundleIdentifier: String
@@ -150,6 +160,7 @@ public struct DiagnosticFacts: Sendable, Equatable {
     public var supportFolder: String
     public var stateFilePresent: Bool
     public var stateFileBytes: Int
+    public var nativeAppVersions: [DesktopAppProvider: NativeAppVersion] = [:]
 
     public init(version: String, buildNumber: String, bundleIdentifier: String, fixtureMode: Bool, operatingSystem: String, updatesEnabled: Bool, updatesReason: String, messagesStatus: String, permissionStage: String, agentCount: Int, comparisonCount: Int, hasDraft: Bool, attachmentCount: Int, windowStyle: String, personalAgent: String, webProviderCounts: [String: Int], lastError: String?, supportFolder: String, stateFilePresent: Bool, stateFileBytes: Int) {
         self.version = version
@@ -189,6 +200,7 @@ struct DiagnosticPayload: Codable, Equatable {
     var hasDraft: Bool
     var lastErrorCategory: String
     var messagesStatus: String
+    var nativeAppVersions: [String: DiagnosticFacts.NativeAppVersion]?
     var operatingSystem: String
     var permissionStage: String
     var personalAgent: String
@@ -220,6 +232,14 @@ struct DiagnosticPayload: Codable, Equatable {
         attachmentCount = DiagnosticPayload.count(facts.attachmentCount)
         windowStyle = DiagnosticPayload.choice(facts.windowStyle, allowed: ["connected", "separate"], fallback: "unknown")
         personalAgent = PersonalAgentProvider(rawValue: facts.personalAgent)?.rawValue ?? "none"
+        let versionPattern = #"^[0-9A-Za-z._-]{1,32}\z"#
+        let installed = facts.nativeAppVersions.compactMap { app, metadata -> (String, DiagnosticFacts.NativeAppVersion)? in
+            let version = Self.token(metadata.version, pattern: versionPattern)
+            let build = Self.token(metadata.build, pattern: versionPattern)
+            guard version != "unknown" || build != "unknown" else { return nil }
+            return (app.rawValue, .init(version: version, build: build))
+        }
+        nativeAppVersions = installed.isEmpty ? nil : Dictionary(uniqueKeysWithValues: installed)
         webProviderCounts = Dictionary(uniqueKeysWithValues: facts.webProviderCounts.compactMap { key, value in
             guard WebProvider(rawValue: key) != nil, value > 0 else { return nil }
             return (key, DiagnosticPayload.count(value))

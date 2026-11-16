@@ -13,7 +13,7 @@ IMPLEMENTATION = [CORE, FACTS, VIEW]
 
 KEYS = [
     "agentCount", "attachmentCount", "buildNumber", "bundleIdentifier", "comparisonCount",
-    "fixtureMode", "hasDraft", "lastErrorCategory", "messagesStatus", "operatingSystem",
+    "fixtureMode", "hasDraft", "lastErrorCategory", "messagesStatus", "nativeAppVersions", "operatingSystem",
     "permissionStage", "personalAgent", "stateFileBytes", "stateFilePresent", "supportFolder",
     "updatesEnabled", "updatesReason", "variant", "version", "webProviderCounts", "windowStyle",
 ]
