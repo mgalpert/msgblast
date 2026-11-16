@@ -8,7 +8,10 @@
     "still": "remotion still src/index.tsx Onboarding renders/final-frame.png --frame 239",
     "background": "remotion still src/index.tsx FinderBackground renders/finder-background.png",
     "check": "tsc --noEmit",
-    "render:silent": "remotion render src/index.tsx OnboardingSilent renders/onboarding-silent.mp4 --codec h264 --crf 16"
+    "render:silent": "remotion render src/index.tsx OnboardingSilent renders/onboarding-silent.mp4 --codec h264 --crf 16",
+    "promo:fetch": "gh run download 43127209243 -R mgalpert/msgblast -n msgblast-iphone-promo-69ee8a912cbc8fc2a844725043573e1d462e21f2 -D public/promo",
+    "still:promo": "remotion still src/index.tsx IPhonePromo renders/iphone-promo-still.png",
+    "render:promo": "remotion render src/index.tsx IPhonePromo renders/iphone-promo.mp4 --codec h264 --crf 18"
   },
   "dependencies": {
     "@remotion/cli": "4.0.534",

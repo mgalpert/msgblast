@@ -2,6 +2,7 @@ import React from 'react';
 import {Audio} from '@remotion/media';
 import {AbsoluteFill, Composition, Easing, Img, interpolate, registerRoot, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import icons from './inventory.json';
+import {IPhonePromo, PROMO_FPS, PROMO_FRAMES} from './promo/IPhonePromo';
 const clamp={extrapolateLeft:'clamp',extrapolateRight:'clamp'} as const;
 const mix=(t:number,a:number,b:number)=>a+(b-a)*t;
 const Scene: React.FC<{background?:boolean; withAudio?:boolean}> = ({background=false, withAudio=false})=>{
@@ -42,5 +43,5 @@ const Scene: React.FC<{background?:boolean; withAudio?:boolean}> = ({background=
   <div style={{position:'absolute',top:950,width:'100%',textAlign:'center',opacity:reveal}}><div style={{fontSize:38,fontWeight:500,letterSpacing:-.7}}>Drag to Applications</div><div style={{fontSize:21,color:'#74787a',marginTop:14}}>Then open msgblast from your Applications folder.</div></div>
  </AbsoluteFill>;
 };
-const Root=()=> <><Composition id="Onboarding" component={Scene} defaultProps={{withAudio:true}} width={1920} height={1200} fps={30} durationInFrames={240}/><Composition id="OnboardingSilent" component={Scene} width={1920} height={1200} fps={30} durationInFrames={240}/><Composition id="FinderBackground" component={()=> <Scene background/>} width={1920} height={1200} fps={30} durationInFrames={1}/></>;
+const Root=()=> <><Composition id="Onboarding" component={Scene} defaultProps={{withAudio:true}} width={1920} height={1200} fps={30} durationInFrames={240}/><Composition id="OnboardingSilent" component={Scene} width={1920} height={1200} fps={30} durationInFrames={240}/><Composition id="FinderBackground" component={()=> <Scene background/>} width={1920} height={1200} fps={30} durationInFrames={1}/><Composition id="IPhonePromo" component={IPhonePromo} width={1080} height={1920} fps={PROMO_FPS} durationInFrames={PROMO_FRAMES}/></>;
 registerRoot(Root);
