@@ -89,8 +89,13 @@ extension AppModel {
         } ?? false
         let followUpID = UUID()
         let telemetryStarted = Date()
-        let result = await broadcastShared(request, broadcast: broadcast, comparisonID: comparisonID, progressiveNative: progressiveNative,
-                                           prepared: prepared, plannedAttempts: planned, followUpID: followUpID)
+        let targetIDs = (sessions.map { $0.id.id } + recipients.map(\.uuidString)).sorted()
+        let statsTurn = LocalSubmissionStats.Turn(id: existingID == nil ? comparisonID : followUpID,
+                                                 isFollowUp: existingID != nil, targetIDs: targetIDs)
+        let result = await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+            await broadcastShared(request, broadcast: broadcast, comparisonID: comparisonID, progressiveNative: progressiveNative,
+                                  prepared: prepared, plannedAttempts: planned, followUpID: followUpID)
+        }
         // Every agent asked to send gets a result; one whose send returned nothing counts as a failure.
         recordAgentSendResults(sessions.map { ($0.provider, result.web[$0.id]) })
         recordSharedSendTelemetry(result, comparisonID: comparisonID, existingID: existingID, recipients: recipients, followUpID: followUpID, started: telemetryStarted)
@@ -268,7 +273,7 @@ extension AppModel {
     /// for a private reply while a shared send's replies are still arriving (`independent`).
     /// `prepared` runs once the conversation exists (the pane uses it to show the comparison).
     func sendDirect(_ text: String, to session: WebAgentSession, existingID: UUID?, interactive: Bool = true, independent: Bool = false,
-                    prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
+                    retrying retryID: UUID? = nil, prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
         defer {
             if independent { finishIndependentNativeReply() }
             else { webBroadcastBusy = false }
@@ -287,7 +292,13 @@ extension AppModel {
         do { try save() } catch { self.error = error.localizedDescription; return (id, nil) }
         prepared()
         let telemetryStarted = Date()
-        let attempt = await session.send(text, comparisonID: id)
+        let savedTurn = localStats.attempts.first { $0.id == retryID && $0.comparisonID == id && $0.recipientID == session.id.id }
+        let statsTurn = LocalSubmissionStats.Turn(id: savedTurn?.turnID ?? retryID ?? (existingID == nil ? id : UUID()),
+                                                 isFollowUp: savedTurn?.isFollowUp ?? (existingID != nil),
+                                                 targetIDs: savedTurn?.targetIDs ?? [session.id.id])
+        let attempt = await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+            await session.send(text, comparisonID: id)
+        }
         recordAgentSendResults([(session.provider, attempt)])
         if let attempt, attempt.status.confirmsSubmission {
             recordMessageSubmission(kind: .private, recipientCount: 1, started: telemetryStarted, logicalID: attempt.id)

@@ -31,7 +31,11 @@ public final class WebAgents: ObservableObject {
             (hasBothSavedChats && archivedAgents.contains($0.id) && [.chatgptApp, .dotsApp].contains($0.provider)) }
     }
     public var comparisonID: UUID? { workspaceSession.state.comparisonID }
-    public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false) {
+    public typealias SubmissionObserver = @MainActor (UUID, WebAgentID) -> (@MainActor (UUID, WebSendStatus, Duration?) -> Void)?
+    private let submissionObserver: SubmissionObserver?
+
+    public init(directory: URL, fixture: Bool, websiteOptInRequired: Bool = false, submissionObserver: SubmissionObserver? = nil) {
+        self.submissionObserver = submissionObserver
         self.fixture = fixture
         self.directory = directory
         var migrationErrors: [WebProvider: String] = [:]
@@ -83,6 +87,7 @@ public final class WebAgents: ObservableObject {
         }
     }
     private func observe(_ session: WebAgentSession) {
+        session.beginSubmissionObservation = submissionObserver
         session.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
     }
     public func session(for id: WebAgentID) -> WebAgentSession? { sessions.first { $0.id == id } }

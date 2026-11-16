@@ -1151,6 +1151,30 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                      onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {},
                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
                      plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true) async -> WebSendAttempt? {
+        let finish = comparisonID.flatMap { beginSubmissionObservation?($0, id) }
+        let started = ContinuousClock.now
+        var confirmedAt: ContinuousClock.Instant?
+        let attempt = await performSend(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: {
+            if confirmedAt == nil { confirmedAt = .now }
+            onConfirmedSubmission()
+        }, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft)
+        if let attempt, let finish {
+            let duration: Duration? = if let confirmedAt {
+                started.duration(to: confirmedAt)
+            } else if (provider.personalAgentProvider == nil && provider.desktopApp == nil) || attempt.status == .notSent {
+                started.duration(to: .now)
+            } else { nil }
+            finish(attempt.id, confirmedAt == nil ? attempt.status : .waiting, duration)
+        }
+        return attempt
+    }
+
+    var beginSubmissionObservation: WebAgents.SubmissionObserver?
+
+    private func performSend(_ text: String, comparisonID: UUID? = nil,
+                     onSubmissionFinished: @escaping @MainActor @Sendable () -> Void = {},
+                     onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
+                     plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
         guard plannedAttemptID == nil || provider.desktopApp != nil else { return nil }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
