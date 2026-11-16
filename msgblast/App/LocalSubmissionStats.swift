@@ -111,9 +111,10 @@ final class LocalSubmissionStats: ObservableObject {
     func begin(comparisonID: UUID, followUp: FollowUp? = nil, member: Member, targetIDs: [String], recordingRevision: UUID?) -> ((Submission?) -> Void)? {
         let capture = if let turn = Turn.current { turn.recordingRevision } else { recordingRevision }
         guard let record = begin(recordingRevision: capture) else { return nil }
-        let turnID = followUp?.id ?? comparisonID
-        let targets = Turn.current?.targetIDs ?? attempts.first { $0.turnID == turnID && $0.recipientID == member.id.uuidString }?.targetIDs ?? targetIDs.sorted()
         let attemptID = UUID()
+        let turn = Turn.current
+        let turnID = followUp?.id ?? turn?.id ?? (turn?.isFollowUp == true ? attemptID : comparisonID)
+        let targets = turn?.targetIDs ?? attempts.first { $0.turnID == turnID && $0.recipientID == member.id.uuidString }?.targetIDs ?? targetIDs.sorted()
         let started = ContinuousClock.now
         return { status in
             let outcome: Outcome
@@ -123,7 +124,7 @@ final class LocalSubmissionStats: ObservableObject {
             case .uncertain: outcome = .uncertain
             default: return
             }
-            record(Attempt(id: attemptID, comparisonID: comparisonID, turnID: turnID, isFollowUp: followUp != nil,
+            record(Attempt(id: attemptID, comparisonID: comparisonID, turnID: turnID, isFollowUp: followUp != nil || turn?.isFollowUp == true,
                            recipientID: member.id.uuidString, targetIDs: targets, outcome: outcome,
                            seconds: Self.seconds(started.duration(to: .now))))
         }

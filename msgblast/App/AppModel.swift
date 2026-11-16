@@ -653,7 +653,11 @@ final class AppModel: ObservableObject {
             state.selection.insert(agent.id)
             try save()
             coordinator?.updateMembershipWindow(id)
-            await submit(id, retry: false, only: agent.id)
+            let statsTurn = LocalSubmissionStats.Turn(id: nil, isFollowUp: true, targetIDs: [agent.id.uuidString],
+                                                     recordingRevision: localStats.recordingRevision)
+            await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+                await submit(id, retry: false, only: agent.id)
+            }
         } catch { self.error = error.localizedDescription }
     }
     func openWebComparison(_ id: UUID, present: Bool = true) {
