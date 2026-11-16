@@ -37,6 +37,10 @@ Path(sys.argv[2]).write_text(source[:start] + source[end:])
 PY_SUPPORT
 web_sources+=("$web_tmp/app-support.swift")
 xcrun swiftc "${web_flags[@]}" "${web_sources[@]}" "$web_root/scripts/fixtures/web_comparison_model.swift" "$web_root/scripts/fixtures/permission_review_model.swift" "$web_root/scripts/fixtures/remote_control_model.swift" -o "$web_tmp/model"
+if [ "${2:-}" = "--local-stats-retry-fixture" ]; then
+    "$web_tmp/model" --demo --isolated-demo --no-demo-replies --local-stats-retry-fixture
+    exit
+fi
 "$web_tmp/model" --demo --isolated-demo
 "$web_tmp/model" --demo --isolated-demo --remote-control-fixture
 # Exercise the actual startup path twice against one app-owned fixture profile.

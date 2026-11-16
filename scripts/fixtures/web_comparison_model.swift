@@ -62,7 +62,103 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         for child in view.subviews { if let value = transcriptText(text, in: child) { return value } }
         return nil
     }
+    @MainActor static func runLocalStatsRetryChecks() async throws {
+        let model = AppModel()
+        model.timer?.invalidate()
+        let directory = model.local.url.deletingLastPathComponent()
+        precondition(model.demo && directory.lastPathComponent.hasPrefix("msgblast-UIFixture-"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let statsComparisonID = await model.startBlast(text: "Local stats original", attachments: [],
+                                                       recipientIDs: Set(model.state.agents.prefix(2).map(\.id)), interactive: false)!
+        let statsIndex = model.index(statsComparisonID)!
+        precondition(model.localStats.attempts.isEmpty && !model.localStats.enabled)
+        model.localStats.setEnabled(true)
+        model.demoFailureOnce = true
+        model.state.comparisons[statsIndex].allDraft = "Simulated local stats retry"
+        await model.followUp(statsComparisonID)
+        let statsTurn = model.comparison(statsComparisonID)!.followUps.last!
+        let failedID = statsTurn.memberIDs.last!
+        let successfulID = statsTurn.memberIDs.first!
+        precondition(statsTurn.states[failedID.uuidString] == .failed && statsTurn.states[successfulID.uuidString] == .submitted)
+        await model.followUp(statsComparisonID, retry: statsTurn.id)
+        await model.followUp(statsComparisonID, retry: statsTurn.id)
+        let stats = model.localStats.attempts.filter { $0.comparisonID == statsComparisonID }
+        let retried = stats.filter { $0.recipientID == failedID.uuidString }
+        precondition(retried.map(\.outcome) == [.failed, .submitted] && Set(retried.map(\.id)).count == 2)
+        precondition(Set(stats.map(\.turnID)) == [statsTurn.id] && stats.count == 3)
+        precondition(stats.allSatisfy { $0.targetIDs == statsTurn.memberIDs.map(\.uuidString).sorted() && ($0.seconds ?? -1) >= 0 })
+        precondition(model.comparison(statsComparisonID)!.followUps.last?.states[failedID.uuidString] == .submitted)
+
+        let comparison = model.comparison(statsComparisonID)!
+        for member in comparison.members {
+            precondition(model.transcript(comparison, member: member).filter { $0.outgoing && $0.text == statsTurn.text }.count == 1)
+        }
+
+        print("PASS: one logical follow-up, three recipient attempts. The failed recipient kept the original turn ID and received a distinct successful retry; the successful peer submitted once.")
+
+        var uncertain = FollowUp(text: "Unconfirmed local stats fixture", memberIDs: [failedID])
+        uncertain.states[failedID.uuidString] = .uncertain
+        model.state.comparisons[statsIndex].followUps.append(uncertain)
+        await model.followUp(statsComparisonID, retry: uncertain.id)
+        precondition(model.comparison(statsComparisonID)?.followUps.last?.states[failedID.uuidString] == .uncertain)
+        precondition(model.localStats.attempts.count == stats.count)
+
+        let desktop = model.webAgents.session(for: WebAgentID(provider: .museApp))!
+        model.webAgents.setComparison(statsComparisonID)
+        model.webAgents.setEnabled(true, for: .museApp)
+        let targetIDs = [desktop.id.id, successfulID.uuidString].sorted()
+
+        model.localStats.setEnabled(false)
+        let excluded = LocalSubmissionStats.Turn(id: UUID(), isFollowUp: true, targetIDs: targetIDs,
+                                                 recordingRevision: model.localStats.recordingRevision)
+        let beforeOptIn = model.localStats.attempts.count
+        model.localStats.setEnabled(true)
+        LocalSubmissionStats.Turn.$current.withValue(excluded) {
+            precondition(desktop.recordUnsentPreparation("Started while off", comparisonID: statsComparisonID,
+                                                         reason: "Simulated delayed preparation") != nil)
+        }
+        precondition(model.localStats.attempts.count == beforeOptIn)
+
+        let mixedTurnID = UUID()
+        let mixedTurn = LocalSubmissionStats.Turn(id: mixedTurnID, isFollowUp: true, targetIDs: targetIDs,
+                                                  recordingRevision: model.localStats.recordingRevision)
+        let text = "Mixed recipient preparation fixture"
+        let failedDesktop = await LocalSubmissionStats.Turn.$current.withValue(mixedTurn) {
+            let failed = desktop.recordUnsentPreparation(text, comparisonID: statsComparisonID, reason: "Simulated preparation failure")!
+            model.state.comparisons[statsIndex].allDraft = text
+            await model.followUp(statsComparisonID, recipients: [successfulID], newAttemptID: mixedTurnID)
+            return failed
+        }
+        let result = await model.sendDirect(text, to: desktop, existingID: statsComparisonID, interactive: false, retrying: failedDesktop.id)
+        precondition(result.attempt?.status == .observed, result.attempt?.detail ?? desktop.error ?? "Missing desktop attempt")
+        let mixed = model.localStats.attempts.filter { $0.turnID == mixedTurnID }
+        let desktopAttempts = mixed.filter { $0.recipientID == desktop.id.id }
+        precondition(mixed.count == 3 && mixed.allSatisfy { $0.targetIDs == targetIDs })
+        precondition(desktopAttempts.map(\.id) == [failedDesktop.id, result.attempt!.id])
+        precondition(desktopAttempts.map(\.outcome) == [.failed, .submitted])
+        precondition(desktopAttempts.first?.seconds == nil && desktopAttempts.last?.seconds != nil)
+        print("PASS: simulated desktop preparation failure and retry share the original mixed turn and targets. A send started with recording off stays excluded.")
+
+        let statsFile = directory.appendingPathComponent("My Stats/submissions.json")
+        try FileManager.default.removeItem(at: statsFile)
+        try FileManager.default.createDirectory(at: statsFile, withIntermediateDirectories: false)
+        model.state.comparisons[statsIndex].allDraft = "Send with unavailable stats storage"
+        await model.followUp(statsComparisonID, recipients: [successfulID])
+        precondition(model.localStats.error != nil)
+        precondition(model.comparison(statsComparisonID)?.followUps.last?.states[successfulID.uuidString] == .submitted)
+        print("PASS: an uncertain send stayed ineligible for retry, and an injected stats write failure left submission intact.")
+    }
+
     @MainActor static func main() {
+        if ProcessInfo.processInfo.arguments.contains("--local-stats-retry-fixture") {
+            precondition(ProcessInfo.processInfo.arguments.contains("--demo") && ProcessInfo.processInfo.arguments.contains("--isolated-demo"),
+                         "The local stats fixture requires an isolated Demo profile.")
+            Task { @MainActor in
+                do { try await runLocalStatsRetryChecks(); exit(EXIT_SUCCESS) }
+                catch { fatalError("Isolated local stats fixture failed: \(error)") }
+            }
+            dispatchMain()
+        }
         let application = NSApplication.shared
         application.setActivationPolicy(.regular)
         Task { @MainActor in
@@ -828,6 +924,7 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         precondition(model.comparison(privacyID)!.followUps.count == beforePrivate, "Private send must wait for the web broadcast to finish")
         precondition(model.comparison(privacyID)!.privateDrafts[recipient.id.uuidString] == "Private draft during broadcast")
         model.webBroadcastBusy = false
+        try await runLocalStatsRetryChecks()
         model.state.selection = [recipient.id, newcomer.id]
         model.state.draft = "Chronology original"
         await model.start(recipientIDs: model.state.selection)

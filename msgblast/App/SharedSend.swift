@@ -63,6 +63,7 @@ extension AppModel {
     /// agents and Messages go ahead.
     func sendShared(_ request: SharedSendRequest, broadcast: UUID) async -> SharedSendOutcome {
         defer { finishSharedWebBroadcast(broadcast) }
+        let statsRevision = localStats.recordingRevision
         let sessions = request.sessions, recipients = request.recipients, existingID = request.existingID
         let trimmed = request.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let needsSignIn = await webAgents.signInRequired(for: sessions)
@@ -72,8 +73,13 @@ extension AppModel {
         let nativeOnly = request.nativeOnly
         let progressiveNative = nativeOnly &&
             (existingID.map { id in sessions.allSatisfy { comparison(id)?.resolvedWebAgentIDs.contains($0.id) == true } } ?? true)
+        let followUpID = UUID()
+        let targetIDs = (sessions.map { $0.id.id } + recipients.map(\.uuidString)).sorted()
+        let statsTurn = LocalSubmissionStats.Turn(id: existingID == nil ? nil : followUpID,
+                                                 isFollowUp: existingID != nil, targetIDs: targetIDs,
+                                                 recordingRevision: statsRevision)
         let prepared: SharedSendPreparation
-        switch await prepareSharedRecipients(request, trimmed: trimmed, progressiveNative: progressiveNative) {
+        switch await prepareSharedRecipients(request, trimmed: trimmed, progressiveNative: progressiveNative, statsTurn: statsTurn) {
         case .ready(let preparation): prepared = preparation
         case .finished(let outcome): return outcome
         }
@@ -81,16 +87,20 @@ extension AppModel {
         guard bindSharedSend(broadcast, comparisonID: comparisonID, sessions: sessions) else { return .stopped }
         var planned: [WebAgentID: UUID] = [:]
         if progressiveNative {
-            guard let plannedAttempts = planNativePreparations(sessions, trimmed: trimmed, comparisonID: comparisonID) else { return .stopped }
+            let plan = LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+                planNativePreparations(sessions, trimmed: trimmed, comparisonID: comparisonID)
+            }
+            guard let plannedAttempts = plan else { return .stopped }
             planned = plannedAttempts
         }
         let allRecipients = comparison(comparisonID).map { comparison in
             Set(comparison.resolvedWebAgentIDs) == Set(sessions.map(\.id)) && Set(comparison.members.map(\.id)) == recipients
         } ?? false
-        let followUpID = UUID()
         let telemetryStarted = Date()
-        let result = await broadcastShared(request, broadcast: broadcast, comparisonID: comparisonID, progressiveNative: progressiveNative,
-                                           prepared: prepared, plannedAttempts: planned, followUpID: followUpID)
+        let result = await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+            await broadcastShared(request, broadcast: broadcast, comparisonID: comparisonID, progressiveNative: progressiveNative,
+                                  prepared: prepared, plannedAttempts: planned, followUpID: followUpID)
+        }
         // Every agent asked to send gets a result; one whose send returned nothing counts as a failure.
         recordAgentSendResults(sessions.map { ($0.provider, result.web[$0.id]) })
         recordSharedSendTelemetry(result, comparisonID: comparisonID, existingID: existingID, recipients: recipients, followUpID: followUpID, started: telemetryStarted)
@@ -100,12 +110,13 @@ extension AppModel {
 
     /// Progressive Mac app sends only need the comparison; other sends prepare every
     /// recipient first and record Mac apps that could not be prepared as not sent.
-    private func prepareSharedRecipients(_ request: SharedSendRequest, trimmed: String, progressiveNative: Bool) async -> SharedSendPreparationStep {
+    private func prepareSharedRecipients(_ request: SharedSendRequest, trimmed: String, progressiveNative: Bool,
+                                         statsTurn: LocalSubmissionStats.Turn) async -> SharedSendPreparationStep {
         if progressiveNative {
             guard let id = await sharedSendComparisonID(request, trimmed: trimmed) else { return .finished(.stopped) }
             return .ready(SharedSendPreparation(comparisonID: id))
         }
-        return await prepareSharedSessions(request, trimmed: trimmed)
+        return await prepareSharedSessions(request, trimmed: trimmed, statsTurn: statsTurn)
     }
 
     /// The existing conversation, or a new one prepared for this send.
@@ -114,7 +125,7 @@ extension AppModel {
         return await prepareWebComparison(trimmed, recipientIDs: request.recipients, agents: request.sessions.map(\.id), interactive: request.interactive)
     }
 
-    private func prepareSharedSessions(_ request: SharedSendRequest, trimmed: String) async -> SharedSendPreparationStep {
+    private func prepareSharedSessions(_ request: SharedSendRequest, trimmed: String, statsTurn: LocalSubmissionStats.Turn) async -> SharedSendPreparationStep {
         let sessions = request.sessions, recipients = request.recipients, existingID = request.existingID
         guard let preparation = await webAgents.prepareComparisonRecipients(existingID, for: sessions, startNativeApps: true, allowSavedPrivateDraft: true, foregroundPreparation: true) else { return .finished(.notPrepared) }
         guard existingID.flatMap({ comparison($0)?.endedAt }) == nil else { return .finished(.stopped) }
@@ -126,8 +137,14 @@ extension AppModel {
               !readySessions.isEmpty || !recipients.isEmpty else { return .finished(.notPrepared) }
         let failures = failedSessions.map { ($0, $0.error ?? $0.snapshot.reason) }
         guard let comparisonID = await sharedSendComparisonID(request, trimmed: trimmed) else { return .finished(.stopped) }
-        guard await joinReadySessions(readySessions, existingID: existingID, comparisonID: comparisonID) else { return .finished(.stopped) }
-        guard let unsent = recordUnsentPreparations(failures, trimmed: trimmed, comparisonID: comparisonID) else { return .finished(.stopped) }
+        let joined = await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+            await joinReadySessions(readySessions, existingID: existingID, comparisonID: comparisonID)
+        }
+        guard joined else { return .finished(.stopped) }
+        let unsentAttempts = LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+            recordUnsentPreparations(failures, trimmed: trimmed, comparisonID: comparisonID)
+        }
+        guard let unsent = unsentAttempts else { return .finished(.stopped) }
         return .ready(SharedSendPreparation(comparisonID: comparisonID, readySessions: readySessions, unsent: unsent))
     }
 
@@ -268,7 +285,8 @@ extension AppModel {
     /// for a private reply while a shared send's replies are still arriving (`independent`).
     /// `prepared` runs once the conversation exists (the pane uses it to show the comparison).
     func sendDirect(_ text: String, to session: WebAgentSession, existingID: UUID?, interactive: Bool = true, independent: Bool = false,
-                    prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
+                    retrying retryID: UUID? = nil, prepared: () -> Void = {}) async -> (comparisonID: UUID?, attempt: WebSendAttempt?) {
+        let statsRevision = localStats.recordingRevision
         defer {
             if independent { finishIndependentNativeReply() }
             else { webBroadcastBusy = false }
@@ -287,7 +305,13 @@ extension AppModel {
         do { try save() } catch { self.error = error.localizedDescription; return (id, nil) }
         prepared()
         let telemetryStarted = Date()
-        let attempt = await session.send(text, comparisonID: id)
+        let savedTurn = localStats.attempts.first { $0.id == retryID && $0.comparisonID == id && $0.recipientID == session.id.id }
+        let statsTurn = LocalSubmissionStats.Turn(id: savedTurn?.turnID ?? retryID ?? (existingID == nil ? id : UUID()),
+                                                 isFollowUp: savedTurn?.isFollowUp ?? (existingID != nil),
+                                                 targetIDs: savedTurn?.targetIDs ?? [session.id.id], recordingRevision: statsRevision)
+        let attempt = await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+            await session.send(text, comparisonID: id)
+        }
         recordAgentSendResults([(session.provider, attempt)])
         if let attempt, attempt.status.confirmsSubmission {
             recordMessageSubmission(kind: .private, recipientCount: 1, started: telemetryStarted, logicalID: attempt.id)

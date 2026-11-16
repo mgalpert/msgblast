@@ -181,7 +181,7 @@ struct AgentsWorkspaceView: View {
                 HStack(spacing: 0) {
                     ForEach(displayedSessions, id: \.id) { session in
                         if session.id != displayedSessions.first?.id { Divider() }
-                        WebAgentPane(session: session, account: model.personalAgent, busy: sending || (windowComparisonID != nil && web.comparisonID != windowComparisonID), allowPrivateReplyWhileBusy: canReplyWhileBroadcasting(to: session), endedMessages: archivedMessages(for: session), removalDisabled: sending, sendNative: { sendDirect($0, to: session) }, removeFromView: {
+                        WebAgentPane(session: session, account: model.personalAgent, busy: sending || (windowComparisonID != nil && web.comparisonID != windowComparisonID), allowPrivateReplyWhileBusy: canReplyWhileBroadcasting(to: session), endedMessages: archivedMessages(for: session), removalDisabled: sending, sendNative: { sendDirect($0, to: session, retrying: $1) }, removeFromView: {
                             if windowComparisonID == nil || web.comparisonID == windowComparisonID {
                                 session.updateState { $0.selected = false }
                             }
@@ -355,7 +355,7 @@ struct AgentsWorkspaceView: View {
         }
     }
 
-    private func sendDirect(_ text: String, to session: WebAgentSession) {
+    private func sendDirect(_ text: String, to session: WebAgentSession, retrying: UUID? = nil) {
         guard nativeComparison?.endedAt == nil else { return }
         let independent = canReplyWhileBroadcasting(to: session)
         guard (!model.webBroadcastBusy || independent), (!busy || independent), session.isEnabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -364,7 +364,7 @@ struct AgentsWorkspaceView: View {
             guard model.beginIndependentNativeReply() else { return }
         } else { model.webBroadcastBusy = true }
         Task { @MainActor in
-            _ = await model.sendDirect(text, to: session, existingID: existingID, independent: independent) { showingComparison = true }
+            _ = await model.sendDirect(text, to: session, existingID: existingID, independent: independent, retrying: retrying) { showingComparison = true }
         }
     }
 }
@@ -570,7 +570,7 @@ private struct WebAgentPane: View {
     var allowPrivateReplyWhileBusy = false
     var endedMessages: [WebPageMessage]? = nil
     var removalDisabled = false
-    let sendNative: (String) -> Void
+    let sendNative: (String, UUID?) -> Void
     let removeFromView: () -> Void
     var body: some View {
         VStack(spacing: 0) {
@@ -622,7 +622,7 @@ private struct WebAgentPane: View {
                     Text(latest.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if let detail = latest.detail, detail != session.desktopRecoveryMessage { Text(detail).font(.caption).foregroundStyle(.secondary) }
                     if latest.status == .notSent, latest.messageID == nil, session.provider.desktopApp != nil {
-                        Button("Retry") { sendNative(latest.text) }
+                        Button("Retry") { sendNative(latest.text, latest.id) }
                             .disabled(busy || !session.canSubmitNativePrompt)
                     }
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -811,7 +811,7 @@ private struct WebAgentPane: View {
                 attachments: [], addAttachments: { _ in }, removeAttachment: { _ in }, placeholder: "Message \(session.name)",
                 accessibilityName: "Message \(session.name)", sendLabel: "Send to \(session.name)",
                 disabled: (busy && !allowPrivateReplyWhileBusy) || !session.canSubmitNativePrompt, attachmentsEnabled: false) {
-                    sendNative(session.state.draft)
+                    sendNative(session.state.draft, nil)
                 }
         }.padding(14)
     }
