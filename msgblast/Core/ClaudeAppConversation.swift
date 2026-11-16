@@ -33,11 +33,12 @@ actor ClaudeAppConversation {
         let fields = state.body.filter { $0.role == "AXTextArea" && $0.label == "Write your prompt to Claude" && $0.element_token != nil && $0.enabled != false }
         var withoutTerminalNewlines = observation.rawNativeDraft
         while withoutTerminalNewlines.last == "\n" { withoutTerminalNewlines.removeLast() }
-        // The driver omits terminal LF characters that native AX preserves.
+        // The driver omits terminal LF characters that native AX preserves, and
+        // may report placeholder text for an empty editor. Native reads decide emptiness.
         // Native draft checks still verify every append and the final prompt.
         guard fields.count == 1, fields[0].frame == observation.composerFrame,
               fields[0].value == observation.rawNativeDraft || fields[0].value == withoutTerminalNewlines ||
-              (observation.draft.isEmpty && (fields[0].value == nil || fields[0].value == "\n")) else {
+              observation.draft.isEmpty else {
             throw DesktopAppError.unavailable("Claude's draft or composer geometry could not be verified. Existing text was preserved.")
         }
         return fields[0]

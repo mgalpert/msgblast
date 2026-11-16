@@ -253,7 +253,7 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(fixture.calls().filter { $0["tool"] as? String == "get_window_state" }.count, 2, "The initialization shell must not substitute for a verified composer snapshot")
     }
 
-    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
+    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, placeholderDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000001")!
@@ -296,6 +296,7 @@ final class ClaudeAppDriverTests: XCTestCase {
                 ["role": "AXButton", "label": "New", "element_token": "new-\(stage)", "enabled": true]
             ]
             if omitEmptyDriverValue && stage == 0 { elements[0].removeValue(forKey: "value") }
+            if placeholderDriverValue && stage == 0 && draft.isEmpty { elements[0]["value"] = "How can I help you today?" }
             if stage == 1 { elements.append(["role": "AXButton", "label": "Send message", "element_token": "send-1", "enabled": true]) }
             if stage == 2 { elements.append(["role": "AXButton", "label": "Stop", "element_token": "stop-2", "enabled": true]) }
             return ["pid": wrongPID ? 99 : 42, "window_id": 21, "elements": elements, "window_bounds": ["x": 0, "y": 0, "width": 100, "height": 100]]
@@ -726,6 +727,22 @@ final class ClaudeAppDriverTests: XCTestCase {
     }
     func testOmittedDriverValueDoesNotHideNativeNonemptyDraft() async throws {
         let fixture = try fixture(initialDraft: "Preserve native draft", omitEmptyDriverValue: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do {
+            _ = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
+            XCTFail("Native draft must prevent preparation")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("draft")) }
+        XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
+    }
+    func testDriverPlaceholderValueIsAcceptedWhenNativeEmptyEditorIsVerified() async throws {
+        let fixture = try fixture(placeholderDriverValue: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let binding = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
+        XCTAssertEqual(binding, fixture.binding)
+        XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
+    }
+    func testDriverPlaceholderValueDoesNotHideNativeNonemptyDraft() async throws {
+        let fixture = try fixture(initialDraft: "Preserve native draft", placeholderDriverValue: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         do {
             _ = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
