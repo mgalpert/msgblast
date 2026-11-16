@@ -253,7 +253,7 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(fixture.calls().filter { $0["tool"] as? String == "get_window_state" }.count, 2, "The initialization shell must not substitute for a verified composer snapshot")
     }
 
-    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false, nativePlaceholder: String? = nil, driverEmptyValue: String? = nil) throws -> Fixture {
+    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000001")!
@@ -279,7 +279,7 @@ final class ClaudeAppDriverTests: XCTestCase {
             let draft = stage == 1 ? prompt : stage == 0 ? initialDraft : ""
             let raw = collapseNativeBlankParagraphs && !draft.hasSuffix("\n") ? draft.components(separatedBy: "\n").filter { !$0.isEmpty }.joined(separator: "\n") : draft
             var controls: [ClaudeAXNode] = [
-                .init(role: "AXTextArea", label: "Write your prompt to Claude", value: draft.isEmpty ? "\n" : raw, placeholder: nativePlaceholder, frame: fieldFrame, focused: true, children: draft.isEmpty ? [.init(role: "AXGroup", classes: ["is-empty", "is-editor-empty"])] : collapseNativeBlankParagraphs ? draft.components(separatedBy: "\n").map { line in .init(role: "AXGroup", children: line.isEmpty ? [] : [.init(role: "AXStaticText", value: line)]) } : []),
+                .init(role: "AXTextArea", label: "Write your prompt to Claude", value: draft.isEmpty ? "\n" : raw, frame: fieldFrame, focused: true, children: draft.isEmpty ? [.init(role: "AXGroup", classes: ["is-empty", "is-editor-empty"])] : collapseNativeBlankParagraphs ? draft.components(separatedBy: "\n").map { line in .init(role: "AXGroup", children: line.isEmpty ? [] : [.init(role: "AXStaticText", value: line)]) } : []),
                 .init(role: "AXGroup", label: "Chat messages", children: articles)
             ]
             if stage == 2 { controls.append(.init(role: "AXButton", label: "Stop")) }
@@ -296,7 +296,6 @@ final class ClaudeAppDriverTests: XCTestCase {
                 ["role": "AXButton", "label": "New", "element_token": "new-\(stage)", "enabled": true]
             ]
             if omitEmptyDriverValue && stage == 0 { elements[0].removeValue(forKey: "value") }
-            if let driverEmptyValue, stage == 0 { elements[0]["value"] = driverEmptyValue }
             if stage == 1 { elements.append(["role": "AXButton", "label": "Send message", "element_token": "send-1", "enabled": true]) }
             if stage == 2 { elements.append(["role": "AXButton", "label": "Stop", "element_token": "stop-2", "enabled": true]) }
             return ["pid": wrongPID ? 99 : 42, "window_id": 21, "elements": elements, "window_bounds": ["x": 0, "y": 0, "width": 100, "height": 100]]
@@ -725,16 +724,31 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertEqual(binding, fixture.binding)
         XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
     }
+    private func placeholderFixture(driverValue: String) throws -> Fixture {
+        let base = try fixture()
+        let url = base.directory.appendingPathComponent("snapshots.json")
+        var snapshots = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
+        var elements = try XCTUnwrap(snapshots[0]["elements"] as? [[String: Any]])
+        elements[0]["value"] = driverValue
+        snapshots[0]["elements"] = elements
+        try JSONSerialization.data(withJSONObject: snapshots).write(to: url)
+        let field = ClaudeAXNode(role: "AXTextArea", label: "Write your prompt to Claude", value: "\n", placeholder: "How can I help you today?",
+                                 frame: base.observations[0].composerFrame, focused: true, children: [.init(role: "AXGroup", classes: ["is-empty", "is-editor-empty"])])
+        let empty = try ClaudeAppObservation(root: .init(role: "AXWindow", frame: .init(x: 0, y: 0, w: 100, h: 100), children: [
+            .init(role: "AXWebArea", url: base.observations[0].url, children: [.init(role: "AXGroup", subrole: "AXLandmarkMain", children: [field, .init(role: "AXGroup", label: "Chat messages")])])
+        ]))
+        return Fixture(directory: base.directory, executable: base.executable, binding: base.binding,
+                       observations: [empty] + base.observations.dropFirst(), unrelatedHistory: base.unrelatedHistory)
+    }
     func testDriverPlaceholderMatchingNativePlaceholderIsAnEmptyComposer() async throws {
-        let placeholder = "How can I help you today?"
-        let fixture = try fixture(nativePlaceholder: placeholder, driverEmptyValue: placeholder)
+        let fixture = try placeholderFixture(driverValue: "How can I help you today?")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let binding = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
         XCTAssertEqual(binding, fixture.binding)
         XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
     }
     func testDriverTextOtherThanNativePlaceholderPreventsPreparation() async throws {
-        let fixture = try fixture(nativePlaceholder: "How can I help you today?", driverEmptyValue: "Unverified text")
+        let fixture = try placeholderFixture(driverValue: "Unverified text")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         do {
             _ = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)

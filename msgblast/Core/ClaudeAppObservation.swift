@@ -95,9 +95,8 @@ struct ClaudeAppObservation: Sendable, Equatable {
         let fields = controls.filter { $0.role == "AXTextArea" && $0.label == "Write your prompt to Claude" }
         guard !fields.isEmpty else { throw ClaudeObservationError.transient("Claude's message field is still loading.") }
         guard fields.count == 1 else { throw DesktopAppError.unavailable("Claude's draft is unreadable. It was preserved.") }
-        composerFrame = fields[0].frame
+        composerFrame = fields[0].frame; composerPlaceholder = fields[0].placeholder
         composerFocused = fields[0].focused
-        composerPlaceholder = fields[0].placeholder
         let nativeDraft = try ClaudeNativeDraft.read(fields[0])
         rawNativeDraft = nativeDraft.raw
         draft = nativeDraft.actual
