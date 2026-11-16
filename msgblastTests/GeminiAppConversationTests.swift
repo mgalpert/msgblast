@@ -550,7 +550,11 @@ final class GeminiAppDriverTests: XCTestCase {
         let f = try savedConversationScenario(binding)
         defer { try? FileManager.default.removeItem(at: f.directory) }
         let saved = BindingRecorder()
-        let answer = try await adapter(f).reply("Follow up", binding: binding, preferences: .init(model: "3.8 Flash, All-around help"), onPrepared: { await saved.record($0) }) { await saved.record($0) }
+        let observed = expectation(description: "Matched outgoing prompt observed")
+        let answer = try await adapter(f).reply("Follow up", binding: binding, preferences: .init(model: "3.8 Flash, All-around help"),
+                                                onPrepared: { await saved.record($0) },
+                                                onOutgoingObserved: { observed.fulfill() }) { await saved.record($0) }
+        await fulfillment(of: [observed], timeout: 1)
         XCTAssertEqual(answer, "FOLLOWUP-OK")
         let result = await saved.value
         XCTAssertEqual(result, binding)

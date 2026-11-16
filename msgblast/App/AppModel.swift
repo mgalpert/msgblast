@@ -607,6 +607,9 @@ final class AppModel: ObservableObject {
     func joinWebAgent(_ session: WebAgentSession, comparisonID: UUID) async -> Bool {
         guard comparison(comparisonID)?.endedAt == nil, !busy, session.isEnabled, session.provider.supportsSharedSubmissions else { return false }
         if comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) == true { return true }
+        let statsRevision = if let turn = LocalSubmissionStats.Turn.current { turn.recordingRevision } else { localStats.recordingRevision }
+        let statsTurn = LocalSubmissionStats.Turn(id: nil, isFollowUp: true, targetIDs: [session.id.id],
+                                                 recordingRevision: statsRevision)
         do {
             try freezeSharedContext(comparisonID)
             guard let saved = comparison(comparisonID), let i = index(comparisonID) else { return false }
@@ -620,7 +623,9 @@ final class AppModel: ObservableObject {
             // Save membership before sending so an interrupted join is never automatically repeated.
             state.comparisons[i].setWebAgents(saved.resolvedWebAgentIDs + [session.id])
             try save()
-            let attempt = await session.send(saved.joiningPrompt(), comparisonID: comparisonID, consumePrivateDraft: false)
+            let attempt = await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+                await session.send(saved.joiningPrompt(), comparisonID: comparisonID, consumePrivateDraft: false)
+            }
             if attempt == nil || attempt?.status == .notSent {
                 state.comparisons[i].setWebAgents(state.comparisons[i].resolvedWebAgentIDs.filter { $0 != session.id })
                 try save()

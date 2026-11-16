@@ -293,6 +293,7 @@ actor GeminiAppConversation {
     }
     func reply(_ text: String, binding: GeminiConversationBinding, preferences: GeminiPreferences,
                onPrepared: @Sendable (GeminiConversationBinding) async throws -> Void,
+               onOutgoingObserved: @Sendable () async -> Void = {},
                onBinding: @Sendable (GeminiConversationBinding) async throws -> Void) async throws -> String {
         guard !occupied else { throw DesktopAppError.unavailable("Gemini is already handling a request.") }
         occupied = true; defer { occupied = false }
@@ -314,6 +315,7 @@ actor GeminiAppConversation {
         try await attemptActionOnce("type_text", control: field, text: prompt, target: target, session: session, expected: native)
         let prepared = try await read(target)
         guard prepared.draft == prompt, prepared.messages == baseline, prepared.title == native.title, prepared.model == native.model else { throw DesktopAppError.unavailable("Gemini’s prepared prompt changed. It was not sent or retried.") }
+        var outgoingObserved = false
         let answer = try await DesktopAppWorkflow.reply(app: "Gemini", timing: timing,
             timeout: binding.mode == .task ? taskReplyTimeout : timing.replyTimeout, submit: {
                 try await self.attemptActionOnce(control: prepared.control(id: "send_button"), target: target, session: session, expected: prepared)
@@ -325,6 +327,10 @@ actor GeminiAppConversation {
                 guard messages.starts(with: baseline), messages.count <= baseline.count + 2 else { throw DesktopAppError.unavailable("Gemini’s conversation changed. No reply was attributed.") }
                 if messages.count > baseline.count {
                     guard messages[baseline.count] == .init(role: .user, text: prompt) else { throw DesktopAppError.unavailable("Gemini’s outgoing message did not match this request.") }
+                    if !outgoingObserved {
+                        outgoingObserved = true
+                        await onOutgoingObserved()
+                    }
                 }
                 guard messages.count == baseline.count + 2, let answer = messages.last, answer.role == .assistant, !native.generating, native.draft.isEmpty else { return nil }
                 return answer.text

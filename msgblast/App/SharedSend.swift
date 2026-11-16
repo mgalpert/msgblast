@@ -137,7 +137,10 @@ extension AppModel {
               !readySessions.isEmpty || !recipients.isEmpty else { return .finished(.notPrepared) }
         let failures = failedSessions.map { ($0, $0.error ?? $0.snapshot.reason) }
         guard let comparisonID = await sharedSendComparisonID(request, trimmed: trimmed) else { return .finished(.stopped) }
-        guard await joinReadySessions(readySessions, existingID: existingID, comparisonID: comparisonID) else { return .finished(.stopped) }
+        let joined = await LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
+            await joinReadySessions(readySessions, existingID: existingID, comparisonID: comparisonID)
+        }
+        guard joined else { return .finished(.stopped) }
         let unsentAttempts = LocalSubmissionStats.Turn.$current.withValue(statsTurn) {
             recordUnsentPreparations(failures, trimmed: trimmed, comparisonID: comparisonID)
         }

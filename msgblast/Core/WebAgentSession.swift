@@ -2031,7 +2031,8 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         saved.title = saved.dedicatedTitle
                         try self.recordGeminiSubmission(saved)
                     }
-                    if provider.desktopApp != nil { try await submitted() }
+                    if provider == .geminiApp { onObserved?(outgoingID) }
+                    else if provider.desktopApp != nil { try await submitted() }
                     return PersonalAgentReply(text: "\(provider.name) fixture reply: \(text)", sessionID: savedSessionID ?? UUID().uuidString)
                 }
                 let refreshInput: (@Sendable (DesktopAppConversation.Target, String) async throws -> Void)?
@@ -2068,7 +2069,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                     let answer = try await geminiApp.reply(text, binding: saved, preferences: geminiPreferences, onPrepared: { [weak self] prepared in
                         guard let self else { throw CancellationError() }
                         try await self.recordGeminiSubmission(prepared)
-                    }) { [weak self] discovered in
+                    }, onOutgoingObserved: { await onObserved?(outgoingID) }) { [weak self] discovered in
                         guard let self else { throw CancellationError() }
                         try await self.recordGeminiSubmission(discovered)
                     }
