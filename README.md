@@ -65,6 +65,8 @@ For **Muse Web, ChatGPT Web, Claude Web, and Grok Web**, add separate named acco
 
 CLI chats respect the installed CLI’s permissions, skills, tools, and connectors. Interactive approvals may require Terminal; msgblast does not bypass them. Claude Code requires **2.1.259 or later**. Website sign-in does not sign in a CLI. See [CLI accounts and conversations](docs/personal-agent-reports.md#website-chats-and-optional-cli-conversations).
 
+On iPhone, use a paired Mac to continue with [Codex CLI](https://msgblast.app/guides/codex-cli-on-iphone/) or [Claude Code](https://msgblast.app/guides/claude-code-on-iphone/). On Mac, see how to [compare Codex CLI and Claude Code side by side](https://msgblast.app/guides/compare-codex-claude-code-mac/).
+
 ### Comparison report agents
 
 **Codex, Claude Code, Gemini CLI, Pi, and Hermes** can generate reports from Messages comparisons. These are separate from chat agents: report generation restricts tools to analyzing the supplied replies. **Hermes** offers reports and Terminal setup, without a chat pane. **OpenClaw** currently offers a Terminal setup shortcut only, with no chat or report integration.
