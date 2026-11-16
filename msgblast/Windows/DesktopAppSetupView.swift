@@ -130,7 +130,15 @@ struct DesktopAppSetupView: View {
                     Text("msgblast briefly brings \(app.name) forward to send, then returns you here.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if !session.desktopReady { Text(session.desktopStatus).font(.caption).foregroundStyle(.secondary) }
+                if !session.desktopReady {
+                    // A failed check reads as an error next to Connect, which is the Try Again.
+                    let failed = !session.loading && session.desktopRecoveryMessage != nil
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        if failed { Image(systemName: "exclamationmark.triangle.fill") }
+                        Text(session.desktopStatus)
+                    }.font(failed ? .callout : .caption).foregroundStyle(failed ? Color.orange : Color.secondary)
+                        .accessibilityIdentifier("desktop-app-status")
+                }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
         .task {
@@ -156,6 +164,10 @@ struct DesktopAppSetupView: View {
     }
 
     private func connect(_ app: DesktopAppProvider) async {
+        defer {
+            // A failed check is explained here, so return to msgblast if another app took focus.
+            if !session.desktopReady, !NSApp.isActive { NSApp.activate() }
+        }
         guard await session.prepareDesktopConnection() else { return }
         if app == .grokBot {
             await loadBots(markConnected: false, activateIfNeeded: true)
