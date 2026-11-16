@@ -82,16 +82,21 @@ public enum AgentControlSend {
             let conversation = try input.comparisonID.map { _ in try comparison(input) }
             action = .sendPrivate(conversationID: conversation, agentID: try sendable(one), text: try text(input), attachmentIDs: [])
         case "msgblast_agent_choose":
-            guard let one = input.agent else { throw AgentControlError.invalidArguments("agent is required") }
-            guard let label = input.action, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AgentControlError.invalidArguments("action is required") }
-            guard let offer = input.actionsID, !offer.isEmpty else { throw AgentControlError.invalidArguments("actionsId is required") }
-            action = .chooseAction(conversationID: try comparison(input), agentID: try sendable(one), label: label, offerID: offer)
+            action = try choice(input)
         case "msgblast_comparison_end":
             action = .endConversation(conversationID: try comparison(input))
         default:
             throw AgentControlError.unknownTool(tool)
         }
         return RemoteCommand(clientCommandID: id, action: action)
+    }
+
+    /// A tap on one suggestion: its label and the reply it was offered under.
+    private static func choice(_ input: Input) throws -> RemoteAction {
+        guard let one = input.agent else { throw AgentControlError.invalidArguments("agent is required") }
+        guard let label = input.action, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AgentControlError.invalidArguments("action is required") }
+        guard let offer = input.actionsID, !offer.isEmpty else { throw AgentControlError.invalidArguments("actionsId is required") }
+        return .chooseAction(conversationID: try comparison(input), agentID: try sendable(one), label: label, offerID: offer)
     }
 
     private static func comparison(_ input: Input) throws -> UUID {
