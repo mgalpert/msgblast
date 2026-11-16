@@ -26,6 +26,12 @@ const diagnosticFields = {
 };
 
 const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value,key));
+const nativeApps = ['muse','grokBot','wabi','gemini','chatgpt','dots','claude'];
+const nativeVersionToken = token(/^[0-9A-Za-z._-]{1,32}(?![\s\S])/);
+const validNativeAppVersions = value => object(value) && Object.entries(value).every(([app, version]) =>
+  nativeApps.includes(app) && exact(version,['version','build']) &&
+  nativeVersionToken(version.version) && nativeVersionToken(version.build));
+
 function validCrash(c) {
   return exact(c,['schema','incident','process','bundleIdentifier','version','build','exception','signal','day','frames','fingerprint'])
     && c.schema === 1 && typeof c.incident === 'string' && uuid.test(c.incident)
@@ -51,7 +57,10 @@ function validate(body) {
     if (typeof body.diagnostics !== 'string') return null;
     let diagnostics;
     try { diagnostics = JSON.parse(body.diagnostics); } catch { return null; }
-    if (!object(diagnostics) || Object.keys(diagnostics).length !== Object.keys(diagnosticFields).length || !Object.entries(diagnosticFields).every(([key, valid]) => Object.hasOwn(diagnostics,key) && valid(diagnostics[key]))) return null;
+    if (!object(diagnostics) ||
+        !Object.entries(diagnosticFields).every(([key, valid]) => Object.hasOwn(diagnostics,key) && valid(diagnostics[key])) ||
+        Object.keys(diagnostics).some(key => key !== 'nativeAppVersions' && !Object.hasOwn(diagnosticFields,key)) ||
+        (Object.hasOwn(diagnostics,'nativeAppVersions') && !validNativeAppVersions(diagnostics.nativeAppVersions))) return null;
     // Mirror invariants of DiagnosticPayload, not caller-supplied arbitrary data.
     const variant = {'com.msgblast.mac':'production','com.msgblast.development':'development','com.msgblast.demo':'demo'}[diagnostics.bundleIdentifier] ?? 'other';
     if (diagnostics.variant !== variant || (!diagnostics.stateFilePresent && diagnostics.stateFileBytes !== 0)) return null;

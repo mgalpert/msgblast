@@ -49,6 +49,21 @@ test('diagnostics allowlist rejects arbitrary fields, types and categories',asyn
  for(const value of [{...diagnostics,transcript:'secret'},{...diagnostics,agentCount:-1},{...diagnostics,agentCount:1000001},{...diagnostics,fixtureMode:'true'},{...diagnostics,messagesStatus:'private text'},{...diagnostics,webProviderCounts:{unknown:1}},{...diagnostics,supportFolder:'/Users/private'},{...diagnostics,updatesReason:'a token'},{...diagnostics,version:'secret with spaces'},{}])assert.equal((await send({...report,diagnostics:JSON.stringify(value)})).status,400);
  assert.equal((await send({...report,diagnostics})).status,400);
 });
+test('stores supported native app versions and builds without accepting arbitrary metadata',async()=>{
+ const nativeAppVersions={claude:{version:'4.16336.0',build:'16336'},muse:{version:'12.0',build:'unknown'}};
+ const payload=versions=>({...report,diagnostics:JSON.stringify({...diagnostics,nativeAppVersions:versions})});
+ const env=environment();
+ assert.equal((await send(payload(nativeAppVersions),env)).status,201);
+ assert.deepEqual(JSON.parse(env.objects.get(`reports/${id}.json`).value).diagnostics.nativeAppVersions,nativeAppVersions);
+ assert.equal((await send(payload(nativeAppVersions),env)).status,200);
+ for (const invalid of [null,[],{unknownApp:nativeAppVersions.claude},{claude:{version:'1'}},
+   {claude:{version:'1',build:'2',path:'/Applications/Claude.app'}},{muse:{version:'1',build:'private text'}},
+   {muse:{version:'1',build:'2\n'}},{muse:{version:'1',build:2}}]) {
+  assert.equal((await send(payload(invalid))).status,400);
+ }
+ const {version,...missingRequired}=diagnostics;
+ assert.equal((await send({...report,diagnostics:JSON.stringify({...missingRequired,nativeAppVersions})})).status,400);
+});
 test('caps streamed bytes even without Content-Length and cancels oversized input',async()=>{
  let cancelled=false;
  const stream=new ReadableStream({pull(controller){controller.enqueue(new Uint8Array(32769));},cancel(){cancelled=true;}});
