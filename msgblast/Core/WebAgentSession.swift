@@ -1158,8 +1158,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                      onConfirmedSubmission: @escaping @MainActor @Sendable () -> Void = {},
                      plannedAttemptID: UUID? = nil, consumePrivateDraft: Bool = true, action: Bool = false) async -> WebSendAttempt? {
         defer { onSubmissionFinished() }
-        guard !action || provider == .alexaShopping else { return nil }
-        guard plannedAttemptID == nil || provider.desktopApp != nil else { return nil }
+        guard plannedAttemptID == nil || provider.desktopApp != nil, !action || provider == .alexaShopping else { return nil }
         if provider == .grokbot { return await sendGrokBot(text, comparisonID: comparisonID, consumePrivateDraft: consumePrivateDraft) }
         if provider.personalAgentProvider != nil || provider.desktopApp != nil { return await sendNative(text, comparisonID: comparisonID, onSubmissionFinished: onSubmissionFinished, onConfirmedSubmission: onConfirmedSubmission, plannedAttemptID: plannedAttemptID, consumePrivateDraft: consumePrivateDraft) }
         guard isEnabled, !isSending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -1170,7 +1169,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         isSending = true
         defer { isSending = false }
         var attempt = WebSendAttempt(text: text)
-        if action { attempt.action = true }
+        attempt.action = action ? true : nil
         let id = comparisonID ?? state.comparisonID ?? UUID()
         attempt.comparisonID = id
         var submissionWasPossible = false
@@ -1200,8 +1199,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             let expectedURL = snapshot.url
             let preparation: [String: Any]?
             do {
-                preparation = try await webView.callAsyncJavaScript(action ? script.prepareAction : script.prepare, arguments: action ? ["label": text] : ["text": text],
-                                                                    in: nil, contentWorld: .defaultClient) as? [String: Any]
+                preparation = try await runPrepare(text, action: action)
             } catch {
                 guard generation == navigationGeneration, !loading else {
                     throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.")
@@ -1219,15 +1217,12 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
             attempt.receiptContext = WebReceiptContext(originalURL: provider == .alexaShopping ? provider.homeURL : url, baseline: baseline, existingPaths: existingPaths)
             receiptGenerations[attempt.id] = WebReceiptGeneration(page: currentPage(), generation: generation)
             let preparedDraft = preparation?["preparedDraft"] as? String ?? text
-            if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
-            else if !action { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
+            try await waitBeforeClick(preparedDraft, expectedURL: expectedURL, generation: generation, action: action)
             guard generation == navigationGeneration, !loading else { throw WebSessionFailure.notSent("\(provider.name) navigated before submission. Review its draft.") }
             attempt.status = .attempting
             try store(attempt) // The possible external side effect is durably recorded first.
             submissionWasPossible = true
-            let result = try await webView.callAsyncJavaScript(action ? script.clickAction : script.clickSend,
-                                                               arguments: action ? ["label": text, "expectedURL": expectedURL] : ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL],
-                                                               in: nil, contentWorld: .defaultClient) as? [String: Any]
+            let result = try await runClick(text, preparedDraft: preparedDraft, expectedURL: expectedURL, action: action)
             if result?["clicked"] as? Bool == false {
                 submissionWasPossible = false
                 throw WebSessionFailure.notSent(result?["reason"] as? String ?? "\(provider.name)’s Send control was not clicked.")
@@ -2641,6 +2636,25 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         state.attempts[index].conversationURL = binding.url
         state.attempts[index].recoveryConversationURL = nil
         try save()
+    }
+
+    /// Fills the composer, or for a suggestion checks the page still offers that button.
+    private func runPrepare(_ text: String, action: Bool) async throws -> [String: Any]? {
+        try await webView.callAsyncJavaScript(action ? script.prepareAction : script.prepare, arguments: action ? ["label": text] : ["text": text],
+                                              in: nil, contentWorld: .defaultClient) as? [String: Any]
+    }
+
+    /// Clicks Send, or the suggestion button itself, so the page sends whatever that button sends.
+    private func runClick(_ text: String, preparedDraft: String, expectedURL: String, action: Bool) async throws -> [String: Any]? {
+        try await webView.callAsyncJavaScript(action ? script.clickAction : script.clickSend,
+                                              arguments: action ? ["label": text, "expectedURL": expectedURL] : ["text": text, "preparedDraft": preparedDraft, "expectedURL": expectedURL],
+                                              in: nil, contentWorld: .defaultClient) as? [String: Any]
+    }
+
+    /// A suggestion has no composer, so there is no Send control to wait for.
+    private func waitBeforeClick(_ preparedDraft: String, expectedURL: String, generation: Int, action: Bool) async throws {
+        if provider == .muse { try await Task.sleep(for: .milliseconds(150)) }
+        else if !action { try await waitForSendControl(preparedDraft, expectedURL: expectedURL, generation: generation) }
     }
 
     private func waitForSendControl(_ preparedDraft: String, expectedURL: String, generation: Int) async throws {
