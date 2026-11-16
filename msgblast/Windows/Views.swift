@@ -754,7 +754,7 @@ struct RecipientPills: View {
 }
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
-    case general = "General", apps = "Mac apps", websites = "Websites", cli = "CLI tools", webhooks = "Webhooks", outsideAgents = "Outside agents", remote = "Remote", permissions = "Permissions", sharing = "Sharing", updates = "Updates"
+    case general = "General", apps = "Mac apps", websites = "Websites", cli = "CLI tools", webhooks = "Webhooks", outsideAgents = "Outside agents", remote = "Remote", permissions = "Permissions", sharing = "Sharing", myStats = "My Stats", updates = "Updates"
     var id: Self { self }
     var symbol: String {
         switch self {
@@ -766,7 +766,8 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .outsideAgents: "person.badge.key"
         case .remote: "iphone"
         case .permissions: "hand.raised"
-        case .sharing: "chart.bar"
+        case .sharing: "person.2"
+        case .myStats: "chart.bar"
         case .updates: "arrow.down.circle"
         }
     }
@@ -792,6 +793,7 @@ struct AppSettingsView: View {
                     sidebarRow(.outsideAgents)
                     sidebarRow(.remote)
                     sidebarRow(.permissions)
+                    sidebarRow(.myStats)
                     sidebarRow(.sharing)
                     sidebarRow(.updates)
                 }
@@ -865,6 +867,9 @@ struct AppSettingsView: View {
                     settingsPage(.permissions) {
                         Section { PermissionsSettingsView(model: model) }
                     }
+                    settingsPage(.myStats) {
+                        MyStatsView(stats: model.localStats, recipientNames: statsRecipientNames)
+                    }
                     settingsPage(.sharing) {
                         Section { SharingSettingsView(model: model) }
                     }
@@ -897,6 +902,13 @@ struct AppSettingsView: View {
             .accessibilityIdentifier("settings-page-\(item.id)")
     }
 
+    private var statsRecipientNames: [String: String] {
+        var names: [String: String] = [:]
+        for agent in model.state.agents { names[agent.id.uuidString] = agent.name }
+        for session in model.webAgents.sessions { names[session.id.id] = session.name }
+        return names
+    }
+
     private var subtitle: String {
         switch page {
         case .general: "Choose how you start blasts and open conversations."
@@ -907,6 +919,7 @@ struct AppSettingsView: View {
         case .remote: "Pair an iPhone to start and follow blasts on this Mac."
         case .outsideAgents: "Let agents such as Claude Code and Codex use msgblast, with the access you choose."
         case .permissions: "Control what msgblast can access on this Mac."
+        case .myStats: "Review your local submission activity."
         case .sharing: "Choose the anonymous statistics you share to improve msgblast."
         case .updates: "Keep msgblast up to date."
         }
