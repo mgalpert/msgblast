@@ -103,6 +103,20 @@ private final class FeedbackWindowProtocol: URLProtocol, @unchecked Sendable {
         precondition(model.comparison(statsComparisonID)?.followUps.last?.states[failedID.uuidString] == .uncertain)
         precondition(model.localStats.attempts.count == stats.count)
 
+        model.localStats.setEnabled(false)
+        model.state.comparisons[statsIndex].allDraft = "Send while recording is paused"
+        await model.followUp(statsComparisonID, recipients: [successfulID])
+        let reopenedStats = LocalSubmissionStats(directory: directory)
+        precondition(!reopenedStats.enabled && reopenedStats.attempts.map(\.id) == stats.map(\.id))
+        precondition(model.comparison(statsComparisonID)?.followUps.last?.states[successfulID.uuidString] == .submitted)
+        model.localStats.clear()
+        precondition(LocalSubmissionStats(directory: directory).attempts.isEmpty)
+        model.localStats.setEnabled(true)
+        model.state.comparisons[statsIndex].allDraft = "Send after re-enabling local stats"
+        await model.followUp(statsComparisonID, recipients: [successfulID])
+        precondition(model.localStats.attempts.count == 1)
+        print("PASS: pausing leaves saved attempts intact across store reopen, clearing removes them, and re-enabling records subsequent sends.")
+
         let desktop = model.webAgents.session(for: WebAgentID(provider: .museApp))!
         model.webAgents.setComparison(statsComparisonID)
         model.webAgents.setEnabled(true, for: .museApp)

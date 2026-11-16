@@ -37,8 +37,8 @@ Outside agents can open comparisons as an MCP App. The UI resource is `ui://msgb
 
 ## Settings organization
 
-Settings uses a native sidebar with General, Outside agents, Remote, Permissions, Sharing,
-and Updates, plus a Connections group containing Mac apps, Websites, CLI tools, and Webhooks.
+Settings uses a native sidebar with General, Outside agents, Remote, Permissions, My Stats,
+Sharing, and Updates, plus a Connections group containing Mac apps, Websites, CLI tools, and Webhooks.
 Outside agents holds the agent control switch, setup commands, the MCP command for this Mac, and the MCP server URL and per-agent keys for the Tailscale endpoint
 (Grok Bot or any other MCP client), and each approved agent's Read only or Full access level.
 Webhooks currently contains Grok Bot routines; the Grok Bot Mac app remains under Mac apps.
@@ -50,6 +50,13 @@ unsaved choices remain while switching pages. Leaving General cancels shortcut
 recording. Each category scrolls independently within the resizable settings window.
 Share Feedback and Build A New Feature remain pinned below the sidebar list and open
 the existing feedback and feature-building windows without submitting anything.
+
+My Stats shows local submission counts and timings for sends made while recording is
+enabled. Recording is off by default and is independent of Sharing. Each profile's
+`My Stats/submissions.json` stores identifiers, outcomes, and elapsed times.
+Known submission times exclude reply waiting. CLI runs without a separate
+submission signal can contribute an outcome without a timing sample. Pausing
+keeps existing data, and Clear Saved Stats clears the profile's recorded attempts.
 
 ## Runtime boundaries
 
