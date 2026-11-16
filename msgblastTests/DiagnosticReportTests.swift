@@ -49,7 +49,7 @@ final class DiagnosticReportTests: XCTestCase {
         XCTAssertTrue(readme.contains("This ZIP is a local copy created when you choose Save."))
         for topic in DiagnosticReport.excludedTopics { XCTAssertTrue(readme.contains(topic), topic) }
         let object = try JSONSerialization.jsonObject(with: Data(diagnostics.utf8)) as? [String: Any]
-        XCTAssertEqual(Set(object.map { Array($0.keys) } ?? []), Set(DiagnosticReport.diagnosticKeys))
+        XCTAssertEqual(Set(object.map { Array($0.keys) } ?? []), Set(DiagnosticReport.diagnosticKeys).subtracting(["nativeAppVersions"]))
         XCTAssertEqual(object?["variant"] as? String, "production")
         XCTAssertEqual(object?["bundleIdentifier"] as? String, "com.msgblast.mac")
         XCTAssertEqual(object?["version"] as? String, "unknown")

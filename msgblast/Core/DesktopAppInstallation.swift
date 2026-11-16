@@ -7,6 +7,13 @@ public struct DesktopAppInstallation: Equatable, Sendable {
     public var isInstalled: Bool { url != nil }
     public var isRunning: Bool { isInstalled && processID != nil }
 
+    @MainActor
+    public static func current(for app: DesktopAppProvider) -> Self {
+        let running = app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }.first { !$0.isTerminated }
+        let registered = app.bundleIDs.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first { validatedURL($0, for: app) != nil }
+        return resolve(for: app, registeredURL: registered, runningURL: running?.bundleURL, processID: running?.processIdentifier)
+    }
+
     static func resolve(for app: DesktopAppProvider, registeredURL: URL?, runningURL: URL?, processID: Int32?) -> Self {
         if let url = validatedURL(runningURL, for: app) { return .init(url: url, processID: processID) }
         return .init(url: validatedURL(registeredURL, for: app), processID: nil)
@@ -39,12 +46,7 @@ struct DesktopAppInstallationClient: Sendable {
     }
 
     static func system(handBack: @escaping FrontHandBack) -> Self {
-        .init(inspect: { app in
-            let running = app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }.first { !$0.isTerminated }
-            let registered = app.bundleIDs.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first { DesktopAppInstallation.validatedURL($0, for: app) != nil }
-            return .resolve(for: app, registeredURL: registered,
-                            runningURL: running?.bundleURL, processID: running?.processIdentifier)
-        }, open: { url, activates in
+        .init(inspect: DesktopAppInstallation.current, open: { url, activates in
             try await openSystem(url, activates: activates, handBack: handBack)
         }, isHidden: { app in
             app.bundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
