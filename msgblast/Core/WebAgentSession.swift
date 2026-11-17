@@ -1660,6 +1660,15 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         updateNativeSnapshot()
     }
 
+    /// A send may open a new chat from Claude's Code or other pages; it holds
+    /// the foreground for that, as preparing the chat does next.
+    private func checkClaude(sending: Bool) async throws {
+        do { try await claudeApp.checkAvailable() }
+        catch ClaudeObservationError.otherPage where sending {
+            try await DesktopAppWorkflow.preparation(.claude, driver: desktopDriver) { try await claudeApp.checkAvailable() }
+        }
+    }
+
     private func refreshDesktop(duringConnection: Bool = false, connectIfNeeded: Bool = false) async {
         guard let app = provider.desktopApp, provider.isAvailableInBuild, (!loading || duringConnection), !refreshing, !shuttingDown else { return }
         refreshing = true
@@ -1685,7 +1694,7 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
                         }
                     }
                     if !fixture {
-                        if app == .claude { try await claudeApp.checkAvailable() }
+                        if app == .claude { try await checkClaude(sending: connectIfNeeded) }
                         else if let kind = chatgptKind { try await chatgptApp.checkAvailable(kind: kind) }
                     }
                     guard generation == comparisonGeneration, !shuttingDown else { return }

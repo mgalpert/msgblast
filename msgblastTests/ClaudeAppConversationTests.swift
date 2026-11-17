@@ -34,6 +34,17 @@ final class ClaudeAppConversationTests: XCTestCase {
         }
     }
 
+    func testClaudePageOutsideChatsIsNotTreatedAsStartup() {
+        let wrapper = ClaudeAXNode(role: "AXWebArea", url: URL(string: "file:///Applications/Claude.app/Contents/Resources/index.html"))
+        let code = ClaudeAXNode(role: "AXWebArea", url: URL(string: "https://claude.ai/epitaxy/project/p1?thread=t1"))
+        XCTAssertThrowsError(try ClaudeAppObservation(root: .init(role: "AXWindow", children: [wrapper, code]))) { error in
+            guard case ClaudeObservationError.otherPage = error else { return XCTFail("A Code session never becomes a chat by waiting") }
+        }
+        XCTAssertThrowsError(try ClaudeAppObservation(root: .init(role: "AXWindow", children: [wrapper]))) { error in
+            guard case ClaudeObservationError.transient = error else { return XCTFail("The wrapper alone is still starting up") }
+        }
+    }
+
     func testMessageBoundariesUseNativeSenderAndExcludeToolbars() throws {
         let observed = try ClaudeAppObservation(root: tree([
             article(1, 2, "You said: Prompt excerpt", "Full prompt"),
@@ -245,6 +256,31 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key", "launch_app"].contains($0["tool"] as? String ?? "") })
     }
 
+    func testCodeSessionOpensNewChatOnlyWhileHoldingTheForeground() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let opened = fixture.directory.appendingPathComponent("opened-new"), chat = fixture.observations[0]
+        let code = ClaudeAXNode(role: "AXWindow", children: [
+            .init(role: "AXWebArea", url: URL(string: "file:///Applications/Claude.app/Contents/Resources/index.html")),
+            .init(role: "AXWebArea", url: URL(string: "https://claude.ai/epitaxy/project/p1?thread=t1"), children: [.init(role: "AXGroup", subrole: "AXLandmarkMain")])
+        ])
+        let adapter = ClaudeAppConversation(executable: fixture.executable, timing: .init(pollInterval: .milliseconds(5), stableDuration: .zero, replyTimeout: .seconds(5), callTimeout: 5)) { _, _ in
+            FileManager.default.fileExists(atPath: opened.path) ? chat : try ClaudeAppObservation(root: code)
+        }
+        do {
+            try await adapter.checkAvailable()
+            XCTFail("A background check must not navigate Claude")
+        } catch {
+            guard case ClaudeObservationError.otherPage = error else { return XCTFail(error.localizedDescription) }
+        }
+        XCTAssertFalse(fixture.calls().contains { $0["tool"] as? String == "launch_app" })
+        try await DesktopAppWorkflow.$foreground.withValue(true) { try await adapter.checkAvailable() }
+        let launches = fixture.calls().filter { $0["tool"] as? String == "launch_app" }
+        XCTAssertEqual(launches.map { ($0["arguments"] as? [String: Any])?["urls"] as? [String] }, [["claude://claude.ai/new"]])
+        XCTAssertEqual((launches.first?["arguments"] as? [String: Any])?["bundle_id"] as? String, DesktopAppProvider.claude.bundleID)
+        XCTAssertFalse(fixture.calls().contains { ["click", "type_text", "press_key"].contains($0["tool"] as? String ?? "") })
+    }
+
     func testOnboardingInitializesDriverSnapshotBeforeReadingColdNativeControls() async throws {
         let fixture = try fixture(initialDriverShell: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -320,9 +356,9 @@ final class ClaudeAppDriverTests: XCTestCase {
         elif tool=='list_windows':
             assert a['pid']==42
             print(json.dumps({'windows':[{'window_id':21,'title':'Claude','is_on_screen':False,'on_current_space':False,'space_ids':[1],'bounds':{'width':1000,'height':900}}]}))
+        elif tool=='launch_app' and a['urls']==['claude://claude.ai/new']:(p/'opened-new').touch();print(json.dumps({'effect':'unverifiable'}))
         elif tool=='launch_app':
-            assert s==4
-            assert a['bundle_id']=='com.anthropic.claudefordesktop'
+            assert s==4 and a['bundle_id']=='com.anthropic.claudefordesktop'
             assert a['urls']==['claude://claude.ai/chat/00000000-0000-0000-0000-000000000001']
             assert 'https://' not in a['urls'][0]
             (p/'stage').write_text('0')
