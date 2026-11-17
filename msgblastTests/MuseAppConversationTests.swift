@@ -23,6 +23,21 @@ final class MuseAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try MuseComposerText.read(markerText: { placeholder }) { _ in "Message" })
         XCTAssertThrowsError(try MuseComposerText.read(markerText: { nil }) { _ in "" })
     }
+    func testNamedSideChatPlaceholderIsAnEmptyComposerButMatchingTextIsADraft() throws {
+        let name = MuseComposerText.placeholder(label: "Message in Trip plans Attach file\nSend")
+        XCTAssertEqual(name, "Message in Trip plans")
+        XCTAssertEqual(MuseComposerText.placeholder(label: "Message"), "Message")
+        let length = name.count
+        XCTAssertEqual(try MuseComposerText.read(placeholder: name, markerText: { name + "\n\n\n\n\n" }) { range in
+            range.length == length ? name : range.length == length + 1 ? name + "\n\n\n\n\n\n" : nil
+        }, "")
+        let literal = name as NSString
+        XCTAssertEqual(try MuseComposerText.read(placeholder: name, markerText: { "" }) { range in
+            range.length <= literal.length ? literal.substring(with: range) : ""
+        }, name)
+        XCTAssertThrowsError(try MuseComposerText.read(markerText: { name + "\n\n\n\n\n" }) { _ in name },
+                             "The plain placeholder must not accept a named side chat's hint text")
+    }
 
     func testBindingsSurviveRestartAndCannotTransferOrReplaceChatIdentity() throws {
         let a = UUID(), b = UUID(), thread = UUID()

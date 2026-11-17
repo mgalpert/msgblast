@@ -32,7 +32,7 @@ final class DesktopAccessibilityTests: XCTestCase {
 
     func testMuseReplyLayoutKeepsCompoundComposerReadableAcrossLineBreaks() throws {
         let url = URL(string: "https://muse.ai/thread/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
-        for prefix in ["Message Attach file Dictate a message\n\n", "Message Attach file\n"] { for action in ["Send", "Stop"] {
+        for prefix in ["Message Attach file Dictate a message\n\n", "Message Attach file\n", "Message in Trip plans Attach file\n"] { for action in ["Send", "Stop"] {
             let composer = DesktopAccessibilityNode(role: "AXButton", label: prefix + action, editorText: "")
             XCTAssertTrue(DesktopAccessibility.isComposer(composer, app: .muse))
             let root = DesktopAccessibilityNode(role: "AXWindow", children: [
@@ -49,6 +49,8 @@ final class DesktopAccessibilityTests: XCTestCase {
         } }
         XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXButton", label: "Message Attach file Dictate a message Delete"), app: .muse))
         XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXButton", label: "Message Attach Send"), app: .muse))
+        XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXButton", label: "Message in Attach file Send"), app: .muse))
+        XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXButton", label: "Reply in Trip plans Attach file Send"), app: .muse))
         XCTAssertFalse(DesktopAccessibility.isComposer(.init(role: "AXStaticText", label: "Message Attach file Dictate a message Send"), app: .muse))
     }
 
