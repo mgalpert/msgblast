@@ -253,12 +253,13 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(fixture.calls().filter { $0["tool"] as? String == "get_window_state" }.count, 2, "The initialization shell must not substitute for a verified composer snapshot")
     }
 
-    private static func adjustEmptyDriverValue(_ composer: inout [String: Any], omit: Bool, placeholder: Bool, draft: String) {
+    private var driverPlaceholder: String?
+    private static func adjustEmptyDriverValue(_ composer: inout [String: Any], omit: Bool, placeholder: String?, draft: String) {
         if omit { composer.removeValue(forKey: "value") }
-        if placeholder && draft.isEmpty { composer["value"] = "How can I help you today?" }
+        if let placeholder, draft.isEmpty { composer["value"] = placeholder }
     }
 
-    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, placeholderDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
+    private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = URL(string: "https://claude.ai/chat/00000000-0000-0000-0000-000000000001")!
@@ -300,7 +301,7 @@ final class ClaudeAppDriverTests: XCTestCase {
                 ["role": "AXTextArea", "label": "Write your prompt to Claude", "value": draft.isEmpty ? "\n" : raw, "element_token": "composer-\(stage)", "enabled": true, "frame": ["x": 0, "y": 0, "w": 10, "h": 10]],
                 ["role": "AXButton", "label": "New", "element_token": "new-\(stage)", "enabled": true]
             ]
-            if stage == 0 { Self.adjustEmptyDriverValue(&elements[0], omit: omitEmptyDriverValue, placeholder: placeholderDriverValue, draft: draft) }
+            if stage == 0 { Self.adjustEmptyDriverValue(&elements[0], omit: omitEmptyDriverValue, placeholder: driverPlaceholder, draft: draft) }
             if stage == 1 { elements.append(["role": "AXButton", "label": "Send message", "element_token": "send-1", "enabled": true]) }
             if stage == 2 { elements.append(["role": "AXButton", "label": "Stop", "element_token": "stop-2", "enabled": true]) }
             return ["pid": wrongPID ? 99 : 42, "window_id": 21, "elements": elements, "window_bounds": ["x": 0, "y": 0, "width": 100, "height": 100]]
@@ -739,14 +740,16 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
     }
     func testDriverPlaceholderValueIsAcceptedWhenNativeEmptyEditorIsVerified() async throws {
-        let fixture = try fixture(placeholderDriverValue: true)
+        driverPlaceholder = "How can I help you today?"
+        let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let binding = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
         XCTAssertEqual(binding, fixture.binding)
         XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
     }
     func testDriverPlaceholderValueDoesNotHideNativeNonemptyDraft() async throws {
-        let fixture = try fixture(initialDraft: "Preserve native draft", placeholderDriverValue: true)
+        driverPlaceholder = "How can I help you today?"
+        let fixture = try fixture(initialDraft: "Preserve native draft")
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         do {
             _ = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
