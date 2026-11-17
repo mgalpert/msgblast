@@ -63,10 +63,13 @@ actor ClaudeAppConversation {
                 _ = try await driver.call("launch_app", ["bundle_id": DesktopAppProvider.claude.bundleID],
                                           arrays: ["urls": ["claude://claude.ai/new"]], as: DesktopAppConversation.Action.self)
             } catch { try Task.checkCancellation() }
+            let failure = "Claude did not open a new chat. Nothing was sent."
             // Poll quickly: Claude holds the foreground until this returns.
-            return try await DesktopAppWorkflow.wait(timeout: .seconds(8), interval: min(timing.pollInterval, .milliseconds(200)),
-                failure: "Claude did not open a new chat. Nothing was sent.",
-                read: { try await self.observe(target, session: session) }, ready: { ClaudeChatURL.isNew($0.1.url) })
+            do {
+                return try await DesktopAppWorkflow.wait(timeout: .seconds(8), interval: min(timing.pollInterval, .milliseconds(200)),
+                    failure: failure,
+                    read: { try await self.observe(target, session: session) }, ready: { ClaudeChatURL.isNew($0.1.url) })
+            } catch ClaudeObservationError.otherPage { throw DesktopAppError.unavailable(failure) }
         }
     }
     private func opened(_ binding: ClaudeConversationBinding, target: DesktopAppConversation.Target, session: String) async throws -> ClaudeAppObservation {
