@@ -19,6 +19,13 @@ Validation failures return `400`; wrong media types `415`; excessive raw bytes `
 
 ## Storage and operations
 
+Opt-in diagnostics may include `permissions` with exactly `accessibility`,
+`screenRecording`, `contacts`, `messagesDatabase`, and `messagesAutomation`.
+Values are `allowed`, `off`, `notRequested`, `restricted`, `notConnected`, or
+`unknown`. Reports from older clients may omit this object. Deploy the updated
+validator in the authoritative landing Worker before releasing a client that
+sends it.
+
 Create a dedicated **private** `msgblast-feedback` R2 bucket in the configured msgblast account. Never bind the public release/archive bucket. Do not enable the R2 public development URL or attach a public custom domain to this bucket. Reports include the user's note, optional reply email and optional diagnostics, so access must remain restricted to authorized team members through the Cloudflare dashboard or authenticated R2 tooling.
 
 The Worker stores `reports/<lowercase UUID>.json` with `id`, `kind`, `note`, `contact`, optional parsed `diagnostics`, and a server-assigned ISO `receivedAt`. No IP address is persisted. The IP is used only as the rate-limit key. The Worker does not log the body, note, contact, IP, or diagnostic data. Invocation logs are disabled; sampled operational traces are enabled.
