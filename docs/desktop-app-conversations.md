@@ -290,8 +290,6 @@ asks it to (by setting the macOS accessibility attribute assistive apps use)
 and retries for about ten seconds. It may reconnect by itself; if it still
 reports the version as unsupported, press Reconnect. The attribute stays set on
 that ChatGPT process until it quits.
-Claude App starts each comparison with Claude's **New** sidebar button. If Connect
-reports that the New control is missing, open Claude's sidebar and press Reconnect.
 
 Starting or explicitly reopening a conversation opens a closed installed app
 once and waits for its main window. Shared Send displays a getting-ready state

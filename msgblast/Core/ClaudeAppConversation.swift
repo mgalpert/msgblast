@@ -35,11 +35,9 @@ actor ClaudeAppConversation {
         while withoutTerminalNewlines.last == "\n" { withoutTerminalNewlines.removeLast() }
         // The driver omits terminal LF characters that native AX preserves.
         // Native draft checks still verify every append and the final prompt.
-        // CuaDriver 0.38 reports an empty editor's placeholder as its value.
-        let emptyValues: [String?] = [nil, "\n"] + (observation.composerPlaceholder.map { [$0] } ?? [])
         guard fields.count == 1, fields[0].frame == observation.composerFrame,
               fields[0].value == observation.rawNativeDraft || fields[0].value == withoutTerminalNewlines ||
-              (observation.draft.isEmpty && emptyValues.contains(fields[0].value)) else {
+              (observation.draft.isEmpty && (fields[0].value == nil || fields[0].value == "\n")) else {
             throw DesktopAppError.unavailable("Claude's draft or composer geometry could not be verified. Existing text was preserved.")
         }
         return fields[0]

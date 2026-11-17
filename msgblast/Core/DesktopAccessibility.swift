@@ -17,7 +17,6 @@ struct DesktopAccessibilityNode: Sendable {
     var enabled = true
     var focused = false
     var selectedText: String?
-    var placeholder: String?
     var frame: DesktopAppSnapshot.Element.Frame?
     var identity: UInt?
     var editorText: String?
@@ -218,7 +217,6 @@ enum DesktopAccessibility {
             var node = try DesktopAccessibilityMetadata.node(values, identity: CFHash(element))
             if node.role == "AXWebArea" { addresses.append((element, try DesktopAccessibilityMetadata.address(values["AXURL"]))) }
             if readComposer, app == .muse, isComposer(node, app: app) { node.editorText = try museEditorText(element) }
-            if app == .claude, node.role == "AXTextArea" { node.placeholder = try attribute(element, "AXPlaceholderValue") as? String }
             return (node, values["AXChildren"] as? [AXUIElement] ?? [])
         }
         let final = try attributes(window)

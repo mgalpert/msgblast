@@ -724,38 +724,6 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertEqual(binding, fixture.binding)
         XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
     }
-    private func placeholderFixture(driverValue: String) throws -> Fixture {
-        let base = try fixture()
-        let url = base.directory.appendingPathComponent("snapshots.json")
-        var snapshots = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
-        var elements = try XCTUnwrap(snapshots[0]["elements"] as? [[String: Any]])
-        elements[0]["value"] = driverValue
-        snapshots[0]["elements"] = elements
-        try JSONSerialization.data(withJSONObject: snapshots).write(to: url)
-        let field = ClaudeAXNode(role: "AXTextArea", label: "Write your prompt to Claude", value: "\n", placeholder: "How can I help you today?",
-                                 frame: base.observations[0].composerFrame, focused: true, children: [.init(role: "AXGroup", classes: ["is-empty", "is-editor-empty"])])
-        let empty = try ClaudeAppObservation(root: .init(role: "AXWindow", frame: .init(x: 0, y: 0, w: 100, h: 100), children: [
-            .init(role: "AXWebArea", url: base.observations[0].url, children: [.init(role: "AXGroup", subrole: "AXLandmarkMain", children: [field, .init(role: "AXGroup", label: "Chat messages")])])
-        ]))
-        return Fixture(directory: base.directory, executable: base.executable, binding: base.binding,
-                       observations: [empty] + base.observations.dropFirst(), unrelatedHistory: base.unrelatedHistory)
-    }
-    func testDriverPlaceholderMatchingNativePlaceholderIsAnEmptyComposer() async throws {
-        let fixture = try placeholderFixture(driverValue: "How can I help you today?")
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let binding = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
-        XCTAssertEqual(binding, fixture.binding)
-        XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
-    }
-    func testDriverTextOtherThanNativePlaceholderPreventsPreparation() async throws {
-        let fixture = try placeholderFixture(driverValue: "Unverified text")
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        do {
-            _ = try await fixture.adapter().prepare(comparisonID: fixture.binding.comparisonID, binding: nil)
-            XCTFail("Driver text that is not the native placeholder must prevent preparation")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("draft")) }
-        XCTAssertTrue(fixture.calls().allSatisfy { !["type_text", "click"].contains($0["tool"] as? String ?? "") })
-    }
     func testOmittedDriverValueDoesNotHideNativeNonemptyDraft() async throws {
         let fixture = try fixture(initialDraft: "Preserve native draft", omitEmptyDriverValue: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

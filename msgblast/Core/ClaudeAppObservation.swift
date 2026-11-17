@@ -31,7 +31,6 @@ struct ClaudeAXNode: Sendable {
     var subrole = ""
     var label = ""
     var value: String?
-    var placeholder: String?
     var classes: [String] = []
     var url: URL?
     var frame: DesktopAppSnapshot.Element.Frame?
@@ -75,7 +74,6 @@ struct ClaudeAppObservation: Sendable, Equatable {
     let windowBounds: DesktopAppSnapshot.Bounds?
     let composerFrame: DesktopAppSnapshot.Element.Frame?
     let composerFocused: Bool
-    let composerPlaceholder: String?
 
     init(root: ClaudeAXNode, mode: ReadMode = .conversation) throws {
         windowBounds = root.frame.map { .init(x: $0.x, y: $0.y, width: $0.w, height: $0.h) }
@@ -95,7 +93,7 @@ struct ClaudeAppObservation: Sendable, Equatable {
         let fields = controls.filter { $0.role == "AXTextArea" && $0.label == "Write your prompt to Claude" }
         guard !fields.isEmpty else { throw ClaudeObservationError.transient("Claude's message field is still loading.") }
         guard fields.count == 1 else { throw DesktopAppError.unavailable("Claude's draft is unreadable. It was preserved.") }
-        composerFrame = fields[0].frame; composerPlaceholder = fields[0].placeholder
+        composerFrame = fields[0].frame
         composerFocused = fields[0].focused
         let nativeDraft = try ClaudeNativeDraft.read(fields[0])
         rawNativeDraft = nativeDraft.raw
@@ -202,7 +200,7 @@ enum ClaudeAppProfile {
     }
     static func parse(_ root: DesktopAccessibilityNode, mode: ClaudeAppObservation.ReadMode = .conversation) throws -> ClaudeAppObservation {
         func convert(_ node: DesktopAccessibilityNode) -> ClaudeAXNode {
-            .init(role: node.role, subrole: node.subrole, label: node.label, value: node.value, placeholder: node.placeholder, classes: node.classes,
+            .init(role: node.role, subrole: node.subrole, label: node.label, value: node.value, classes: node.classes,
                   url: node.url, frame: node.frame, focused: node.focused, children: node.children.map(convert))
         }
         return try ClaudeAppObservation(root: convert(root), mode: mode)
