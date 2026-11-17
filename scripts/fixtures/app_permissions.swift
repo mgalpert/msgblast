@@ -148,6 +148,16 @@ struct PermissionCheck {
         precondition(probe.snapshot.historyReads == beforeDemo.historyReads && probe.snapshot.asks == beforeDemo.asks && probe.snapshot.messagesOpened == beforeDemo.messagesOpened)
         precondition(permissions.history == .notConnected && permissions.sending == .allowed)
         print("PASS: demo permissions bypass native permission checks and requests")
-        print("9 permission-boundary regressions passed; all OS responses were simulated")
+        let diagnosticStatuses: [(AppPermissionStatus, String)] = [
+            (.checking, "unknown"), (.allowed, "allowed"), (.notRequested, "notRequested"),
+            (.denied, "off"), (.restricted, "restricted"), (.notConnected, "notConnected"),
+            (.needsMessages, "unknown"), (.unavailable, "unknown")
+        ]
+        for (status, expected) in diagnosticStatuses {
+            precondition(status.diagnosticStatus == expected)
+        }
+        precondition(probe.snapshot.historyReads == beforeDemo.historyReads && probe.snapshot.asks == beforeDemo.asks)
+        print("PASS: diagnostic status conversion preserves unchecked states without requesting access")
+        print("10 permission-boundary regressions passed; all OS responses were simulated")
     }
 }

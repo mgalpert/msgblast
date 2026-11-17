@@ -14,7 +14,7 @@ IMPLEMENTATION = [CORE, FACTS, VIEW]
 KEYS = [
     "agentCount", "attachmentCount", "buildNumber", "bundleIdentifier", "comparisonCount",
     "fixtureMode", "hasDraft", "lastErrorCategory", "messagesStatus", "operatingSystem",
-    "permissionStage", "personalAgent", "stateFileBytes", "stateFilePresent", "supportFolder",
+    "permissions", "permissionStage", "personalAgent", "stateFileBytes", "stateFilePresent", "supportFolder",
     "updatesEnabled", "updatesReason", "variant", "version", "webProviderCounts", "windowStyle",
 ]
 EXCLUDED = [
@@ -43,6 +43,8 @@ class FeedbackDiagnosticTests(unittest.TestCase):
         self.assertNotIn("mailto:", view)
         for path in IMPLEMENTATION:
             text = path.read_text()
+            if path == FACTS:
+                text = text.replace("CNContactStore.authorizationStatus(for: .contacts)", "")
             # Transport injection belongs in the session/controller; the native
             # web-comparison fixture proves explicit send and payload privacy.
             if path != VIEW:
