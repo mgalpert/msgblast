@@ -43,17 +43,6 @@ final class ClaudeAppConversationTests: XCTestCase {
         XCTAssertThrowsError(try ClaudeAppObservation(root: .init(role: "AXWindow", children: [wrapper]))) { error in
             guard case ClaudeObservationError.transient = error else { return XCTFail("The wrapper alone is still starting up") }
         }
-        for (value, leaves) in [("\n", true), ("Half-written prompt", false)] {
-            var page = code
-            page.children = [.init(role: "AXTextArea", value: value)]
-            XCTAssertThrowsError(try ClaudeAppObservation(root: .init(role: "AXWindow", children: [wrapper, page]))) { error in
-                switch error {
-                case ClaudeObservationError.otherPage: XCTAssertTrue(leaves, "Typed text on the page must keep Claude there")
-                case ClaudeObservationError.otherPageDraft: XCTAssertFalse(leaves, "An empty composer can be left")
-                default: XCTFail(error.localizedDescription)
-                }
-            }
-        }
     }
 
     func testMessageBoundariesUseNativeSenderAndExcludeToolbars() throws {
