@@ -63,7 +63,11 @@ actor ClaudeAppConversation {
                 _ = try await driver.call("launch_app", ["bundle_id": DesktopAppProvider.claude.bundleID],
                                           arrays: ["urls": ["claude://claude.ai/new"]], as: DesktopAppConversation.Action.self)
             } catch { try Task.checkCancellation() }
-            return try await settled(target, session: session) { ClaudeChatURL.isNew($0.url) }
+            _ = try await settled(target, session: session) { ClaudeChatURL.isNew($0.url) }
+            // Claude focuses its window again once the new chat loads. Let that
+            // land while msgblast still holds the lease, so restoring focus wins.
+            try await Task.sleep(for: timing.stableDuration)
+            return try await observe(target, session: session, mode: .navigation)
         }
     }
     private func opened(_ binding: ClaudeConversationBinding, target: DesktopAppConversation.Target, session: String) async throws -> ClaudeAppObservation {
