@@ -67,7 +67,6 @@ actor ClaudeAppConversation {
             // Claude focuses its window again once the new chat loads. Let that
             // land while msgblast still holds the lease, so restoring focus wins.
             // Callers only read this result or observe again before any input.
-            try await Task.sleep(for: timing.stableDuration)
             return opened
         }
     }
