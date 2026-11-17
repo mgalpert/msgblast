@@ -310,7 +310,9 @@ follow-up; navigation does not relax send or reply attribution.
 When Claude shows a claude.ai page outside its chats, such as a Code session,
 Connect and an explicit send open a new chat through `claude://claude.ai/new`
 while msgblast holds the foreground for Claude, then restore focus. Background
-checks and reply polling only report that page and never navigate.
+checks and reply polling only report that page and never navigate. If that
+page has unsent text in a text field, msgblast leaves it alone and asks the
+user to send or clear it first.
 
 Each ChatGPT and Claude comparison gets a dedicated chat. The first native
 prompt includes a comparison reference while the local transcript keeps the

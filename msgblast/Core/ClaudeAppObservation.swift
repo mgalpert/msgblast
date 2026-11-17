@@ -189,19 +189,26 @@ struct ClaudeReplyReceipt: Codable, Equatable, Sendable {
 extension ClaudeAppObservation {
     // The file:// wrapper is always present; a claude.ai page that is not a
     // chat (a Code session, Projects, Settings) will not become one by waiting.
+    // Leaving a page with typed text could lose it, so that page is never left.
     static func missingChat(_ nodes: [ClaudeAXNode]) -> ClaudeObservationError {
-        nodes.contains { $0.role == "AXWebArea" && $0.url?.scheme == "https" && $0.url?.host == "claude.ai" }
-            ? .otherPage : .transient("Claude is still opening its native chat.")
+        let pages = nodes.filter { $0.role == "AXWebArea" && $0.url?.scheme == "https" && $0.url?.host == "claude.ai" }
+        guard !pages.isEmpty else { return .transient("Claude is still opening its native chat.") }
+        let typed = pages.flatMap(\.descendants).contains {
+            ["AXTextArea", "AXTextField"].contains($0.role) && !($0.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return typed ? .otherPageDraft : .otherPage
     }
 }
 
 enum ClaudeObservationError: LocalizedError {
     case transient(String)
     case otherPage
+    case otherPageDraft
     var errorDescription: String? {
         switch self {
         case .transient(let message): message
         case .otherPage: "Claude is showing a page outside its chats, such as a Code session. msgblast opens a new chat when you connect or send."
+        case .otherPageDraft: "Claude's current page has unsent text. Send or clear it in Claude, then connect again. Nothing was changed."
         }
     }
 }
