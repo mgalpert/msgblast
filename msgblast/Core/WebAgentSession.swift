@@ -1827,6 +1827,26 @@ public final class WebAgentSession: NSObject, ObservableObject, WKNavigationDele
         if !storageFailed, let error, dismissedDetails.contains(error) { self.error = nil }
     }
 
+    /// How long an unfinished Mac app request may keep the app Busy.
+    public static let staleDesktopRequestAge: TimeInterval = 15 * 60
+
+    /// Treats a Mac app request as reviewed once it is this old and no reply is being read.
+    /// History is kept and nothing is resent; recovery skips dismissed requests, so a late reply is not attached.
+    public func releaseStaleDesktopRequests(now: Date = Date()) {
+        guard provider.desktopApp != nil, !isSending else { return }
+        let stale = Set(state.attempts.filter { $0.status.isUnresolved && now.timeIntervalSince($0.created) >= Self.staleDesktopRequestAge }.map(\.id))
+        guard !stale.isEmpty else { return }
+        let detail = "msgblast stopped waiting after 15 minutes. Nothing was resent."
+        let cleared = state.attempts.filter { stale.contains($0.id) }.compactMap(\.detail)
+        updateState { state in
+            for i in state.attempts.indices where stale.contains(state.attempts[i].id) {
+                state.attempts[i].status = .dismissed
+                state.attempts[i].detail = detail
+            }
+        }
+        if !storageFailed, let error, cleared.contains(error) { self.error = nil }
+    }
+
     public func hasUnresolvedSend(_ text: String) -> Bool {
         if provider.desktopApp != nil { return hasIncompleteNativeRequest(for: state.comparisonID) }
         if provider.sharesOneConversation {
