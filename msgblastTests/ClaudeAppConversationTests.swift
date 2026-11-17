@@ -253,6 +253,11 @@ final class ClaudeAppDriverTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(fixture.calls().filter { $0["tool"] as? String == "get_window_state" }.count, 2, "The initialization shell must not substitute for a verified composer snapshot")
     }
 
+    private static func adjustEmptyDriverValue(_ composer: inout [String: Any], omit: Bool, placeholder: Bool, draft: String) {
+        if omit { composer.removeValue(forKey: "value") }
+        if placeholder && draft.isEmpty { composer["value"] = "How can I help you today?" }
+    }
+
     private func fixture(virtualizedInitialHistory: Bool = false, followup: Bool = false, foreignOutgoing: Bool = false, wrongPID: Bool = false, initialDraft: String = "", reopen: Bool = false, foreignResume: Bool = false, unknownLaunchResult: Bool = false, omitEmptyDriverValue: Bool = false, placeholderDriverValue: Bool = false, question: String = "First question", stripDriverTrailingNewlines: Bool = false, corruptDriverTextAfterNewline: Bool = false, collapseNativeBlankParagraphs: Bool = false, initialDriverShell: Bool = false) throws -> Fixture {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -295,8 +300,7 @@ final class ClaudeAppDriverTests: XCTestCase {
                 ["role": "AXTextArea", "label": "Write your prompt to Claude", "value": draft.isEmpty ? "\n" : raw, "element_token": "composer-\(stage)", "enabled": true, "frame": ["x": 0, "y": 0, "w": 10, "h": 10]],
                 ["role": "AXButton", "label": "New", "element_token": "new-\(stage)", "enabled": true]
             ]
-            if omitEmptyDriverValue && stage == 0 { elements[0].removeValue(forKey: "value") }
-            if placeholderDriverValue && stage == 0 && draft.isEmpty { elements[0]["value"] = "How can I help you today?" }
+            if stage == 0 { Self.adjustEmptyDriverValue(&elements[0], omit: omitEmptyDriverValue, placeholder: placeholderDriverValue, draft: draft) }
             if stage == 1 { elements.append(["role": "AXButton", "label": "Send message", "element_token": "send-1", "enabled": true]) }
             if stage == 2 { elements.append(["role": "AXButton", "label": "Stop", "element_token": "stop-2", "enabled": true]) }
             return ["pid": wrongPID ? 99 : 42, "window_id": 21, "elements": elements, "window_bounds": ["x": 0, "y": 0, "width": 100, "height": 100]]
