@@ -1,0 +1,8 @@
+msgblast Dev (Claude Code Page a96fa43), local merge of #169 (c37d6da) + claude/project-thread-77c9qr-claude-code-page (a96fa43)
+Claude starts on a Code page (claude.ai/epitaxy/...). User clicks Connect Claude in setup.
+Logged with NSWorkspace didActivateApplication events + Claude AXWebArea URL polled every ~20-60 ms (local time):
+11:33:33.6  Claude activated (msgblast takes the foreground for Claude)
+11:33:35.7  Claude page -> /new (+2.1 s)
+11:33:38.7  msgblast Dev activated (+3.0 s after /new, +5.1 s total); row shows Ready
+            No activation by Claude afterwards; msgblast stayed frontmost 132 s until the user switched apps.
+Nothing was sent to Claude.
