@@ -1,0 +1,39 @@
+{
+ "pr": 172,
+ "reviewed_head": "d029ea98bb83d3628b33275084e30ec839ff27d9",
+ "base": "a3701c9c1ed057f7e2a8863eadd2bca5198dceb7",
+ "previous_reviewed_heads": [
+  "a96fa4349dc26c53596189fb0b652346d711c88f",
+  "471f97746f6a23de513edc6a3bb2382116c8d5ff",
+  "9bf88c872dbe6a89817af40509a5832d700a4092"
+ ],
+ "previous_receipt": "pr-172-9bf88c8.json",
+ "reviewer": "independent model (Claude Sonnet subagent, read-only, wrote none of this change)",
+ "reviewer_model": "Claude Sonnet",
+ "scope": "git diff 9bf88c8 p172 (+11/-4, 2 files: msgblast/Core/ClaudeAppConversation.swift, msgblast/Windows/DesktopAppSetupView.swift). Also read DesktopAppWorkflow.wait/transient, ClaudeObservationError, ClaudeAppObservation.missingChat, WebAgentSession desktopStatus/desktopCheckFailure. git merge-tree --write-tree p172 against p168, p169, p170, p171, p173, p175: all exit 0 (clean). PR body not read (repo-only check).",
+ "verdict": "approve with notes",
+ "findings": [
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Windows/DesktopAppSetupView.swift",
+   "text": "Red condition is correct. desktopCheckFailed sets desktopStatus and desktopCheckFailure to the same string, so equality is true only for a failed check. Any later progress text overwrites desktopStatus, so it differs from the still-set desktopCheckFailure and renders secondary. desktopCheckFailure == nil never matches the non-optional String. Only the foreground style changed; the Text and the !desktopReady guard are unchanged. Residual: the red is a string-equality heuristic, so if progress text ever equalled the failure text it would be red; not realistic."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/ClaudeAppConversation.swift (chat())",
+   "text": "Timeout mapping fires only in the intended case. DesktopAppWorkflow.transient() treats every ClaudeObservationError (including otherPage) as retryable, so wait() rethrows otherPage only when it is the last error at the 8 s deadline (lastError is cleared by any successful read). The catch is scoped to ClaudeObservationError.otherPage, inside the foreground-only branch, after the claude://claude.ai/new launch and before any composer interaction or send, so 'Nothing was sent.' is accurate: this path never types or clicks send. Other errors (transient, incompleteSnapshot, dialogs, changed-while-verifying) pass through unchanged. If the last read was a readable non-new chat that never became new, wait() already throws the same failure string. The same string is used for both, so wording is consistent."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/ClaudeAppConversation.swift",
+   "text": "Behavior change: a persistently-other page now surfaces as DesktopAppError.unavailable rather than ClaudeObservationError.otherPage, so WebAgentSession's `catch ClaudeObservationError.otherPage where sending` (line ~1667) cannot match an error from this branch. That handler would only see otherPage from a non-foreground/other path. I did not trace that handler's intent beyond confirming the new-chat attempt had already been made, so a hint-style message there would have been misleading anyway. No test in the repo references either string; no test was added for the new mapping (SHOULD-NOT-BLOCK, suggest a unit test with a fake clock where read always throws otherPage)."
+  },
+  {
+   "severity": "ACCEPTED TRADE-OFF",
+   "file": "msgblast/Core/ClaudeAppConversation.swift (chat())",
+   "text": "Carried over from 9bf88c8: owner accepted that unsent text on a non-chat Claude page may be lost when Connect opens a new chat. Unchanged by this delta."
+  }
+ ],
+ "notes": "Delta is small and local; no regressions found. No BLOCKER or SHOULD-FIX. Reasoned from git only; no Swift toolchain available, so nothing was built or run.",
+ "tests": "Not built or run (no Swift toolchain)."
+}
