@@ -148,6 +148,12 @@ struct PermissionCheck {
         precondition(probe.snapshot.historyReads == beforeDemo.historyReads && probe.snapshot.asks == beforeDemo.asks && probe.snapshot.messagesOpened == beforeDemo.messagesOpened)
         precondition(permissions.history == .notConnected && permissions.sending == .allowed)
         print("PASS: demo permissions bypass native permission checks and requests")
+        checkDiagnosticStatuses(probe, unchangedFrom: beforeDemo)
+    }
+
+    /// Diagnostic statuses keep unchecked states as unknown, and converting them asks for nothing.
+    @MainActor
+    static func checkDiagnosticStatuses(_ probe: PermissionProbe, unchangedFrom before: PermissionProbe.State) {
         let diagnosticStatuses: [(AppPermissionStatus, String)] = [
             (.checking, "unknown"), (.allowed, "allowed"), (.notRequested, "notRequested"),
             (.denied, "off"), (.restricted, "restricted"), (.notConnected, "notConnected"),
@@ -156,7 +162,7 @@ struct PermissionCheck {
         for (status, expected) in diagnosticStatuses {
             precondition(status.diagnosticStatus == expected)
         }
-        precondition(probe.snapshot.historyReads == beforeDemo.historyReads && probe.snapshot.asks == beforeDemo.asks)
+        precondition(probe.snapshot.historyReads == before.historyReads && probe.snapshot.asks == before.asks)
         print("PASS: diagnostic status conversion preserves unchecked states without requesting access")
         print("10 permission-boundary regressions passed; all OS responses were simulated")
     }
