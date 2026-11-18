@@ -9,7 +9,7 @@ public enum DiagnosticReport {
     public static let diagnosticKeys = [
         "agentCount", "attachmentCount", "buildNumber", "bundleIdentifier", "comparisonCount",
         "fixtureMode", "hasDraft", "lastErrorCategory", "messagesStatus", "operatingSystem",
-        "permissionStage", "personalAgent", "stateFileBytes", "stateFilePresent", "supportFolder",
+        "permissions", "permissionStage", "personalAgent", "stateFileBytes", "stateFilePresent", "supportFolder",
         "updatesEnabled", "updatesReason", "variant", "version", "webProviderCounts", "windowStyle"
     ]
     public static let excludedTopics = [
@@ -150,6 +150,7 @@ public struct DiagnosticFacts: Sendable, Equatable {
     public var supportFolder: String
     public var stateFilePresent: Bool
     public var stateFileBytes: Int
+    public var permissions: [String: String]?
 
     public init(version: String, buildNumber: String, bundleIdentifier: String, fixtureMode: Bool, operatingSystem: String, updatesEnabled: Bool, updatesReason: String, messagesStatus: String, permissionStage: String, agentCount: Int, comparisonCount: Int, hasDraft: Bool, attachmentCount: Int, windowStyle: String, personalAgent: String, webProviderCounts: [String: Int], lastError: String?, supportFolder: String, stateFilePresent: Bool, stateFileBytes: Int) {
         self.version = version
@@ -191,6 +192,7 @@ struct DiagnosticPayload: Codable, Equatable {
     var messagesStatus: String
     var operatingSystem: String
     var permissionStage: String
+    var permissions: [String: String]?
     var personalAgent: String
     var stateFileBytes: Int
     var stateFilePresent: Bool
@@ -214,6 +216,11 @@ struct DiagnosticPayload: Codable, Equatable {
         updatesReason = DiagnosticPayload.updatesReason(facts.updatesReason)
         messagesStatus = DiagnosticPayload.messagesStatus(facts.messagesStatus)
         permissionStage = DiagnosticPayload.choice(facts.permissionStage, allowed: ["idle", "openingSettings", "guiding", "waitingForAccess", "verified"])
+        permissions = facts.permissions.map { snapshot in
+            Dictionary(uniqueKeysWithValues: ["accessibility", "screenRecording", "contacts", "messagesDatabase", "messagesAutomation"].map { key in
+                (key, Self.choice(snapshot[key] ?? "unknown", allowed: ["allowed", "off", "notRequested", "restricted", "notConnected", "unknown"]))
+            })
+        }
         agentCount = DiagnosticPayload.count(facts.agentCount)
         comparisonCount = DiagnosticPayload.count(facts.comparisonCount)
         hasDraft = facts.hasDraft

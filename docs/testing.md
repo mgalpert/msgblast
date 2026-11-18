@@ -24,6 +24,12 @@ in a test. Broaden testing only when changes or failures justify it.
 
 ## Native core tests
 
+Feedback permission diagnostics capture Accessibility, Screen Recording, and
+Contacts through non-prompting status queries. Messages database access and
+Automation use the latest permission-controller observation and report unchecked
+states as `unknown`. Demo uses fixed sample statuses. Feedback collection never
+launches Messages or reads the protected database.
+
 From the repository root on a Mac with Xcode 27:
 
 ```sh
