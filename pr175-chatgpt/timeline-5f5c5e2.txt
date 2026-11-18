@@ -1,0 +1,20 @@
+msgblast Dev (0.11.1 Candidate 5f5c5e2): local merge of main a3701c9 + #168 a30bed8 + #169 c37d6da + #172 d029ea9 + #175 10b4b80.
+ChatGPT 26.1111.21308. Empty message box label: "Do anything".
+Driven through cua-driver accessibility clicks on the msgblast Dev window only. Nothing was sent.
+Local times, 2026-11-18.
+
+ChatGPT:
+13:33:26.564  "Opening ChatGPT..."
+13:33:27.226  "Checking ChatGPT's conversation..."
+13:33:27.653  Ready; Continue is available and says Claude will be skipped
+
+Claude, starting on a Code page (claude.ai/epitaxy/...):
+13:33:41.804  "Opening Claude..."
+13:33:42.126  "Checking Claude's conversation..."
+13:33:43.341  Claude activated
+13:33:45.379  Claude page is /new
+13:33:48.186  msgblast Dev activated, 2.81 s after /new was seen
+13:33:50.482  Ready; both apps Ready
+              No Claude activation followed during the logged run.
+
+Not covered: sending a message, and ChatGPT's message box inside an existing conversation.
