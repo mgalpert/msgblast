@@ -1,0 +1,51 @@
+{
+ "pr": 175,
+ "reviewed_head": "0adccda46ab0bf8b5d5bbb8144375c2bc33201ce",
+ "base": "a3701c9c1ed057f7e2a8863eadd2bca5198dceb7",
+ "reviewer": "independent model (Claude Sonnet subagent, read-only, wrote none of this change)",
+ "reviewer_model": "Claude Sonnet",
+ "scope": "git diff 10b4b80 p175 (delta, one added test line in ChatGPTAppConversationTests.swift); prior scope git diff a3701c9 p175 covered in 10b4b80 receipt and unchanged; merge-tree of p175 against p168-p173",
+ "verdict": "approve with notes",
+ "findings": [
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/ChatGPTAppObservation.swift:242-250",
+   "text": "Older versions unaffected: 'Ask ChatGPT' and 'Message' stay in both allowlists, kind logic unchanged (only 'Message' is .dots), and for non-dots the placeholder is now composer.label, which is 'Ask ChatGPT' whenever that label matched, so old behaviour is identical. Because composer.label can only be one of the two allowlisted non-dots labels, the placeholder string is never attacker/user-controlled."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/ChatGPTAppObservation.swift:248-250",
+   "text": "Draft-safety holds. Empty is inferred only when BOTH (a) a descendant with class 'placeholder' exists AND (b) value is exactly the label or label+'\\n' (case/whitespace exact, no trimming). A user who types 'Do anything' removes the placeholder node, so the value goes through paragraphDraft and is preserved. Residual theoretical risk is only if ChatGPT left a placeholder node while real text equals the label; that was equally true for 'Ask ChatGPT' and is not new."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/ChatGPTAppObservation.swift:242",
+   "text": "'Do anything' is a generic label. Fail-safe if it appears on a second AXTextArea inside the conversation panel: fields.count != 1 throws 'ambiguous, draft preserved' rather than picking one. The same label is added to the DesktopAccessibility.swift:201 focus guard, which only widens which focused editors are accepted for .chatgpt/.dots; the existing stale-focus rejection test was extended to cover it."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/ChatGPTAppObservation.swift:211, 197",
+   "text": "No missed matches of the old placeholder in production code. Remaining 'Ask ChatGPT' hits in msgblast/ are the web ProseMirror selector in WebPageScript.swift:29 (web ChatGPT, unrelated to the desktop app) and workDraft, which already uses field.label generically (Codex 'Work with ...' fields, not renamed per the report). DesktopAppConversation.swift:190 is another app's placeholders. Other 'Ask ChatGPT' occurrences are test fixtures/docs."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblastTests/ChatGPTAppConversationTests.swift:114-119",
+   "text": "New test covers placeholder+'Do anything\\n' -> empty draft and kind .chatgpt, and a real draft with no placeholder node preserved. Gaps (non-blocking): no case for the literal user draft 'Do anything' with placeholder:false (the exact hard-rule scenario; code handles it but it should be pinned), no case for value 'Do anything' without trailing newline, and the end-to-end send/fixture helpers (lines ~498, 605-620, 686) still hard-code 'Ask ChatGPT', so no send flow is exercised with the new label. The AX shape for 26.1111 (placeholder class child, value 'Do anything\\n') is assumed to mirror 26.1103, not verified against a real capture."
+  },
+  {
+   "severity": "RESOLVED",
+   "file": "msgblastTests/ChatGPTAppConversationTests.swift:114-119",
+   "text": "Resolved at 0adccda. Delta from 10b4b80 is test-only (1 file, +1 line): XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(\"Do anything\", value: \"Do anything\", placeholder: false))).draft, \"Do anything\"), in testChatGPT26_1111ComposerLabelIsAcceptedAsAnEmptyChat. Verified it exercises the intended case: field(...) with placeholder:false gives children [] (no placeholder node), so readComposer hasPlaceholder is false and paragraphDraft returns raw immediately (children.isEmpty), yielding 'Do anything'. window(...) wraps it in a single test-chat-panel so fields.count == 1. A regression treating label-equal value as empty without the placeholder node check would fail this test. No production code changed."
+  },
+  {
+   "severity": "NOTE",
+   "file": "merge check",
+   "text": "git merge-tree --write-tree p175 against p168, p169, p170, p171, p172, p173: all six clean (exit 0, no conflicts), re-run at 0adccda."
+  }
+ ],
+ "notes": "Delta is test-only and resolves the prior SHOULD-FIX. Remaining items are NOTEs carried over (no 'Do anything' without trailing newline case, send/fixture helpers still hard-code 'Ask ChatGPT', 26.1111 AX shape assumed not captured).",
+ "tests": "Swift side not built or run (no Swift toolchain; static read-only review via git show/diff/merge-tree). Tests were inspected, not executed.",
+ "previous_reviewed_heads": [
+  "10b4b80f5f530cb72cf7b7a0c7d4789d2a25fc75"
+ ]
+}
