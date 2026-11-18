@@ -1,0 +1,9 @@
+msgblast Dev (0.11.1 Notes 7f88113): local merge of main b5bf4d8 + PR #174 ed7df45.
+The sheet shows "What's New in 0.11.1" and "Installed version 0.11.1".
+Highlights shown first: setup always lets you finish; Claude and Muse connect again; ChatGPT connects again on 26.1111.
+
+Build note: main still has MARKETING_VERSION 0.9.0, and What's New hides versions newer than the installed one.
+For this preview only, MARKETING_VERSION was set to 0.11.1 in an uncommitted scratch copy. No repository file changed.
+
+Driven through cua-driver on the msgblast Dev window. The notes pane was scrolled through its accessibility scroll bar.
+One agent tile is covered in the video. Nothing was sent.
