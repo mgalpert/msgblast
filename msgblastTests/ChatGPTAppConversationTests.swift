@@ -116,6 +116,7 @@ final class ChatGPTAppConversationTests: XCTestCase {
         XCTAssertEqual(native.kind, .chatgpt)
         XCTAssertEqual(native.draft, "")
         XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field("Do anything", value: "Keep my draft", placeholder: false))).draft, "Keep my draft")
+        XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field("Do anything", value: "Do anything", placeholder: false))).draft, "Do anything")
     }
     func testFirstPartyContentTitleOverridesGenericNativeWindowTitle() throws {
         var chat = window(title: "ChatGPT")
