@@ -74,19 +74,26 @@ enum MuseTextRange {
 }
 
 enum MuseComposerText {
-    static func read(markerText: () throws -> String?, query: (NSRange) throws -> String?) throws -> String {
+    /// The composer's hint text: "Message", or "Message in <chat name>" in a
+    /// named Muse 12.1 side chat. The label continues with "Attach file".
+    static func placeholder(label: String) -> String {
+        guard let attach = label.range(of: "Attach file", options: .backwards) else { return label }
+        return String(label[..<attach.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    static func read(placeholder: String = "Message", markerText: () throws -> String?, query: (NSRange) throws -> String?) throws -> String {
         guard let marker = try markerText() else { throw DesktopAppError.unavailable("Muse's composer text markers are unavailable.") }
+        let length = placeholder.count
         func isPlaceholder(_ value: String) -> Bool {
-            value.hasPrefix("Message") && value.dropFirst(7).allSatisfy { $0 == "\n" }
+            value.hasPrefix(placeholder) && value.dropFirst(length).allSatisfy { $0 == "\n" }
         }
-        if isPlaceholder(marker) {
+        if !placeholder.isEmpty, isPlaceholder(marker) {
             // The empty compound button exposes its placeholder and adjacent
-            // controls. A literal draft "Message" has an empty marker range
-            // and a seven-character numeric range instead.
-            let prefix = try query(NSRange(location: 0, length: 8))
-            guard try query(NSRange(location: 0, length: 7)) == "Message",
-                  let prefix, prefix.count > 7, isPlaceholder(prefix),
-                  try query(NSRange(location: 0, length: 8)) == prefix,
+            // controls. A literal draft equal to the placeholder has an empty
+            // marker range and a numeric range of exactly that length instead.
+            let prefix = try query(NSRange(location: 0, length: length + 1))
+            guard try query(NSRange(location: 0, length: length)) == placeholder,
+                  let prefix, prefix.count > length, isPlaceholder(prefix),
+                  try query(NSRange(location: 0, length: length + 1)) == prefix,
                   try markerText() == marker else { throw DesktopAppError.unavailable("Muse's empty composer could not be confirmed.") }
             return ""
         }
@@ -230,9 +237,16 @@ enum MuseAppProfile {
         }
         let header = nodes.first { $0.role == "AXButton" && $0.label.contains("Open chat and side chats") }?.label
         let title = header.map { $0.components(separatedBy: " Unread chats").first ?? $0 } ?? "Muse side chat"
+        // Muse 12.1 docks the side-chat list beside the chat. Only a list that
+        // reaches the composer has to be closed before typing.
+        let list = nodes.first { $0.role == "AXButton" && $0.label == "New side chat" }
+        let listCoversComposer = list.map { list in
+            guard let listFrame = list.frame, let composerFrame = composer?.frame else { return true }
+            return listFrame.x + listFrame.w > composerFrame.x
+        } ?? false
         return .init(url: url, draft: repliesOnly ? "" : composer!.editorText!, composerFocused: !repliesOnly && composer?.focused == true,
                      messages: try MuseTranscript.messages(in: convert(transcripts[0])), composerIdentity: composer?.identity,
-                     sidebarOpen: nodes.contains { $0.role == "AXButton" && $0.label == "New side chat" },
+                     sidebarOpen: listCoversComposer,
                      windowBounds: root.frame.map { .init(x: $0.x, y: $0.y, width: $0.w, height: $0.h) },
                      generating: nodes.contains { $0.role == "AXButton" && ($0.label == "Stop" || DesktopAccessibility.museComposerAction($0.label) == "Stop") }, title: title)
     }

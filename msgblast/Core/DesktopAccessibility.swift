@@ -185,9 +185,14 @@ enum DesktopAccessibility {
 
 
     static func museComposerAction(_ label: String) -> String? {
-        let words = label.split(whereSeparator: \.isWhitespace)
-        guard words.dropLast() == ["Message", "Attach", "file", "Dictate", "a", "message"],
-              let action = words.last, action == "Send" || action == "Stop" else { return nil }
+        var words = label.split(whereSeparator: \.isWhitespace)
+        guard let action = words.popLast(), action == "Send" || action == "Stop" else { return nil }
+        // Muse 12.1 moved Dictate outside the composer; earlier builds include it.
+        if words.suffix(3) == ["Dictate", "a", "message"] { words.removeLast(3) }
+        guard words.suffix(2) == ["Attach", "file"] else { return nil }
+        words.removeLast(2)
+        // A named Muse 12.1 side chat says "Message in <chat name>".
+        guard words == ["Message"] || (words.count > 2 && words.prefix(2) == ["Message", "in"]) else { return nil }
         return String(action)
     }
 
@@ -215,7 +220,7 @@ enum DesktopAccessibility {
             let values = try attributes(element)
             var node = try DesktopAccessibilityMetadata.node(values, identity: CFHash(element))
             if node.role == "AXWebArea" { addresses.append((element, try DesktopAccessibilityMetadata.address(values["AXURL"]))) }
-            if readComposer, app == .muse, isComposer(node, app: app) { node.editorText = try museEditorText(element) }
+            if readComposer, app == .muse, isComposer(node, app: app) { node.editorText = try museEditorText(element, label: node.label) }
             return (node, values["AXChildren"] as? [AXUIElement] ?? [])
         }
         let final = try attributes(window)
@@ -231,12 +236,12 @@ enum DesktopAccessibility {
 
     /// Muse's compound WebKit editor exposes exact text through parameterized
     /// ranges rather than AXValue. This is a profile hook, not another walker.
-    private static func museEditorText(_ composer: AXUIElement) throws -> String {
+    private static func museEditorText(_ composer: AXUIElement, label: String) throws -> String {
         func parameter(_ key: String, _ argument: CFTypeRef) -> CFTypeRef? {
             var value: CFTypeRef?
             return AXUIElementCopyParameterizedAttributeValue(composer, key as CFString, argument, &value) == .success ? value : nil
         }
-        return try MuseComposerText.read(markerText: {
+        return try MuseComposerText.read(placeholder: MuseComposerText.placeholder(label: label), markerText: {
             guard let range = parameter("AXTextMarkerRangeForUIElement", composer) else { return nil }
             return parameter("AXStringForTextMarkerRange", range) as? String
         }) { range in
