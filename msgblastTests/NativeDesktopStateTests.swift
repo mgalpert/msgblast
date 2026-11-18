@@ -259,6 +259,35 @@ final class NativeDesktopStateTests: XCTestCase {
         XCTAssertTrue(agents.canSendIndependentNativeReply(to: chatgpt, comparisonID: comparison))
     }
 
+    func testStaleAppRequestStopsBlockingAfterFifteenMinutes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let agents = WebAgents(directory: directory, fixture: true)
+        defer { agents.beginShutdown() }
+        let muse = try XCTUnwrap(agents.session(for: .init(provider: .museApp)))
+        let grok = try XCTUnwrap(agents.session(for: .init(provider: .grokBotApp)))
+        muse.setEnabled(true); grok.setEnabled(true)
+        let sent = Date()
+        var unconfirmed = WebSendAttempt(text: "Earlier question", status: .uncertain)
+        unconfirmed.created = sent; unconfirmed.comparisonID = UUID()
+        var waiting = WebSendAttempt(text: "Another question", status: .waiting)
+        waiting.created = sent; waiting.comparisonID = UUID()
+        muse.updateState { $0.attempts = [unconfirmed] }
+        grok.updateState { $0.attempts = [waiting] }
+        agents.releaseStaleDesktopRequests(now: sent.addingTimeInterval(14 * 60))
+        XCTAssertTrue(agents.isBusyForSelection(muse))
+        XCTAssertTrue(agents.isBusyForSelection(grok))
+        agents.releaseStaleDesktopRequests(now: sent.addingTimeInterval(15 * 60))
+        XCTAssertFalse(agents.isBusyForSelection(muse))
+        XCTAssertFalse(agents.isBusyForSelection(grok))
+        XCTAssertEqual(muse.state.attempts.map(\.status), [.dismissed])
+        XCTAssertEqual(muse.state.attempts.first?.text, "Earlier question", "The request stays in history")
+        XCTAssertEqual(grok.state.attempts.map(\.status), [.dismissed])
+        let reopened = WebAgentSession(provider: .museApp, storageURL: directory.appendingPathComponent(WebProvider.museApp.storageFilename), fixture: true)
+        defer { reopened.beginShutdown() }
+        XCTAssertNil(reopened.incompleteDesktopAttempt, "Clearing survives a restart")
+    }
+
     func testBusyAppCannotBeSelectedInAnotherConversationOrThroughItsSharedSurface() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
