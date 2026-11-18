@@ -186,7 +186,7 @@ final class DesktopAccessibilityTests: XCTestCase {
 
     func testChatGPTAndDotsRejectStaleEditorFocusWhenAnotherControlOwnsInput() throws {
         for app in [DesktopAppProvider.chatgpt, .dots] {
-            for label in ["Ask ChatGPT", "Message", "Work with ChatGPT"] {
+            for label in ["Ask ChatGPT", "Do anything", "Message", "Work with ChatGPT"] {
                 let source = [0: Source(node: .init(role: "AXWindow"), children: [1, 2]),
                               1: Source(node: .init(role: "AXTextArea", label: label, focused: true)),
                               2: Source(node: .init(role: "AXTextField", label: "Chat title", focused: true))]

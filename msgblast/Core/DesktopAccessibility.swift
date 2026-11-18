@@ -198,7 +198,7 @@ enum DesktopAccessibility {
                 (node.role == "AXButton" && museComposerAction(node.label) != nil)
         case .wabi: return ["AXTextArea", "AXTextField"].contains(node.role) && node.label == "Message"
         case .grokBot: return node.role == "AXTextArea" && node.label == "Prompt"
-        case .chatgpt, .dots: return node.role == "AXTextArea" && ["Ask ChatGPT", "Message", "Work with ChatGPT"].contains(node.label)
+        case .chatgpt, .dots: return node.role == "AXTextArea" && ["Ask ChatGPT", "Do anything", "Message", "Work with ChatGPT"].contains(node.label)
         default: return false
         }
     }
