@@ -239,13 +239,13 @@ struct ChatGPTAppObservation: Sendable {
         return node.children.filter { $0.role != "AXWebArea" }.flatMap(panelMatches)
     }
     private static func readComposer(_ panel: [ChatGPTAXNode]) throws -> (node: ChatGPTAXNode, kind: ChatGPTAppKind, draft: String, generating: Bool) {
-        let fields = panel.filter { $0.role == "AXTextArea" && ["Ask ChatGPT", "Message"].contains($0.label) }
+        let fields = panel.filter { $0.role == "AXTextArea" && ["Ask ChatGPT", "Do anything", "Message"].contains($0.label) }
         guard !fields.isEmpty else { throw ChatGPTObservationError.composerUnavailable }
         guard fields.count == 1 else { throw DesktopAppError.unavailable("ChatGPT’s message field is ambiguous. Your draft was preserved.") }
         guard let value = fields[0].value else { throw ChatGPTObservationError.composerUnavailable }
         let composer = fields[0]
         let kind: ChatGPTAppKind = composer.label == "Message" ? .dots : .chatgpt
-        let placeholder = kind == .dots ? "Send a message" : "Ask ChatGPT"
+        let placeholder = kind == .dots ? "Send a message" : composer.label
         let hasPlaceholder = composer.descendants.contains { $0.classes.contains("placeholder") }
         let draft = hasPlaceholder && [placeholder, placeholder + "\n"].contains(value) ? "" : try paragraphDraft(composer, raw: value)
         let generating = panel.contains { $0.role == "AXButton" && ["Stop", "Stop generating", "Stop response"].contains($0.label) }

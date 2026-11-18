@@ -111,6 +111,12 @@ final class ChatGPTAppConversationTests: XCTestCase {
         XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(value: "Ask ChatGPT"))).draft, "")
         XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field(value: "Ask ChatGPT", placeholder: false))).draft, "Ask ChatGPT")
     }
+    func testChatGPT26_1111ComposerLabelIsAcceptedAsAnEmptyChat() throws {
+        let native = try ChatGPTAppObservation(root: window(composer: field("Do anything", value: "Do anything\n")))
+        XCTAssertEqual(native.kind, .chatgpt)
+        XCTAssertEqual(native.draft, "")
+        XCTAssertEqual(try ChatGPTAppObservation(root: window(composer: field("Do anything", value: "Keep my draft", placeholder: false))).draft, "Keep my draft")
+    }
     func testFirstPartyContentTitleOverridesGenericNativeWindowTitle() throws {
         var chat = window(title: "ChatGPT")
         chat.children[0].label = "Reply exact string"
