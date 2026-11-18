@@ -1,0 +1,53 @@
+{
+ "pr": 171,
+ "reviewed_head": "407be8507cfde7a6591bf35e2b8b3820ec149d70",
+ "base": "a3701c9c1ed057f7e2a8863eadd2bca5198dceb7",
+ "reviewer": "independent model (Claude Sonnet subagent, read-only, wrote none of this change)",
+ "reviewer_model": "Claude Sonnet",
+ "scope": "git diff a3701c9 407be85 (FeedbackFacts.swift, DiagnosticReport.swift, AppPermissions.swift, FeedbackView.swift, tests, fixture, docs); cross-checked against #170 validator (git diff a3701c9 p170) and merge-tree against p168, p169, p170, p172, p173",
+ "verdict": "approve with notes",
+ "findings": [
+  {
+   "severity": "NOTE",
+   "file": "msgblast/App/FeedbackFacts.swift:50-72",
+   "text": "No prompt/launch path in capture. Accessibility uses AXIsProcessTrusted (not the WithOptions prompt variant), Screen Recording uses CGPreflightScreenCaptureAccess (not CGRequest...), Contacts uses CNContactStore.authorizationStatus (no requestAccess). Messages values read only the cached @Published history/sending on AppPermissions.messagesPermissions, which does not probe or open Messages; .checking/.needsMessages/.unavailable map to unknown. Demo returns fixed sample values before any native call. Only allowlisted strings are produced; no usernames, paths or content."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/DiagnosticReport.swift:219-223",
+   "text": "Sanitization is sound: DiagnosticPayload rebuilds exactly the 5 keys, drops unknown keys, and passes each value through choice() against the 6-value allowlist, with missing/unexpected values becoming unknown. permissions is Optional so nil is omitted (no null sent); diagnosticKeys gains 'permissions'. Diagnostics off excludes the whole file (existing encodeRequest path; test covers excluded keys)."
+  },
+  {
+   "severity": "NOTE",
+   "file": "feedback/worker.mjs (p170) vs DiagnosticReport.swift",
+   "text": "Client and #170 validator agree: keys accessibility/screenRecording/contacts/messagesDatabase/messagesAutomation, values allowed/off/notRequested/restricted/notConnected/unknown, object omitted when nil. Client always sends all 5 keys when present, matching the validator's exact-key rule. Deploy ordering: #170 Worker must be live before this client ships, otherwise old Worker rejects diagnostics (400)."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/App/FeedbackFacts.swift:56-61",
+   "text": "CNAuthorizationStatus cases handled: authorized/denied/restricted/notDetermined, @unknown default maps to unknown. Newer SDKs that add .limited or .fullAccess would show as unknown (safe, just less informative); worth a glance when building on Xcode 27."
+  },
+  {
+   "severity": "NOTE",
+   "file": "scripts/fixtures/app_permissions.swift (407be85)",
+   "text": "Refactor preserves behaviour and order: the demo PASS line prints, then the extracted checkDiagnosticStatuses runs the same 8 status mappings, the same historyReads/asks no-change precondition (before = beforeDemo), the same PASS line and the same '10 ... regressions passed' summary. Only change is a parameter rename and @MainActor helper. Not executed."
+  },
+  {
+   "severity": "NOTE",
+   "file": "scripts/tests/test_feedback_diagnostics.py:46-47",
+   "text": "The forbidden-substring scan for 'CNContact' is bypassed by string-replacing the exact CNContactStore.authorizationStatus call in FeedbackFacts. Narrow and acceptable, but it would not catch a future requestAccess/CNContactStore() added alongside; consider also forbidding requestAccess, AXIsProcessTrustedWithOptions and CGRequestScreenCaptureAccess in FACTS."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblastTests/",
+   "text": "Coverage is good for sanitization (free text/newline values, missing keys filled, extra key dropped, end-to-end encodeRequest, UI preview contains permissions keys, diagnosticStatus mapping in fixture). Gap: no unit test of FeedbackFacts.permissions itself (demo fixed values, nil-model path); only static text checks cover it."
+  },
+  {
+   "severity": "NOTE",
+   "file": "merge check",
+   "text": "git merge-tree --write-tree 407be85 against p168, p169, p170, p172 (fetched pull/172/head) and p173 all exit clean, no conflicts."
+  }
+ ],
+ "notes": "No blockers or should-fix items. Privacy, no-prompt and validator agreement all hold on reading. Release ordering: deploy #170 Worker first.",
+ "tests": "No Swift toolchain available: nothing built or run (Swift unit/UI tests and the permissions fixture not executed). Review is by reading the diff only; merge-tree checks were run."
+}
