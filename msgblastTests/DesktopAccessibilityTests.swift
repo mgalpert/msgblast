@@ -138,6 +138,41 @@ final class DesktopAccessibilityTests: XCTestCase {
         XCTAssertEqual(first.url, second.url)
     }
 
+    func testMuseEmbeddedCardWebAreaDoesNotBlockTheChatRead() throws {
+        func tree(siblingWebArea: Bool = false) throws -> DesktopAccessibilityNode {
+            var composer = DesktopAccessibilityNode(role: "AXTextArea", label: "Message", value: "")
+            composer.editorText = ""
+            let card = DesktopAccessibilityNode(role: "AXWebArea", url: URL(string: "about:srcdoc"), children: [
+                .init(role: "AXStaticText", value: "Week ahead")
+            ])
+            let messages = DesktopAccessibilityNode(role: "AXGroup", label: "Chat messages", children: [
+                .init(role: "AXGroup", children: [
+                    .init(role: "AXPopUpButton", label: "React"),
+                    .init(role: "AXStaticText", value: "Here's your week."),
+                    card,
+                ])
+            ])
+            let web = DesktopAccessibilityNode(role: "AXWebArea", url: URL(string: "https://muse.ai/"), children: [messages, composer])
+            var nodes: [Int: Source] = [:]
+            var next = 0
+            func flatten(_ node: DesktopAccessibilityNode) -> Int {
+                let id = next; next += 1
+                var copy = node; copy.children = []
+                nodes[id] = Source(node: copy)
+                nodes[id]!.children = node.children.map(flatten)
+                return id
+            }
+            let siblings = siblingWebArea ? [web, DesktopAccessibilityNode(role: "AXWebArea", url: URL(string: "https://muse.ai/"))] : [web]
+            _ = flatten(DesktopAccessibilityNode(role: "AXWindow", children: siblings))
+            return try read(nodes, app: .muse)
+        }
+        let observed = try MuseAppProfile.parse(try tree())
+        XCTAssertEqual(observed.url, URL(string: "https://muse.ai/")!)
+        XCTAssertEqual(observed.draft, "")
+        XCTAssertEqual(observed.messages, [.init(role: .assistant, text: "Here's your week.\n\nWeek ahead")])
+        XCTAssertThrowsError(try MuseAppProfile.parse(try tree(siblingWebArea: true)))
+    }
+
     func testOnlyGeminiVirtualizedSidebarReferencesCanBeSkipped() throws {
         let source = [0: Source(node: .init(role: "AXWindow"), children: [1]),
                       1: Source(node: .init(role: "AXOutline"), children: [2]),
