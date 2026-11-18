@@ -1,0 +1,48 @@
+{
+ "pr": 173,
+ "reviewed_head": "a852a8773611a043ed76a83f864b036517ebc6a2",
+ "base": "a3701c9c1ed057f7e2a8863eadd2bca5198dceb7",
+ "reviewer": "independent model (Claude Sonnet subagent, read-only, wrote none of this change)",
+ "reviewer_model": "Claude Sonnet",
+ "scope": "git diff a3701c9 p173 (WebAgentSession.swift, WebAgents.swift, NativeDesktopStateTests.swift); read surrounding code at p173 via git show; git merge-tree --write-tree of p173 against p168, p169, p171, p172",
+ "verdict": "approve with notes",
+ "findings": [
+  {
+   "severity": "SHOULD-FIX",
+   "file": "msgblast/Core/WebAgentSession.swift:1830-1848 and applyGrokBotReceipt (~2959)",
+   "text": "A real reply that arrives after auto-clear is dropped, not attached. Status becomes .dismissed; applyGrokBotReceipt throws callbackUnavailable for dismissed attempts (receiver answers 410), and Dots/ChatGPT/Muse recovery filters on isUnresolved so it skips dismissed attempts. This matches manual 'stop waiting' and the doc comment says so, but a long Grok Bot/Muse run over 15 minutes loses its answer, with only the detail text 'stopped waiting after 15 minutes. Nothing was resent.' as a trace. Consider confirming with the owner that this is accepted, and/or surfacing it in release notes. History of the request is kept."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/WebAgentSession.swift:1834-1848",
+   "text": "Clock handling and boundary: uses >= 15*60 against attempt.created with an injectable now, so exactly 15:00 clears and 14:59 does not (no off-by-one). Wall-clock Date: a backward clock change only delays clearing; a forward jump clears early. Timer fires every 60 s, so real clearing happens between 15 and 16 minutes. Acceptable."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/WebAgentSession.swift:1834",
+   "text": "Guard is provider.desktopApp != nil and !isSending. isSending covers only an in-flight send on that session, not a Muse/Dots reply being read in recovery, so a read in progress at the 15-minute tick is not protected. Statuses cleared are .attempting, .waiting and .uncertain (isUnresolved); resolved attempts (.observed, .notSent, .dismissed) are untouched. Created is the attempt creation time, so a send queued behind a lock before dispatch ages from creation."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/WebAgentSession.swift:1830-1848",
+   "text": "No resend and no send-path contact: the function only mutates status and detail on existing attempts via updateState and clears a matching error string. It calls no send, recovery or UI-activation code, so it cannot take focus. updateState re-saves the current draft unchanged (localDrafts[key] = state.draft, comparisonID unchanged), so the user's draft is not overwritten or lost. Request text stays in history."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblast/Core/WebAgents.swift:77-79",
+   "text": "Thread safety is fine: WebAgents and WebAgentSession are @MainActor, the timer publishes on .main and uses MainActor.assumeIsolated with weak self. Timer subscription is stored in subscriptions but not cancelled in beginShutdown; harmless after shutdown (updateState only checks storageFailed) but could be cancelled for tidiness. The sweep also runs once at init, so stale requests from before launch clear on startup."
+  },
+  {
+   "severity": "NOTE",
+   "file": "msgblastTests/NativeDesktopStateTests.swift:262-289",
+   "text": "Test covers the real boundary (14 min stays busy, exactly 15 min clears) for both an .uncertain (Muse) and a .waiting (Grok Bot) attempt, keeps history, and checks persistence across a reopened session (save is synchronous). Gaps, not blocking: no case for .attempting, for a non-app provider being untouched, for isSending skipping the sweep, for a resolved attempt being untouched, or for a late reply after clearing; the error-clearing branch is untested."
+  },
+  {
+   "severity": "NOTE",
+   "file": "merge check",
+   "text": "git merge-tree --write-tree p173 against p168, p169, p171 and p172: all four exit 0 (clean, no conflicts)."
+  }
+ ],
+ "notes": "No blockers. Change is narrow, does not touch the send path, cannot cause a resend, does not touch drafts or focus. Residual product risk is that a reply arriving after 15 minutes is discarded for Grok Bot and Dots/Muse recovery.",
+ "tests": "Not built and not run: no Swift/Xcode toolchain available; review is by reading the diff and surrounding code only."
+}
