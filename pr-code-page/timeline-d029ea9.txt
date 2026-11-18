@@ -1,0 +1,17 @@
+msgblast Dev (Claude Code Page d029ea9): local merge of #169 and PR #172 head d029ea9.
+Driven through cua-driver accessibility clicks on the msgblast Dev window only. Nothing was sent.
+Local times, 2026-11-18. Sources: NSWorkspace activation events, Claude's AXWebArea URL (polled about every 50 ms), window text changes (polled about every 100 ms).
+
+Claude, starting on a Code page (claude.ai/epitaxy/...), with Claude already frontmost:
+13:26:35.275  Claude row shows "Opening Claude..." (Connect was clicked just before)
+13:26:36.184  "Checking Claude's conversation..." (grey)
+13:26:39.805  Claude page is /new
+13:26:40.460  msgblast Dev frontmost, 0.66 s after /new was seen
+13:26:42.624  Claude row shows Ready
+              No Claude activation followed; msgblast was still frontmost when ChatGPT was quit.
+
+ChatGPT, quit first; msgblast relaunched it on Connect:
+13:27:12.685  "Opening ChatGPT..."
+13:27:13.738-13:27:14.794  ChatGPT and msgblast Dev trade the front; msgblast Dev ends frontmost
+13:27:16.767  "Checking ChatGPT's conversation..." (grey)
+13:27:18.768  "ChatGPT's message field is unavailable. Your draft was preserved." (red)
