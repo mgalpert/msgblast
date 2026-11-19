@@ -1,0 +1,38 @@
+{
+ "pr": 137,
+ "reviewed_head": "c5db796b7634634c6c6e87c39d5aab93439a4664",
+ "base": "68fe240",
+ "verdict": "approve",
+ "reviewer_model": "claude-sonnet (independent subagent)",
+ "author_models": [
+  "claude-opus"
+ ],
+ "reviewed_at": "2026-11-19T06:52:36Z",
+ "summary": "The prior MAJOR (attachments wiped on a Mac-driven recipients change) is fixed. ComposeSend.keepsAttachments keeps files while the draft key is unchanged and a file-taker remains. For a new conversation the key is constant (new|all), so Mac connect/drop of agents no longer loses files or text. Text is never lost: it is saved per key by onChange(text) before the key changes. Selection follows defaultNewSelection until the first tap (onChange now also watches defaultNewSelection), then only filters out departed agents. CLI isSetUp now requires subscription/apiKey/other, matching WebAgentSession.ready and the Mac pane (WebServicesView). Fixture seq builds on projection.seq. nonisolated static draftKey is a pure string builder with no actor state, safe. Tests assert the helper behaviour. No focus-taking added (focusRequest untouched). No BLOCKER/MAJOR; two MINOR and two NIT remain.",
+ "findings": [
+  {
+   "severity": "MINOR",
+   "file": "msgblastMobile/Views/ComposeBar.swift",
+   "line": 118,
+   "detail": "Attachments can still be dropped without a tap in an existing conversation: if Mac-side membership shrinks so recipients (All) goes from 2+ to exactly 1 member, the draft key changes (conv|all -> conv|agent), attachments are cleared and text swaps to the other draft. Rare; typed text is preserved under the old key but disappears from the field. Also, in a new conversation a transient readiness flap that drops the only file-taker (e.g. a Messages contact) discards the files silently; they do not return when it reappears. Dropping when no file-taker remains is reasonable (otherwise canSend would send files to agents that cannot take them), but consider keeping them hidden and blocking Send, or surfacing a brief note."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblastMobile/Views/ComposeBar.swift",
+   "line": 428,
+   "detail": "An upload in flight when the last file-taker leaves will append its attachment after the recipients change, leaving attachments with no file-taking recipient (Send still enabled). Pre-existing race, made slightly more reachable now that selection follows the Mac live. Guard the append with takesAttachments."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblastMobileTests/ViewModelTests.swift",
+   "line": 861,
+   "detail": "The keepsAttachments assertions are appended to testAConfirmedSendKeepsWhatWasTypedWhileItWaited, an unrelated async test (and run only after its setup/awaits). Better as a standalone test. The view wiring in ComposeBar.onChange is not itself tested, only the pure helper."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblastMobile/Debug/DesignFixtures.swift",
+   "line": 83,
+   "detail": "seq is captured when connectLater runs (projection.seq + index + 1), not when the delayed closure fires. Fine for the debug fixture, but a real event arriving earlier would make these seqs stale and ignored."
+  }
+ ]
+}
