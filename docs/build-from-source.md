@@ -40,7 +40,7 @@ This avoids changing the machine-wide Xcode selection.
 For personal use:
 
 ```sh
-git clone https://github.com/mgalpert/msgblast.git
+git clone https://github.com/contains-studio/msgblast.git
 cd msgblast
 ```
 

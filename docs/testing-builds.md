@@ -36,7 +36,7 @@ Recheck it before publishing. Ordinary PR validation and ad-hoc previews stay un
    user text are not interpreted by a shell:
 
    ```sh
-   gh api --method POST repos/mgalpert/msgblast/actions/workflows/test-build.yml/dispatches \
+   gh api --method POST repos/contains-studio/msgblast/actions/workflows/test-build.yml/dispatches \
      --input /PRIVATE_TEMP_DIRECTORY/testing-dispatch.json
    ```
 
@@ -55,7 +55,7 @@ Recheck it before publishing. Ordinary PR validation and ad-hoc previews stay un
 
 4. Identify the resulting run by workflow, initiator, dispatch time, and input SHA;
    do not assume the first listed run belongs to you. Watch it with
-   `gh run view RUN_ID -R mgalpert/msgblast` and inspect its summary.
+   `gh run view RUN_ID -R contains-studio/msgblast` and inspect its summary.
    Feature code runs the Python and native core checks and builds an ad-hoc Dev
    artifact without signing secrets or a write token.
 5. The signing job waits for **test-build-signing** approval. Its job name includes

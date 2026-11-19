@@ -22,7 +22,7 @@ Signing-certificate creation, API-key creation, enrollment purchases and updated
 
 ## GitHub Actions configuration
 
-Set these repository variables on `mgalpert/msgblast`:
+Set these repository variables on `contains-studio/msgblast`:
 
 | Variable | Value |
 | --- | --- |

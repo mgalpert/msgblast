@@ -58,7 +58,7 @@ and failed different focus and timing tests on each run.
    asks for:
 
    ```
-   ./config.sh --url https://github.com/mgalpert/msgblast --token <token from that page> \
+   ./config.sh --url https://github.com/contains-studio/msgblast --token <token from that page> \
      --name studio-1 --labels msgblast-studio --unattended
    ./svc.sh install
    ./svc.sh start

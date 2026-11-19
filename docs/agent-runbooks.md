@@ -23,7 +23,7 @@ them as current setup instructions or proof that today's branch passes.
   editing. Preserve existing work and commit only the requested files.
 - For a new task, fetch the current upstream default branch and record its full
   SHA. In a fork, `origin` is normally the user's fork and `upstream` is
-  `mgalpert/msgblast`; verify rather than assuming. Use a descriptive `codex/`
+  `contains-studio/msgblast`; verify rather than assuming. Use a descriptive `codex/`
   branch by default. Existing authorized work continues from its intended ref.
 - Verify the recorded base is an ancestor of the working branch. Report a stale
   or wrong base instead of resetting existing work. Include `Base-SHA:` and
@@ -150,7 +150,7 @@ Verify `release_revision` is the reviewed commit before tagging. The workflow re
 Alternatively, dispatch the workflow from `main` with a numeric version, without the `v` prefix:
 
 ```sh
-gh workflow run release-adhoc.yml -R mgalpert/msgblast --ref main -f version=0.1.3
+gh workflow run release-adhoc.yml -R contains-studio/msgblast --ref main -f version=0.1.3
 ```
 
 Dispatch builds `main` as resolved for that run. Verify the run's `headSha` matches the intended source; use a tag when the revision must be pinned. Choose **one** trigger per release. Do not push a tag and dispatch the same release as two separate jobs.
@@ -162,9 +162,9 @@ Actions handles testing, building, the configured signing/notarization mode, Spa
 1. Identify the run belonging to the chosen tag/dispatch and check its source SHA. Wait for completion and inspect its conclusion and summary. A queued, canceled, failed, or unfinished run is not evidence of a successful release.
 
    ```sh
-   gh run list -R mgalpert/msgblast --workflow release-adhoc.yml --limit 5
-   gh run view RUN_ID -R mgalpert/msgblast --json status,conclusion,headSha,url
-   gh run watch RUN_ID -R mgalpert/msgblast --exit-status --interval 20
+   gh run list -R contains-studio/msgblast --workflow release-adhoc.yml --limit 5
+   gh run view RUN_ID -R contains-studio/msgblast --json status,conclusion,headSha,url
+   gh run watch RUN_ID -R contains-studio/msgblast --exit-status --interval 20
    ```
 
 2. Check the published signed feed and immutable `releases/VERSION-BUILD.json` manifest. Confirm version, allocated build and `source_revision`; use the actual allocated build from the run, not a predicted counter.
@@ -195,7 +195,7 @@ Signing-key/identity changes require a deliberate migration. Missing R2 hosting 
 
 Hosted Cloud Agents run on Ubuntu and cannot validate the native Mac app. Follow [docs/cloud-agent.md](cloud-agent.md) for install, Linux checks, the non-publishing native workflow, GitHub access limits, and release verification. Linux tests are not a substitute for `.github/workflows/validate.yml` on the `xcode-27` runner.
 
-- Start new tasks from fresh `main` unless the user specifies another pushed branch or exact commit. Fetch the intended base, record its resolved SHA, verify it is an ancestor of the working branch before editing, and include `Base-SHA:` in the PR. Report a stale/wrong base instead of resetting existing work. Cursor defaults are `mgalpert/msgblast` / `main`; the saved environment enables stale-build updates with a threshold of `0`.
+- Start new tasks from fresh `main` unless the user specifies another pushed branch or exact commit. Fetch the intended base, record its resolved SHA, verify it is an ancestor of the working branch before editing, and include `Base-SHA:` in the PR. Report a stale/wrong base instead of resetting existing work. Cursor defaults are `contains-studio/msgblast` / `main`; the saved environment enables stale-build updates with a threshold of `0`.
 - Install with `bash scripts/cloud-agent-install.sh`. It pins `scripts/installer-requirements.txt` in `${MSGBLAST_INSTALLER_VENV:-$HOME/.msgblast-installer}` and runs `npm ci --prefix download`. Do not commit `.cursor/environment.json`; that file overrides the saved environment.
 - Linux checks: `python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v`, then `npm test --prefix download` and `npm run check --prefix download`. The Wrangler check is a dry-run and does not deploy.
 - Native core checks belong to `validate.yml` (`msgblastTests` plus `scripts/test_updates.py` on `xcode-27`). Cursor PR branches (`cursor/*`) and manual `workflow_dispatch` also build two ad-hoc preview ZIPs in that workflow: blue-green `msgblast Dev.app` (`com.msgblast.development`) and blue fixture `msgblast Demo.app` (`com.msgblast.demo`, `msgblastDemo` true). Artifacts stay on the Actions run for 14 days. Do not dispatch `release-adhoc.yml` as a test.

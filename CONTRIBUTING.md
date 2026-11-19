@@ -13,13 +13,13 @@ also read [AGENTS.md](AGENTS.md). [Architecture](docs/architecture.md) and
 For personal use, clone the repository or download its source ZIP from GitHub's
 **Code** menu. A ZIP has no Git history; clone a fork when you want to contribute.
 
-For a PR, [fork msgblast](https://github.com/mgalpert/msgblast/fork), then clone your
+For a PR, [fork msgblast](https://github.com/contains-studio/msgblast/fork), then clone your
 fork. Replace YOUR-USERNAME below with your GitHub username:
 
 ```sh
 git clone https://github.com/YOUR-USERNAME/msgblast.git
 cd msgblast
-git remote add upstream https://github.com/mgalpert/msgblast.git
+git remote add upstream https://github.com/contains-studio/msgblast.git
 git fetch upstream main
 git switch -c codex/my-feature upstream/main
 git rev-parse upstream/main
@@ -73,7 +73,7 @@ I'm using msgblast and want to build a feature for myself, then share it with ot
 
 My feature idea: [Describe the problem and the behavior you want.]
 
-Use https://github.com/mgalpert/msgblast. Help me fork and clone it, or work in my existing clone. Read AGENTS.md, CONTRIBUTING.md, and the build, architecture, and testing guides before making changes.
+Use https://github.com/contains-studio/msgblast. Help me fork and clone it, or work in my existing clone. Read AGENTS.md, CONTRIBUTING.md, and the build, architecture, and testing guides before making changes.
 
 Implement a focused change on a feature branch. Build separate Dev and Demo apps without replacing my installed app or changing its saved data. Use Demo with sample data for testing and screenshots/video. Run the relevant checks and explain any limits.
 
@@ -83,7 +83,7 @@ Help me run my own build. Prepare a PR against upstream main with a clear descri
 ## Submit a pull request
 
 Commit your change, push the branch to your fork, and open a PR against
-`mgalpert/msgblast:main` through GitHub or `gh pr create`. Review the diff before
+`contains-studio/msgblast:main` through GitHub or `gh pr create`. Review the diff before
 pushing; exclude build products, private state, sensitive logs, and unrelated
 changes. Use a draft PR when native validation or evidence is still pending, and
 state the limitation.

@@ -132,7 +132,7 @@ Choose **msgblast → Build a New Feature…** to describe your idea and copy a
 starting prompt for your coding agent. The window links to the public repository,
 fork page, source download, and build guide. You can also find it in **Help**.
 
-[msgblast's source is public](https://github.com/mgalpert/msgblast). Fork it, build
+[msgblast's source is public](https://github.com/contains-studio/msgblast). Fork it, build
 the feature you want to use, and share it through a pull request with a description,
 screenshots, and a short video. You can also clone or download the source for a
 personal build.

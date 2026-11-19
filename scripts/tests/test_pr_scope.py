@@ -104,5 +104,33 @@ class ApprovalTests(unittest.TestCase):
         self.assertTrue(check([review, dict(id=3, state='COMMENTED', commit_id='abc', user=None)], {'owner'}))
 
 
+    def test_sole_maintainer_waives_size_in_an_organization_repository(self):
+        spec = importlib.util.spec_from_file_location('scope', SCRIPT)
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
+        review = dict(id=1, state='COMMENTED', commit_id='abc',
+                      user=dict(login='person', type='User'), body='Size-exception: abc')
+
+        def check(reviews, collaborators):
+            def fake(command):
+                path = command[-1]
+                if '/reviews?' in path:
+                    return json.dumps(reviews).encode()
+                if '/collaborators?' in path:
+                    return json.dumps([dict(login=login, type='User') for login in collaborators]).encode()
+                raise AssertionError(path)
+            original = scope.subprocess.check_output
+            scope.subprocess.check_output = fake
+            try:
+                return scope.github_exception('some-org/msgblast', 7, 'abc', 'person')
+            finally:
+                scope.subprocess.check_output = original
+
+        # The organization in the path never reviews; its one maintainer does.
+        self.assertTrue(check([review], ['person']))
+        self.assertFalse(check([review], ['person', 'teammate']))
+        self.assertFalse(check([review | dict(body='looks good')], ['person']))
+        self.assertFalse(check([review | dict(user=dict(login='stranger', type='User'))], ['person']))
+
 if __name__ == '__main__':
     unittest.main()

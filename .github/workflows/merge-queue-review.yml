@@ -1,0 +1,34 @@
+name: Merge queue review
+
+# The merge queue asks for every required check again on its own temporary
+# commit. "Independent model review" is a status the owner posts by hand on a
+# pull request's exact head, so nobody posts it on that commit. This job reports
+# the same name there, but only after reading a passing review status on the
+# queued pull request's current head. It never runs for a pull request, so the
+# hand-posted status stays the gate there. Delete this file if the check is
+# dropped from the ruleset.
+on:
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+
+jobs:
+  review:
+    name: Independent model review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      # Run main's copy of the script. This workflow file itself comes from the
+      # queued commit, but a pull request reaches the queue only with a passing
+      # review status on its head, which covers any edit to this file.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.merge_group.base_ref }}
+          persist-credentials: false
+      - name: Read the review status on the pull request head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/check_queue_review.py --repo "$GITHUB_REPOSITORY" --event-file "$GITHUB_EVENT_PATH"

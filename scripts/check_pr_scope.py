@@ -27,10 +27,12 @@ def approved_review(reviews, head, author, permissions):
 
 
 def owner_review(reviews, head, owner, maintainers):
-    """Solo user-owned repository: the owner may record the exception on their own PR.
+    """Solo repository: its one maintainer may record the exception on their own PR.
 
     GitHub forbids approving your own PR, so a comment review counts. It applies
     only while the owner is the sole user with write, maintain, or admin access.
+    The owner is that one person, not the account in the repository path, so it
+    keeps working when the repository belongs to an organization.
     The owner's latest review on the head decides, so a later review without
     the line revokes it.
     """
@@ -62,8 +64,7 @@ def github_exception(repo, number, head, author):
                    for login in logins}
     if approved_review(reviews, head, author, permissions):
         return True
-    owner = repo.split('/')[0]
-    if not any((r.get('user') or {}).get('login') == owner for r in reviews):
+    if not any(f'Size-exception: {head}' in (r.get('body') or '').splitlines() for r in reviews):
         return False
     maintainers = set()
     page = 1
@@ -77,7 +78,9 @@ def github_exception(repo, number, head, author):
         if len(batch) < 100:
             break
         page += 1
-    return owner_review(reviews, head, owner, maintainers)
+    if len(maintainers) != 1:
+        return False
+    return owner_review(reviews, head, next(iter(maintainers)), maintainers)
 
 
 def main():
