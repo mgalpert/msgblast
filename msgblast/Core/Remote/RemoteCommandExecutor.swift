@@ -223,17 +223,7 @@ public final class RemoteCommandExecutor {
         if case .fetchAttachment(let turnID, let index, let maxBytes) = command.action { reply(attachment(command, turnID: turnID, index: index, maxBytes: maxBytes)); return }
         if var stored = ledger[id] { stored.replayed = true; reply(stored); return }
         if inProgress.contains(id) { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Already running on your Mac", replayed: true)); return }
-        if command.action.isSerial {
-            if let rejection = command.action.isSend ? checkSend(command) : checkPrepare(command) { finish(rejection, reply); return }
-            // A prepare replaces any waiting prepare, so only the others count toward the cap.
-            let waiting = Self.isPrepare(command) ? sendQueue.filter { !Self.isPrepare($0.command) }.count : sendQueue.count
-            guard waiting < Self.maximumQueuedSends else {
-                finish(reject(command, .macBusy, "Too many requests waiting on your Mac. Try again soon"), reply); return
-            }
-            inProgress.insert(id)
-            enqueue(command, reply)
-            return
-        }
+        if command.action.isSerial { submitSerial(command, reply); return }
         inProgress.insert(id)
         // Chunks are repeatable and short-lived; keeping them out of the ledger stops a
         // 128-chunk upload from pushing send results out of it.
@@ -267,6 +257,17 @@ public final class RemoteCommandExecutor {
     /// Queues a serial command. A newer prepare replaces older ones still waiting (the phone asks
     /// again whenever its recipients change, and only the newest answer matters to it), so a
     /// prepare never waits behind preparations nobody needs any more.
+    private func submitSerial(_ command: RemoteCommand, _ reply: @escaping (RemoteCommandResult) -> Void) {
+        if let rejection = command.action.isSend ? checkSend(command) : checkPrepare(command) { finish(rejection, reply); return }
+        // A prepare replaces any waiting prepare, so only the others count toward the cap.
+        let waiting = Self.isPrepare(command) ? sendQueue.filter { !Self.isPrepare($0.command) }.count : sendQueue.count
+        guard waiting < Self.maximumQueuedSends else {
+            finish(reject(command, .macBusy, "Too many requests waiting on your Mac. Try again soon"), reply); return
+        }
+        inProgress.insert(command.clientCommandID)
+        enqueue(command, reply)
+    }
+
     private func enqueue(_ command: RemoteCommand, _ reply: @escaping (RemoteCommandResult) -> Void) {
         if Self.isPrepare(command) {
             let replaced = sendQueue.filter { Self.isPrepare($0.command) }
