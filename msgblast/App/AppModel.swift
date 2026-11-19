@@ -313,7 +313,7 @@ final class AppModel: ObservableObject {
                 if messages[chatID] != fresh { messages[chatID] = fresh }
             }
             try reconcile()
-            if try startDirectThreads() { lastDataVersion = version }
+            try finishRefresh(version)
         } catch { databaseAvailable = false; databaseStatus = error.localizedDescription; database = nil }
     }
     func refreshContactAccess() {
@@ -789,6 +789,10 @@ final class AppModel: ObservableObject {
         }
     }
     /// A contact's message that no conversation holds starts that contact's direct thread.
+    /// The database version is recorded only once direct threads are settled, so a held insert is retried.
+    private func finishRefresh(_ version: Int64) throws {
+        if try startDirectThreads() { lastDataVersion = version }
+    }
     /// Returns false while a send is in flight: sends keep a conversation's position across awaits, so the
     /// insert waits and the next refresh tries again.
     @discardableResult private func startDirectThreads() throws -> Bool {
