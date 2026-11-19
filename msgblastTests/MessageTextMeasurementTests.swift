@@ -10,19 +10,20 @@ final class MessageTextMeasurementTests: XCTestCase {
     }
 
     func testCappedMeasurementOfLongTextThatFitsMatchesFullMeasurement() {
-        XCTAssertEqual(MessageTextMeasurement.size(longDraft, width: 100_000, maxHeight: 100), MessageTextMeasurement.size(longDraft, width: 100_000))
+        XCTAssertEqual(MessageTextMeasurement.size(longDraft, width: 4000, maxHeight: 100), MessageTextMeasurement.size(longDraft, width: 4000))
     }
 
     func testCappedMeasurementStillReportsOverflow() {
         XCTAssertGreaterThan(MessageTextMeasurement.size(longDraft, width: 320, maxHeight: 100).height, 100)
     }
 
-    func testZeroWidthProbeOfLongParagraphReturnsQuickly() {
-        // One paragraph of ~100k characters: uncapped, a 1 pt probe takes about half a second.
-        let paragraph = String(repeating: longDraft, count: 10)
+    func testZeroAndUnboundedProbesOfLongParagraphReturnQuickly() {
+        // One paragraph of ~1M characters: uncapped, either probe typesets all of it.
+        let paragraph = String(repeating: longDraft, count: 100)
         _ = MessageTextMeasurement.size("Warm up fonts", width: 320)
         let start = Date()
         _ = MessageTextMeasurement.size(paragraph, width: 0, maxHeight: 100)
-        XCTAssertLessThan(Date().timeIntervalSince(start), 0.2)
+        _ = MessageTextMeasurement.size(paragraph, width: .infinity, maxHeight: 100)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5)
     }
 }

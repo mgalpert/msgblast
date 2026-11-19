@@ -3,14 +3,16 @@ import AppKit
 public enum MessageTextMeasurement {
     /// With a `maxHeight`, growing prefixes are measured first: a prefix taller than the cap proves the whole draft is, without typesetting all of it.
     public static func size(_ text: String, width: CGFloat, maxHeight: CGFloat = .greatestFiniteMagnitude) -> CGSize {
-        if maxHeight < .greatestFiniteMagnitude {
-            let length = text.count
-            var prefix = 512
-            while prefix < length {
-                let size = layoutSize(String(text.prefix(prefix)), width: width)
-                if size.height > maxHeight { return size }
-                prefix *= 4
-            }
+        guard maxHeight < .greatestFiniteMagnitude else { return layoutSize(text, width: width) }
+        // An unbounded probe width would set a long paragraph as one line; no composer is wider than this.
+        let width = min(width, 4096)
+        var prefix = 512
+        while true {
+            let head = text.prefix(prefix)
+            if head.endIndex == text.endIndex { break }
+            let size = layoutSize(String(head), width: width)
+            if size.height > maxHeight { return size }
+            prefix *= 4
         }
         return layoutSize(text, width: width)
     }
