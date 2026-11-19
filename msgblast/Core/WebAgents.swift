@@ -74,6 +74,9 @@ public final class WebAgents: ObservableObject {
             configurationError = "Saved agent copies could not be read. The original file has been preserved: \(error.localizedDescription)"
         }
         for session in sessions { observe(session) }
+        releaseStaleDesktopRequests()
+        Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+            .sink { [weak self] now in MainActor.assumeIsolated { self?.releaseStaleDesktopRequests(now: now) } }.store(in: &subscriptions)
         setComparison(workspaceSession.state.comparisonID)
         // Older saved selections may contain both recipients. Keep ChatGPT
         // selected on startup; the user can switch to Dots at any time.
@@ -128,6 +131,9 @@ public final class WebAgents: ObservableObject {
     public func setComparison(_ id: UUID?) {
         if id == nil && !archivedAgents.isEmpty { archivedAgents = [] }
         for session in sessions where session.state.comparisonID != id { session.updateState { $0.comparisonID = id } }
+    }
+    public func releaseStaleDesktopRequests(now: Date = Date()) {
+        for session in sessions { session.releaseStaleDesktopRequests(now: now) }
     }
     public func setEnabled(_ enabled: Bool, for provider: WebProvider) {
         guard let session = sessions.first(where: { $0.provider == provider }) else { return }

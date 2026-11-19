@@ -54,6 +54,22 @@ import msgblastRemoteProtocol
         XCTAssertEqual(host.commands, [])
     }
 
+    func testChooseTapsALabelInAComparison() async throws {
+        let host = Host()
+        let comparison = UUID()
+        _ = try await call("msgblast_agent_choose", #"{"comparisonId":"\#(comparison.uuidString)","agent":"web:chatgpt","action":"Show more grocery items","actionsId":"reply-3","requestId":"c1"}"#, host: host)
+        XCTAssertEqual(host.commands.map(\.action), [.chooseAction(conversationID: comparison, agentID: "chatgpt", label: "Show more grocery items", offerID: "reply-3")])
+        let missing = await refusal("msgblast_agent_choose", #"{"comparisonId":"\#(comparison.uuidString)","agent":"web:chatgpt","action":" ","actionsId":"reply-3"}"#, host: host)
+        XCTAssertEqual(missing, .invalidArguments("action is required"))
+        let noOffer = await refusal("msgblast_agent_choose", #"{"comparisonId":"\#(comparison.uuidString)","agent":"web:chatgpt","action":"Add it"}"#, host: host)
+        XCTAssertEqual(noOffer, .invalidArguments("actionsId is required"))
+        let readOnly = await refusal("msgblast_agent_choose", #"{"comparisonId":"\#(comparison.uuidString)","agent":"web:chatgpt","action":"Add it","actionsId":"reply-3"}"#, host: host, access: .readOnly)
+        XCTAssertEqual(readOnly, .needsAccess(.full), "Read only agents can see choices but not make them")
+        let noComparison = await refusal("msgblast_agent_choose", #"{"agent":"web:chatgpt","action":"Add it","actionsId":"reply-3"}"#, host: host)
+        XCTAssertEqual(noComparison, .invalidArguments("comparisonId is required"))
+        XCTAssertEqual(host.commands.count, 1)
+    }
+
     func testStartBecomesOneExecutorCommandWithAgentIDsTranslated() async throws {
         let host = Host()
         let comparison = UUID()

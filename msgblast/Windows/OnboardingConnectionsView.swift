@@ -16,10 +16,15 @@ struct OnboardingConnectionsView: View {
         model.busy || model.webBroadcastBusy || setup.checking || setup.permissionChecksBusy ||
             sessions.contains { $0.loading || $0.isSending }
     }
-    private var canContinue: Bool {
-        !busy && !sessions.isEmpty && sessions.allSatisfy {
-            appAccessReady && checked.contains($0.provider) && setup.isReady($0)
-        }
+    private var ready: Set<WebProvider> {
+        guard appAccessReady else { return [] }
+        return Set(sessions.filter { checked.contains($0.provider) && setup.isReady($0) }.map(\.provider))
+    }
+    // An app that fails its check must not block setup. It stays selected,
+    // so the workspace keeps reminding the user to connect it later.
+    private var unready: [WebAgentSession] { sessions.filter { !ready.contains($0.provider) } }
+    private func proceed() {
+        setup.completeDesktopConnections(checked: ready, skipped: Set(unready.map(\.provider)))
     }
 
     var body: some View {
@@ -56,9 +61,18 @@ struct OnboardingConnectionsView: View {
             HStack {
                 Button("Back") { setup.back() }.disabled(busy)
                 Spacer()
-                Button("Continue") { setup.completeDesktopConnections(checked: checked, skipped: []) }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(!canContinue)
+                if ready.isEmpty {
+                    Button("Skip for now") { proceed() }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).disabled(busy)
+                } else {
+                    if !unready.isEmpty {
+                        Text("\(ListFormatter.localizedString(byJoining: unready.map(\.provider.name))) will be skipped. You can connect later.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    Button("Continue") { proceed() }
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                        .disabled(busy)
+                }
             }.padding(24)
         }
         .task {

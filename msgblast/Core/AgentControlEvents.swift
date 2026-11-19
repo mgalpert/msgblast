@@ -4,6 +4,9 @@ import Foundation
 public struct AgentControlEvent: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case replyArrived, agentBusy, agentReady, sendResult, messageReceived, reportReady
+        /// The agent's newest reply now offers these suggestion buttons (detail: labels, one per line).
+        /// Alexa draws them after its text, so this can follow `replyArrived` by a few seconds.
+        case actionsOffered
     }
     public var seq: Int, kind: Kind, comparisonID: UUID?, agent: String?, detail: String?, date: Date
 }
@@ -105,6 +108,8 @@ public struct AgentControlSnapshot: Equatable, Sendable {
     public var busy: Set<String> = []
     /// When each watched comparison was created.
     public var created: [UUID: Date] = [:]
+    /// Suggestion buttons under each agent's newest reply. A new reply is a new offer even with the same labels.
+    public var actions: [Key: WebPageActions] = [:]
 
     public init() {}
 
@@ -117,6 +122,7 @@ public struct AgentControlSnapshot: Equatable, Sendable {
         var base = self
         for (key, count) in next.replies where joined(key.comparisonID) { base.replies[key] = count }
         for (key, state) in next.states where joined(key.comparisonID) { base.states[key] = state }
+        for (key, labels) in next.actions where joined(key.comparisonID) { base.actions[key] = labels }
         return base
     }
 
@@ -128,6 +134,10 @@ public struct AgentControlSnapshot: Equatable, Sendable {
         for key in states.keys.sorted(by: Self.order) {
             guard let state = states[key], state != old.states[key], Self.settledStates.contains(state) else { continue }
             changes.append(Change(kind: .sendResult, comparisonID: key.comparisonID, agent: key.agent, detail: state))
+        }
+        for key in actions.keys.sorted(by: Self.order) {
+            guard let offer = actions[key], !offer.labels.isEmpty, offer != old.actions[key] else { continue }
+            changes.append(Change(kind: .actionsOffered, comparisonID: key.comparisonID, agent: key.agent, detail: offer.labels.joined(separator: "\n")))
         }
         for name in busy.subtracting(old.busy).sorted() { changes.append(Change(kind: .agentBusy, comparisonID: nil, agent: name, detail: nil)) }
         for name in old.busy.subtracting(busy).sorted() { changes.append(Change(kind: .agentReady, comparisonID: nil, agent: name, detail: nil)) }
