@@ -64,10 +64,11 @@ final class PresenterTests: XCTestCase {
         XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: [messages.agentID], conversation: nil), "Mac locked")
 
         XCTAssertEqual(presenter.newConversationAgents.agents.map(\.agentID), [], "Only rabbit OS3 is ready, and it is not on the Mac's grid")
-        let gridAgents = state.grid.filter { state.agents[$0].map { $0.form != .messages } ?? false }
+        // The recorded Mac's grid holds only contacts; put three set-up agents on it.
+        let gridAgents = ["codexCLI", "claude", "chatgptApp"]
+        state.grid = gridAgents + state.grid
         for id in gridAgents { state.agents[id]?.readiness = .ready; state.agents[id]?.reasons = [] }
         let list = ProjectionPresenter(state: state).newConversationAgents
-        XCTAssertGreaterThan(gridAgents.count, 1)
         XCTAssertEqual(list.agents.map(\.agentID), gridAgents, "Once set up: the Mac's grid order, each form its own row, nothing off the grid")
         XCTAssertTrue(list.messages.allSatisfy { $0.form == .messages })
         XCTAssertFalse(list.messages.isEmpty, "Messages contacts have their own section")
