@@ -969,12 +969,24 @@ final class AppModel: ObservableObject {
                 messages[member.chat.id]?[index].reactions = [MessageReaction(id: "fixture-recipient", emoji: "✅", outgoing: false)]
                 let answer = sent.linkPreview?.url.absoluteString ?? answers[offset % answers.count]
                 appendDemo(answer, chat: member.chat, outgoing: false, replyTo: anchor.guid)
+                scheduleDemoLateMessage(member.chat)
                 if ProcessInfo.processInfo.arguments.contains("--business-choices-preview"), member.chat.businessConversation == true {
                     appendBusinessChoiceFixture(chat: member.chat)
                 }
             } else {
                 appendDemo(answers[offset % answers.count], chat: member.chat, outgoing: false, replyTo: anchor.guid)
             }
+        }
+    }
+    /// Demo launched with `--late-message-preview`: after a reply, you write the contact from Messages
+    /// itself and they answer. No conversation holds those rows, so they start the contact's direct thread.
+    private func scheduleDemoLateMessage(_ chat: Chat) {
+        guard ProcessInfo.processInfo.arguments.contains("--late-message-preview") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            appendDemo("Running late, see you at 7", chat: chat, outgoing: true)
+            appendDemo("No problem, see you then", chat: chat, outgoing: false)
+            try? startDirectThreads()
         }
     }
     func openMessages(_ member: Member) {

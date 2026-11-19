@@ -393,5 +393,7 @@ Live native action requires the exact app's Accessibility permission. Inspecting
 
 For private-send scrolling evidence, launch the blue Demo with `--isolated-demo --no-demo-replies`. This keeps automatic simulated replies from moving the transcript after submission. The native UI regression sends a long reply through Cedar's own composer and checks that its end is visible without manual scrolling. The AppKit controller fixture covers overflowing joined panes and a late tapback; it does not reproduce the real composer timing failure by itself.
 
+For late-message evidence, launch the blue Demo with `--isolated-demo --late-message-preview`. Six seconds after each simulated reply, the fixture adds a message you sent the contact from Messages itself and the contact's answer. The conversation does not show them; a direct thread named after the contact appears in the list and does.
+
 Gemini is deferred: its compatibility fixtures remain, but public session tests
 prove saved state survives while connection, configuration and sending stay blocked.
