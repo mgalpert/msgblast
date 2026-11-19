@@ -129,7 +129,8 @@ class PreviewPlanTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 preview.latest_release_version(temporary)
         self.assertEqual(preview.latest_release_version(), max(
-            (path.stem for path in (ROOT / "release-notes").glob("*.md")),
+            (path.stem for path in (ROOT / "release-notes").glob("*.md")
+             if all(part.isdigit() for part in path.stem.split("."))),
             key=lambda version: tuple(int(part) for part in version.split("."))))
 
     def test_all_keeps_building_only_dev_and_demo(self):
