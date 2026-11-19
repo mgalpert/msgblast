@@ -1,0 +1,56 @@
+{
+ "pr": 128,
+ "reviewed_head": "b71aca99c35b8f8d70d63ea6b138254af6b30aea",
+ "base": "68fe240",
+ "verdict": "approve",
+ "reviewer_model": "claude-sonnet (independent subagent)",
+ "author_models": [
+  "claude-opus"
+ ],
+ "reviewed_at": "2026-11-19T07:05:43Z",
+ "summary": "No BLOCKER or MAJOR. Queue cap (1 running + 8 waiting, a prepare not counted against the cap when it replaces a waiting prepare) and upload caps (4 uploads, 2x25MB, LRU) are correct. Both Bugbot fixes are present and tested. All refusals use existing codes (macBusy, failed, attachmentRejected), so old phones are unaffected, and every refusal reaches the phone as a result and is stored for queryCommand, so no send is silently dropped. Executor, tests and service are MainActor, with no race in attach(), the generation check or drain(). Idempotency is in memory only (1,000 entries, lost on app quit), which the docs state. Minor items remain around same-ID retry of recorded refusals, upload thrash and test coverage of RemoteService.",
+ "findings": [
+  {
+   "severity": "MINOR",
+   "file": "msgblast/Core/Remote/RemoteCommandExecutor.swift",
+   "line": 263,
+   "detail": "Queue-full refusal (macBusy, 'Try again soon') is recorded in the ledger via finish(). A phone that retries with the same clientCommandID will get the stored macBusy replayed forever, even after the queue drains. Fine if the phone mints a new ID per user retry; confirm that on the phone side and consider not recording capacity refusals, or say so in the docs. Same pattern already exists for head-of-queue macBusy."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblast/Core/Remote/RemoteCommandExecutor.swift",
+   "line": 191,
+   "detail": "attach() refuses sends queued before the restart and records them as .failed in the ledger. They never ran, but a same-ID replay from the phone returns failed permanently. Safe for the never-run-twice guarantee and the user is told ('Remote control restarted on your Mac'), but the user must resend under a new ID. The flushed entries' reply closures belong to the old connection, so the phone only learns this through queryCommand or replay; that path works (status(of:) reads the ledger)."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblast/Core/Remote/RemoteCommandExecutor.swift",
+   "line": 548,
+   "detail": "LRU eviction of partial uploads can thrash: with more than 4 concurrent uploads (or two near-25MB files plus a third), each new chunk evicts another active upload, and evicted uploads silently restart as a single-chunk entry on their next chunk. Each then fails at attachStaged with 'Upload incomplete. Add it again' (clear, not silent), but a phone that parallelizes uploads could livelock. Depends on phone concurrency, which is not visible in this diff."
+  },
+  {
+   "severity": "MINOR",
+   "file": "docs/remote-control.md",
+   "line": 132,
+   "detail": "Idempotency is in memory only and bounded to 1,000 results. It survives remote control off/on but not an app quit or crash, and a repeated send id after eviction would run again. The crash window between performSend and finish()/ledger write is not closed (no persistence). The doc states this honestly; the PR's 'never run twice' claim should be read as 'across remote-control restarts within one app run'. Executing and recording are synchronous on the MainActor with no await between them, so there is no window inside a run."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblastTests/RemoteCommandExecutorTests.swift",
+   "line": 474,
+   "detail": "testTheLedgerSurvivesARestartAndQueuedSendsDoNot covers the executor only. Nothing tests that RemoteService.start() reuses the kept executor and calls attach(), nor a send already running (past the generation check, inside host.performSend) during attach. Queue-cap and replace-on-full tests do assert the claimed behaviour with correct off-by-one (1 running + 8 queued; prepare counted separately). The cap test depends on 100 ms sleeps, which is mildly timing-sensitive but main-actor serialized."
+  },
+  {
+   "severity": "NIT",
+   "file": "docs/evidence/pr94-hardening/remote-command-executor-tests.mp4",
+   "line": 0,
+   "detail": "A 175 KB video and a 140 KB PNG are committed under a pr94-hardening directory in a PR numbered 128; confirm they are intended in the repo and not stale evidence from another PR."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblast/Core/Remote/RemoteCommandExecutor.swift",
+   "line": 258,
+   "detail": "The doc comment about prepare replacement now sits above submitSerial rather than enqueue, which is where the replace logic lives."
+  }
+ ]
+}
