@@ -8,7 +8,7 @@
 # step runs. Set MSGBLAST_STUDIO_REPOSITORY in the runner's .env if the
 # repository moves (for example to an organization).
 set -euo pipefail
-exec /usr/bin/python3 -I - "${MSGBLAST_STUDIO_REPOSITORY:-mgalpert/msgblast}" <<'PY'
+exec /usr/bin/python3 -I - "${MSGBLAST_STUDIO_REPOSITORY:-contains-studio/msgblast}" <<'PY'
 import json
 import os
 import sys

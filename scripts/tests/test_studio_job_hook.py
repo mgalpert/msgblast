@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / "scripts/ci/studio-job-started.sh"
-REPO = "mgalpert/msgblast"
+REPO = "contains-studio/msgblast"
 
 
 def run(event_name, ref="refs/heads/feature", head_repo=REPO, repository=REPO, expected=None):
@@ -43,12 +43,12 @@ class StudioJobHookTests(unittest.TestCase):
         self.assertEqual(run("merge_group", ref="refs/heads/gh-readonly-queue/release/pr-7-abc"), 1)
         self.assertEqual(run("workflow_dispatch", repository="someone/msgblast"), 1)
 
-    def test_moved_repository_is_set_in_the_runner_environment(self):
-        moved = "contains-studio/msgblast"
-        self.assertEqual(run("push", ref="refs/heads/main", repository=moved), 1)
-        self.assertEqual(run("push", ref="refs/heads/main", repository=moved, head_repo=moved,
-                             expected=moved), 0)
-        self.assertEqual(run("pull_request", repository=moved, head_repo=REPO, expected=moved), 1)
+    def test_another_repository_must_be_named_in_the_runner_environment(self):
+        old = "mgalpert/msgblast"
+        self.assertEqual(run("push", ref="refs/heads/main", repository=old, head_repo=old), 1)
+        self.assertEqual(run("push", ref="refs/heads/main", repository=old, head_repo=old,
+                             expected=old), 0)
+        self.assertEqual(run("pull_request", repository=old, head_repo=REPO, expected=old), 1)
 
 
 if __name__ == "__main__":
