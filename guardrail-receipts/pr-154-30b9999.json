@@ -1,0 +1,60 @@
+{
+  "pr": 154,
+  "repository": "contains-studio/msgblast",
+  "reviewed_head": "30b999911abe270a26ce83547472d4c663d0af50",
+  "base": "68fe240",
+  "verdict": "approve",
+  "reviewer_model": "claude-sonnet-5-5",
+  "author_models": [
+    "claude-opus-5-5"
+  ],
+  "rounds": [
+    {
+      "head": "9399c86",
+      "verdict": "approve",
+      "fixed_after": [
+        "MAJOR: queue review checked only the last PR of a merge group (fixed in 248ca56)",
+        "MINOR: workflow comment overstated what is trusted (fixed in 248ca56)"
+      ],
+      "not_changed": [
+        "MAJOR: Studio hook still defaults to mgalpert/msgblast; kept on purpose, the runner .env sets MSGBLAST_STUDIO_REPOSITORY (runner thread's design)"
+      ]
+    },
+    {
+      "head": "29f0a79",
+      "verdict": "approve",
+      "fixed_after": [
+        "MAJOR: compare API pagination could stall the queue for PRs with many commits (fixed in 5eb59f5 by walking commits one by one)"
+      ]
+    },
+    {
+      "head": "72aac30",
+      "verdict": "approve",
+      "fixed_after": [
+        "Studio hook default switched to contains-studio/msgblast (d80523b), from round 1's MAJOR"
+      ]
+    },
+    {
+      "head": "30b9999",
+      "verdict": "approve"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "MINOR",
+      "file": "scripts/check_queue_review.py",
+      "detail": "Queue must use the Merge commit method; squash or rebase makes every entry fail closed. API errors exit nonzero with a traceback."
+    },
+    {
+      "severity": "NIT",
+      "file": "scripts/tests/test_queue_review.py",
+      "detail": "main() aggregation is untested; double blank line before a test."
+    },
+    {
+      "severity": "MINOR",
+      "file": "scripts/ci/studio-job-started.sh",
+      "detail": "The installed hook copy on a runner must be refreshed for the new default to apply."
+    }
+  ],
+  "tests": "python3 -m unittest discover -s scripts/tests -p 'test_*.py': 177 run, OK (3 skipped), run by the author at d80523b; 30b9999 adds only evidence media."
+}
