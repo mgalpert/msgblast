@@ -674,18 +674,31 @@ struct ComparisonWorkspace: View {
                                 }
                             }
                         }
-                        Divider()
-                        VStack(spacing: 12) {
-                            RecipientPills(model: model, comparison: comparison, showMember: { hiddenMembers.remove($0) }).disabled(comparison.endedAt != nil)
-                            SharedComposer(model: model, comparisonID: comparisonID, recipientIDs: recipients)
-                                .disabled(model.webBroadcastBusy)
-                        }.padding(16).frame(maxWidth: .infinity).background(.bar)
+                        UniversalComposer(model: model, comparison: comparison, recipients: recipients, showMember: { hiddenMembers.remove($0) })
                     }
                     .onChange(of: selection.selectedConversation) { _, memberID in
                         if let memberID { withAnimation { proxy.scrollTo(memberID, anchor: .center) } }
                     }
                 }
             }.background(Color(nsColor: .textBackgroundColor))
+        }
+    }
+}
+
+/// The Send to bar and the composer for everyone. A direct thread has one contact, so that contact's own composer is enough.
+struct UniversalComposer: View {
+    @ObservedObject var model: AppModel
+    let comparison: Comparison
+    let recipients: [UUID]
+    var showMember: (UUID) -> Void
+    var body: some View {
+        if comparison.direct != true {
+            Divider()
+            VStack(spacing: 12) {
+                RecipientPills(model: model, comparison: comparison, showMember: showMember).disabled(comparison.endedAt != nil)
+                SharedComposer(model: model, comparisonID: comparison.id, recipientIDs: recipients)
+                    .disabled(model.webBroadcastBusy)
+            }.padding(16).frame(maxWidth: .infinity).background(.bar)
         }
     }
 }
