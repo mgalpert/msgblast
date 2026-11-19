@@ -227,7 +227,7 @@ struct MainView: View {
                             Image(systemName: "bubble.left.and.bubble.right.fill").font(.title3).foregroundStyle(.secondary).frame(width: 32)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text((comparison.members.map(\.name) + comparison.resolvedWebAgentIDs.map { model.webAgents.name(for: $0) }).joined(separator: ", ")).fontWeight(.semibold).lineLimit(1)
-                                Text(comparison.direct == true ? "Direct messages" : comparison.prompt).foregroundStyle(.secondary).lineLimit(2)
+                                Text(comparison.direct != true ? comparison.prompt : comparison.endedAt == nil ? "Direct messages" : "Direct messages · Ended").foregroundStyle(.secondary).lineLimit(2)
                             }
                         }.padding(.horizontal, 10).padding(.vertical, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
