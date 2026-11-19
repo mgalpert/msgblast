@@ -82,7 +82,7 @@ enum DesignFixtures {
             agent.setUp = true
             let seq = UInt64(43 + index)
             DispatchQueue.main.asyncAfter(deadline: .now() + 3 * Double(index + 1)) {
-                app.store.handle(.events([RemoteEvent(seq: seq, change: .agentUpsert(agent))], latest: seq))
+                app.store.handle(.events([RemoteEvent(seq: seq, change: .agentUpsert(agent))], latestSeq: seq))
             }
         }
     }

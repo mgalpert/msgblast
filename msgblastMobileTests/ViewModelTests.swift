@@ -399,7 +399,7 @@ final class PresenterTests: XCTestCase {
                 capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
                 readiness: .ready, reasons: [], observedAt: fixedNow, source: .live, setUp: setUp)
             let seq = (state.seq ?? 0) + 1
-            state = ProjectionReducer.reduce(state, .events([RemoteEvent(seq: seq, change: .agentUpsert(agent))], latest: seq))
+            state = ProjectionReducer.reduce(state, .events([RemoteEvent(seq: seq, change: .agentUpsert(agent))], latestSeq: seq))
         }
         func listed() -> [String] { ProjectionPresenter(state: state).newConversationAgents.agents.map(\.agentID) }
         upsert("claude", setUp: true); upsert("chatgptApp", setUp: false)
