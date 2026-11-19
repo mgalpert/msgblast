@@ -124,8 +124,11 @@ public enum ComposeSend {
         public mutating func start(_ send: Send) { sends.append(send) }
         /// The Mac answered this send before the timeout.
         public mutating func answered(_ id: UUID) { sends.removeAll { $0.id == id } }
-        public mutating func timedOut(_ id: UUID) {
-            if let index = sends.firstIndex(where: { $0.id == id }) { sends[index].timedOut = true }
+        /// False when the send is no longer tracked, so nothing will ever confirm it.
+        @discardableResult public mutating func timedOut(_ id: UUID) -> Bool {
+            guard let index = sends.firstIndex(where: { $0.id == id }) else { return false }
+            sends[index].timedOut = true
+            return true
         }
         /// The timed-out sends, whose records the compose bar watches.
         public var waitingIDs: [UUID] { sends.filter(\.timedOut).map(\.id) }

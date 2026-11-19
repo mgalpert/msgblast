@@ -200,10 +200,12 @@ public final class MobileApp: ObservableObject {
         composeCompletions[id] = nil
     }
     /// The timeout gave up on it: a later `applied` binds it to this send. One that arrived
-    /// between the timeout and here is bound now.
-    public func composeSendTimedOut(_ id: UUID) {
-        composeSends.timedOut(id)
+    /// between the timeout and here is bound now. False when pairing again or forgetting the
+    /// Mac already dropped it, so no notice will show and the compose bar must say so itself.
+    @discardableResult public func composeSendTimedOut(_ id: UUID) -> Bool {
+        guard composeSends.timedOut(id) else { return false }
         bindLateSends()
+        return true
     }
     /// Binds each timed-out send the Mac has since applied, whether or not its compose bar is
     /// still on screen: its reply link is recorded, then its own completion runs, once.

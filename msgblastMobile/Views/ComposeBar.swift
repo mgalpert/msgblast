@@ -370,9 +370,10 @@ struct ComposeBar: View {
                 // clears itself; otherwise the user checks the conversation before sending again.
                 // A send that left shows the unconfirmed notice until it is final (see `status`).
                 // An `applied` that arrived between the timeout and here is bound now.
+                // One the pairing took with it never shows the notice, so it is told here too.
                 refusedCount += 1
-                if let sentID { app.composeSendTimedOut(sentID) }
-                else { message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription }
+                if let sentID, app.composeSendTimedOut(sentID) { return }
+                message = (error as? LocalizedError)?.errorDescription ?? MobileConnectionError.unconfirmed.errorDescription
             }
         }
     }

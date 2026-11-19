@@ -991,6 +991,17 @@ final class MobileAppTests: XCTestCase {
         _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
         XCTAssertTrue(app.composeSends.sends.isEmpty, "No send waits on a pairing that is gone")
         XCTAssertFalse(lateRan)
+
+        // A send still waiting when the pairing goes ends unconfirmed with no notice to show it,
+        // so its compose bar is told the send is no longer tracked and says so itself.
+        mac.answerCommands = false
+        let (waiting, result) = try await startSend(app, mac, .createConversation(text: "Slow", agentIDs: ["codexCLI"], attachmentIDs: []))
+        app.startComposeSend(.init(id: waiting, text: "Slow", attachmentIDs: [], quoting: nil)) { _ in lateRan = true }
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        do { _ = try await result.value; XCTFail("Pairing again ends the wait") } catch { XCTAssertEqual(error as? MobileConnectionError, .unconfirmed) }
+        XCTAssertFalse(app.composeSendTimedOut(waiting), "The bar falls back to its own unconfirmed message")
+        XCTAssertTrue(app.composeSends.waitingIDs.isEmpty)
+        XCTAssertFalse(lateRan)
     }
 
     /// No manual save: the record is on disk before the send leaves, so an app ended right after
