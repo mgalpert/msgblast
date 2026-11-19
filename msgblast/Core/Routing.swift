@@ -78,20 +78,24 @@ public enum ComparisonRange {
     /// Half an hour with nothing in the chat ends a conversation's hold on a contact. Measured on real
     /// history: about 3 in 100 kept messages are misplaced and 1 in 9 follow-ups goes to the direct thread.
     public static let quietPeriod: TimeInterval = 1_800
+    /// How long a conversation waits for the answer to its own latest message before the quiet period applies.
+    public static let answerPeriod: TimeInterval = 86_400
     /// The rows a conversation shows for one member: from its start to the next conversation's
     /// send in that chat. With `own`, it also lets go when you message the contact outside
-    /// msgblast, or when they write after `quiet` seconds of silence; a later send of its own
-    /// takes the chat back. Inline replies to rows it holds always stay.
+    /// msgblast, or when they write after `quiet` seconds of silence (`answerPeriod` while it
+    /// waits for the answer to its own latest message); a later send of its own takes the chat back. Inline replies to rows it holds always stay.
     public static func messages(_ messages: [Message], anchor: Anchor, next: Int64?, own: OwnSends? = nil, quiet: TimeInterval = quietPeriod) -> [Message] {
         var related: Set<String> = [anchor.guid]
         var selected: [Message] = []
         var holding = true
+        var awaiting = true
         var last: Date?
         for message in messages.sorted(by: { $0.id < $1.id }) {
             var inRange = message.id >= anchor.rowID && (next == nil || message.id < next!)
             if inRange, let own {
-                if message.outgoing { holding = own.includes(message) }
-                else if holding, let last, message.date.timeIntervalSince(last) > quiet { holding = false }
+                if message.outgoing { holding = own.includes(message); awaiting = true }
+                else if holding, let last, message.date.timeIntervalSince(last) > (awaiting ? max(quiet, answerPeriod) : quiet) { holding = false }
+                else { awaiting = false }
                 inRange = holding
             }
             let linked = message.replyTo.map { related.contains($0) } ?? false

@@ -313,8 +313,7 @@ final class AppModel: ObservableObject {
                 if messages[chatID] != fresh { messages[chatID] = fresh }
             }
             try reconcile()
-            try startDirectThreads()
-            lastDataVersion = version
+            if try startDirectThreads() { lastDataVersion = version }
         } catch { databaseAvailable = false; databaseStatus = error.localizedDescription; database = nil }
     }
     func refreshContactAccess() {
@@ -790,12 +789,16 @@ final class AppModel: ObservableObject {
         }
     }
     /// A contact's message that no conversation holds starts that contact's direct thread.
-    private func startDirectThreads() throws {
+    /// Returns false while a send is in flight: sends keep a conversation's position across awaits, so the
+    /// insert waits and the next refresh tries again.
+    @discardableResult private func startDirectThreads() throws -> Bool {
+        guard !busy, !webBroadcastBusy, !webAgents.sessions.contains(where: { $0.isSending }) else { return false }
         let chatIDs = Set(state.comparisons.flatMap(\.members).map(\.chat.id)).sorted()
         let threads = chatIDs.compactMap { ComparisonRange.directThread(chatID: $0, history: messages[$0] ?? [], comparisons: state.comparisons) }
-        guard !threads.isEmpty else { return }
+        guard !threads.isEmpty else { return true }
         state.comparisons.insert(contentsOf: threads, at: 0)
         do { try save() } catch { state.comparisons.removeAll { thread in threads.contains { $0.id == thread.id } }; throw error }
+        return true
     }
     func reconcile() throws {
         var changed = false
@@ -986,7 +989,7 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(for: .seconds(6))
             appendDemo("Running late, see you at 7", chat: chat, outgoing: true)
             appendDemo("No problem, see you then", chat: chat, outgoing: false)
-            try? startDirectThreads()
+            _ = try? startDirectThreads()
         }
     }
     func openMessages(_ member: Member) {

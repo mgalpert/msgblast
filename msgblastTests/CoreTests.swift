@@ -449,6 +449,22 @@ final class CoreTests: XCTestCase {
         history += [row(15, "Follow-up", outgoing: true, hours: 600), row(16, "Reply", hours: 600.1)]
         XCTAssertEqual(ComparisonRange.transcript(history, comparison: comparison, member: comparison.members[0], comparisons: [comparison]).map(\.id), [10, 11, 12, 15, 16])
     }
+    func testConversationWaitsADayForAnAnswerThenHalfAnHourBetweenMessages() {
+        var comparison = heldConversation()
+        let member = comparison.members[0]
+        func shown(_ rows: [Message]) -> [Int64] {
+            let anchor = Message(id: 10, guid: "anchor", chatID: "A", text: "Prompt", outgoing: true, date: Date(timeIntervalSince1970: 0))
+            return ComparisonRange.transcript([anchor] + rows, comparison: comparison, member: member, comparisons: [comparison]).map(\.id)
+        }
+        XCTAssertEqual(shown([row(11, "First answer after 31 minutes", hours: 31.0 / 60)]), [10, 11])
+        XCTAssertEqual(shown([row(11, "First answer after 23 hours", hours: 23), row(12, "And more", hours: 23.5)]), [10, 11, 12], "Exactly 1,800 seconds still belongs")
+        XCTAssertEqual(shown([row(11, "Answer", hours: 23), row(12, "One second too late", hours: 23.5 + 1.0 / 3600)]), [10, 11])
+        XCTAssertEqual(shown([row(11, "Unrelated, two days on", hours: 48)]), [10], "A prompt nobody answered within a day holds nothing")
+        var followUp = FollowUp(text: "Follow-up", memberIDs: [member.id])
+        followUp.states[member.id.uuidString] = .submitted
+        comparison.followUps = [followUp]
+        XCTAssertEqual(shown([row(11, "Answer", hours: 0.1), row(12, "Follow-up", outgoing: true, hours: 0.2), row(13, "Answered hours later", hours: 5)]), [10, 11, 12, 13])
+    }
     func testUnidentifiedSendKeepsEverySentRowUntilItResolves() {
         var comparison = heldConversation()
         var followUp = FollowUp(text: "Photo", memberIDs: [comparison.members[0].id])
@@ -515,6 +531,9 @@ final class CoreTests: XCTestCase {
         let next = try XCTUnwrap(ComparisonRange.directThread(chatID: "A", history: later, comparisons: [ended, old], now: Date(timeIntervalSince1970: 104 * 3600)))
         XCTAssertEqual(next.members[0].anchor?.rowID, 40)
         XCTAssertEqual(ComparisonRange.transcript(later, comparison: ended, member: ended.members[0], comparisons: [next, ended, old]).map(\.id), [20, 21])
+        let week = ComparisonRange.directWindow / 3600
+        XCTAssertNotNil(ComparisonRange.directThread(chatID: "A", history: history, comparisons: [old], now: Date(timeIntervalSince1970: (100 + week) * 3600)), "Seven days old still starts one")
+        XCTAssertNil(ComparisonRange.directThread(chatID: "A", history: history, comparisons: [old], now: Date(timeIntervalSince1970: (100.2 + week) * 3600)))
         let decoded = try JSONDecoder().decode(Comparison.self, from: JSONEncoder().encode(old))
         XCTAssertNil(decoded.direct, "Saved conversations decode unchanged")
     }
