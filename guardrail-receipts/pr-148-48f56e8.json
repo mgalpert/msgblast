@@ -1,0 +1,38 @@
+{
+ "pr": 148,
+ "reviewed_head": "48f56e8e1bbca485377c639252b2346918f25954",
+ "base": "68fe240",
+ "verdict": "approve",
+ "reviewer_model": "claude-sonnet (independent subagent)",
+ "author_models": [
+  "claude-opus"
+ ],
+ "reviewed_at": "2026-11-19T07:40:41Z",
+ "summary": "Approve. Banner VStack(spacing:0) gives onChange/onAppear a real view; parent is VStack(spacing:0) with the same default alignment, and dismissCompletion only clears a defaults key and cancels the flow (no focus or draft effects). Version selection is numeric-tuple max over *.md, skips highlights.json/unpublished.json/README.md, raises on missing/empty dir, handles 0.10.x and 0.6.11-style patches. Stamping is in package_variant only, after configure_info (which rejects the production identity); release.py is untouched. 28 tests in test_preview_apps.py pass. Minor parity gaps with the Swift ReleaseHistory loader and test gaps noted.",
+ "findings": [
+  {
+   "severity": "MINOR",
+   "file": "scripts/preview_apps.py",
+   "line": 141,
+   "detail": "latest_release_version ignores release-notes/unpublished.json and empty notes files, but msgblast/Core/ReleaseHistory.swift (lines 26-31) excludes unpublished versions and empty notes. If the newest .md is ever listed unpublished or empty, previews stamp a version What's New hides, so the PR claim 'matches production' fails. Today unpublished.json only lists old versions (0.1.0-0.4.2), so no current impact."
+  },
+  {
+   "severity": "MINOR",
+   "file": "scripts/preview_apps.py",
+   "line": 141,
+   "detail": "Version filter is looser than Swift ReleaseHistory.components (exactly 3 numeric fields). Python accepts 1, 1.2 or 1.2.3.4 stems, and str.isdigit() accepts unicode digits like '²' where int() then raises ValueError. Use re.fullmatch(r'\\d+\\.\\d+\\.\\d+', stem)."
+  },
+  {
+   "severity": "MINOR",
+   "file": "scripts/tests/test_preview_apps.py",
+   "line": 119,
+   "detail": "Test gaps: no unpublished.json case, no test for a truly missing release-notes directory (only empty), no patch-level ordering case such as 0.6.11 vs 0.6.9, and nothing asserts package_variant stamps CFBundleShortVersionString (needs xcodebuild) or that production is never stamped. The last assertion recomputes the same algorithm against the real repo, so it is near-tautological, and it would also hit the unpublished mismatch."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblast/Windows/Views.swift",
+   "line": 342,
+   "detail": "No automated test covers the banner fix. Reasoning says an empty VStack still hosts onAppear/onChange, but it should be confirmed once manually (grant access, check the handoff clears)."
+  }
+ ]
+}
