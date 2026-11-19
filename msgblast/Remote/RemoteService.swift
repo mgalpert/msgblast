@@ -25,6 +25,9 @@ final class RemoteService: ObservableObject {
     private(set) var listener: RemoteListener?
     private var projection: RemoteProjection?
     private var host: AppRemoteHost?
+    /// Kept across stop and start so a send id the phone repeats after a restart still
+    /// returns its stored result instead of running again.
+    private var executor: RemoteCommandExecutor?
     private var identity: RemoteIdentity?
     private unowned let model: AppModel
     private let directory: URL
@@ -110,7 +113,9 @@ final class RemoteService: ObservableObject {
             identityStorage = identity.storage
             identityFingerprint = RemoteHandshake.fingerprint(identity.identityKeySHA256)
             let host = AppRemoteHost(model: model, availability: availability, avatars: avatars, keepAwake: keepAwake, power: power, settings: { [settingsReader] in settingsReader.value })
-            let executor = RemoteCommandExecutor(host: host)
+            let executor = self.executor ?? RemoteCommandExecutor(host: host)
+            executor.attach(host)
+            self.executor = executor
             let journal = RemoteChangeJournal()
             let model = model, power = power, keepAwake = keepAwake, availability = availability, reader = settingsReader
             let triggers: [AnyPublisher<Void, Never>] = [model.objectWillChange.map { _ in }.eraseToAnyPublisher(),
