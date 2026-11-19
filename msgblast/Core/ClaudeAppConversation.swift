@@ -33,11 +33,12 @@ actor ClaudeAppConversation {
         let fields = state.body.filter { $0.role == "AXTextArea" && $0.label == "Write your prompt to Claude" && $0.element_token != nil && $0.enabled != false }
         var withoutTerminalNewlines = observation.rawNativeDraft
         while withoutTerminalNewlines.last == "\n" { withoutTerminalNewlines.removeLast() }
-        // The driver omits terminal LF characters that native AX preserves.
+        // The driver omits terminal LF characters that native AX preserves, and
+        // may report placeholder text for an empty editor. Native reads decide emptiness.
         // Native draft checks still verify every append and the final prompt.
         guard fields.count == 1, fields[0].frame == observation.composerFrame,
               fields[0].value == observation.rawNativeDraft || fields[0].value == withoutTerminalNewlines ||
-              (observation.draft.isEmpty && (fields[0].value == nil || fields[0].value == "\n")) else {
+              observation.draft.isEmpty else {
             throw DesktopAppError.unavailable("Claude's draft or composer geometry could not be verified. Existing text was preserved.")
         }
         return fields[0]
@@ -54,8 +55,26 @@ actor ClaudeAppConversation {
     private func click(_ element: DesktopAppSnapshot.Element, target: DesktopAppConversation.Target, session: String) async throws {
         _ = try await driver.call("click", ["element_token": element.element_token!, "session": session, "delivery_mode": "background"], numbers: ["pid": target.pid, "window_id": target.window], as: DesktopAppConversation.Action.self)
     }
+    /// Opens a new chat when Claude shows another claude.ai page, only while
+    /// msgblast holds the foreground for Claude. Background reads never navigate.
+    private func chat(_ target: DesktopAppConversation.Target, session: String) async throws -> (DesktopAppSnapshot, ClaudeAppObservation) {
+        do { return try await observe(target, session: session, mode: .navigation) }
+        catch ClaudeObservationError.otherPage where DesktopAppWorkflow.foreground {
+            do {
+                _ = try await driver.call("launch_app", ["bundle_id": DesktopAppProvider.claude.bundleID],
+                                          arrays: ["urls": ["claude://claude.ai/new"]], as: DesktopAppConversation.Action.self)
+            } catch { try Task.checkCancellation() }
+            let failure = "Claude did not open a new chat. Nothing was sent."
+            // Poll quickly: Claude holds the foreground until this returns.
+            do {
+                return try await DesktopAppWorkflow.wait(timeout: .seconds(8), interval: min(timing.pollInterval, .milliseconds(200)),
+                    failure: failure,
+                    read: { try await self.observe(target, session: session) }, ready: { ClaudeChatURL.isNew($0.1.url) })
+            } catch ClaudeObservationError.otherPage { throw DesktopAppError.unavailable(failure) }
+        }
+    }
     private func opened(_ binding: ClaudeConversationBinding, target: DesktopAppConversation.Target, session: String) async throws -> ClaudeAppObservation {
-        var (state, observation) = try await observe(target, session: session, mode: .navigation)
+        var (state, observation) = try await chat(target, session: session)
         try empty(state, observation)
         if let url = binding.url {
             guard ClaudeChatURL.isChat(url), let first = binding.firstPrompt, first.hasPrefix("[msgblast comparison \(binding.comparisonID.uuidString)]\n\n") else { throw DesktopAppError.unavailable("Claude's saved conversation binding is invalid. No replacement was created.") }
@@ -112,7 +131,7 @@ actor ClaudeAppConversation {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {
             do {
-                let (state, observation) = try await observe(target, session: session, mode: .navigation)
+                let (state, observation) = try await chat(target, session: session)
                 try empty(state, observation)
                 _ = try control(state, label: "New")
                 return

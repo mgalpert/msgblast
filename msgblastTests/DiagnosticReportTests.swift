@@ -49,7 +49,7 @@ final class DiagnosticReportTests: XCTestCase {
         XCTAssertTrue(readme.contains("This ZIP is a local copy created when you choose Save."))
         for topic in DiagnosticReport.excludedTopics { XCTAssertTrue(readme.contains(topic), topic) }
         let object = try JSONSerialization.jsonObject(with: Data(diagnostics.utf8)) as? [String: Any]
-        XCTAssertEqual(Set(object.map { Array($0.keys) } ?? []), Set(DiagnosticReport.diagnosticKeys))
+        XCTAssertEqual(Set(object.map { Array($0.keys) } ?? []), Set(DiagnosticReport.diagnosticKeys).subtracting(["permissions"]))
         XCTAssertEqual(object?["variant"] as? String, "production")
         XCTAssertEqual(object?["bundleIdentifier"] as? String, "com.msgblast.mac")
         XCTAssertEqual(object?["version"] as? String, "unknown")
@@ -105,6 +105,16 @@ final class DiagnosticReportTests: XCTestCase {
         XCTAssertEqual(object["lastErrorCategory"] as? String, "storage")
         XCTAssertFalse(json.contains("disk full"))
         XCTAssertFalse(json.contains("Could not save"))
+    }
+
+    func testPermissionSnapshotFillsUncheckedAndRejectsFreeText() throws {
+        var facts = DiagnosticFacts.empty()
+        facts.permissions = ["accessibility": "allowed\n", "contacts": "private text", "messagesDatabase": "notConnected"]
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(DiagnosticReport.diagnosticsJSON(facts).utf8)) as? [String: Any])
+        XCTAssertEqual(object["permissions"] as? [String: String], [
+            "accessibility": "unknown", "screenRecording": "unknown", "contacts": "unknown",
+            "messagesDatabase": "notConnected", "messagesAutomation": "unknown"
+        ])
     }
 
     func testPackageRejectsEmptyNotesInvalidAddressesAndPrivateFiles() {

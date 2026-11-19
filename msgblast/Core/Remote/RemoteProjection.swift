@@ -19,6 +19,8 @@ public struct RemoteProjectionInput: Sendable {
     public var reports: [UUID: RemoteReport]
     /// Alexa product image URL → file already on disk. Missing entries are still downloading.
     public var webImages: [String: MessageAttachment] = [:]
+    /// comparison → agent → suggestion buttons under its newest reply (Alexa only).
+    public var webActions: [UUID: [WebAgentID: WebPageActions]] = [:]
     public init(macStatus: MacStatus, gridAgentIDs: [String], agents: [AgentAvailability], comparisons: [Comparison], messagesTranscripts: [UUID: [UUID: [Message]]] = [:],
                 webHistories: [UUID: [WebAgentID: [WebPageMessage]]] = [:], webAttempts: [UUID: [WebAgentID: [WebSendAttempt]]] = [:], canEnd: [UUID: Bool] = [:], reports: [UUID: RemoteReport] = [:]) {
         self.macStatus = macStatus; self.gridAgentIDs = gridAgentIDs; self.agents = agents; self.comparisons = comparisons
@@ -32,6 +34,7 @@ public struct RemoteProjectionInput: Sendable {
             var endable = true
             for agent in comparison.resolvedWebAgentIDs {
                 let session = sessions.first { $0.id == agent }
+                if comparison.endedAt == nil, let actions = session?.actionsForComparison(comparison.id) { webActions[comparison.id, default: [:]][agent] = actions }
                 if comparison.endedAt != nil { histories[agent] = comparison.endedWebHistory?[agent.id] ?? [] }
                 else { histories[agent] = session?.messagesForComparison(comparison.id) ?? [] }
                 attempts[agent] = session?.state.attempts.filter { $0.comparisonID == comparison.id } ?? []
@@ -195,8 +198,10 @@ public enum RemoteProjectionBuilder {
             for (ordinal, message) in (input.webHistories[cid]?[agent] ?? []).enumerated() {
                 let key = agent.provider.usesNativeConversation ? message.id : String(ordinal)
                 let images = downloadedImages(message, input: input)
+                let offered = input.webActions[cid]?[agent].flatMap { $0.messageID == message.id ? $0 : nil }
                 turns.append(RemoteTurn(id: "w:\(agent.id):\(cid.uuidString):\(key)", conversationID: cid, agentID: agent.id, role: role(message.role), origin: .agentTranscript,
-                                        text: message.text, created: nil, ordinal: ordinal, attachments: refs(images), contentHash: hash(message.text)))
+                                        text: message.text, created: nil, ordinal: ordinal, attachments: refs(images), contentHash: hash(message.text),
+                                        actions: offered?.labels, actionsID: offered?.messageID))
             }
             for attempt in input.webAttempts[cid]?[agent] ?? [] {
                 conversationAttempts.append(RemoteAttempt(id: "wa:\(attempt.id.uuidString)", conversationID: cid, agentID: agent.id, text: attempt.text,
