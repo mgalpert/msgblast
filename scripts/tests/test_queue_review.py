@@ -29,5 +29,23 @@ class QueueReviewTests(unittest.TestCase):
         self.assertFalse(review.reviewed([ok | dict(state='pending')], 'h')[0])
 
 
+    def test_every_pull_request_in_a_group_is_read(self):
+        def merge(sha, parent, number):
+            return dict(sha=sha, commit=dict(message=f'Merge pull request #{number} from x/y\n'),
+                        parents=[dict(sha=parent), dict(sha='p' + sha)])
+        commits = [dict(sha='pa', commit=dict(message='work'), parents=[dict(sha='base')]),
+                   merge('a', 'base', 7), merge('b', 'a', 9)]
+        self.assertEqual(review.group_pulls(commits, 'base', 'b'), [7, 9])
+        self.assertEqual(review.group_pulls(commits, 'base', 'a'), [7])
+        squashed = commits + [dict(sha='c', commit=dict(message='Merge pull request #11 from x/y'),
+                                   parents=[dict(sha='b')])]
+        with self.assertRaises(ValueError):
+            review.group_pulls(squashed, 'base', 'c')
+        with self.assertRaises(ValueError):
+            review.group_pulls(commits, 'other', 'b')
+        forged = commits + [dict(sha='d', commit=dict(message='Fix things'), parents=[dict(sha='b')])]
+        with self.assertRaises(ValueError):
+            review.group_pulls(forged, 'base', 'd')
+
 if __name__ == '__main__':
     unittest.main()

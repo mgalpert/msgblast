@@ -35,6 +35,28 @@ def reviewed(statuses, head):
     return True, f'"{CONTEXT}" passed on {head}: {latest.get("description") or ""}'.rstrip(': ')
 
 
+def group_pulls(commits, base_sha, head_sha):
+    """Pull requests in a queue group, read from GitHub's merge commits on the first-parent chain.
+
+    With merge groups larger than one, the branch name names only the last pull
+    request, so every pull request between base and head is read from its merge
+    commit. Anything else on that chain fails closed.
+    """
+    by_sha = {c['sha']: c for c in commits}
+    numbers = []
+    sha = head_sha
+    while sha != base_sha:
+        commit = by_sha.get(sha)
+        if commit is None:
+            raise ValueError(f'{sha} is not between the queue base and head')
+        match = re.match(r'Merge pull request #(\d+) ', commit['commit']['message'])
+        if not match or len(commit['parents']) != 2:
+            raise ValueError(f'{sha[:7]} is not a pull request merge commit')
+        numbers.append(int(match.group(1)))
+        sha = commit['parents'][0]['sha']
+    return numbers[::-1]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', required=True)
@@ -43,23 +65,31 @@ def main():
     with open(args.event_file) as handle:
         group = json.load(handle)['merge_group']
     base = group['base_ref'].removeprefix('refs/heads/')
-    number = pull_number(group['head_ref'], base)
+    last = pull_number(group['head_ref'], base)
 
     def api(path):
         return json.loads(subprocess.check_output(['gh', 'api', path]))
 
-    head = api(f'repos/{args.repo}/pulls/{number}')['head']['sha']
-    statuses = []
-    page = 1
-    while True:
-        batch = api(f'repos/{args.repo}/commits/{head}/statuses?per_page=100&page={page}')
-        statuses.extend(batch)
-        if len(batch) < 100:
-            break
-        page += 1
-    ok, message = reviewed(statuses, head)
-    print(f'PR #{number}: {message}')
-    return 0 if ok else 1
+    compare = api(f"repos/{args.repo}/compare/{group['base_sha']}...{group['head_sha']}")
+    numbers = group_pulls(compare['commits'], group['base_sha'], group['head_sha'])
+    if not numbers or numbers[-1] != last:
+        print(f'Queue branch names PR #{last}, but its merge commits name {numbers}.')
+        return 1
+    failed = False
+    for number in numbers:
+        head = api(f'repos/{args.repo}/pulls/{number}')['head']['sha']
+        statuses = []
+        page = 1
+        while True:
+            batch = api(f'repos/{args.repo}/commits/{head}/statuses?per_page=100&page={page}')
+            statuses.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        ok, message = reviewed(statuses, head)
+        print(f'PR #{number}: {message}')
+        failed = failed or not ok
+    return 1 if failed else 0
 
 
 if __name__ == '__main__':

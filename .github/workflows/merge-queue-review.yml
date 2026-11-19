@@ -21,7 +21,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-      # Run main's copy of the script; the queued commit is not trusted code here.
+      # Run main's copy of the script. This workflow file itself comes from the
+      # queued commit, but a pull request reaches the queue only with a passing
+      # review status on its head, which covers any edit to this file.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event.merge_group.base_ref }}
