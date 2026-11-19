@@ -36,8 +36,8 @@ final class WindowCoordinator: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let key = ObjectIdentifier(window)
         guard confirming.insert(key).inserted else { return false }
         let alert = NSAlert()
-        alert.messageText = "End this conversation?"
-        alert.informativeText = "Keep the history and stop adding future replies to this conversation."
+        alert.messageText = comparison.direct == true ? "End this thread with \(comparison.title)?" : "End this conversation?"
+        alert.informativeText = comparison.direct == true ? "Keep the history. Their next message starts a new thread." : "Keep the history and stop adding future replies to this conversation."
         alert.addButton(withTitle: "End and Close")
         alert.addButton(withTitle: "Keep Active and Close")
         alert.buttons[0].keyEquivalent = "\r"

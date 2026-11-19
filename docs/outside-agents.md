@@ -56,7 +56,7 @@ this Mac under your account, and remove names you no longer use.
 | --- | --- | --- |
 | `msgblast_status` | Read only | Version, permissions, busy agents |
 | `msgblast_agents_list` | Read only | Agents and their ids |
-| `msgblast_comparisons_list`, `msgblast_comparison_read` | Read only | Saved comparisons and their conversations |
+| `msgblast_comparisons_list`, `msgblast_comparison_read` | Read only | Saved comparisons and their conversations. A Messages contact's direct thread is never listed or readable |
 | `msgblast_mentions` | Read only | Comparisons as links for @-mentions |
 | `msgblast_blast_wait` | Read only | Waits for replies, send results and busy changes |
 | `msgblast_request_status` | Read only | The stored result of an earlier send call |

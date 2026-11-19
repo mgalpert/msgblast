@@ -36,7 +36,8 @@ extension AppModel: AgentControlHost {
         return RemoteAgentIDs.messages(entry.agent.id)
     }
 
-    func controlComparisons() -> [Comparison] { state.comparisons }
+    /// Direct threads hold a contact's own chat, not an agent's answers, so outside agents never see them.
+    func controlComparisons() -> [Comparison] { state.comparisons.filter { $0.direct != true } }
 
     func controlTranscript(_ comparison: Comparison) -> [AgentControlTurn] {
         let messages = comparison.members.flatMap { member in
@@ -58,7 +59,7 @@ extension AppModel: AgentControlHost {
         var snapshot = AgentControlSnapshot()
         let busy = webAgents.sessions.filter { webAgents.isBusyForSelection($0) }
         snapshot.busy = Set(busy.map(\.name))
-        let recent = state.comparisons.filter { $0.endedAt == nil }.sorted { $0.created > $1.created }.prefix(AgentControlSnapshot.watchedComparisons)
+        let recent = controlComparisons().filter { $0.endedAt == nil }.sorted { $0.created > $1.created }.prefix(AgentControlSnapshot.watchedComparisons)
         for comparison in recent {
             snapshot.created[comparison.id] = comparison.created
             for member in comparison.members {

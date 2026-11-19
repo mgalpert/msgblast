@@ -111,10 +111,7 @@ public struct ComparisonSummaryInput: Sendable {
         }
         var responses = 0, responding = 0
         let participants = comparison.members.map { member in
-            let transcript = member.anchor.map {
-                ComparisonRange.messages(messages[member.chat.id] ?? [], anchor: $0,
-                    next: ComparisonRange.nextAnchor(for: comparison, member: member, comparisons: comparisons))
-            } ?? []
+            let transcript = ComparisonRange.transcript(messages[member.chat.id] ?? [], comparison: comparison, member: member, comparisons: comparisons)
             let replyCount = transcript.reduce(0) { count, message in
                 count + (message.outgoing ? 0 : 1) + message.reactions.filter { !$0.outgoing }.count
             }

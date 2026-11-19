@@ -308,12 +308,12 @@ final class AppModel: ObservableObject {
             if databaseStatus != "Messages history available · read-only" { databaseStatus = "Messages history available · read-only" }
             let members = state.comparisons.flatMap(\.members)
             for chatID in Set(members.map(\.chat.id)) {
-                let start = members.filter { $0.chat.id == chatID }.compactMap(\.anchor?.rowID).min() ?? 0
+                let start = members.filter { $0.chat.id == chatID }.compactMap { ComparisonRange.start(of: $0)?.rowID }.min() ?? 0
                 let fresh = try database.messages(chatID: chatID, after: start)
                 if messages[chatID] != fresh { messages[chatID] = fresh }
             }
             try reconcile()
-            lastDataVersion = version
+            try finishRefresh(version)
         } catch { databaseAvailable = false; databaseStatus = error.localizedDescription; database = nil }
     }
     func refreshContactAccess() {
@@ -602,7 +602,7 @@ final class AppModel: ObservableObject {
         } catch { self.error = error.localizedDescription; return nil }
     }
     func joinWebAgent(_ session: WebAgentSession, comparisonID: UUID) async -> Bool {
-        guard comparison(comparisonID)?.endedAt == nil, !busy, session.isEnabled, session.provider.supportsSharedSubmissions else { return false }
+        guard let joined = comparison(comparisonID), joined.endedAt == nil, joined.direct != true, !busy, session.isEnabled, session.provider.supportsSharedSubmissions else { return false }
         if comparison(comparisonID)?.resolvedWebAgentIDs.contains(session.id) == true { return true }
         do {
             try freezeSharedContext(comparisonID)
@@ -634,7 +634,7 @@ final class AppModel: ObservableObject {
         try save()
     }
     func addAgent(_ agent: Agent, to id: UUID) async {
-        guard let i = index(id), state.comparisons[i].endedAt == nil, !busy, !state.comparisons[i].members.contains(where: { $0.id == agent.id }) else { return }
+        guard let i = index(id), state.comparisons[i].endedAt == nil, state.comparisons[i].direct != true, !busy, !state.comparisons[i].members.contains(where: { $0.id == agent.id }) else { return }
         do {
             try freezeSharedContext(id)
             var member = try validateMembers(prompt: state.comparisons[i].prompt, selectedIDs: [agent.id])[0]
@@ -714,9 +714,7 @@ final class AppModel: ObservableObject {
     func comparison(_ id: UUID) -> Comparison? { state.comparisons.first { $0.id == id } }
     func index(_ id: UUID) -> Int? { state.comparisons.firstIndex { $0.id == id } }
     func transcript(_ comparison: Comparison, member: Member) -> [Message] {
-        guard let anchor = member.anchor else { return [] }
-        let history = messages[member.chat.id] ?? []
-        return ComparisonRange.messages(comparison.endedAt == nil ? history : history.filter { comparison.includes($0) }, anchor: anchor, next: ComparisonRange.nextAnchor(for: comparison, member: member, comparisons: state.comparisons))
+        ComparisonRange.transcript(messages[member.chat.id] ?? [], comparison: comparison, member: member, comparisons: state.comparisons)
     }
     func latest(_ chat: Chat) throws -> [Message] {
         if demo { return messages[chat.id] ?? [] }
@@ -789,6 +787,22 @@ final class AppModel: ObservableObject {
             if submitted > 0 { recordMessageSubmission(kind: .shared, recipientCount: submitted, started: telemetryStarted, logicalID: id) }
             else { recordOperation(.send, success: false, started: telemetryStarted) }
         }
+    }
+    /// A contact's message that no conversation holds starts that contact's direct thread.
+    /// The database version is recorded only once direct threads are settled, so a held insert is retried.
+    private func finishRefresh(_ version: Int64) throws {
+        if try startDirectThreads() { lastDataVersion = version }
+    }
+    /// Returns false while a send is in flight: sends keep a conversation's position across awaits, so the
+    /// insert waits and the next refresh tries again.
+    @discardableResult private func startDirectThreads() throws -> Bool {
+        guard !busy, !webBroadcastBusy, !webAgents.sessions.contains(where: { $0.isSending }) else { return false }
+        let chatIDs = Set(state.comparisons.flatMap(\.members).map(\.chat.id)).sorted()
+        let threads = chatIDs.compactMap { ComparisonRange.directThread(chatID: $0, history: messages[$0] ?? [], comparisons: state.comparisons) }
+        guard !threads.isEmpty else { return true }
+        state.comparisons.insert(contentsOf: threads, at: 0)
+        do { try save() } catch { state.comparisons.removeAll { thread in threads.contains { $0.id == thread.id } }; throw error }
+        return true
     }
     func reconcile() throws {
         var changed = false
@@ -962,12 +976,24 @@ final class AppModel: ObservableObject {
                 messages[member.chat.id]?[index].reactions = [MessageReaction(id: "fixture-recipient", emoji: "✅", outgoing: false)]
                 let answer = sent.linkPreview?.url.absoluteString ?? answers[offset % answers.count]
                 appendDemo(answer, chat: member.chat, outgoing: false, replyTo: anchor.guid)
+                scheduleDemoLateMessage(member.chat)
                 if ProcessInfo.processInfo.arguments.contains("--business-choices-preview"), member.chat.businessConversation == true {
                     appendBusinessChoiceFixture(chat: member.chat)
                 }
             } else {
                 appendDemo(answers[offset % answers.count], chat: member.chat, outgoing: false, replyTo: anchor.guid)
             }
+        }
+    }
+    /// Demo launched with `--late-message-preview`: after a reply, you write the contact from Messages
+    /// itself and they answer. No conversation holds those rows, so they start the contact's direct thread.
+    private func scheduleDemoLateMessage(_ chat: Chat) {
+        guard ProcessInfo.processInfo.arguments.contains("--late-message-preview") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            appendDemo("Running late, see you at 7", chat: chat, outgoing: true)
+            appendDemo("No problem, see you then", chat: chat, outgoing: false)
+            _ = try? startDirectThreads()
         }
     }
     func openMessages(_ member: Member) {

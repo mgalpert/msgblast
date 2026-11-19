@@ -211,7 +211,8 @@ sleep only; it does not wake a sleeping Mac, keep the display on, or unlock.
 ## What never leaves the Mac
 
 Website cookies and WebKit stores, CLI logins, Grok Bot keys, `chat.db` rows other
-than projected replies in a conversation's range, Contacts data, macOS
+than projected replies in a conversation's range and the text of both sides of a
+contact's direct thread, Contacts data, macOS
 permissions, and the Mac's composer drafts. Sign-in, permissions, and keys are set
 up on the Mac; the phone shows the blocked state and where to fix it.
 

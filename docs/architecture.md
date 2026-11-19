@@ -310,6 +310,31 @@ Explicit saved recipient choices, drafts, and existing comparison membership
 are retained. A failed native conversation preparation preserves the prompt and
 shows its error with a Reconnect action, including for an empty first chat.
 
+## Messages ranges
+
+A Messages chat is one stream per contact, so a conversation holds only part of it.
+For each Messages member it shows the chat from its own sent prompt up to the next
+msgblast conversation's send to that contact. A send whose row is not identified
+yet counts from the row after its saved baseline, so an older conversation never
+takes its replies. Inside that range the conversation lets go of the contact when
+you message them outside msgblast, or when they write after half an hour with
+nothing in the chat (a full day while it waits for the answer to its own latest
+message); a later msgblast message in the conversation takes the chat
+back. Business chats keep every sent row, because their choices are sent by
+Messages itself.
+
+A message from the contact that no conversation holds goes to that contact's
+direct thread: a conversation with no prompt, named after the contact, with one
+Messages member (`Comparison.direct`). msgblast starts it by itself during a
+refresh (`ComparisonRange.directThread`) and never asks where a message belongs.
+There is one open direct thread per contact; it shows every row from its first
+one that no conversation holds, including messages you sent from Messages, and
+you can reply from it like any conversation. Only a message from the last seven
+days starts one, and only for a contact msgblast already has a conversation
+with, so older history stays in Messages. Ending the thread keeps what it
+showed; the contact's next unheld message starts a new one. Website and app
+agents cannot join a direct thread, and outside agents cannot list or read one.
+
 ## Closing conversations
 
 Closing an active conversation window asks whether to end it or keep collecting

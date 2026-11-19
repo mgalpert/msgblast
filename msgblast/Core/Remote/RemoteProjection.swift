@@ -122,8 +122,10 @@ public enum RemoteProjectionBuilder {
         let cid = comparison.id
         var activity = comparison.created
         var conversationAttempts: [RemoteAttempt] = []
-        turns.append(RemoteTurn(id: "p:\(cid.uuidString)", conversationID: cid, agentID: nil, role: .user, origin: .sharedPrompt, text: comparison.prompt,
-                                created: comparison.created, ordinal: 0, attachments: refs(comparison.attachments ?? []), contentHash: hash(comparison.prompt)))
+        if comparison.direct != true {
+            turns.append(RemoteTurn(id: "p:\(cid.uuidString)", conversationID: cid, agentID: nil, role: .user, origin: .sharedPrompt, text: comparison.prompt,
+                                    created: comparison.created, ordinal: 0, attachments: refs(comparison.attachments ?? []), contentHash: hash(comparison.prompt)))
+        }
         appendMessagesMembers(comparison, input: input, turns: &turns, attempts: &conversationAttempts, activity: &activity)
         appendFollowUps(comparison, turns: &turns, attempts: &conversationAttempts, activity: &activity)
         appendWebAgents(comparison, input: input, turns: &turns, attempts: &conversationAttempts, activity: &activity)
@@ -146,15 +148,29 @@ public enum RemoteProjectionBuilder {
         let cid = comparison.id
         for member in comparison.members {
             let agentID = RemoteAgentIDs.messages(member.id)
-            conversationAttempts.append(RemoteAttempt(id: "ma:\(cid.uuidString):\(member.id.uuidString)", conversationID: cid, agentID: agentID, text: comparison.prompt,
-                                                      status: status(member.submission), detail: member.error, created: member.attemptedAt))
-            for (index, message) in (input.messagesTranscripts[cid]?[member.id] ?? []).enumerated() where !message.outgoing {
+            if comparison.direct != true {
+                conversationAttempts.append(RemoteAttempt(id: "ma:\(cid.uuidString):\(member.id.uuidString)", conversationID: cid, agentID: agentID, text: comparison.prompt,
+                                                          status: status(member.submission), detail: member.error, created: member.attemptedAt))
+            }
+            for (index, message) in (input.messagesTranscripts[cid]?[member.id] ?? []).enumerated() {
+                if message.outgoing {
+                    if let yours = sentOutside(message, comparison: comparison, agentID: agentID, ordinal: index) { turns.append(yours); activity = max(activity, message.date) }
+                    continue
+                }
                 turns.append(RemoteTurn(id: "m:\(message.guid)", conversationID: cid, agentID: agentID, role: .assistant, origin: .messagesHistory, text: message.text,
                                         created: message.date, ordinal: index, attachments: refs(message.attachments), contentHash: hash(message.text),
                                         reactions: reactions(message.reactions, contact: agentID)))
                 activity = max(activity, message.date)
             }
         }
+    }
+
+    /// In a direct thread, a message you sent the contact from Messages itself. Ones sent from
+    /// msgblast are the thread's follow-up turns already. Text only: your own files stay on the Mac.
+    private static func sentOutside(_ message: Message, comparison: Comparison, agentID: String, ordinal: Int) -> RemoteTurn? {
+        guard comparison.direct == true, !message.text.isEmpty, !comparison.followUps.contains(where: { $0.text == message.text }) else { return nil }
+        return RemoteTurn(id: "m:\(message.guid)", conversationID: comparison.id, agentID: agentID, role: .user, origin: .messagesHistory, text: message.text,
+                          created: message.date, ordinal: ordinal, attachments: [], contentHash: hash(message.text), reactions: reactions(message.reactions, contact: agentID))
     }
 
     private static func appendFollowUps(_ comparison: Comparison, turns: inout [RemoteTurn], attempts conversationAttempts: inout [RemoteAttempt], activity: inout Date) {
