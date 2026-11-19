@@ -69,10 +69,11 @@ struct ComposeBar: View {
 
     private var presenter: ProjectionPresenter { ProjectionPresenter(state: app.store.projection, commands: app.store.commands) }
     private var members: [String] { conversationID.flatMap { app.store.projection.conversations[$0]?.agentIDs } ?? [] }
-    private var draftKey: String { MobileStore.draftKey(conversation: conversationID, agentID: recipients.count == 1 && conversationID != nil ? recipients[0] : nil) }
+    private var draftKey: String { ComposeSend.draftKey(conversation: conversationID, recipients: recipients) }
     /// The plus shows only when a recipient takes attachments (Messages contacts today).
-    private var takesAttachments: Bool {
-        recipients.contains { id in app.store.projection.agents[id].map { $0.form == .messages || $0.capabilities.attachments } ?? false }
+    private var takesAttachments: Bool { recipients.contains(where: takesFiles) }
+    private func takesFiles(_ id: String) -> Bool {
+        app.store.projection.agents[id].map { $0.form == .messages || $0.capabilities.attachments } ?? false
     }
     @State private var capturing = false
     private var block: ComposeBlock? {
@@ -112,7 +113,11 @@ struct ComposeBar: View {
             if hasContent { engage() }
             applyFixtureFocus()
         }
-        .onChange(of: recipients) { _, _ in text = app.store.draft(draftKey); attachments = []; if engaged { prepare() } }
+        .onChange(of: recipients) { old, new in
+            text = app.store.draft(draftKey)
+            if !ComposeSend.keepsAttachments(conversation: conversationID, from: old, to: new, takesFiles: takesFiles) { attachments = [] }
+            if engaged { prepare() }
+        }
         .onChange(of: text) { _, value in app.store.setDraft(value, for: draftKey); if hasContent { engage() } }
         .onChange(of: attachments.count) { _, count in if count > 0 { engage() } }
         // The timeout said unconfirmed; then a reconnect's query said the Mac did send it.

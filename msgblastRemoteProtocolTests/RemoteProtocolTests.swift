@@ -26,6 +26,12 @@ final class RemoteProtocolCodingTests: XCTestCase {
             try roundTrip(availability(readiness))
         }
         XCTAssertEqual(availability(.ready).formLabel, "ChatGPT · Mac app")
+        var setUp = availability(.ready); setUp.setUp = false
+        try roundTrip(setUp)
+        // A Mac before 0.11.2 sends no `setUp`; it decodes as unknown, not as false.
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: RemoteProtocol.encoder().encode(setUp)) as? [String: Any])
+        object["setUp"] = nil
+        XCTAssertNil(try RemoteProtocol.decoder().decode(AgentAvailability.self, from: JSONSerialization.data(withJSONObject: object)).setUp)
     }
 
     func testUnknownValuesFromANewerPeerDecodeSafely() throws {

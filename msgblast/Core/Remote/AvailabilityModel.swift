@@ -179,7 +179,20 @@ public enum AvailabilityCalculator {
             visibleInGrid: m.visibleGridIDs.contains(s.gridID), selectedForSharedSend: s.isEnabled && s.selected && shared,
             capabilities: AgentCapabilities(sharedSend: shared, privateSend: shared, attachments: false, namedCopies: provider.supportsCopies,
                                             endConversation: true, sharesOneConversation: provider.sharesOneConversation),
-            readiness: d.readiness, reasons: d.reasons, observedAt: now, source: d.source)
+            readiness: d.readiness, reasons: d.reasons, observedAt: now, source: d.source, setUp: isSetUp(s, form: form))
+    }
+
+    /// Set up on this Mac, read from the signals themselves rather than the first reason
+    /// found, so a busy or blocked agent keeps its answer. A Mac app that only prepares on
+    /// its first send was never connected; a CLI needs a known account, as its Mac pane does.
+    static func isSetUp(_ s: AgentSessionSignals, form: AgentForm) -> Bool {
+        switch form {
+        case .website: s.signedIn != false && s.signedOut != true
+        case .macApp: s.desktopInstalled && (s.hasDesktopBinding || s.desktopReady)
+        case .cli: [.subscription, .apiKey, .other].contains(s.accountStatus)
+        case .webhookBot: s.grokBotConfigured
+        case .messages: false
+        }
     }
 
     private static func websiteAvailability(_ s: AgentSessionSignals, into d: inout AvailabilityDraft) {
@@ -326,7 +339,7 @@ public enum AvailabilityCalculator {
         return AgentAvailability(agentID: agent.remoteID, product: .messages, form: .messages, displayName: agent.name, avatarRef: nil,
             visibleInGrid: m.visibleGridIDs.contains(agent.gridID), selectedForSharedSend: agent.selected,
             capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: true, namedCopies: false, endConversation: true, sharesOneConversation: false),
-            readiness: readiness, reasons: reasons, observedAt: now, source: .live)
+            readiness: readiness, reasons: reasons, observedAt: now, source: .live, setUp: agent.routable)
     }
 }
 

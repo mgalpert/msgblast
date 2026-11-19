@@ -63,13 +63,15 @@ final class PresenterTests: XCTestCase {
         state.macLocked = true
         XCTAssertEqual(ProjectionPresenter(state: state).disabledReason(agentIDs: [messages.agentID], conversation: nil), "Mac locked")
 
-        let list = presenter.newConversationAgents
-        XCTAssertFalse(list.agents.isEmpty)
-        XCTAssertTrue(list.agents.allSatisfy { $0.form != .messages }); XCTAssertTrue(list.messages.allSatisfy { $0.form == .messages })
+        XCTAssertEqual(presenter.newConversationAgents.agents.map(\.agentID), [], "Only rabbit OS3 is ready, and it is not on the Mac's grid")
+        // The recorded Mac's grid holds only contacts; put three set-up agents on it.
+        let gridAgents = ["codexCLI", "claude", "chatgptApp"]
+        state.grid = gridAgents + state.grid
+        for id in gridAgents { state.agents[id]?.readiness = .ready; state.agents[id]?.reasons = [] }
+        let list = ProjectionPresenter(state: state).newConversationAgents
+        XCTAssertEqual(list.agents.map(\.agentID), gridAgents, "Once set up: the Mac's grid order, each form its own row, nothing off the grid")
+        XCTAssertTrue(list.messages.allSatisfy { $0.form == .messages })
         XCTAssertFalse(list.messages.isEmpty, "Messages contacts have their own section")
-        let gridOrder = state.grid.filter { id in list.agents.contains { $0.agentID == id } }
-        XCTAssertEqual(Array(list.agents.map(\.agentID).prefix(gridOrder.count)), gridOrder, "The Mac's grid order")
-        XCTAssertEqual(Set(list.agents.map(\.agentID)).count, list.agents.count, "Each form is its own row; histories stay separate")
         XCTAssertEqual(ProjectionPresenter.formLabel(.webhookBot), "Bot")
         XCTAssertEqual(ChipState(.uncertain), .unconfirmed)
         XCTAssertEqual(ChipState(.observed), .replied)
@@ -332,12 +334,10 @@ final class PresenterTests: XCTestCase {
         agent("tiny", .cli, .busy(detail: "Working"), selected: true)
         agent("blocked", .macApp, .blocked, selected: true)
         agent("gone", .macApp, .unavailable, selected: true)
-        // Enabled, ready, never connected, and absent from the Mac's grid: still in the strip.
-        agent("rabbit", .website, .ready, selected: false, inGrid: false)
+        agent("rabbit", .website, .ready, selected: false)
         agent("messages:ana", .messages, .ready, selected: true)
         agent("messages:bo", .messages, .ready, selected: false)
         let presenter = ProjectionPresenter(state: state)
-        XCTAssertTrue(presenter.newConversationAgents.agents.contains { $0.agentID == "rabbit" })
         let chosen = presenter.defaultNewSelection
         XCTAssertEqual(chosen, ["instinct", "alexa", "tiny", "messages:ana"], "Selected and ready, launching, or busy, in strip order; a contact only when the Mac selected it")
         XCTAssertFalse(chosen.contains("rabbit"), "A ready website the Mac did not select stays unchecked")
@@ -345,6 +345,72 @@ final class PresenterTests: XCTestCase {
         XCTAssertFalse(chosen.contains("gone"), "A selected unavailable agent is not checked")
         XCTAssertFalse(chosen.contains("messages:bo"))
         XCTAssertEqual(ProjectionPresenter.togglingNew("instinct", chosen: chosen).contains("instinct"), false, "A tap still removes")
+    }
+
+    func testNewConversationListsOnlyConnectedAgents() {
+        var state = ProjectionState()
+        func agent(_ id: String, _ form: AgentForm, _ readiness: AgentReadiness, _ code: AvailabilityReasonCode? = nil, inGrid: Bool = true, setUp: Bool? = nil) {
+            let reasons = code.map { [AvailabilityReason(code: $0, userText: "", fixOn: .mac)] } ?? []
+            state.agents[id] = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: form, displayName: id, visibleInGrid: inGrid, selectedForSharedSend: false,
+                capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                readiness: readiness, reasons: reasons, observedAt: fixedNow, source: .live, setUp: setUp)
+            if inGrid { state.grid.append(id) }
+            state.agentOrder.append(id)
+        }
+        agent("claudeApp", .macApp, .ready)
+        agent("chatgptApp", .macApp, .ready, .preparesOnSend)
+        agent("dotsApp", .macApp, .blocked, .incompleteRequestBlocking)
+        agent("codexCLI", .cli, .busy(detail: "Working"), .sendInFlight)
+        agent("museApp", .macApp, .blocked, .notConnected)
+        agent("claude", .website, .blocked, .signedOut)
+        agent("claudeCode", .cli, .blocked, .cliSignedOut)
+        agent("grokbot", .webhookBot, .blocked, .webhookNotConfigured)
+        agent("wabi", .macApp, .unavailable, .notInstalled)
+        agent("os3", .website, .ready, .signInUnknown, inGrid: false)
+        agent("messages:ana", .messages, .ready)
+        agent("messages:bo", .messages, .blocked, .conversationUnroutable)
+        let list = ProjectionPresenter(state: state).newConversationAgents
+        XCTAssertEqual(list.agents.map(\.agentID), ["claudeApp", "chatgptApp", "dotsApp", "codexCLI"],
+                       "Set up on the Mac, including busy and briefly blocked; not unconnected, signed out, uninstalled or off the grid")
+        XCTAssertEqual(list.messages.map(\.agentID), ["messages:ana"], "A contact with no Messages chat is not listed")
+
+        // A current Mac says outright: its answer wins over the reasons, whatever comes first.
+        state = ProjectionState()
+        agent("claudeApp", .macApp, .ready, .preparesOnSend, setUp: false)
+        agent("museApp", .macApp, .busy(detail: "Checking"), .sendInFlight, setUp: false)
+        agent("codexCLI", .cli, .blocked, .incompleteRequestBlocking, setUp: false)
+        agent("chatgptApp", .macApp, .blocked, .permissionMissing, setUp: true)
+        agent("claude", .website, .ready, .signInUnknown, setUp: true)
+        agent("wabi", .macApp, .unavailable, .notInstalled, setUp: true)
+        agent("messages:ana", .messages, .blocked, .permissionMissing, setUp: true)
+        let current = ProjectionPresenter(state: state).newConversationAgents
+        XCTAssertEqual(current.agents.map(\.agentID), ["chatgptApp", "claude"], "Never connected stays out even when busy, blocked or preparing on send")
+        XCTAssertEqual(current.messages.map(\.agentID), ["messages:ana"], "A contact waiting on a Mac permission stays")
+    }
+
+    func testTheNewConversationStripFollowsTheMacWithoutMovingIcons() {
+        XCTAssertEqual(ProjectionPresenter.stripOrder([], ["a", "b"]), ["a", "b"], "The first list fills an empty strip")
+        XCTAssertEqual(ProjectionPresenter.stripOrder(["a", "b", "c"], ["c", "d", "a"]), ["a", "c", "d"], "Shown icons keep their place, a new one goes last, one that left goes")
+        XCTAssertEqual(ProjectionPresenter.stripOrder(["a"], []), [], "Disconnecting the last agent empties the strip")
+
+        // While the screen is open, the Mac connects ChatGPT, then Claude disconnects.
+        var state = ProjectionState(); state.seq = 1; state.grid = ["claude", "chatgptApp"]
+        func upsert(_ id: String, setUp: Bool) {
+            let agent = AgentAvailability(agentID: id, product: AgentProduct(rawValue: id), form: .website, displayName: id, visibleInGrid: true, selectedForSharedSend: true,
+                capabilities: AgentCapabilities(sharedSend: true, privateSend: true, attachments: false, namedCopies: false, endConversation: true, sharesOneConversation: false),
+                readiness: .ready, reasons: [], observedAt: fixedNow, source: .live, setUp: setUp)
+            let seq = (state.seq ?? 0) + 1
+            state = ProjectionReducer.reduce(state, .events([RemoteEvent(seq: seq, change: .agentUpsert(agent))], latestSeq: seq))
+        }
+        func listed() -> [String] { ProjectionPresenter(state: state).newConversationAgents.agents.map(\.agentID) }
+        upsert("claude", setUp: true); upsert("chatgptApp", setUp: false)
+        var shown = listed()
+        XCTAssertEqual(shown, ["claude"])
+        upsert("chatgptApp", setUp: true); shown = ProjectionPresenter.stripOrder(shown, listed())
+        XCTAssertEqual(shown, ["claude", "chatgptApp"], "Connected on the Mac: it appears at the end")
+        upsert("claude", setUp: false); shown = ProjectionPresenter.stripOrder(shown, listed())
+        XCTAssertEqual(shown, ["chatgptApp"], "Disconnected on the Mac: it leaves")
+        XCTAssertEqual(ProjectionPresenter(state: state).defaultNewSelection, ["chatgptApp"], "Nor is it checked")
     }
 
     func testTheHeaderSelectionDrivesSendsPlaceholderAndTitle() {
@@ -792,6 +858,13 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(ComposeSend.field("B", afterSending: "A"), "B", "The field keeps what was typed since")
         XCTAssertEqual(ComposeSend.field(" A\n", afterSending: "A"), "", "A field still holding the sent text clears")
         XCTAssertEqual(ComposeSend.attachments(["a1", "b2"], id: { $0 }, afterSending: ["a1"]), ["b2"], "Only the sent files go")
+        // Files stay with their draft when the recipients change, including when the Mac connects or drops an agent.
+        let files: (String) -> Bool = { $0.hasPrefix("messages:") }, thread = UUID()
+        XCTAssertTrue(ComposeSend.keepsAttachments(conversation: nil, from: ["messages:ana"], to: ["messages:ana", "claude"], takesFiles: files), "An agent connects on the Mac")
+        XCTAssertTrue(ComposeSend.keepsAttachments(conversation: nil, from: ["claude", "messages:ana"], to: ["messages:ana"], takesFiles: files), "An agent leaves")
+        XCTAssertFalse(ComposeSend.keepsAttachments(conversation: nil, from: ["messages:ana", "claude"], to: ["claude"], takesFiles: files), "No recipient takes files any more")
+        XCTAssertFalse(ComposeSend.keepsAttachments(conversation: thread, from: ["messages:ana", "claude"], to: ["messages:ana"], takesFiles: files), "A private send is another draft")
+        XCTAssertTrue(ComposeSend.keepsAttachments(conversation: thread, from: ["messages:ana", "claude", "grok"], to: ["messages:ana", "claude"], takesFiles: files))
         XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendShared" }.count, 1, "Never sent a second time")
     }
 

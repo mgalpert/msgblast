@@ -471,13 +471,27 @@ public struct ProjectionPresenter: Sendable {
         return date.formatted(style)
     }
 
-    /// The new-conversation list: one flat list in the Mac's grid order, with Messages
-    /// contacts apart. Agents outside the grid follow, unless they are unavailable.
+    /// The new-conversation list: only connected agents, those on the Mac's agent grid and set
+    /// up there, in the grid's order, with Messages contacts apart.
     public var newConversationAgents: (agents: [AgentAvailability], messages: [AgentAvailability]) {
-        let visible = state.grid.compactMap { state.agents[$0] }
-        let rest = state.orderedAgents.filter { !state.grid.contains($0.agentID) && $0.readiness != .unavailable }
-        let all = visible + rest
+        let all = state.grid.compactMap { state.agents[$0] }.filter(Self.isConnected)
         return (all.filter { $0.form != .messages }, all.filter { $0.form == .messages })
+    }
+
+    /// Reasons that mean an agent was never set up, for Macs that do not send `setUp`.
+    private static let setupReasons: Set<AvailabilityReasonCode> = [.notConnected, .signedOut, .cliSignedOut, .webhookNotConfigured, .conversationUnroutable]
+
+    /// Turned on and set up on the Mac. One that is busy or briefly blocked (a permission,
+    /// an unfinished request) still counts, and shows its reason. A Mac before 0.11.2 does
+    /// not say, so its reasons stand in; they can miss a Mac app that was never connected.
+    static func isConnected(_ agent: AgentAvailability) -> Bool {
+        agent.readiness != .unavailable && (agent.setUp ?? !agent.reasons.contains { setupReasons.contains($0.code) })
+    }
+
+    /// The strip's order once the list changes: icons already shown keep their place, newly
+    /// connected agents go at the end, and ones no longer connected leave.
+    public static func stripOrder(_ shown: [String], _ listed: [String]) -> [String] {
+        shown.filter(listed.contains) + listed.filter { !shown.contains($0) }
     }
 
     public static func formLabel(_ form: AgentForm) -> String {

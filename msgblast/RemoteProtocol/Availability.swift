@@ -166,10 +166,13 @@ public struct AgentAvailability: Codable, Hashable, Sendable, Identifiable {
     public var reasons: [AvailabilityReason]
     public var observedAt: Date
     public var source: AvailabilitySource
-    public init(agentID: String, product: AgentProduct, form: AgentForm, displayName: String, avatarRef: String? = nil, visibleInGrid: Bool, selectedForSharedSend: Bool, capabilities: AgentCapabilities, readiness: AgentReadiness, reasons: [AvailabilityReason], observedAt: Date, source: AvailabilitySource) {
+    /// Set up on the Mac (signed in, app connected, CLI account, bot webhook, Messages chat),
+    /// whatever its passing state. Macs before 0.11.2 leave it out.
+    public var setUp: Bool?
+    public init(agentID: String, product: AgentProduct, form: AgentForm, displayName: String, avatarRef: String? = nil, visibleInGrid: Bool, selectedForSharedSend: Bool, capabilities: AgentCapabilities, readiness: AgentReadiness, reasons: [AvailabilityReason], observedAt: Date, source: AvailabilitySource, setUp: Bool? = nil) {
         self.agentID = agentID; self.product = product; self.form = form; self.displayName = displayName; self.avatarRef = avatarRef
         self.visibleInGrid = visibleInGrid; self.selectedForSharedSend = selectedForSharedSend; self.capabilities = capabilities
-        self.readiness = readiness; self.reasons = reasons; self.observedAt = observedAt; self.source = source
+        self.readiness = readiness; self.reasons = reasons; self.observedAt = observedAt; self.source = source; self.setUp = setUp
     }
     /// "ChatGPT · Mac app". Messages agents show their contact name alone.
     public var formLabel: String { form == .messages || displayName.hasSuffix(form.label) ? displayName : "\(displayName) · \(form.label)" }
