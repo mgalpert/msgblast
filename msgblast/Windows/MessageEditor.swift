@@ -59,7 +59,9 @@ struct MessageEditor: NSViewRepresentable {
                 view.setSelectedRange(NSRange(location: view.string.utf16.count, length: 0))
             }
         }
-        let size = NSSize(width: scroll.contentSize.width, height: max(22, context.coordinator.measure(text, width: scroll.contentSize.width).height))
+        // Before the first layout pass the scroll view is zero wide; measuring at 1 pt would lay a long draft out one glyph per line.
+        let width = scroll.contentSize.width >= 1 ? scroll.contentSize.width : 320
+        let size = NSSize(width: scroll.contentSize.width, height: max(22, context.coordinator.measure(text, width: width).height))
         if view.frame.size != size { view.frame.size = size }
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
