@@ -132,6 +132,18 @@ def stage_icons(workspace):
     assert_committed_icons_unchanged()
 
 
+def latest_release_version(root=ROOT):
+    """Newest version with notes in release-notes/, so preview builds show the same What's New as production.
+
+    The Xcode project keeps a placeholder MARKETING_VERSION; release.py stamps the real one.
+    """
+    versions = [path.stem for path in (Path(root) / "release-notes").glob("*.md")
+                if all(part.isdigit() for part in path.stem.split("."))]
+    if not versions:
+        raise RuntimeError("No release notes found to take the app version from")
+    return max(versions, key=lambda version: tuple(int(part) for part in version.split(".")))
+
+
 def configure_info(info, variant, source_revision):
     """Return the Info.plist fields that make a preview app unmistakable and isolated."""
     if variant["bundle_id"] == "com.msgblast.mac" or variant["app_name"] == "msgblast.app":

@@ -229,6 +229,7 @@ def package_variant(workspace, variant, source_revision, output, enable_dev_tele
     except RuntimeError as error:
         raise SystemExit(f"{variant['id']} {error}") from error
     info = preview.configure_info(built_info, variant, source_revision)
+    info["CFBundleShortVersionString"] = preview.latest_release_version(workspace)
     if enable_dev_telemetry and variant["development"]:
         info["msgblastTelemetryEndpoint"] = "https://msgblast.app/api/telemetry"
     with info_path.open("wb") as file:

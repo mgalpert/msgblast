@@ -116,6 +116,23 @@ class PreviewPlanTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             preview.verify_configured_info(preview.configure_info(info, development, "c" * 40), variant, "c" * 40)
 
+    def test_preview_version_is_the_newest_release_notes_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            notes = Path(temporary) / "release-notes"
+            notes.mkdir()
+            for name in ("0.9.0.md", "0.10.3.md", "0.11.0.md", "0.2.0.md", "highlights.json", "README.md"):
+                (notes / name).write_text("")
+            self.assertEqual(preview.latest_release_version(temporary), "0.11.0")
+            for name in list(notes.iterdir()):
+                if name.suffix == ".md":
+                    name.unlink()
+            with self.assertRaises(RuntimeError):
+                preview.latest_release_version(temporary)
+        self.assertEqual(preview.latest_release_version(), max(
+            (path.stem for path in (ROOT / "release-notes").glob("*.md")
+             if all(part.isdigit() for part in path.stem.split("."))),
+            key=lambda version: tuple(int(part) for part in version.split("."))))
+
     def test_all_keeps_building_only_dev_and_demo(self):
         self.assertEqual([variant["id"] for variant in preview.selected_variants("all")], ["development", "demo"])
         self.assertEqual([variant["id"] for variant in preview.selected_variants("development-remote")], ["development-remote"])
