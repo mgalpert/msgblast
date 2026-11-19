@@ -1,0 +1,44 @@
+{
+ "pr": 176,
+ "reviewed_head": "7870f0f0fb2ce642019242d41a7dac7e1a5b7f9b",
+ "base": "68fe240",
+ "verdict": "approve",
+ "reviewer_model": "claude-sonnet (independent subagent)",
+ "author_models": [
+  "claude-opus"
+ ],
+ "reviewed_at": "2026-11-19T06:59:28Z",
+ "summary": "Prior MAJOR resolved. New test draft is 24 chars x 80 = 1920 chars. At 14pt system font (avg ~6.6-7 pt/char, ~13,000 pt total) at width 4000 it wraps to 4 lines, 5 at most with word-wrap slack; line height ~17 pt so ~68-85 pt, under 100 (6 lines would need >12 pt/char, impossible). Capped path: 512-char prefix (~1 line, 17 pt) does not overflow, prefix grows to 2048 > 1920 so head.endIndex == text.endIndex and the loop breaks to layoutSize(text, 4000), the same call as the uncapped path (4000 < 4096 clamp), so equality holds and the added <=100 assertion holds. It goes past the first prefix step (512 -> 2048) so the grow-then-fall-through path is exercised. Full diff 68fe240...7870f0f skimmed: no new issues; pbxproj adds the new source and test to the right build phases; coordinator measure cache removed; updateNSView no longer measures; sizeThatFits uses the capped measurement. Not compiled or run (no Swift toolchain); verified by reading and arithmetic. UI behaviour needs the Mac check.",
+ "findings": [
+  {
+   "severity": "MINOR",
+   "file": "msgblast/Windows/MessageEditor.swift",
+   "line": 60,
+   "detail": "sizeThatFits still typesets up to a few thousand chars per keystroke (bounded by prefix loop and the 100 pt cap, not the full text). Mac check: paste 1M chars and confirm typing stays responsive."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblast/Windows/MessageEditor.swift",
+   "line": 29,
+   "detail": "Mac check: TextKit self-sizing via isVerticallyResizable/minSize/maxSize with widthTracksTextView and container width 0 before first layout; verify the document view grows and shrinks with content, the outer scroll view caps at 100 pt then scrolls, and the caret stays visible (textDidChange calls scrollRangeToVisible). No scroller configured (pre-existing)."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblastTests/MessageTextMeasurementTests.swift",
+   "line": 13,
+   "detail": "The test margin depends on font metrics (4 lines, ~68 pt vs the 100 cap); comfortable, but the test only runs one overflow check (512) before falling through, so the 2048/8192 steps are not covered when text fits."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblast/Core/MessageTextMeasurement.swift",
+   "line": 9,
+   "detail": "Width clamp of 4096 over-estimates height for proposals wider than 4096 pt; harmless because the result is clamped to 100 and the real editor is narrower."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblast/Windows/MessageEditor.swift",
+   "line": 57,
+   "detail": "Width sync is guarded by an inequality check so it cannot loop. Other measurement caller (Views.swift:96, read-only bubble) is uncapped but not per-keystroke and unchanged."
+  }
+ ]
+}
