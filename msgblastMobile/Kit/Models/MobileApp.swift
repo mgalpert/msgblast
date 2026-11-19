@@ -54,7 +54,12 @@ public final class MobileApp: ObservableObject {
         connection.keepAwakeRequested = keepAwake
         connection.onEvent = { [weak self] event in self?.handle(event) }
         connection.pendingCommandIDs = { [weak self] in self?.store.unresolvedCommandIDs ?? [] }
-        connection.willReplacePairing = { [weak self] _ in self?.failWaiting(); self?.store.forgetMac() }
+        connection.willReplacePairing = { [weak self] _ in
+            self?.composeSends = ComposeSend.Pending()
+            self?.composeCompletions = [:]
+            self?.failWaiting()
+            self?.store.forgetMac()
+        }
         connection.sinceSeq = { [weak self] in self?.store.projection.needsSnapshot == true ? nil : self?.store.projection.seq }
         connection.$state.removeDuplicates().sink { [weak self] state in
             guard let self else { return }
