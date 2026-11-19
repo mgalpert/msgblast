@@ -88,7 +88,8 @@ struct NewConversationView: View {
                 if let agents = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FILTER"] { selected = agents.split(separator: ",").map(String.init); touched = true }
                 #endif
             }
-            .onChange(of: listed) { _, now in refresh(now) }
+            // The Mac's default checks can change with readiness alone, so they are watched too.
+            .onChange(of: listed + [presenter.defaultNewSelection]) { _, now in refresh(Array(now.prefix(2))) }
     }
 
     /// Follows the Mac's list: an agent that leaves is unchecked, and until the first tap

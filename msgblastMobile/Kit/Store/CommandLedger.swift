@@ -79,6 +79,18 @@ public enum ComposeSend {
         return current.filter { !gone.contains(id($0)) }
     }
 
+    /// The field's draft: per agent only for one recipient in an existing conversation.
+    public static func draftKey(conversation: UUID?, recipients: [String]) -> String {
+        MobileStore.draftKey(conversation: conversation, agentID: recipients.count == 1 && conversation != nil ? recipients[0] : nil)
+    }
+
+    /// Attached files belong to the draft: when the recipients change, by a tap or because the
+    /// Mac connected or dropped an agent, they stay unless the field moves to another draft or
+    /// no recipient takes files any more.
+    public static func keepsAttachments(conversation: UUID?, from old: [String], to new: [String], takesFiles: (String) -> Bool) -> Bool {
+        draftKey(conversation: conversation, recipients: old) == draftKey(conversation: conversation, recipients: new) && new.contains(where: takesFiles)
+    }
+
     /// A send the field gave up on (its timeout said unconfirmed) that the Mac then finished.
     public struct LateConfirmation: Equatable, Sendable {
         /// The conversation it went to: for a new conversation, the id the Mac reported.

@@ -184,12 +184,12 @@ public enum AvailabilityCalculator {
 
     /// Set up on this Mac, read from the signals themselves rather than the first reason
     /// found, so a busy or blocked agent keeps its answer. A Mac app that only prepares on
-    /// its first send was never connected.
+    /// its first send was never connected; a CLI needs a known account, as its Mac pane does.
     static func isSetUp(_ s: AgentSessionSignals, form: AgentForm) -> Bool {
         switch form {
         case .website: s.signedIn != false && s.signedOut != true
         case .macApp: s.desktopInstalled && (s.hasDesktopBinding || s.desktopReady)
-        case .cli: s.accountStatus != .signedOut && !s.snapshotReason.hasPrefix("Install ")
+        case .cli: [.subscription, .apiKey, .other].contains(s.accountStatus)
         case .webhookBot: s.grokBotConfigured
         case .messages: false
         }

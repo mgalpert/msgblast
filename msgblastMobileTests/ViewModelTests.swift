@@ -858,6 +858,13 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(ComposeSend.field("B", afterSending: "A"), "B", "The field keeps what was typed since")
         XCTAssertEqual(ComposeSend.field(" A\n", afterSending: "A"), "", "A field still holding the sent text clears")
         XCTAssertEqual(ComposeSend.attachments(["a1", "b2"], id: { $0 }, afterSending: ["a1"]), ["b2"], "Only the sent files go")
+        // Files stay with their draft when the recipients change, including when the Mac connects or drops an agent.
+        let files: (String) -> Bool = { $0.hasPrefix("messages:") }, thread = UUID()
+        XCTAssertTrue(ComposeSend.keepsAttachments(conversation: nil, from: ["messages:ana"], to: ["messages:ana", "claude"], takesFiles: files), "An agent connects on the Mac")
+        XCTAssertTrue(ComposeSend.keepsAttachments(conversation: nil, from: ["claude", "messages:ana"], to: ["messages:ana"], takesFiles: files), "An agent leaves")
+        XCTAssertFalse(ComposeSend.keepsAttachments(conversation: nil, from: ["messages:ana", "claude"], to: ["claude"], takesFiles: files), "No recipient takes files any more")
+        XCTAssertFalse(ComposeSend.keepsAttachments(conversation: thread, from: ["messages:ana", "claude"], to: ["messages:ana"], takesFiles: files), "A private send is another draft")
+        XCTAssertTrue(ComposeSend.keepsAttachments(conversation: thread, from: ["messages:ana", "claude", "grok"], to: ["messages:ana", "claude"], takesFiles: files))
         XCTAssertEqual(mac.commands.filter { $0.action.kind == "sendShared" }.count, 1, "Never sent a second time")
     }
 

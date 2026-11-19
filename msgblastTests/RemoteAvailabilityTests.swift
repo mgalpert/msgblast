@@ -211,6 +211,7 @@ final class RemoteAvailabilityTests: XCTestCase {
         XCTAssertEqual(evaluate(signals(.claude) { $0.signedIn = nil }).setUp, true, "Sign-in is checked when you send, as on the Mac")
         XCTAssertEqual(evaluate(signals(.claudeCode) { $0.accountStatus = .signedOut; $0.isSending = true }).setUp, false, "Signed out, even while sending")
         XCTAssertEqual(evaluate(signals(.codexCLI) { $0.isSending = true }).setUp, true)
+        XCTAssertEqual(evaluate(signals(.codexCLI) { $0.accountStatus = .unknown }).setUp, false, "As the Mac's CLI pane: an unchecked account is not connected")
         XCTAssertEqual(evaluate(signals(.grokbot) { $0.grokBotConfigured = false }).setUp, false)
         let fo = MessagesAgentSignal(agentID: UUID(), gridID: .featuredMessages(.fo), name: "Fo", routable: false, routeStatus: "", selected: true)
         XCTAssertEqual(AvailabilityCalculator.availability(fo, inputs: allowed(), now: now).setUp, false)
