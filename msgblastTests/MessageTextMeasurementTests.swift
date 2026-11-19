@@ -10,7 +10,10 @@ final class MessageTextMeasurementTests: XCTestCase {
     }
 
     func testCappedMeasurementOfLongTextThatFitsMatchesFullMeasurement() {
-        XCTAssertEqual(MessageTextMeasurement.size(longDraft, width: 4000, maxHeight: 100), MessageTextMeasurement.size(longDraft, width: 4000))
+        // About 1,900 characters: past the first prefix, but only about four lines at 4,000 pt.
+        let text = String(repeating: "Long pasted draft text. ", count: 80)
+        XCTAssertEqual(MessageTextMeasurement.size(text, width: 4000, maxHeight: 100), MessageTextMeasurement.size(text, width: 4000))
+        XCTAssertLessThanOrEqual(MessageTextMeasurement.size(text, width: 4000).height, 100)
     }
 
     func testCappedMeasurementStillReportsOverflow() {
