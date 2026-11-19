@@ -854,6 +854,8 @@ final class WorkflowTests: XCTestCase {
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         let previewText = (preview.value as? String) ?? preview.label
         XCTAssertTrue(previewText.contains("\"messagesStatus\""))
+        XCTAssertTrue(previewText.contains("\"permissions\""))
+        XCTAssertTrue(previewText.contains("\"messagesAutomation\""))
         XCTAssertFalse(previewText.contains("chat.db"))
         XCTAssertFalse(previewText.contains("@"))
         XCTAssertTrue(feedback.buttons["Save Report with Diagnostics…"].exists)

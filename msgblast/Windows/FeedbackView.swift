@@ -200,6 +200,8 @@ struct FeedbackView: View {
                     .font(.caption).foregroundStyle(.orange)
             }
             Toggle("Include a diagnostic report", isOn: $session.includeDiagnostics)
+            Text("Diagnostics include permission statuses. Messages access reflects the latest check in msgblast.")
+                .font(.caption).foregroundStyle(.secondary)
             Text("Diagnostics never include:").font(.caption).foregroundStyle(.secondary)
             Text(DiagnosticReport.excludedTopics.map { "• \($0)" }.joined(separator: "\n"))
                 .font(.caption).foregroundStyle(.secondary)

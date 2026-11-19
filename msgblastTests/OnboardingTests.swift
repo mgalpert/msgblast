@@ -560,6 +560,30 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(onboarding.stage, .connecting)
     }
 
+    func testAppThatFailsItsCheckIsSkippedWithoutBlockingSetup() {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.claudeApp, .museApp] { onboarding.toggle(choice) }
+        onboarding.begin()
+        onboarding.complete(.claudeApp)
+        onboarding.skip(.museApp)
+
+        XCTAssertEqual(onboarding.stage, .feedback)
+        XCTAssertEqual(onboarding.connectionReminderChoices(selectedProviders: [.museApp]), [.museApp])
+        onboarding.finish()
+        XCTAssertTrue(onboarding.isFinished)
+    }
+
+    func testSkippingEveryFailedAppReturnsToTheChooser() {
+        var onboarding = OnboardingState()
+        for choice: OnboardingChoice in [.claudeApp, .museApp] { onboarding.toggle(choice) }
+        onboarding.begin()
+        onboarding.skip(.claudeApp)
+        onboarding.skip(.museApp)
+
+        XCTAssertEqual(onboarding.stage, .choosing)
+        XCTAssertFalse(onboarding.isFinished)
+    }
+
     func testMessagesCompletionAndIndividualSkipKeepTheGroupUntilResolved() {
         var onboarding = OnboardingState()
         for choice: OnboardingChoice in [.instinct, .fo, .szn] { onboarding.toggle(choice) }

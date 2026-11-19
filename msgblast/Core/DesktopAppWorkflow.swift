@@ -1,6 +1,9 @@
 import Foundation
 
 enum DesktopAppWorkflow {
+    /// True while a connection retry or preparation holds the foreground for
+    /// the app, so adapters may navigate it without taking focus themselves.
+    @TaskLocal static var foreground = false
     struct ReplyClock: Clock {
         typealias Instant = ContinuousClock.Instant
         private let readNow: @Sendable () -> Instant
@@ -74,7 +77,7 @@ enum DesktopAppWorkflow {
             guard transient(error), app.requiresForegroundSubmission, let driver,
                   let focus = try await driver.beginForeground(app, session: "msgblast-connect-\(UUID())") else { throw error }
             let result: Value
-            do { result = try await check() }
+            do { result = try await $foreground.withValue(true) { try await check() } }
             catch {
                 try await focus.restore()
                 throw error
@@ -93,7 +96,7 @@ enum DesktopAppWorkflow {
             return try await prepare()
         }
         let value: Value
-        do { value = try await prepare() }
+        do { value = try await $foreground.withValue(true) { try await prepare() } }
         catch {
             try await focus.restore()
             throw error
