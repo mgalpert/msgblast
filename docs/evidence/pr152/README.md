@@ -1,16 +1,19 @@
 # PR 152 evidence: late messages start a direct thread
 
-Simulated: packaged blue **msgblast Demo** built from `55aea37ff1430e83968181de29b8d79e98581fd5`,
+Simulated: packaged blue **msgblast Demo** built from `1ce694b12ee96306cef82f049d717a195cc3e698`,
 launched with `--isolated-demo --late-message-preview` in the foreground test VM. No real Messages,
 no real sends; all text is Demo sample data.
 
 | File | Shows |
 | --- | --- |
-| `late-message-flow.mp4` | Send "What should we compare first?" to Cedar, reply, late pair arrives, list gains "Cedar · Direct messages", open it |
+| `late-message-flow.mp4` | Send "What should we compare first?" to Cedar, reply, late pair, open "Cedar · Direct messages", reply "See you then" from it, next late pair, close dialog |
 | `a-conversation-list.png` | Both Cedar rows: the direct thread ("Direct messages") and the original conversation |
-| `b-original-conversation.png` | Original conversation holds only the prompt and its reply |
-| `c-direct-thread.png` | Cedar's direct thread holds "Running late, see you at 7" and "No problem, see you then" |
-| `d-list-after-second-send.png` | After a second prompt to Cedar: still one direct row, plus the new conversation |
-| `e-direct-thread-after-second-send.png` | The second late pair joins the same direct thread |
+| `b-original-conversation.png` | Original conversation: only the prompt and its reply; Send to bar and both composers still present |
+| `c-direct-thread.png` | Cedar's direct thread with the late pair and a single "Message" composer (no Send to bar) |
+| `f-end-dialog.png` | Closing the direct thread: "End this thread with Cedar?" / "Keep the history. Their next message starts a new thread." |
+| `g-direct-thread-after-reply.png` | Reply sent from the direct thread, simulated answer and the next late pair all stay in that thread |
+| `h-list-after-end-new-thread.png` | After End and Close and a new prompt to Cedar: a new "Direct messages" row appears |
+| `i-ended-direct-thread.png` | The ended direct thread keeps only what it showed |
+| `j-new-direct-thread.png` | The new direct thread holds only the newest late pair |
 
 Fixture evidence only; it does not establish live Messages behavior.
