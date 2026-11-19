@@ -9,8 +9,46 @@ environment. Record provider/model, base/head SHAs, findings, fixes, test result
 and limits. Publish the required `Independent model review` commit status only
 after that review completes; use a review receipt as its target URL. Never publish
 a passing status from an author-only review or a stale receipt. New commits need
-a new review. This is an externally supplied status, not a PR-body checkbox;
-GitHub does not itself attest which model performed the review.
+a new review, except clean merges of the base branch (below). This is an
+externally supplied status, not a PR-body checkbox; GitHub does not itself attest
+which model performed the review.
+
+## Review receipts and the status
+
+The `Review receipt` workflow posts the status, so the owner no longer posts it
+by hand. Push the receipt as JSON to a branch of this repository, then name it
+in the PR description on a line of its own:
+
+```text
+Review-receipt: <branch>:<path/to/receipt.json>
+```
+
+Editing the description (or pushing) runs the workflow. It runs main's copy of
+`scripts/post_review_status.py`, reads the PR only as Git data, and posts
+success only when every rule holds:
+
+- `pr` is this PR's number and `reviewed_head` is a full 40-character SHA.
+- `verdict` is `approve` and no finding has severity `BLOCKER` or `MAJOR`.
+- `reviewer_model` names the reviewing model and is not in `author_models`,
+  the list of every model that wrote the change.
+- The receipt covers the head: `reviewed_head` is the head, or the head adds
+  only clean merges of the base branch since then.
+
+Otherwise it posts nothing, so the check stays missing and blocks the merge. It
+posts only when the head has no status of that name yet, so it never replaces
+one the owner set, including a failure or pending posted to block a head. Other
+receipt fields (`scope`, `notes`, `tests`) stay free text.
+
+The receipt is self-attested: the status proves a receipt with these fields is
+on a branch of this repository, not who wrote it. Anyone with write access can
+push one, so keep write access to people and agents that follow this process.
+
+**Clean merges of the base carry a review and evidence over.** A review of
+commit R still covers head H when every commit on H's first-parent chain back
+to R is a merge whose other parent is on the base branch, and merging R with
+the newest of those base commits, without conflicts, gives exactly H's tree
+(`scripts/review_carry_over.py`). A conflict fix, a rebase or any new commit
+needs a new review. The evidence check applies the same rule to `Evidence-SHA`.
 
 ## Size and scope
 

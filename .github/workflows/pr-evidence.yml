@@ -19,15 +19,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Reject missing, stale, or placeholder evidence
         env:
           HEAD_REF: ${{ github.head_ref }}
           REVIEW_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
-          args=(--event-file "$GITHUB_EVENT_PATH" --head "$REVIEW_SHA")
+          args=(--event-file "$GITHUB_EVENT_PATH" --head "$REVIEW_SHA" --base-ref "origin/$BASE_REF")
           if [[ "$HEAD_REF" == cursor/* ]]; then
             args+=(--require-preview)
           fi
