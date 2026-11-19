@@ -1,4 +1,7 @@
 import Foundation
+import ApplicationServices
+import CoreGraphics
+import Contacts
 import msgblastCore
 
 enum FeedbackFacts {
@@ -13,7 +16,9 @@ enum FeedbackFacts {
         let updatesEnabled = updater.configuration.isEnabled
         let updatesReason = updater.configuration.unavailableReason
         guard let model else {
-            return DiagnosticFacts(version: version, buildNumber: build, bundleIdentifier: bundle, fixtureMode: false, operatingSystem: system, updatesEnabled: updatesEnabled, updatesReason: updatesReason, messagesStatus: "", permissionStage: "idle", agentCount: 0, comparisonCount: 0, hasDraft: false, attachmentCount: 0, windowStyle: "connected", personalAgent: "", webProviderCounts: [:], lastError: nil, supportFolder: "", stateFilePresent: false, stateFileBytes: 0)
+            var facts = DiagnosticFacts(version: version, buildNumber: build, bundleIdentifier: bundle, fixtureMode: false, operatingSystem: system, updatesEnabled: updatesEnabled, updatesReason: updatesReason, messagesStatus: "", permissionStage: "idle", agentCount: 0, comparisonCount: 0, hasDraft: false, attachmentCount: 0, windowStyle: "connected", personalAgent: "", webProviderCounts: [:], lastError: nil, supportFolder: "", stateFilePresent: false, stateFileBytes: 0)
+            facts.permissions = permissions(model: nil)
+            return facts
         }
         let state = model.state
         var providers: [String: Int] = [:]
@@ -29,7 +34,7 @@ enum FeedbackFacts {
             bundleIdentifier: bundle)
         let size = (try? model.local.url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]))
         let present = size?.isRegularFile == true && size?.fileSize != nil
-        return DiagnosticFacts(
+        var facts = DiagnosticFacts(
             version: version, buildNumber: build, bundleIdentifier: bundle, fixtureMode: model.demo, operatingSystem: system,
             updatesEnabled: updatesEnabled, updatesReason: updatesReason, messagesStatus: model.databaseStatus,
             permissionStage: permissionStage(model.accessGuide.flow.stage), agentCount: state.agents.count,
@@ -37,6 +42,33 @@ enum FeedbackFacts {
             windowStyle: state.effectiveWindowStyle.rawValue, personalAgent: state.personalAgentProvider ?? "",
             webProviderCounts: providers, lastError: model.error, supportFolder: folder,
             stateFilePresent: present, stateFileBytes: present ? (size?.fileSize ?? 0) : 0)
+        facts.permissions = permissions(model: model)
+        return facts
+    }
+
+    @MainActor
+    private static func permissions(model: AppModel?) -> [String: String] {
+        if model?.demo == true {
+            return ["accessibility": "allowed", "screenRecording": "off", "contacts": "notRequested",
+                    "messagesDatabase": "notConnected", "messagesAutomation": "unknown"]
+        }
+        let contacts: String
+        switch CNContactStore.authorizationStatus(for: .contacts) {
+        case .authorized: contacts = "allowed"
+        case .denied: contacts = "off"
+        case .restricted: contacts = "restricted"
+        case .notDetermined: contacts = "notRequested"
+        @unknown default: contacts = "unknown"
+        }
+        // Messages checks retain their latest observation so feedback never
+        // opens Messages or probes the protected database.
+        return [
+            "accessibility": AXIsProcessTrusted() ? "allowed" : "off",
+            "screenRecording": CGPreflightScreenCaptureAccess() ? "allowed" : "off",
+            "contacts": contacts,
+            "messagesDatabase": model?.onboarding.messagesPermissions.history.diagnosticStatus ?? "unknown",
+            "messagesAutomation": model?.onboarding.messagesPermissions.sending.diagnosticStatus ?? "unknown"
+        ]
     }
 
     private static func permissionStage(_ stage: HistoryAccessHandoff.Stage) -> String {

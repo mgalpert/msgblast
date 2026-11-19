@@ -210,7 +210,11 @@ enum MuseAppProfile {
     private static func parse(_ root: DesktopAccessibilityNode, repliesOnly: Bool) throws -> MuseAppObservation {
         let nodes = root.descendants
         guard !nodes.contains(where: { ["AXSheet", "AXDialog"].contains($0.role) }) else { throw DesktopAppError.unavailable("Dismiss Muse's dialog before continuing.") }
-        let areas = nodes.filter { $0.role == "AXWebArea" }
+        // Embedded cards are nested AXWebAreas. Only the chat page itself counts.
+        func topLevelWebAreas(_ node: DesktopAccessibilityNode) -> [DesktopAccessibilityNode] {
+            node.role == "AXWebArea" ? [node] : node.children.flatMap(topLevelWebAreas)
+        }
+        let areas = topLevelWebAreas(root)
         let composers = nodes.filter { DesktopAccessibility.isComposer($0, app: .muse) }
         let transcripts = nodes.filter { $0.role == "AXGroup" && $0.label == "Chat messages" }
         guard areas.count == 1, let url = areas.first?.url, transcripts.count == 1 else {

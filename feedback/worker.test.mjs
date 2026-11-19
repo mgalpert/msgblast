@@ -49,6 +49,23 @@ test('diagnostics allowlist rejects arbitrary fields, types and categories',asyn
  for(const value of [{...diagnostics,transcript:'secret'},{...diagnostics,agentCount:-1},{...diagnostics,agentCount:1000001},{...diagnostics,fixtureMode:'true'},{...diagnostics,messagesStatus:'private text'},{...diagnostics,webProviderCounts:{unknown:1}},{...diagnostics,supportFolder:'/Users/private'},{...diagnostics,updatesReason:'a token'},{...diagnostics,version:'secret with spaces'},{}])assert.equal((await send({...report,diagnostics:JSON.stringify(value)})).status,400);
  assert.equal((await send({...report,diagnostics})).status,400);
 });
+test('stores optional permission statuses and preserves legacy reports and retries',async()=>{
+ const permissions={accessibility:'allowed',screenRecording:'off',contacts:'restricted',messagesDatabase:'unknown',messagesAutomation:'notRequested'};
+ const input={...report,diagnostics:JSON.stringify({...diagnostics,permissions})};
+ const env=environment();
+ assert.equal((await send(input,env)).status,201);
+ assert.deepEqual(JSON.parse(env.objects.get(`reports/${id}.json`).value).diagnostics.permissions,permissions);
+ assert.equal((await send(input,env)).status,200);
+ const reordered=Object.fromEntries(Object.entries(permissions).reverse());
+ assert.equal((await send({...input,diagnostics:JSON.stringify({...diagnostics,permissions:reordered})},env)).status,200);
+ for(const invalid of [null,[],{},true,{...permissions,other:'allowed'},
+   {...permissions,contacts:true},{...permissions,accessibility:'private text'},
+   {...permissions,messagesDatabase:'allowed\n'}]){
+  assert.equal((await send({...input,diagnostics:JSON.stringify({...diagnostics,permissions:invalid})})).status,400);
+ }
+ const {permissionStage,...missingRequired}=diagnostics;
+ assert.equal((await send({...input,diagnostics:JSON.stringify({...missingRequired,permissions})})).status,400);
+});
 test('caps streamed bytes even without Content-Length and cancels oversized input',async()=>{
  let cancelled=false;
  const stream=new ReadableStream({pull(controller){controller.enqueue(new Uint8Array(32769));},cancel(){cancelled=true;}});

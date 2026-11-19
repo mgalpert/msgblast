@@ -130,7 +130,11 @@ struct DesktopAppSetupView: View {
                     Text("msgblast briefly brings \(app.name) forward to send, then returns you here.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if !session.desktopReady { Text(session.desktopStatus).font(.caption).foregroundStyle(.secondary) }
+                if !session.desktopReady {
+                    // A failed check reads as an error; progress text stays secondary.
+                    Text(session.desktopStatus).font(.caption)
+                        .foregroundStyle(session.desktopStatus == session.desktopCheckFailure ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
         .task {
