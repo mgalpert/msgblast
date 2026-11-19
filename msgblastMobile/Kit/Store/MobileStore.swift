@@ -83,7 +83,7 @@ public final class MobileStore: ObservableObject {
 
     // MARK: Drafts (per device)
 
-    public static func draftKey(conversation: UUID?, agentID: String?) -> String {
+    public nonisolated static func draftKey(conversation: UUID?, agentID: String?) -> String {
         "\(conversation?.uuidString ?? "new")|\(agentID ?? "all")"
     }
     public func draft(_ key: String) -> String { drafts[key] ?? "" }
