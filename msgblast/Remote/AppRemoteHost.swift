@@ -128,10 +128,16 @@ final class AppRemoteHost: RemoteCommandHost {
 
     private func sendPrivateMessage(_ plan: RemoteSendPlan, files: [MessageAttachment]) async -> RemoteHostResult {
         guard let agentID = plan.agentIDs.first else { return .rejected(.invalidCommand, "Choose an agent") }
-        if let member = RemoteAgentIDs.messagesAgent(agentID) { return await sendPrivateToMessagesMember(plan, member: member, files: files) }
+        if let member = RemoteAgentIDs.messagesAgent(agentID) {
+            guard !plan.isAction else { return .rejected(.invalidCommand, "That agent doesn't offer choices", conversationID: plan.conversationID) }
+            return await sendPrivateToMessagesMember(plan, member: member, files: files)
+        }
         guard let session = session(agentID) else { return .rejected(.unknownAgent, "That agent is gone from your Mac") }
+        if let offer = plan.offerID, plan.conversationID.flatMap(session.actionsForComparison).map({ $0.messageID == offer && $0.labels.contains(plan.text) }) != true {
+            return .rejected(.invalidCommand, "\(session.name) no longer offers that choice", conversationID: plan.conversationID)
+        }
         model.webBroadcastBusy = true
-        let (id, attempt) = await model.sendDirect(plan.text, to: session, existingID: plan.conversationID, interactive: false)
+        let (id, attempt) = await model.sendDirect(plan.text, to: session, existingID: plan.conversationID, interactive: false, action: plan.offerID)
         guard let attempt else { return .rejected(.failed, "Not sent", conversationID: id) }
         return .applied(conversationID: id, statuses: [agentID: RemoteAttemptStatus(rawValue: attempt.status.rawValue) ?? .uncertain])
     }

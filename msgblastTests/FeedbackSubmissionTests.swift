@@ -9,6 +9,9 @@ final class FeedbackSubmissionTests: XCTestCase {
         facts.lastError = "secret token /Users/private/chat.db"
         facts.supportFolder = "/Users/private"
         facts.updatesReason = "sk-secret"
+        facts.permissions = ["accessibility": "allowed", "screenRecording": "off", "contacts": "restricted",
+                             "messagesDatabase": "unknown", "messagesAutomation": "notRequested",
+                             "private": "/Users/private"]
         var request = DiagnosticRequest(kind: .bug, note: "  Cannot save\n", contact: " ada@example.com ", facts: facts)
         let excluded = try object(FeedbackSubmission.encodeRequest(request, id: id))
         XCTAssertEqual(Set(excluded.keys), ["id", "kind", "note", "contact"])
@@ -20,6 +23,11 @@ final class FeedbackSubmissionTests: XCTestCase {
         let included = try object(FeedbackSubmission.encodeRequest(request, id: id))
         let preview = try XCTUnwrap(included["diagnostics"] as? String)
         XCTAssertEqual(preview, DiagnosticReport.diagnosticsJSON(facts))
+        let diagnostics = try object(Data(preview.utf8))
+        XCTAssertEqual(diagnostics["permissions"] as? [String: String], [
+            "accessibility": "allowed", "screenRecording": "off", "contacts": "restricted",
+            "messagesDatabase": "unknown", "messagesAutomation": "notRequested"
+        ])
         XCTAssertFalse(preview.contains("secret"))
         XCTAssertFalse(preview.contains("/Users/"))
         XCTAssertNil(included["archive"])

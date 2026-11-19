@@ -25,6 +25,16 @@ enum AppPermissionStatus: Sendable {
         default: "Open Settings"
         }
     }
+    var diagnosticStatus: String {
+        switch self {
+        case .allowed: "allowed"
+        case .denied: "off"
+        case .notRequested: "notRequested"
+        case .restricted: "restricted"
+        case .notConnected: "notConnected"
+        case .checking, .needsMessages, .unavailable: "unknown"
+        }
+    }
 }
 
 // Native checks are injectable so regression tests never request system access.

@@ -83,7 +83,7 @@ struct ClaudeAppObservation: Sendable, Equatable {
         }
         try DesktopInterstitial.check(.claude, controls: nodes.map { ($0.role, $0.label) })
         let areas = nodes.filter { $0.role == "AXWebArea" && $0.url.map { ClaudeChatURL.isChat($0) || ClaudeChatURL.isNew($0) } == true }
-        guard !areas.isEmpty else { throw ClaudeObservationError.transient("Claude is still opening its native chat.") }
+        guard !areas.isEmpty else { throw Self.missingChat(nodes) }
         guard areas.count == 1, let url = areas[0].url else { throw DesktopAppError.unavailable("Claude's native chat address is unavailable or ambiguous.") }
         let areaNodes = areas[0].descendants
         let main = areaNodes.filter { $0.subrole == "AXLandmarkMain" }
@@ -186,9 +186,24 @@ struct ClaudeReplyReceipt: Codable, Equatable, Sendable {
     }
 }
 
+extension ClaudeAppObservation {
+    // The file:// wrapper is always present; a claude.ai page that is not a
+    // chat (a Code session, Projects, Settings) will not become one by waiting.
+    static func missingChat(_ nodes: [ClaudeAXNode]) -> ClaudeObservationError {
+        nodes.contains { $0.role == "AXWebArea" && $0.url?.scheme == "https" && $0.url?.host == "claude.ai" }
+            ? .otherPage : .transient("Claude is still opening its native chat.")
+    }
+}
+
 enum ClaudeObservationError: LocalizedError {
     case transient(String)
-    var errorDescription: String? { switch self { case .transient(let message): message } }
+    case otherPage
+    var errorDescription: String? {
+        switch self {
+        case .transient(let message): message
+        case .otherPage: "Claude is showing a page outside its chats, such as a Code session. msgblast opens a new chat when you connect or send."
+        }
+    }
 }
 
 // Claude's Electron wrapper and its conversation expose different AXWebAreas.

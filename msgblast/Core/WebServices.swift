@@ -48,6 +48,8 @@ public struct WebSendAttempt: Codable, Equatable, Identifiable, Sendable {
     var claudeReplyReceipt: ClaudeReplyReceipt?
     var grokReplyReceipt: GrokReplyReceipt?
     var chatgptReplyReceipt: ChatGPTReplyReceipt?
+    /// A tap on one of Alexa's suggestion buttons: `text` is its label, and the page may show your turn in other words.
+    var action: Bool?
     var pinnedConversationURL: URL? { recoveryConversationURL ?? receiptContext?.candidateURL }
     public init(text: String, status: WebSendStatus = .preparing) {
         self.text = text; self.status = status
@@ -314,6 +316,13 @@ public struct WebPageMessage: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// The suggestion buttons Alexa shows under its newest reply, by label.
+public struct WebPageActions: Codable, Equatable, Sendable {
+    public var messageID: String
+    public var labels: [String]
+    public init(messageID: String, labels: [String]) { self.messageID = messageID; self.labels = labels }
+}
+
 public struct WebPageSnapshot: Decodable, Equatable, Sendable {
     public var url = ""
     public var ready = false
@@ -326,6 +335,8 @@ public struct WebPageSnapshot: Decodable, Equatable, Sendable {
     public var messages: [WebPageMessage] = []
     public var submissionInterrupted: Bool?
     public var signedOut: Bool?
+    /// Alexa only; nil on every other page.
+    public var actions: WebPageActions?
     public init() {}
 }
 
