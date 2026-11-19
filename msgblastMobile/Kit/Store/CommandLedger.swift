@@ -129,6 +129,11 @@ public enum ComposeSend {
         }
         /// The timed-out sends, whose records the compose bar watches.
         public var waitingIDs: [UUID] { sends.filter(\.timedOut).map(\.id) }
+        /// The timed-out sends a compose bar shows as unconfirmed: its own conversation's, and New
+        /// Conversation's, since the conversation such a send makes may be any thread.
+        public func waitingIDs(in conversationID: UUID?) -> [UUID] {
+            sends.filter { $0.timedOut && ($0.conversationID == nil || $0.conversationID == conversationID) }.map(\.id)
+        }
 
         /// Timed-out sends the Mac has since applied, oldest first, each with its own confirmation.
         /// They leave, as does one the Mac refused; the rest stay until they are final.

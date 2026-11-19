@@ -97,6 +97,8 @@ public final class MobileApp: ObservableObject {
         requeries = [:]
         for (_, continuation) in waiting { continuation.resume(throwing: MobileConnectionError.unconfirmed) }
         waiting = [:]
+        composeSends = ComposeSend.Pending()
+        composeCompletions = [:]
     }
 
     /// A send made through `perform` still waits on the Mac, whose result comes only to this session.
@@ -271,8 +273,6 @@ public final class MobileApp: ObservableObject {
     public func forgetMac() {
         avatarRequests = [:]
         avatarsUnavailable = []
-        composeSends = ComposeSend.Pending()
-        composeCompletions = [:]
         failWaiting()
         connection.forget()
         store.forgetMac()

@@ -252,8 +252,8 @@ struct ComposeBar: View {
         }
         if preparing { return Status(text: "Getting ready…", progress: true) }
         if let message { return Status(text: message, progress: uploading) }
-        // Until every send the timeout gave up on is final, from this bar or one it replaced.
-        if !app.composeSends.waitingIDs.isEmpty { return Status(text: MobileConnectionError.unconfirmed.errorDescription ?? "Not confirmed") }
+        // Until every send the timeout gave up on here, or in New Conversation, is final.
+        if !app.composeSends.waitingIDs(in: conversationID).isEmpty { return Status(text: MobileConnectionError.unconfirmed.errorDescription ?? "Not confirmed") }
         // A launch note matters only once there is something to send.
         let drafting = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
         let notes = drafting ? presenter.launchNotes(agentIDs: recipients) : []

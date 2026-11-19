@@ -962,6 +962,37 @@ final class MobileAppTests: XCTestCase {
         XCTAssertEqual(app.composeSends.sends.map(\.conversationID), [other], "Only the other bar's own send is still tracked")
     }
 
+    /// A timed-out send shows as unconfirmed in its own thread and not in another one; New
+    /// Conversation's shows in every thread, since the conversation it made may be any of them.
+    func testTheUnconfirmedNoticeStaysWithTheThreadItWasSentFrom() {
+        var pending = ComposeSend.Pending()
+        let here = UUID(), elsewhere = UUID(), fromThread = UUID(), fromNew = UUID()
+        pending.start(.init(id: fromThread, text: "Hi", attachmentIDs: [], quoting: nil, from: here))
+        pending.timedOut(fromThread)
+        XCTAssertEqual(pending.waitingIDs(in: here), [fromThread])
+        XCTAssertEqual(pending.waitingIDs(in: elsewhere), [], "Another thread's bar is not told about it")
+        pending.start(.init(id: fromNew, text: "Hey", attachmentIDs: [], quoting: nil))
+        pending.timedOut(fromNew)
+        XCTAssertEqual(pending.waitingIDs(in: elsewhere), [fromNew])
+        XCTAssertEqual(pending.waitingIDs(in: nil), [fromNew])
+    }
+
+    /// Pairing again wipes the old Mac's command records, so nothing could ever finish a send
+    /// still waiting on it: the notice must not outlive the pairing.
+    func testPairingAgainDropsSendsWaitingOnTheOldPairing() async throws {
+        let mac = FakeMac()
+        let app = try makeApp(mac)
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        var lateRan = false
+        let id = UUID()
+        app.startComposeSend(.init(id: id, text: "Hi", attachmentIDs: [], quoting: nil)) { _ in lateRan = true }
+        app.composeSendTimedOut(id)
+        XCTAssertEqual(app.composeSends.waitingIDs, [id])
+        _ = try await app.pairAndWaitForInbox(offer: mac.offer(), deviceName: "Phone")
+        XCTAssertTrue(app.composeSends.sends.isEmpty, "No send waits on a pairing that is gone")
+        XCTAssertFalse(lateRan)
+    }
+
     /// No manual save: the record is on disk before the send leaves, so an app ended right after
     /// dispatch (before any debounced save) still knows it, shows it unconfirmed and asks about it.
     func testASendInterruptedRightAfterDispatchIsKnownAfterRelaunch() async throws {
