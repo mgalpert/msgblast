@@ -478,13 +478,20 @@ public struct ProjectionPresenter: Sendable {
         return (all.filter { $0.form != .messages }, all.filter { $0.form == .messages })
     }
 
-    /// Reasons that mean an agent was never set up on the Mac, as opposed to a passing state.
+    /// Reasons that mean an agent was never set up, for Macs that do not send `setUp`.
     private static let setupReasons: Set<AvailabilityReasonCode> = [.notConnected, .signedOut, .cliSignedOut, .webhookNotConfigured, .conversationUnroutable]
 
     /// Turned on and set up on the Mac. One that is busy or briefly blocked (a permission,
-    /// an unfinished request) still counts, and shows its reason.
+    /// an unfinished request) still counts, and shows its reason. A Mac before 0.11.2 does
+    /// not say, so its reasons stand in; they can miss a Mac app that was never connected.
     static func isConnected(_ agent: AgentAvailability) -> Bool {
-        agent.readiness != .unavailable && !agent.reasons.contains { setupReasons.contains($0.code) }
+        agent.readiness != .unavailable && (agent.setUp ?? !agent.reasons.contains { setupReasons.contains($0.code) })
+    }
+
+    /// The strip's order once the list changes: icons already shown keep their place, newly
+    /// connected agents go at the end, and ones no longer connected leave.
+    public static func stripOrder(_ shown: [String], _ listed: [String]) -> [String] {
+        shown.filter(listed.contains) + listed.filter { !shown.contains($0) }
     }
 
     public static func formLabel(_ form: AgentForm) -> String {

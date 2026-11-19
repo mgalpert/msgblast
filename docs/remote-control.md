@@ -311,8 +311,10 @@ connection, the local cache and the screen presenters, so its tests run on macOS
   Mac" once there is something to send; ⓘ shows the Mac's longer reason; photos and
   files for Messages agents), the new-conversation list (only connected agents:
   on the Mac's grid and set up there, so not turned off, not installed, never
-  connected, signed out or without a Messages chat; in the grid's order with
-  Messages contacts apart), the status subtitle, and Settings (Mac name, key
+  connected, signed out or without a Messages chat; the Mac says so in each
+  agent's `setUp`, and for Macs before 0.11.2 the phone reads it from the
+  reasons; in the grid's order with Messages contacts apart; icons keep their
+  place as agents connect or leave while the screen is open), the status subtitle, and Settings (Mac name, key
   fingerprint, status and route, Keep Mac Awake, Forget This Mac). Every screen
   follows one rule: a short line to glance at, the Mac's full text on demand.
 - **Compose bar after a refused prepare:** the Mac's reason stays above the

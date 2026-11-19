@@ -7,14 +7,15 @@ import msgblastRemoteProtocol
 /// the conversation, this same screen becomes its thread in place.
 struct NewConversationView: View {
     @ObservedObject var app: MobileApp
-    /// The checked agents. Starts with the Mac's selected agents that can take a send;
-    /// taps add and remove, and none checked means no one.
+    /// The checked agents. Follows the Mac's selected agents that can take a send until the
+    /// first tap; taps add and remove, and none checked means no one.
     @State private var selected: [String] = []
+    @State private var touched = false
     /// After the initial fill, so only later taps spring into the header.
     @State private var settled = false
-    /// The strip's order, fixed when the screen opens so icons never move under a finger
-    /// while readiness changes.
-    @State private var order: (agents: [String], messages: [String])?
+    /// The strip's agents, then Messages contacts. Icons keep their place as the Mac's list
+    /// changes, so none moves under a finger; newly connected ones are added at the end.
+    @State private var order: [[String]] = [[], []]
     @State private var focusRequest = 0
     /// The conversation the send created, once known.
     @State private var created: UUID?
@@ -29,25 +30,43 @@ struct NewConversationView: View {
         }
     }
 
+    /// The connected agents as the Mac reports them now.
+    private var listed: [[String]] {
+        let list = presenter.newConversationAgents
+        return [list.agents.map(\.agentID), list.messages.map(\.agentID)]
+    }
+
+    /// Only once the Mac has answered: before its first snapshot, or while it is away, an
+    /// empty list says nothing about what is connected.
+    private func showsNoAgents(_ strip: [[String]]) -> Bool {
+        strip.allSatisfy(\.isEmpty) && app.store.projection.seq != nil && app.connection.state.canSend
+    }
+
     private var empty: some View {
-        let list = order ?? Self.order(presenter.newConversationAgents)
+        // Before the first refresh, the Mac's list as it is.
+        let strip = order.allSatisfy(\.isEmpty) ? listed : order
         return Color(.systemBackground)
             .ignoresSafeArea(.container, edges: .horizontal)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: Space.inset) {
-                            if list.agents.isEmpty && list.messages.isEmpty {
-                                Text("Connect an agent on your Mac to message it here.").font(.footnote).foregroundStyle(.secondary)
-                                    .frame(height: Space.avatarRow)
-                            }
-                            ForEach(list.agents, id: \.self) { id in icon(id) }
-                            if !list.messages.isEmpty {
-                                Divider().frame(height: Space.avatarRow)
-                                ForEach(list.messages, id: \.self) { id in icon(id) }
+                    Group {
+                        if showsNoAgents(strip) {
+                            Text("Connect an agent on your Mac to message it here.").font(.footnote).foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, minHeight: Space.avatarRow)
+                                .padding(.horizontal, Space.screen).padding(.top, Space.gap)
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: Space.inset) {
+                                    ForEach(strip[0], id: \.self) { id in icon(id) }
+                                    if !strip[1].isEmpty {
+                                        Divider().frame(height: Space.avatarRow)
+                                        ForEach(strip[1], id: \.self) { id in icon(id) }
+                                    }
+                                }
+                                .padding(.horizontal, Space.screen).padding(.top, Space.gap)
                             }
                         }
-                        .padding(.horizontal, Space.screen).padding(.top, Space.gap)
                     }
                     .background(.bar)
                     ComposeBar(app: app, conversationID: nil, recipients: $selected, focusRequest: focusRequest) { id in created = id }
@@ -60,26 +79,28 @@ struct NewConversationView: View {
             }
             .sensoryFeedback(.selection, trigger: selected)
             .onAppear {
-                if order == nil {
-                    order = Self.order(presenter.newConversationAgents)
-                    selected = presenter.defaultNewSelection
-                    Task { settled = true }
-                }
+                refresh(listed)
+                if !settled { Task { settled = true } }
                 // The keyboard comes up with the screen.
                 Task { focusRequest += 1 }
                 #if DEBUG
                 // Design review: `MSGBLAST_FIXTURE_FILTER=<id>,<id>` checks agents.
-                if let agents = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FILTER"] { selected = agents.split(separator: ",").map(String.init) }
+                if let agents = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_FILTER"] { selected = agents.split(separator: ",").map(String.init); touched = true }
                 #endif
             }
+            .onChange(of: listed) { _, now in refresh(now) }
+    }
+
+    /// Follows the Mac's list: an agent that leaves is unchecked, and until the first tap
+    /// the checks follow the Mac's selection.
+    private func refresh(_ now: [[String]]) {
+        order = zip(order, now).map(ProjectionPresenter.stripOrder)
+        let ids = Set(now.joined())
+        selected = touched ? selected.filter(ids.contains) : presenter.defaultNewSelection
     }
 
     /// An agent as the thread's strip shows it: the avatar with the Mac's corner check,
     /// unchosen at 60%.
-    private static func order(_ list: (agents: [AgentAvailability], messages: [AgentAvailability])) -> (agents: [String], messages: [String]) {
-        (list.agents.map(\.agentID), list.messages.map(\.agentID))
-    }
-
     @ViewBuilder private func icon(_ id: String) -> some View {
         if let agent = app.store.projection.agents[id] { icon(agent) }
     }
@@ -88,6 +109,7 @@ struct NewConversationView: View {
         let checked = selected.contains(agent.agentID)
         let available = agent.readiness != .unavailable
         return Button {
+            touched = true
             selected = ProjectionPresenter.togglingNew(agent.agentID, chosen: selected)
         } label: {
             AgentAvatar(app: app, agentID: agent.agentID, name: agent.displayName, size: Space.avatarRow)

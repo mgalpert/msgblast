@@ -6,12 +6,12 @@ import msgblastMobileKit
 import msgblastRemoteProtocol
 
 /// Debug-only screens for design review without pairing or a network. Launch with
-/// `MSGBLAST_FIXTURE` set to inbox, conversation, conversation-short, typing, incomplete, blocked, new, settings,
+/// `MSGBLAST_FIXTURE` set to inbox, conversation, conversation-short, typing, incomplete, blocked, new, new-live, settings,
 /// reconnecting, locked, pairing or pairing-paste (and optionally `MSGBLAST_FIXTURE_CONVERSATION=<uuid>`
 /// and `MSGBLAST_FIXTURE_DRAFT=<text>` to pre-fill the composer).
 /// Everything here is simulated; nothing is read from or sent to a Mac.
 enum DesignFixtures {
-    enum Name: String, CaseIterable { case inbox, conversation, conversationShort = "conversation-short", conversationPinned = "conversation-pinned", conversationMany = "conversation-many", typing, incomplete, blocked, new, settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
+    enum Name: String, CaseIterable { case inbox, conversation, conversationShort = "conversation-short", conversationPinned = "conversation-pinned", conversationMany = "conversation-many", typing, incomplete, blocked, new, newLive = "new-live", settings, reconnecting, locked, pairing, pairingPaste = "pairing-paste" }
 
     static var current: Name? { ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE"].flatMap(Name.init(rawValue:)) }
 
@@ -31,7 +31,7 @@ enum DesignFixtures {
         let requested = ProcessInfo.processInfo.environment["MSGBLAST_FIXTURE_CONVERSATION"].flatMap(UUID.init(uuidString:))
         if let fixture = fixtureConversation(name) { return .conversation(requested ?? fixture) }
         switch name {
-        case .new: return .newConversation
+        case .new, .newLive: return .newConversation
         case .settings: return .settings
         case .pairingPaste: return .pastePairingLink
         default: return requested.map(LaunchScreen.conversation) ?? .inbox
@@ -71,7 +71,20 @@ enum DesignFixtures {
         // Every row but the group has been read on this phone, so the inbox shows one unread dot.
         for id in [codexDirect, cedarDirect, unfinished, blockedConversation] { app.store.markOpened(id, at: now) }
         if paired { recordFixtureReply(app) }
+        if name == .newLive { connectLater(app) }
         return app
+    }
+
+    /// `new-live`: nothing is set up on the Mac at first; then Claude and ChatGPT connect there.
+    @MainActor private static func connectLater(_ app: MobileApp) {
+        for (index, id) in ["claude", "chatgptApp"].enumerated() {
+            guard var agent = app.store.projection.agents[id] else { continue }
+            agent.setUp = true
+            let seq = UInt64(43 + index)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3 * Double(index + 1)) {
+                app.store.handle(.events([RemoteEvent(seq: seq, change: .agentUpsert(agent))], latest: seq))
+            }
+        }
     }
 
     @MainActor private static func showConnection(_ app: MobileApp, _ name: Name) {
@@ -143,6 +156,7 @@ enum DesignFixtures {
         for var agent in agents {
             // Cedar keeps initials, so both the artwork and the fallback are on screen.
             agent.avatarRef = avatars[agent.agentID]?.ref
+            if name == .newLive { agent.setUp = false }
             state.agents[agent.agentID] = agent; state.agentOrder.append(agent.agentID)
         }
         state.grid = ["claude", "chatgptApp", "museApp", "codexCLI", "dotsApp", "grok", "geminiApp", cedar]

@@ -196,6 +196,26 @@ final class RemoteAvailabilityTests: XCTestCase {
         if case .busy = AvailabilityCalculator.availability(agent, inputs: busy, now: now).readiness {} else { XCTFail("A Messages send is busy") }
     }
 
+    /// Whether an agent is set up comes from its own signals, never from which reason the
+    /// calculator reached first, so the phone can list only connected agents.
+    func testSetUpIgnoresPassingStates() {
+        XCTAssertEqual(evaluate(signals(.claudeApp)).setUp, true)
+        let unbound: (inout AgentSessionSignals) -> Void = { $0.hasDesktopBinding = false; $0.desktopReady = false; $0.canSubmitNativePrompt = true }
+        XCTAssertEqual(evaluate(signals(.claudeApp, unbound)).setUp, false, "Preparing on the first send is not connected")
+        XCTAssertEqual(evaluate(signals(.claudeApp) { unbound(&$0); $0.loading = true }).setUp, false, "Busy first")
+        var denied = allowed(); denied.accessibility = .denied
+        XCTAssertEqual(evaluate(signals(.claudeApp, unbound), denied).setUp, false, "A missing permission first")
+        XCTAssertEqual(evaluate(signals(.claudeApp), denied).setUp, true, "Connected, waiting on a permission")
+        XCTAssertEqual(evaluate(signals(.claudeApp) { $0.desktopInstalled = false }).setUp, false)
+        XCTAssertEqual(evaluate(signals(.claude) { $0.signedIn = false }).setUp, false)
+        XCTAssertEqual(evaluate(signals(.claude) { $0.signedIn = nil }).setUp, true, "Sign-in is checked when you send, as on the Mac")
+        XCTAssertEqual(evaluate(signals(.claudeCode) { $0.accountStatus = .signedOut; $0.isSending = true }).setUp, false, "Signed out, even while sending")
+        XCTAssertEqual(evaluate(signals(.codexCLI) { $0.isSending = true }).setUp, true)
+        XCTAssertEqual(evaluate(signals(.grokbot) { $0.grokBotConfigured = false }).setUp, false)
+        let fo = MessagesAgentSignal(agentID: UUID(), gridID: .featuredMessages(.fo), name: "Fo", routable: false, routeStatus: "", selected: true)
+        XCTAssertEqual(AvailabilityCalculator.availability(fo, inputs: allowed(), now: now).setUp, false)
+    }
+
     /// Every reason reads at a glance on the phone: one short clause, "on your Mac" at most
     /// once, never "in msgblast on your Mac", no trailing period, no consequence clause.
     func testEveryReasonIsOneShortLine() {
