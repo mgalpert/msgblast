@@ -1,6 +1,6 @@
 # PR 152 evidence: late messages start a direct thread
 
-Simulated: packaged blue **msgblast Demo** built from `acee6cc1aa491df6547e76e9f71f8dd242e9b059`,
+Simulated: packaged blue **msgblast Demo** built from `9f0b3518520151ae951cf0aa5d2c0b3a6a47fdc1`,
 launched with `--isolated-demo --late-message-preview` in the foreground test VM. No real Messages,
 no real sends; all text is Demo sample data.
 
