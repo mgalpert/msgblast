@@ -1,0 +1,50 @@
+{
+ "pr": 129,
+ "reviewed_head": "b1794cd6ed946a7cedfd27582505b2928c6da765",
+ "base": "68fe240",
+ "verdict": "approve",
+ "reviewer_model": "claude-sonnet (independent subagent)",
+ "author_models": [
+  "claude-opus"
+ ],
+ "reviewed_at": "2026-11-19T07:38:11Z",
+ "summary": "The MAJOR from a623497 is fixed. Pending.timedOut now returns Bool (false when the send is untracked) and MobileApp.composeSendTimedOut forwards it, skipping bindLateSends when false. The catch block returns early only when the send is tracked; otherwise it sets message to the error's description (the unconfirmed text), so a re-pair or unpair that cleared composeSends via failWaiting now tells the user. The tracked path is unchanged: timedOut marks it, bindLateSends runs, the unconfirmed notice comes from status, message stays nil. sentID == nil still sets message as before. The draft is untouched in every branch (finishSent is not called in catch). The delta adds no focus calls and the full diff has none. The new test drives a real waiting send through re-pair and asserts the contract the bar uses, not the rendered message text (MINOR). No regressions found in the delta or full diff. Earlier MINORs carried over.",
+ "findings": [
+  {
+   "severity": "MINOR",
+   "file": "msgblastMobileTests/ViewModelTests.swift",
+   "line": 1003,
+   "detail": "testPairingAgainDropsSendsWaitingOnTheOldPairing drives a real waiting send through a re-pair and asserts the result throws unconfirmed, composeSendTimedOut returns false, the list is empty and the completion did not run. That is the exact contract the bar's catch block branches on, but the bar's own message assignment is view code and is not asserted; no test runs ComposeBar. If the one-line guard in ComposeBar.swift ~375 were removed, the test would still pass. Acceptable by reading: the branch is `if let sentID, app.composeSendTimedOut(sentID) { return }` then `message = ...`, and status shows message after any connection block."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblastMobile/Views/ComposeBar.swift",
+   "line": 353,
+   "detail": "Carried over: a late completion runs finishSent on a bar that may be gone; the persisted draft keeps the already-sent text and can invite a duplicate resend."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblastMobile/Kit/Models/MobileApp.swift",
+   "line": 33,
+   "detail": "Carried over: composeSends and composeCompletions are in-memory only; after a relaunch a late applied is not bound, so the field is not cleared and the reply link is lost."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblastMobile/Kit/Store/CommandLedger.swift",
+   "line": 137,
+   "detail": "Carried over: a timed-out send whose record settles as unconfirmed stays tracked, so the notice shows until relaunch; a late rejected send is dropped with no message."
+  },
+  {
+   "severity": "MINOR",
+   "file": "msgblastMobileTests/ViewModelTests.swift",
+   "line": 0,
+   "detail": "Carried over: other tests use a Composer harness or a local Pending rather than the view, so status wiring and finishSent/onSent are untested."
+  },
+  {
+   "severity": "NIT",
+   "file": "msgblastMobile/Kit/Models/MobileApp.swift",
+   "line": 113,
+   "detail": "Carried over: the waitingIDs.contains check before bindLateSends is redundant with the guard inside it."
+  }
+ ]
+}
