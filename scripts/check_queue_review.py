@@ -35,20 +35,20 @@ def reviewed(statuses, head):
     return True, f'"{CONTEXT}" passed on {head}: {latest.get("description") or ""}'.rstrip(': ')
 
 
-def group_pulls(commits, base_sha, head_sha):
+def group_pulls(get_commit, base_sha, head_sha, limit=100):
     """Pull requests in a queue group, read from GitHub's merge commits on the first-parent chain.
 
     With merge groups larger than one, the branch name names only the last pull
     request, so every pull request between base and head is read from its merge
-    commit. Anything else on that chain fails closed.
+    commit. The queue must use the merge-commit method; anything else on that
+    chain fails closed.
     """
-    by_sha = {c['sha']: c for c in commits}
     numbers = []
     sha = head_sha
     while sha != base_sha:
-        commit = by_sha.get(sha)
-        if commit is None:
-            raise ValueError(f'{sha} is not between the queue base and head')
+        if len(numbers) >= limit:
+            raise ValueError(f'no queue base within {limit} merge commits of {head_sha[:7]}')
+        commit = get_commit(sha)
         match = re.match(r'Merge pull request #(\d+) ', commit['commit']['message'])
         if not match or len(commit['parents']) != 2:
             raise ValueError(f'{sha[:7]} is not a pull request merge commit')
@@ -70,8 +70,8 @@ def main():
     def api(path):
         return json.loads(subprocess.check_output(['gh', 'api', path]))
 
-    compare = api(f"repos/{args.repo}/compare/{group['base_sha']}...{group['head_sha']}")
-    numbers = group_pulls(compare['commits'], group['base_sha'], group['head_sha'])
+    numbers = group_pulls(lambda sha: api(f'repos/{args.repo}/commits/{sha}'),
+                          group['base_sha'], group['head_sha'])
     if not numbers or numbers[-1] != last:
         print(f'Queue branch names PR #{last}, but its merge commits name {numbers}.')
         return 1

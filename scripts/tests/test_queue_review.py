@@ -33,19 +33,25 @@ class QueueReviewTests(unittest.TestCase):
         def merge(sha, parent, number):
             return dict(sha=sha, commit=dict(message=f'Merge pull request #{number} from x/y\n'),
                         parents=[dict(sha=parent), dict(sha='p' + sha)])
-        commits = [dict(sha='pa', commit=dict(message='work'), parents=[dict(sha='base')]),
-                   merge('a', 'base', 7), merge('b', 'a', 9)]
-        self.assertEqual(review.group_pulls(commits, 'base', 'b'), [7, 9])
-        self.assertEqual(review.group_pulls(commits, 'base', 'a'), [7])
-        squashed = commits + [dict(sha='c', commit=dict(message='Merge pull request #11 from x/y'),
-                                   parents=[dict(sha='b')])]
+        commits = {c['sha']: c for c in [
+            dict(sha='pa', commit=dict(message='Merge pull request #5 from x/y'), parents=[dict(sha='base')]),
+            merge('a', 'base', 7), merge('b', 'a', 9),
+            dict(sha='c', commit=dict(message='Merge pull request #11 from x/y'), parents=[dict(sha='b')]),
+            dict(sha='d', commit=dict(message='Fix things'), parents=[dict(sha='b')])]}
+
+        def group(base, head, limit=100):
+            return review.group_pulls(commits.__getitem__, base, head, limit)
+        self.assertEqual(group('base', 'b'), [7, 9])
+        self.assertEqual(group('base', 'a'), [7])
+        self.assertEqual(group('b', 'b'), [])
+        for base, head in [('base', 'c'), ('base', 'd'), ('base', 'pa')]:
+            with self.assertRaises(ValueError):
+                group(base, head)
         with self.assertRaises(ValueError):
-            review.group_pulls(squashed, 'base', 'c')
-        with self.assertRaises(ValueError):
-            review.group_pulls(commits, 'other', 'b')
-        forged = commits + [dict(sha='d', commit=dict(message='Fix things'), parents=[dict(sha='b')])]
-        with self.assertRaises(ValueError):
-            review.group_pulls(forged, 'base', 'd')
+            group('base', 'b', limit=1)
+        with self.assertRaises(KeyError):
+            group('other', 'b')
+
 
 if __name__ == '__main__':
     unittest.main()
