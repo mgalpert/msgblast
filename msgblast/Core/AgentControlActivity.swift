@@ -54,6 +54,7 @@ public struct AgentControlActivityLog: Equatable, Sendable {
         case .createConversation(_, let agents, _): ("Started a blast", agents.count)
         case .sendShared(_, _, let agents, _): ("Followed up", agents.isEmpty ? nil : agents.count)
         case .sendPrivate: ("Messaged one agent", 1)
+        case .chooseAction: ("Chose an agent's suggestion", 1)
         case .endConversation: ("Ended a comparison", nil)
         default: nil
         }

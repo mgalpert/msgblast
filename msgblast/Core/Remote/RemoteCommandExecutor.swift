@@ -10,6 +10,10 @@ public struct RemoteSendPlan: Sendable, Equatable {
     public var text: String
     public var agentIDs: [String]
     public var attachmentIDs: [String]
+    /// A tap on a suggestion button: `text` is its label, this is the offer it was shown in, and
+    /// the agent's page clicks that button only while it still shows that offer.
+    public var offerID: String?
+    public var isAction: Bool { offerID != nil }
 }
 
 public struct RemoteHostResult: Sendable, Equatable {
@@ -304,6 +308,7 @@ public final class RemoteCommandExecutor {
         case .createConversation(let text, let agents, let files): RemoteSendPlan(kind: .newConversation, conversationID: nil, text: text, agentIDs: agents, attachmentIDs: files)
         case .sendShared(let id, let text, let agents, let files): RemoteSendPlan(kind: .sharedFollowUp, conversationID: id, text: text, agentIDs: agents, attachmentIDs: files)
         case .sendPrivate(let id, let agent, let text, let files): RemoteSendPlan(kind: .privateMessage, conversationID: id, text: text, agentIDs: [agent], attachmentIDs: files)
+        case .chooseAction(let id, let agent, let label, let offer): RemoteSendPlan(kind: .privateMessage, conversationID: id, text: label, agentIDs: [agent], attachmentIDs: [], offerID: offer)
         default: nil
         }
     }
@@ -316,6 +321,7 @@ public final class RemoteCommandExecutor {
         if let rejection = checkPlanShape(command, plan) { return rejection }
         var members: [String]?
         if let rejection = resolveMembers(command, plan.conversationID, host: host, into: &members) { return rejection }
+        if plan.isAction, members?.contains(where: plan.agentIDs.contains) != true { return reject(command, .invalidCommand, "That agent isn't in this conversation") }
         return checkTargets(command, plan, members: members, host: host)
     }
 
@@ -444,7 +450,7 @@ public final class RemoteCommandExecutor {
         case .endConversation, .renameConversation, .requestReport: return await applyConversationCommand(command, host: host)
         case .acknowledgeIncomplete, .cancelNative, .setKeepAwake: return applyAgentCommand(command, host: host)
         case .uploadAttachmentChunk, .attachStaged: return applyAttachmentCommand(command, host: host)
-        case .createConversation, .sendShared, .sendPrivate, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
+        case .createConversation, .sendShared, .sendPrivate, .chooseAction, .prepareConversation, .queryCommand, .fetchAvatar, .fetchAttachment: return reject(command, .invalidCommand, "Handled separately.")
         case .unknown(let kind): return reject(command, .unsupported, "Update msgblast on your Mac")
         }
     }

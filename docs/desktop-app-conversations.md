@@ -307,6 +307,10 @@ composer, draft, and generation state without requiring unrelated older messages
 to be loaded. After opening the intended chat, the adapter reads its full exposed
 conversation again before any input. Incomplete owned history still blocks a
 follow-up; navigation does not relax send or reply attribution.
+When Claude shows a claude.ai page outside its chats, such as a Code session,
+Connect and an explicit send open a new chat through `claude://claude.ai/new`
+while msgblast holds the foreground for Claude, then restore focus. Background
+checks and reply polling only report that page and never navigate.
 
 Each ChatGPT and Claude comparison gets a dedicated chat. The first native
 prompt includes a comparison reference while the local transcript keeps the
