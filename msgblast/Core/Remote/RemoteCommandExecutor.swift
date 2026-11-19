@@ -225,10 +225,9 @@ public final class RemoteCommandExecutor {
         if inProgress.contains(id) { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Already running on your Mac", replayed: true)); return }
         if command.action.isSerial {
             if let rejection = command.action.isSend ? checkSend(command) : checkPrepare(command) { finish(rejection, reply); return }
-            let replacesPrepares: Bool
-            if case .prepareConversation = command.action { replacesPrepares = true } else { replacesPrepares = false }
-            let kept = replacesPrepares ? sendQueue.filter { if case .prepareConversation = $0.command.action { false } else { true } }.count : sendQueue.count
-            guard kept < Self.maximumQueuedSends else {
+            // A prepare replaces any waiting prepare, so only the others count toward the cap.
+            let waiting = Self.isPrepare(command) ? sendQueue.filter { !Self.isPrepare($0.command) }.count : sendQueue.count
+            guard waiting < Self.maximumQueuedSends else {
                 finish(reject(command, .macBusy, "Too many requests waiting on your Mac. Try again soon"), reply); return
             }
             inProgress.insert(id)
@@ -269,10 +268,9 @@ public final class RemoteCommandExecutor {
     /// again whenever its recipients change, and only the newest answer matters to it), so a
     /// prepare never waits behind preparations nobody needs any more.
     private func enqueue(_ command: RemoteCommand, _ reply: @escaping (RemoteCommandResult) -> Void) {
-        let isPrepare: (RemoteCommand) -> Bool = { if case .prepareConversation = $0.action { true } else { false } }
-        if isPrepare(command) {
-            let replaced = sendQueue.filter { isPrepare($0.command) }
-            sendQueue.removeAll { isPrepare($0.command) }
+        if Self.isPrepare(command) {
+            let replaced = sendQueue.filter { Self.isPrepare($0.command) }
+            sendQueue.removeAll { Self.isPrepare($0.command) }
             for entry in replaced {
                 finish(RemoteCommandResult(clientCommandID: entry.command.clientCommandID, outcome: .applied, message: "Replaced by a newer request"), entry.reply)
             }
@@ -281,6 +279,8 @@ public final class RemoteCommandExecutor {
         sendQueue.append((command, reply, sending))
         drain()
     }
+
+    private static func isPrepare(_ command: RemoteCommand) -> Bool { if case .prepareConversation = command.action { true } else { false } }
 
     private func drain() {
         guard !sending, !sendQueue.isEmpty else { return }

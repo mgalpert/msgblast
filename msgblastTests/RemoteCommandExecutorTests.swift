@@ -423,6 +423,30 @@ final class RemoteCommandExecutorTests: XCTestCase {
         XCTAssertEqual(host.sends.count, RemoteCommandExecutor.maximumQueuedSends + 1)
     }
 
+    func testAFullQueueStillTakesANewerPrepareAndRecordsWhatItRefuses() async {
+        let host = host()
+        host.sendDelay = .milliseconds(100)
+        let executor = RemoteCommandExecutor(host: host)
+        var finals: [UUID: RemoteCommandResult] = [:]
+        func submit(_ action: RemoteAction) -> UUID {
+            let command = RemoteCommand(action: action)
+            executor.submit(command) { if $0.outcome != .accepted { finals[$0.clientCommandID] = $0 } }
+            return command.clientCommandID
+        }
+        for n in 0..<RemoteCommandExecutor.maximumQueuedSends { _ = submit(.createConversation(text: "\(n)", agentIDs: ["claude"], attachmentIDs: [])) }
+        let stale = submit(.prepareConversation(conversationID: nil, agentIDs: ["claude"]))
+        XCTAssertEqual(executor.queuedSendCount, RemoteCommandExecutor.maximumQueuedSends, "One running and a full queue")
+        let newer = submit(.prepareConversation(conversationID: nil, agentIDs: ["chatgptApp"]))
+        XCTAssertEqual(finals[stale]?.message, "Replaced by a newer request", "The phone's newest recipients are not refused")
+        XCTAssertNil(finals[newer])
+        let refused = submit(.createConversation(text: "One too many", agentIDs: ["claude"], attachmentIDs: []))
+        XCTAssertEqual(finals[refused]?.code, .macBusy)
+        let stored = await executor.execute(RemoteCommand(action: .queryCommand(clientCommandID: refused)))
+        XCTAssertEqual(stored.code, .macBusy, "A refusal is recorded like any other result")
+        for _ in 0..<300 where executor.isSending || executor.queuedSendCount > 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(host.prepared, [["chatgptApp"]])
+    }
+
     func testUploadChunksStayOutOfTheReplayLedger() async {
         let host = host()
         let executor = RemoteCommandExecutor(host: host)

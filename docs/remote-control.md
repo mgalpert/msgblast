@@ -136,7 +136,8 @@ Rules the Mac enforces:
   that waits is answered `accepted`, then a second `accepted` ("Started on your
   Mac") when its turn comes, and is re-checked then; if the Mac user started a send
   meanwhile it is refused (`macBusy`), never retried. At most 8 wait behind the
-  running one; more are refused (`macBusy`). Sends still waiting when remote
+  running one, not counting a prepare the new one replaces; more are refused
+  (`macBusy`) and the refusal is recorded like any result. Sends still waiting when remote
   control restarts are refused, never run.
 - The Mac holds at most 4 partial uploads and 50 MB across them. Going over drops
   the least recently used upload, which then fails at attach and is added again.
