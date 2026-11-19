@@ -225,8 +225,11 @@ public final class RemoteCommandExecutor {
         if inProgress.contains(id) { reply(RemoteCommandResult(clientCommandID: id, outcome: .accepted, message: "Already running on your Mac", replayed: true)); return }
         if command.action.isSerial {
             if let rejection = command.action.isSend ? checkSend(command) : checkPrepare(command) { finish(rejection, reply); return }
-            guard sendQueue.count < Self.maximumQueuedSends else {
-                reply(reject(command, .macBusy, "Too many requests waiting on your Mac. Try again soon")); return
+            let replacesPrepares: Bool
+            if case .prepareConversation = command.action { replacesPrepares = true } else { replacesPrepares = false }
+            let kept = replacesPrepares ? sendQueue.filter { if case .prepareConversation = $0.command.action { false } else { true } }.count : sendQueue.count
+            guard kept < Self.maximumQueuedSends else {
+                finish(reject(command, .macBusy, "Too many requests waiting on your Mac. Try again soon"), reply); return
             }
             inProgress.insert(id)
             enqueue(command, reply)
