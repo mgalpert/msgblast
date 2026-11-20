@@ -38,10 +38,14 @@ xcodebuild -project msgblast.xcodeproj -scheme msgblast \
   -destination 'platform=macOS,arch=arm64' \
   MSGBLAST_APP_BUNDLE_IDENTIFIER=com.msgblast.contributor-tests \
   ASSETCATALOG_COMPILER_APPICON_NAME=AppIconDemo \
+  -parallel-testing-enabled YES \
   -only-testing:msgblastTests test
 ```
 
-This runs the unit target, not the UI suite. Existing tests use controlled data,
+This runs the unit target, not the UI suite. Test classes run in parallel
+processes, as in native CI; most of the suite's time is spent waiting on real
+fixture timeouts, so this roughly halves the run. A test that fails only in
+parallel is a bug to fix, not a reason to drop the flag. Existing tests use controlled data,
 SQLite databases, transports, and executable fixtures. Inspect a test's setup
 before running it. A selected blue icon by itself is not Demo mode.
 For a focused regression, append the test class or method to `-only-testing:`.
