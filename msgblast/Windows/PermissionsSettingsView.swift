@@ -51,7 +51,7 @@ struct PermissionControlsView: View {
                     .frame(width: 36, height: 36).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("msgblast").font(.headline)
-                    Text("Feel free to inspect how we use this information. Everything is [open source](https://github.com/mgalpert/msgblast).")
+                    Text("Feel free to inspect how we use this information. Everything is [open source](https://github.com/contains-studio/msgblast).")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
