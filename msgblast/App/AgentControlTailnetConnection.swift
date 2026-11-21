@@ -8,6 +8,11 @@ enum AgentControlTailnetDNS {
         tailscale(["status", "--json"]).flatMap(AgentControlTailnetStatus.parse)
     }
 
+    /// The tailnet this Mac is signed in to, for the paired phone. Nil when Tailscale couldn't be asked.
+    nonisolated static func tailnetName() -> String? {
+        tailscale(["status", "--json"]).flatMap(AgentControlTailnetStatus.tailnetName)
+    }
+
     /// Read-only `tailscale serve status --json`. Nil when Tailscale couldn't be asked.
     nonisolated static func serve(backendPort: Int) -> AgentControlTailnetServe.State? {
         tailscale(["serve", "status", "--json"]).map { AgentControlTailnetServe.parse($0, backendPort: backendPort) }

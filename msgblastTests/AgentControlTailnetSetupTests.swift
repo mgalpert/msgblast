@@ -58,6 +58,15 @@ final class AgentControlTailnetSetupTests: XCTestCase {
         XCTAssertEqual(store.client(matching: grok), AgentControlTailnet.grokBotClient)
     }
 
+    func testTailnetName() {
+        func name(_ json: String) -> String? { AgentControlTailnetStatus.tailnetName(Data(json.utf8)) }
+        XCTAssertEqual(name(#"{"BackendState":"Running","CurrentTailnet":{"Name":"person@example.com","MagicDNSSuffix":"tail1234.ts.net"}}"#), "person@example.com")
+        XCTAssertEqual(name(#"{"BackendState":"Running","CurrentTailnet":{"Name":"","MagicDNSSuffix":"tail1234.ts.net."}}"#), "tail1234.ts.net")
+        XCTAssertNil(name(#"{"BackendState":"Stopped","CurrentTailnet":{"Name":"person@example.com"}}"#), "Tailscale turned off has no tailnet to show")
+        XCTAssertNil(name(#"{"BackendState":"NeedsLogin","CurrentTailnet":null}"#))
+        XCTAssertNil(name("not json"))
+    }
+
     func testStatusParsing() {
         let named = #"{"Self":{"DNSName":"mac.example.ts.net."},"CertDomains":["mac.example.ts.net"],"Peer":{"n1":{"HostName":"laptop","DNSName":"laptop.example.ts.net."},"n2":{"HostName":"GrokBot","DNSName":"other.example.ts.net."}}}"#
         let parsed = AgentControlTailnetStatus.parse(Data(named.utf8))

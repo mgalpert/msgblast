@@ -79,7 +79,7 @@ enum DesignFixtures {
         case .pairing, .pairingPaste: break
         case .reconnecting: app.connection.showDesignFixture(.reconnecting(attempt: 3, retryAt: now.addingTimeInterval(8)), lastHeard: now.addingTimeInterval(-130))
         case .locked: app.connection.showDesignFixture(.macLocked, lastHeard: now.addingTimeInterval(-40))
-        default: app.connection.showDesignFixture(.connected, lastHeard: now, connectedVia: "100.101.102.103:52000", connectSeconds: 0.4)
+        default: app.connection.showDesignFixture(.connected, lastHeard: now, connectedVia: "100.101.102.103:52000", network: .tailscale, connectSeconds: 0.4)
         }
     }
 
@@ -111,7 +111,7 @@ enum DesignFixtures {
         state.macLocked = name == .locked
         state.macStatus = MacStatus(macName: "Studio Mac", variant: .production, locked: name == .locked, awake: true, databaseAvailable: true, databaseStatus: "Connected",
                                     messagesBusy: false, broadcastBusy: false, sendingAgentIDs: ["codexCLI"], keepAwakeEnabled: true, keepAwakeHeld: name != .locked,
-                                    messagesSendsAllowed: true, observedAt: now)
+                                    messagesSendsAllowed: true, tailnet: "example.ts.net", observedAt: now)
         addAgents(&state, name)
         addGroup(&state, name)
         addDirectThreads(&state)

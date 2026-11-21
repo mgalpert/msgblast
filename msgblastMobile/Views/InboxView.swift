@@ -154,6 +154,14 @@ struct SettingsView: View {
                             if let route = app.connection.connectedVia { Text(route).font(.caption.monospaced()).foregroundStyle(.secondary) }
                         }
                     } label: { Text("Status") }
+                    if app.connection.state == .connected, let network = app.connection.connectedNetwork {
+                        LabeledContent {
+                            VStack(alignment: .trailing, spacing: Space.hairline) {
+                                Text(network == .tailscale ? "Tailscale" : "Local network")
+                                if network == .tailscale, let tailnet = app.store.projection.macStatus?.tailnet { Text(tailnet).font(.caption).foregroundStyle(.secondary) }
+                            }
+                        } label: { Text("Network") }
+                    }
                     if let seconds = app.connection.lastConnectSeconds { LabeledContent("Connect time", value: String(format: "%.1f s", seconds)) }
                 } header: {
                     HStack(spacing: Space.gap) {

@@ -112,6 +112,8 @@ public final class MacConnection: ObservableObject {
     @Published public private(set) var lastError: String?
     /// The candidate that won the last race (for example "100.101.102.103:52000" or a Bonjour name).
     @Published public private(set) var connectedVia: String?
+    /// Whether that candidate is a Tailscale or a local network address (Bonjour counts as local).
+    @Published public private(set) var connectedNetwork: RemoteEndpointKind?
     /// Time from starting the race to an authenticated session, for the last connection.
     @Published public private(set) var lastConnectSeconds: Double?
     private var raceStarted: Date?
@@ -168,7 +170,7 @@ public final class MacConnection: ObservableObject {
         pairing = (offer, deviceName, completion)
         state = .pairing
         let endpoints = offer.endpoints.map { MacEndpoint.host($0.host, port: offer.port) } + bonjour
-        open(endpoints, spki: offer.spkiSHA256, driver: RemoteClientDriver(mode: .pair(offer: offer, deviceName: deviceName, deviceKey: key)))
+        open(endpoints, networks: Self.networks(offer.endpoints, port: offer.port), spki: offer.spkiSHA256, driver: RemoteClientDriver(mode: .pair(offer: offer, deviceName: deviceName, deviceKey: key)))
     }
 
     // MARK: Lifecycle
@@ -192,7 +194,7 @@ public final class MacConnection: ObservableObject {
         guard let key = try? keys.loadOrCreate() else { state = .pairingLost("This phone's key is missing. Pair again."); return }
         state = .connecting
         let driver = RemoteClientDriver(mode: .resume(deviceID: mac.deviceID, deviceKey: key, macIdentityKey: mac.identityKey), sinceSeq: sinceSeq())
-        open(mac.endpoints + bonjour, spki: mac.spkiSHA256, driver: driver)
+        open(mac.endpoints + bonjour, networks: Self.networks(mac.addresses, port: mac.port), spki: mac.spkiSHA256, driver: driver)
     }
 
     /// Going to the background or the user disconnecting. No reconnect until `connect()`.
@@ -241,19 +243,25 @@ public final class MacConnection: ObservableObject {
 
     #if DEBUG
     /// Design-review fixtures only: shows a connection state with no network at all.
-    public func showDesignFixture(_ state: MacConnectionState, lastHeard: Date?, connectedVia: String? = nil, connectSeconds: Double? = nil) {
+    public func showDesignFixture(_ state: MacConnectionState, lastHeard: Date?, connectedVia: String? = nil, network: RemoteEndpointKind? = nil, connectSeconds: Double? = nil) {
         reconnectTask?.cancel(); reconnectTask = nil
         stopTransport()
         self.state = state
         self.lastHeard = lastHeard
         self.connectedVia = connectedVia
+        connectedNetwork = network
         lastConnectSeconds = connectSeconds
     }
     #endif
 
     // MARK: Internals
 
-    private func open(_ endpoints: [MacEndpoint], spki: Data, driver: RemoteClientDriver) {
+    /// Address kinds by candidate label, as `MacEndpoint.label` spells a host and port.
+    static func networks(_ addresses: [RemoteEndpoint], port: UInt16) -> [String: RemoteEndpointKind] {
+        Dictionary(addresses.map { (MacEndpoint.host($0.host, port: port).label, $0.kind) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private func open(_ endpoints: [MacEndpoint], networks: [String: RemoteEndpointKind], spki: Data, driver: RemoteClientDriver) {
         stopTransport()
         raceStarted = now()
         self.driver = driver
@@ -262,6 +270,7 @@ public final class MacConnection: ObservableObject {
             switch result {
             case .success(let transport):
                 self.connectedVia = transport.label
+                self.connectedNetwork = networks[transport.label] ?? .lan
                 self.transport = transport
                 transport.onReceive = { [weak self] bytes in self?.receive(bytes) }
                 transport.onState = { [weak self] state in if state != .ready { self?.lost("The connection closed.") } }
