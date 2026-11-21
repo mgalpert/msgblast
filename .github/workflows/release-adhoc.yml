@@ -21,6 +21,9 @@ jobs:
   release:
     runs-on: xcode-27
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.prepare.outputs.version }}
+      build: ${{ steps.prepare.outputs.build }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       MSGBLAST_SIGNING_MODE: ${{ vars.MSGBLAST_SIGNING_MODE || 'ad-hoc' }}
@@ -207,3 +210,70 @@ jobs:
         env:
           MSGBLAST_ED_KEY_FILE: ${{ runner.temp }}/msgblast-sparkle-private-key
         run: rm -f -- "$MSGBLAST_ED_KEY_FILE"
+
+  testflight_changes:
+    name: Check for iPhone changes
+    needs: release
+    if: vars.MSGBLAST_TESTFLIGHT_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: read
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare against the last TestFlight upload
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTFLIGHT_BASE_SHA: ${{ vars.MSGBLAST_TESTFLIGHT_BASE_SHA }}
+        run: bash scripts/testflight_changes.sh
+
+  testflight:
+    name: Upload iPhone build to TestFlight
+    needs: [release, testflight_changes]
+    if: needs.testflight_changes.outputs.changed == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    environment: testflight
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Archive iPhone app
+        env:
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+          RELEASE_BUILD: ${{ needs.release.outputs.build }}
+        run: |
+          bash scripts/archive_testflight.sh "$RELEASE_VERSION" "$RELEASE_BUILD" \
+            "$RUNNER_TEMP/msgblastMobile.xcarchive" --unsigned
+
+      - name: Sign and upload to TestFlight
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.MSGBLAST_TESTFLIGHT_API_KEY }}
+          ASC_KEY_ID: ${{ vars.MSGBLAST_TESTFLIGHT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.MSGBLAST_TESTFLIGHT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          : "${ASC_PRIVATE_KEY:?Missing MSGBLAST_TESTFLIGHT_API_KEY}"
+          : "${ASC_KEY_ID:?Missing MSGBLAST_TESTFLIGHT_KEY_ID}"
+          : "${ASC_ISSUER_ID:?Missing MSGBLAST_TESTFLIGHT_ISSUER_ID}"
+          work=$(mktemp -d "$RUNNER_TEMP/msgblast-testflight.XXXXXX")
+          trap 'rm -rf -- "$work"' EXIT
+          umask 077
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$work/key.p8"
+          unset ASC_PRIVATE_KEY
+          signing=(-allowProvisioningUpdates -authenticationKeyPath "$work/key.p8"
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/msgblastMobile.xcarchive" \
+            -exportOptionsPlist scripts/ExportOptions-testflight.plist \
+            -exportPath "$work/upload" "${signing[@]}"

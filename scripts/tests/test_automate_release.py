@@ -391,9 +391,9 @@ class AutomatedReleaseTests(unittest.TestCase):
 
     def prepare_split(self):
         self.assertEqual(auto.main(["--version", "0.1.1", "--prepare-only"]), 0)
-        key, output = (self.root / "step-output").read_text().strip().split("=", 1)
-        self.assertEqual(key, "prepared-output")
-        return Path(output)
+        outputs = dict(line.split("=", 1) for line in (self.root / "step-output").read_text().splitlines())
+        self.assertEqual((outputs["version"], outputs["build"]), ("0.1.1", "2"))
+        return Path(outputs["prepared-output"])
 
     def test_prepare_only_reserves_and_builds_without_publication(self):
         with self.split_release():

@@ -266,6 +266,7 @@ def main(args=None):
                 if github_output:
                     with Path(github_output).open("a") as file:
                         file.write(f"prepared-output={output}\n")
+                        file.write(f"version={version}\nbuild={build}\n")
                 print(f"Prepared msgblast {version} ({build}) at {output}; no release artifacts published.", flush=True)
                 return 0
         result = publish_release(store, base_url, output / "publish", snapshot, tools, key_file)

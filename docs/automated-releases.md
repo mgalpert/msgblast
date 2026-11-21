@@ -41,6 +41,31 @@ The workflow writes the private seed to an owner-only file in the temporary runn
 
 No hosting account/bucket/domain is created by the workflow. Until these variables/secrets are configured, its preflight fails with the missing configuration name before building or publishing.
 
+## Enable iPhone uploads to TestFlight
+
+Create a GitHub Actions environment named `testflight` for this repository.
+Restrict deployment to `main` and release tags. Use a dedicated App Store
+Connect team API key that can provision and sign the iPhone app and upload
+builds. App Store Connect team keys apply to all apps on the team. Keep the
+TestFlight credentials separate from Mac notarization.
+
+Set the environment secret `MSGBLAST_TESTFLIGHT_API_KEY` to the contents of the
+downloaded `.p8`. Set environment variables `MSGBLAST_TESTFLIGHT_KEY_ID` and
+`MSGBLAST_TESTFLIGHT_ISSUER_ID` from App Store Connect. Set the repository
+variable `MSGBLAST_TESTFLIGHT_BASE_SHA` to the full source SHA of the last manual
+TestFlight upload. Then set `MSGBLAST_TESTFLIGHT_ENABLED` to `true`.
+
+After the Mac release succeeds, the workflow compares its source to the last
+successful deployment in the `testflight` environment. It uses the manual
+baseline until the first automated upload succeeds. Changes to iPhone sources,
+shared protocol, app icon, or build inputs trigger an upload using the same
+marketing version and allocated build number as the Mac release. A failed or
+skipped upload leaves the baseline in place. Keep manual uploads below the
+next release counter value so they do not collide with automation. If the
+upload job fails after sending the build, check App Store Connect before
+rerunning it. Follow the [TestFlight checklist](testflight-checklist.md) for
+testing and tester access.
+
 ## Each release
 
 Keep `release-notes/VERSION.md` brief: start with at most three short bullets about changes users will notice. Put setup instructions and technical detail after the highlights. Add a `## Contributors` section with linked GitHub handles and a specific thank-you; verify attribution from the release's commit range or pull requests. The sidebar shows the highlights and credits first, with full notes available on demand. `release-notes/highlights.json` supplies concise summaries for older long-form notes.

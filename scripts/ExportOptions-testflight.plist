@@ -10,5 +10,7 @@
 	<string>C4XLZBEPK8</string>
 	<key>uploadSymbols</key>
 	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
 </dict>
 </plist>
