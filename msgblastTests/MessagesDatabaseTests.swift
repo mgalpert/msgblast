@@ -176,6 +176,41 @@ final class MessagesDatabaseTests: XCTestCase {
         XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
     }
 
+    func testTextStoredOnlyInAttributedBodyIsShownWithoutChangingDatabase() throws {
+        let url = try fixture(); defer { try? FileManager.default.removeItem(at: url) }
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(db, "ALTER TABLE message ADD COLUMN attributedBody BLOB; UPDATE message SET text=NULL WHERE guid IN ('anchor','answer');", nil, nil, nil), SQLITE_OK)
+        setAttributedBody(archive("Only in the blob 👍🏽"), guid: "anchor", in: db)
+        setAttributedBody(Data("damaged".utf8), guid: "answer", in: db)
+        setAttributedBody(archive("stale copy"), guid: "reply", in: db)
+        sqlite3_close(db)
+        let before = try Data(contentsOf: url)
+        let messages = try MessagesDatabase(path: url.path).messages(chatID: "A")
+        XCTAssertEqual(messages.map(\.text), ["Only in the blob 👍🏽", "[Message body unavailable · view in Messages]", "older reply"])
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+    func testAttributedBodyReadsAppleTypedstreamsAndRejectsDamage() throws {
+        for text in ["Hi", String(repeating: "long ", count: 40), String(repeating: "x", count: 70_000), "👩‍👩‍👧‍👦 🇵🇹 \u{FFFC}"] {
+            XCTAssertEqual(AttributedBody.text(archive(text)), text)
+        }
+        XCTAssertEqual(AttributedBody.text(NSArchiver.archivedData(withRootObject: NSMutableAttributedString(string: "edited"))), "edited")
+        XCTAssertNil(AttributedBody.text(archive("Hello there").prefix(40)), "A cut-off blob is unreadable, not partial")
+        XCTAssertNil(AttributedBody.text(NSArchiver.archivedData(withRootObject: "plain" as NSString)))
+        XCTAssertNil(AttributedBody.text(try NSKeyedArchiver.archivedData(withRootObject: NSAttributedString(string: "keyed"), requiringSecureCoding: true)))
+        XCTAssertNil(AttributedBody.text(Data()))
+    }
+    private func archive(_ text: String) -> Data { NSArchiver.archivedData(withRootObject: NSAttributedString(string: text)) }
+    private func setAttributedBody(_ blob: Data, guid: String, in db: OpaquePointer?) {
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "UPDATE message SET attributedBody=? WHERE guid=?", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        XCTAssertEqual(blob.withUnsafeBytes { sqlite3_bind_blob(statement, 1, $0.baseAddress, Int32(blob.count), transient) }, SQLITE_OK)
+        XCTAssertEqual(sqlite3_bind_text(statement, 2, guid, -1, transient), SQLITE_OK)
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
+    }
+
     func fixture() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("msgblast-\(UUID()).db")
         var db: OpaquePointer?
