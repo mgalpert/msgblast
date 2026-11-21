@@ -354,6 +354,35 @@ final class WebServiceTests: XCTestCase {
         XCTAssertNil(WebAgentSession.comparisonTurns(page, attempts: [attempt])[attempt.comparisonID!])
     }
 
+    func testARequestKeepsItsTurnsWhenAReloadShowsFewerMessagesThanItsBaseline() {
+        func message(_ id: String, _ role: String, _ text: String) -> WebPageMessage { WebPageMessage(id: id, role: role, text: text) }
+        // Sent with four messages already on the page, including an older identical request.
+        let baseline = [message("d1:u0", "user", "hi"), message("a0", "assistant", "Old answer"),
+                        message("d1:u1", "user", "a cable?"), message("a1", "assistant", "Example Cable")]
+        var attempt = WebSendAttempt(text: "hi", status: .uncertain)
+        let thread = UUID()
+        attempt.comparisonID = thread
+        attempt.receiptContext = WebReceiptContext(originalURL: WebProvider.alexaShopping.homeURL, baseline: baseline, existingPaths: [])
+        func turns(_ page: [WebPageMessage]) -> [String] { WebAgentSession.comparisonTurns(page, attempts: [attempt])[thread]?.map(\.id) ?? [] }
+        let sent = baseline + [message("d1:u2", "user", "hi"), message("a2", "assistant", "New answer")]
+        XCTAssertEqual(turns(sent), ["d1:u2", "a2"])
+        // A reload renumbers the requests and shows a recent window shorter than the baseline.
+        let window = [message("a1", "assistant", "Example Cable"), message("d2:u2", "user", "hi"), message("a2", "assistant", "New answer")]
+        XCTAssertEqual(turns(window), ["d2:u2", "a2"])
+        // The older identical request on the reloaded page is still not this one's.
+        let reloaded = [message("d2:u0", "user", "hi"), message("a0", "assistant", "Old answer"), message("d2:u2", "user", "hi"), message("a2", "assistant", "New answer")]
+        XCTAssertEqual(turns(reloaded), ["d2:u2", "a2"])
+        // With no baseline message left to place it, the length guard stays: a renumbered page,
+        // even a short one holding an older identical request, gives this request nothing.
+        XCTAssertEqual(turns(baseline.map { message("d3:" + $0.id, $0.role, $0.text) }), [])
+        XCTAssertEqual(turns([message("d4:u0", "user", "hi"), message("d4:a0", "assistant", "Old answer")]), [])
+        // The saved copy follows the renumbered request instead of repeating it.
+        var saved = WebAgentSession.keepingSharedTurns([:], live: WebAgentSession.comparisonTurns(sent, attempts: [attempt]), onPage: Set(sent.map(\.id)))
+        saved = WebAgentSession.keepingSharedTurns(saved, live: WebAgentSession.comparisonTurns(window, attempts: [attempt]), onPage: Set(window.map(\.id)))
+        XCTAssertEqual(saved[thread.uuidString]?.map(\.id), ["d2:u2", "a2"])
+        XCTAssertEqual(WebAgentSession.indexAfterBaseline([], in: window), 0)
+    }
+
     func testAlexaShoppingIdleLoaderIsNotAPendingReply() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
